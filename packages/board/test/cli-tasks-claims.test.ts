@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import type { MessageView } from '../src/api/routes.ts'
 import { env, tmp, url, useBoard, vb } from './cli-harness.ts'
 import { asProfile, bo, claimOn, claimsDir, create, deployment, events, failure, ok, start, state, task, until } from './cli-tasks-harness.ts'
+import { localBoard, personToken } from './harness.ts'
+import { serve } from './http.ts'
 
 useBoard()
 
@@ -114,6 +116,68 @@ describe("vb tasks, with the claim it keeps", () => {
     expect(held).toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`^error: Can't block task #${id}\\. Someone holds it\\.\\n`)) })
     expect(await vb(['tasks', 'block', id])).toMatchObject({ code: 2, stderr: expect.stringMatching(/^error: Missing what you need from a person, in a line\.\n/) })
   }, 60_000)
+
+  it('suggests unpark for a parked task and unblock for a plain hold', async () => {
+    const id = await create('parked', 'deploy to prod')
+    await ok(['tasks', 'block', id, 'waiting for approval'])
+    const held = await vb(['tasks', 'claim', id])
+    expect(held.code).toBe(1)
+    expect(held.stderr).toContain(`error: Can't claim task #${id}. It's held for a person.\n`)
+    expect(held.stderr).toContain(`    vb tasks unblock ${id}\n`)
+    expect(held.stderr).not.toContain('vb tasks unpark')
+    await ok(['tasks', 'unblock', id])
+
+    await ok(['tasks', 'park', id, 'deployment freeze'])
+    const parked = await vb(['tasks', 'claim', id])
+    expect(parked).toMatchObject({ code: 1, stdout: '' })
+    const [headline, , ...recovery] = parked.stderr.split('\n')
+    expect([headline, ...recovery]).toEqual([
+      `error: Can't claim task #${id}. It's parked.`,
+      '',
+      "  See what it's held for:",
+      `    vb read ${id}`,
+      '  Or, as an operator, lift the park:',
+      `    vb tasks unpark ${id} 'resume work'`,
+      '',
+    ])
+
+    const elsewhere = { BOARD_URL: 'http://env.invalid/api/board' }
+    const refused = failure(await vb(['tasks', 'claim', id, '--url', url, '--as', 'worker', '--json'], elsewhere))
+    expect(refused).toMatchObject({ reason: 'task_blocked', next: [
+      { argv: ['vb', 'read', id, '--url', url, '--as', 'worker'] },
+      { argv: ['vb', 'tasks', 'unpark', id, 'resume work', '--url', url] },
+    ] })
+    // The suggested write still reaches the selected board, but unpark must act as a person, without --as.
+    expect(await ok(refused.next![1]!.argv.slice(1), elsewhere)).toBe(`unparked ${id}\n`)
+  }, 60_000)
+
+  it('keeps the claim refusal when reading the held task fails', async ({ onTestFinished }) => {
+    const team = localBoard({ url: undefined })
+    const server = await serve((request) => {
+      if (request.method === 'GET' && new URL(request.url).pathname.startsWith('/api/board/messages/')) {
+        return Promise.resolve(Response.json({ error: { code: 'unavailable', message: 'thread read unavailable' } }, { status: 503 }))
+      }
+      return team.fetch(request)
+    })
+    onTestFinished(async () => {
+      await server.close()
+      await team.close()
+    })
+    const board = `${server.origin}/api/board`
+    const as = { BOARD_URL: board, BOARD_TOKEN: await personToken('u_julian', board) }
+    const id = await create('parked', 'deploy to prod', [], as)
+    await ok(['tasks', 'park', id, 'deployment freeze'], as)
+
+    const refused = await vb(['tasks', 'claim', id, '--json'], as)
+    expect(refused).toMatchObject({ code: 1, stdout: '' })
+    const error = failure(refused)
+    expect(error).toMatchObject({
+      reason: 'task_blocked',
+      message: `Can't claim task #${id}. It's held, but the CLI couldn't read the task to see why.`,
+      data: { error: { code: 'task_blocked', status: 409, message: `#${id} is parked: an operator must unpark it` } },
+    })
+    expect(error.next?.map(({ argv }) => argv)).toEqual([['vb', 'read', id]])
+  })
 
   it("assigns a task to one of its owner's profiles, the only one that claims it, and returns it to the pool", async () => {
     const id = await create('assigned', 'fix CVE-123')

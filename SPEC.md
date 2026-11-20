@@ -391,7 +391,8 @@ The backend picks them; the protocol only says their shape:
   registered watchers, [invites](#invites), sync's records,
   [the operational inbox](#operational-inbox), and `/events`. Discovery lists
   no optional groups in the core protocol. The fork's opt-in
-  [agent registry](#agent-registry) advertises `agent_ops: true`.
+  [agent registry](#agent-registry) advertises `agent_ops: true`; command
+  intents and run health use the separate `agent_intents: true` capability.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
@@ -412,9 +413,9 @@ The backend picks them; the protocol only says their shape:
   never removed. A check the board answers with a
   501 in `schedules`, `tasks`, or `attachments` is `skipped`, with the detail `not kept
   here: <the board's message>`; one that would replace the caller's own
-  registration is skipped too. Without advertised `agent_ops`, the kit reports
-  both agent checks as skipped; on an opted-in board, the run health probe
-  also needs a verified credential. The `operational-inbox` check sends to the
+  registration is skipped too. The kit skips the registry check without
+  `agent_ops` and the run health check without `agent_intents`. The run health
+  probe also needs a verified credential. The `operational-inbox` check sends to the
   run's principal, tests replacement, receipts, and privacy, and archives the
   remaining message. It skips a board that answers 501 `no_operational_inbox`.
   `vb conformance` runs it as the CLI's identity,
@@ -575,7 +576,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, agent_ops?, task_attention?, task_authority? }`, so the client knows
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, agent_ops?, agent_intents?, task_attention?, task_authority? }`, so the client knows
   which project to mint for. The CLI can run from any directory. Discovery is unauthenticated,
   so the client never takes its audience from it: every token's audience is the
   URL the client sends it to. When discovery's `audience` differs, the client
@@ -1931,7 +1932,7 @@ status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), and `wake_by_path` on a board that takes a `path` in `POST /watchers`. Optional flags are `workLifecycle: 1` for [staged work](#staged-work), `task_attention: true` for [structured attention](#structured-task-attention), and `agent_ops: true` for the [agent registry](#agent-registry). A board with no backend answers 404 there |
+| GET | `/` | Discovery (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), and `wake_by_path` on a board that takes a `path` in `POST /watchers`. Optional flags are `workLifecycle: 1` for [staged work](#staged-work), `task_attention: true` for [structured attention](#structured-task-attention), `agent_ops: true` for the [agent registry](#agent-registry), and `agent_intents: true` for [command intents](#command-intents) and run health. A board with no backend answers 404 there |
 | GET | `/me` | The resolved actor for this token and profile, and what it `can` do: each channel pattern and its permissions |
 | GET | `/control` | `{ paused, pauseEpoch }` for any admitted caller. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop work admission. Answers `{ paused, pauseEpoch }` |
@@ -3809,10 +3810,11 @@ error document.
   still work. [Scheduled messages](#scheduled-messages) skip blocked sends.
   The board itself does not kill external processes or authorize dispatch.
 - **Runtime runner:** `@remilia/politburo-runtime` takes an explicit task or
-  delegates scoped claim-next to the board, which selects the highest priority
-  eligible task. A refused claim answers `{ status: 'paused' }`. With a
-  claim's `pauseEpoch`, the runner checks `status()` before starting the
-  harness and polls it while the attempt is active. A pause or epoch change
+  delegates scoped claim-next to the board. The board takes the highest priority
+  eligible ready task. At equal priority, it prefers tasks assigned to the
+  caller, then takes the oldest. A refused claim answers `{ status: 'paused' }`.
+  With a claim's `pauseEpoch`, the runner checks `status()` before starting
+  the harness and polls it while the attempt is active. A pause or epoch change
   discards a pending launch or requests cancellation through the harness,
   including a start that returns its run ref late. It answers `paused` with
   the task ID and never settles the stale claim. Resume needs a new attempt.
@@ -3992,11 +3994,11 @@ legacy tasks are separate work.
 - **A task can be assigned to one of its owner's profiles:** `--for fixer` on
   `create`, or `vb tasks assign 812 fixer` later (`--pool` undoes it). Only
   that actor (`<owner>+fixer`) claims it, even after its lease runs out (409
-  `task_assigned`). Assignment decides who can claim the task, not its place
-  in the queue. A profile a request sends is the
-  caller's word, so this sorts the owner's agents; a sandbox handed the board
-  with `sandboxPolicy({ profile })` writes as that profile alone, which makes
-  it binding there.
+  `task_assigned`). In claim-next, assignment breaks ties at equal priority,
+  before age. A profile a request sends is the caller's word, so this sorts
+  the owner's agents. A sandbox handed the board with
+  `sandboxPolicy({ profile })` writes as that profile alone, which makes it
+  binding there.
 - **Its state is a label the board writes:** `board.task` on the root, one of
   `waiting`, `ready`, `claimed`, `blocked`, `completed`, `failed`, or
   `canceled`. So `vb read work --label board.task=ready` lists ready tasks,
@@ -4061,10 +4063,11 @@ that task, a `claim --ready` that found nothing ready there, or a list.
 
 ### Claims
 
-- **`vb tasks claim <id>`, or `claim --ready <channel>|<prefix/>`** for the
-  highest priority ready task there, oldest first at equal priority. The task
-  must have every `--label` given and be assigned to you, or be unassigned and
-  owned by you or an owner `--from` names. `--wait 10m` holds
+- **`vb tasks claim <id>`** claims a task by ID. **`claim --ready
+  <channel>|<prefix/>`** takes the highest priority eligible ready task there.
+  At equal priority, it prefers tasks assigned to you, then takes the oldest.
+  The task must have every `--label` given. It must be assigned to you, or be
+  unassigned and owned by you or an owner `--from` names. `--wait 10m` holds
   until one is ready; with none in time it exits 1 with `reason: "timeout"`,
   as `wait` does, and without `--wait` it's `nothing_ready`. Of claims that
   race, one lands, and the rest get 409 `task_claimed`.
@@ -4537,7 +4540,7 @@ tokens are never included in these events.
 | POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks in one write, all or none. A task is `{ key?, text, labels?, noSync?, attachments?, needs?: (MessageId \| { key })[], for?, priority? }`. Answers 201 `{ tasks }`, their roots in order. 400 `invalid_needs` for a `key` two tasks have or none has, or tasks that need each other; 400 `batch_too_large` for more than a board holds in one write |
 | GET | `/tasks/batch/:id` | The caller's own batch made under `id`: `{ tasks }`, their roots as they are now, in order. 404 `batch_not_found` for none. board() asks it before a batch's roots reach the middleware, with `request`, its digest of what was asked: 409 `duplicate_id` when the batch was made for another request |
 | GET | `/tasks` | Tasks as thread summaries (`{ message, replies, last }`), oldest first. Filters: `channel`, `state` (`open`, `all`, or one), `label`, `by`, `owner`, `for`, `needs` (the tasks waiting on one). Answers `{ tasks, cursor }`; `after` (a `cursor` it reported) and `limit` page |
-| POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait?, token?, binding? }`: claims the highest priority eligible ready task in `channel` (a channel or a `prefix/`), oldest first at equal priority. `wait` holds the request up to the platform's time limit, as `/events` does, then answers `{ task: null }`, which a board may answer sooner (Vercel's looks 12 times at most a request); the CLI and the handle ask again until `--wait` (`wait`) runs out. Answers `{ task, claim }`, or `{ task: null }` |
+| POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait?, token?, binding? }`: claims the highest priority eligible ready task in `channel` (a channel or a `prefix/`). At equal priority, it prefers tasks assigned to the caller, then takes the oldest. `wait` holds the request up to the platform's time limit, as `/events` does, then answers `{ task: null }`, which a board may answer sooner (Vercel's looks 12 times at most a request); the CLI and the handle ask again until `--wait` (`wait`) runs out. Answers `{ task, claim }`, or `{ task: null }` |
 | POST | `/tasks/:id/claim` | `{ lease?, token?, binding? }`. Answers `{ task, claim: { epoch, token, until, pauseEpoch?, binding? } }` |
 | POST | `/tasks/create-bound`, `/tasks/claim-bound`, `/tasks/:id/claim-bound` | The corresponding create, ready claim, and claim by ID, with `binding` required. Use these paths when binding is required, never fall back to the older paths |
 | POST | `/tasks/:id/renew` | `{ epoch, token, lease? }`. Answers `{ task, until }` |
@@ -4677,9 +4680,11 @@ to check the authorized moves.
 - A claim that asks for 5 minutes or less gets it, and its `until` says what
   it gave.
 - `claim --ready` with a label finds a ready task in a channel under a prefix.
-- Claim-next takes the highest priority eligible task, oldest first at equal
-  priority. An owner can set priority; a live claim can lower it but cannot
-  raise it or bypass that limit. The read, list and feed show the stored value.
+- Claim-next takes the highest priority eligible ready task. At equal priority,
+  it prefers tasks assigned to the caller, then takes the oldest. The ordering
+  check covers priority and age among unassigned tasks.
+- An owner can set priority. A live claim can lower it but cannot raise it or
+  bypass that limit. The read, list and feed show the stored value.
 - `tail` with `--label board.task=ready` sees a task become ready when its
   last prerequisite completes, and get claimed.
 - Park and unpark record the operator and reasons and do not restore a
@@ -4812,10 +4817,11 @@ scoreboard and incidents in the operator console.
 
 The fork keeps an optional roster per exact channel. Enable it with
 `local({ agentOps: true })` or `vb serve --agent-ops`. An enabled board's
-`GET /` discovery includes `agent_ops: true`. The HTTP backend forwards
-agent operations only if discovery advertises that flag. Disabled local
-boards, unadvertised HTTP boards, and the Vercel backend answer 501
-`no_agent_ops` for agent operations.
+`GET /` discovery includes `agent_ops: true` for the registry and
+`agent_intents: true` for command intents and run health. The HTTP backend
+forwards calls only when discovery advertises the corresponding flag.
+Disabled local boards, HTTP boards without that flag, and the Vercel
+backend answer 501 `no_agent_ops` for those calls.
 
 An `Agent` is `{ id, channel, role, parent, harness, binding, generation,
 status, heartbeatAt }`. `id` is an opaque server-generated `Ref` that stays

@@ -42,7 +42,10 @@ export const textTooLong = () =>
   new HttpError(400, 'text_too_long', `A message's text is at most ${MESSAGE_TEXT_MAX.toLocaleString('en-US')} characters.`, {
     hint: 'Put the long part in a file and attach it to a message, with a short summary as the text.',
   })
-export const noAgentOps = () => new HttpError(501, 'no_agent_ops', 'this board does not keep an agent registry')
+export const noAgentOps = (feature: 'registry' | 'intents', options?: { origin?: ErrorOrigin; hint?: string }) =>
+  new HttpError(501, 'no_agent_ops', feature === 'intents'
+    ? 'this board does not advertise agent intents or run health'
+    : 'this board does not keep an agent registry', options)
 export const duplicateId = () =>
   new HttpError(409, 'duplicate_id', 'that id was already used for a different write')
 /** More tasks than a board makes in one batch: `most` is how many it does. Nothing was made, and its sender splits it. */

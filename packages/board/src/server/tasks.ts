@@ -580,7 +580,10 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     throw badRequest(`from: ${value} is a handle, which several can share: name the owner by ID`, 'invalid_from')
   }
 
-  /** Claims the highest priority ready task the caller can take, oldest first at equal priority. */
+  /**
+   * Claims the highest priority ready task the caller can take. At equal priority, prefer tasks
+   * assigned to the caller, then take the oldest within the same assignment group.
+   */
   async function claimNext(identity: Identity, input: Protocol['claimReadyTask']['input'], signal: AbortSignal, pauseEpoch: number, binding: TaskBinding | undefined): Promise<{ root: Message; claim: TaskClaim } | null> {
     const ctx = writes()
     const { principal } = identity
@@ -609,16 +612,19 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       if (!current) throw forbidden('this token no longer has access to claim work')
       let root: Root | null = null
       let best = -1
+      let bestAssigned = false
       for await (const candidate of rootsAt(filter, ['ready', 'claimed'], position)) {
         const { task } = candidate
         if (task.parked || stateNow(task, now, pauseEpoch) !== 'ready' || !canReady(task) || (task.work && !scopers)) continue
         if (scopers && (!current.readable(candidate.channel) || !current.can('label', candidate.channel))) continue
-        if (!assignedTo(task, identity) && !(task.for === null && owners.has(task.owner))) continue
+        const assigned = assignedTo(task, identity)
+        if (!assigned && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
-        if (rank <= best || (scopers && !(await satisfied(task, position)))) continue
+        if (rank < best || (rank === best && (bestAssigned || !assigned)) || (scopers && !(await satisfied(task, position)))) continue
         root = candidate
         best = rank
-        if (best === TaskPriority.options.length - 1) break
+        bestAssigned = assigned
+        if (bestAssigned && best === TaskPriority.options.length - 1) break
       }
       // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }

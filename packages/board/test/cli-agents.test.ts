@@ -53,6 +53,38 @@ it('vb agents reports disabled boards and runs the registry lifecycle with JSON 
   expect(agents).toEqual(expect.arrayContaining([lead, retired]))
 }, 30_000)
 
+it('vb agents reports missing run health without denying the registry on a registry-only board', async ({ onTestFinished }) => {
+  const home = await tmp('agents-registry-home-')
+  const team = localBoard({ url: undefined, agentOps: true })
+  const server = await serve(async (request) => {
+    const { pathname } = new URL(request.url)
+    if (pathname === '/api/board' || pathname.startsWith('/api/board/ops/health/')) {
+      // Older mounts answer discovery on an unknown GET.
+      const { agent_intents: _, ...info } = await (await team.fetch(new Request(new URL('/api/board', request.url)))).json()
+      return Response.json(info)
+    }
+    return team.fetch(request)
+  })
+  onTestFinished(async () => {
+    await server.close()
+    await team.close()
+  })
+  const url = `${server.origin}/api/board`
+  const env = { HOME: home, XDG_CONFIG_HOME: home, BOARD_URL: url, BOARD_TOKEN: await personToken('u_julian', url) }
+  const run = (...args: string[]) => vb(['agents', ...args, '--json'], env, undefined, home)
+  const roster = await run('list', 'work')
+  expect(roster).toMatchObject({ code: 0, stderr: '' })
+  expect(JSON.parse(roster.stdout)).toEqual({ agents: [] })
+
+  const unavailable = await run('health', '812')
+  expect(unavailable).toMatchObject({ code: 1, stdout: '' })
+  expect(JSON.parse(unavailable.stderr)).toMatchObject({
+    reason: 'no_agent_ops',
+    message: 'this board does not advertise agent intents or run health',
+    hint: expect.stringContaining('supports intents'),
+  })
+})
+
 it('vb agents takes and reports a run probe as the verified local user', async ({ onTestFinished }) => {
   const home = await tmp('agents-probe-home-')
   const team = localBoard({ url: undefined, agentOps: true })

@@ -15,7 +15,7 @@ import { uploadName } from './file-names.ts'
 import { badRequest, duplicateId, HttpError, json, noAgentOps, notFound } from './errors.ts'
 import { carried } from './carried.ts'
 import { deployedOnVercel, registrant, wakePath, type WakeAt } from './registrant.ts'
-import { INVITE_METHODS, isAgentOpsMethod, METHODS } from './routing.ts'
+import { INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, METHODS } from './routing.ts'
 import { compileWatcher } from './watch-spec.ts'
 import { tailWatchers } from './tails.ts'
 import { canonicalWatchers, type SyncEntrySpec, type WatcherSpec } from './watchers-hash.ts'
@@ -3975,7 +3975,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
     Object.entries(methods).map(([name, method]) => [
       name,
       (caller: Caller, ...args: unknown[]) => {
-        if (isAgentOpsMethod(name)) throw noAgentOps()
+        if (isAgentOpsMethod(name)) throw noAgentOps(isAgentIntentMethod(name) ? 'intents' : 'registry')
         if ('identity' in caller) throw servesNone()
         // Refuse unsupported authority operations before starting any background upstream calls.
         if ((name === 'createTask' || name === 'claimTask' || name === 'claimReadyTask') &&

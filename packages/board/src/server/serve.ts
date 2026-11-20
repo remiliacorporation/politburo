@@ -93,7 +93,7 @@ import { avatarSvg } from './avatars.ts'
 import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notFound, toErrorResponse, unauthorized } from './errors.ts'
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
-import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
+import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
 import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
@@ -1295,6 +1295,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
+      ...(capabilities?.agent_intents === true ? { agent_intents: true } : {}),
     }
   }
 
@@ -1328,13 +1329,15 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       // Everything else is for a caller: this deployment's own code, or a request, which a board that
       // uses another board's doesn't serve. Nothing runs for one before that.
       const ops = target.kind === 'protocol' && isAgentOpsMethod(target.name)
-      if (!injected && !policy.open) throw ops ? noAgentOps() : servesOnly()
+        ? (isAgentIntentMethod(target.name) ? 'intents' : 'registry')
+        : null
+      if (!injected && !policy.open) throw ops ? noAgentOps(ops) : servesOnly()
       if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
       if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
         && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {
         if (INVITE_METHODS.has(target.name)) throw noInvites()
-        throw ops ? noAgentOps() : notFound(`no route: ${request.method} ${url.pathname}`)
+        throw ops ? noAgentOps(ops) : notFound(`no route: ${request.method} ${url.pathname}`)
       }
       // A sync callback's client does everything but its own writes as sync, except private mail.
       if (injected && 'platform' in injected && target.kind === 'protocol' && isOperationalInboxMethod(target.name))

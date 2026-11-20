@@ -1177,15 +1177,22 @@ describe('claiming the next ready task', () => {
     expect(await stateOf(bo, hers.id)).toBe('ready')
   })
 
-  it('takes the oldest at equal priority, excluding tasks assigned to someone else', async () => {
+  it('claims by priority, then assignment to the caller, then age', async () => {
     const { ada, board } = setup()
     const fixer = person(board, 'ada', { 'x-board-profile': 'fixer' })
-    const pool = await task(ada, 'anyone can do this')
+    const urgentPool = await task(ada, 'pooled urgent', { priority: 'urgent' })
+    const olderPool = await task(ada, 'older pooled high', { priority: 'high' })
+    const normal = await task(ada, 'assigned normal', { for: `${ADA}+fixer` })
+    const newerPool = await task(ada, 'newer pooled high', { priority: 'high' })
     const reviewers = await task(ada, 'for the reviewer', { for: `${ADA}+reviewer`, priority: 'urgent' })
-    const mine = await task(ada, 'for the fixer', { for: `${ADA}+fixer` })
-    expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body.task.id).toBe(pool.id)
-    expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body.task.id).toBe(mine.id)
-    expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body).toEqual({ task: null })
+    const olderAssigned = await task(ada, 'older assigned urgent', { for: `${ADA}+fixer`, priority: 'urgent' })
+    const newerAssigned = await task(ada, 'newer assigned urgent', { for: `${ADA}+fixer`, priority: 'urgent' })
+
+    const next = async () => (await fixer('POST', '/tasks/claim', { channel: 'work' })).body
+    for (const expected of [olderAssigned, newerAssigned, urgentPool, olderPool, newerPool, normal]) {
+      expect((await next()).task).toMatchObject({ id: expected.id, text: expected.text })
+    }
+    expect(await next()).toEqual({ task: null })
     expect(await stateOf(ada, reviewers.id)).toBe('ready')
   })
 

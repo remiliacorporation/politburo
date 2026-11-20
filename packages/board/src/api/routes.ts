@@ -1155,6 +1155,8 @@ export type Discovery = {
   task_attention?: true
   /** This board opts into the fork's agent registry. */
   agent_ops?: true
+  /** Advertises command intents and run health. `agent_ops` alone only advertises the registry. */
+  agent_intents?: true
 }
 
 /**

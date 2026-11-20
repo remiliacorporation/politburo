@@ -176,6 +176,7 @@ type Context = {
   team: string | null
   workLifecycle: boolean
   agentOps: boolean
+  agentIntents: boolean
 }
 
 type Check = {
@@ -3030,10 +3031,10 @@ const CHECKS: Check[] = [
     group: 'agents',
     name: 'confirms a claimed run only through a taken and reported status probe',
     run: async (ctx) => {
-      const { board, channel, labels, agentOps, me } = ctx
-      if (!agentOps) {
+      const { board, channel, labels, agentOps, agentIntents, me } = ctx
+      if (!agentIntents) {
         await rejects(board.agents.health('conformance-missing'), 501, 'no_agent_ops', 'reading health without advertised support')
-        return 'not kept here: agent operations are not advertised'
+        return agentOps ? 'not kept here: agent intents are not advertised' : 'not kept here: agent operations are not advertised'
       }
       if (me.principal === 'board:client' || me.principal.startsWith('board:client:')) return 'this run has no verified agent credential'
       const worker = board.as(`probe-${labels.conformance}`)
@@ -3228,6 +3229,7 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
     team: info.team_id ?? null,
     agentOps: info.agent_ops === true,
     workLifecycle: info.workLifecycle === 1,
+    agentIntents: info.agent_intents === true,
   }
   try {
     const compatible = ctx.workLifecycle ? [...CHECKS.filter(({ group, requires, taskAuthority, staged }) => group !== 'tasks' || requires === 'task_attention' || taskAuthority || staged), ...LIFECYCLE_CHECKS] : CHECKS
