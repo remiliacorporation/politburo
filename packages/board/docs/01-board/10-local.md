@@ -79,7 +79,7 @@ export const team = board({ backend: local({ attentionResponders: { work: ['verc
 export const GET = team.fetch, POST = team.fetch
 ```
 
-Use the `principal` from `vb me --json`, not a handle or a profile. `work` does
+Use the `principal` from `vb whoami --json`, not a handle or a profile. `work` does
 not cover `work/review`. Configure this on the deployment that keeps the log;
 a proxy does not grant the role. The role does not grant channel access. The
 person must still have `read` and `post` and act without a profile. A person

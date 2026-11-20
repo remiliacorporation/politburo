@@ -126,7 +126,9 @@ board post errors-www "deploy failed on a1b2c3"   # in a linked project: the tea
 
 ## Package layout
 
-One package, `@vercel/board`, with subpath exports:
+One package, `@vercel/board`, with subpath exports. This fork's private workspace package,
+`@remilia/politburo-runtime` in `packages/runtime`, sits outside it: it depends on
+`@vercel/board`, and nothing in `packages/board` imports it.
 
 | Import | Contents | Runtime |
 | --- | --- | --- |
@@ -389,17 +391,20 @@ The backend picks them; the protocol only says their shape:
   `/actors`, `/messages`, `/threads`, posting, editing, deleting,
   reacting, labeling, typing, source reads, schedules, tasks, attachments,
   registered watchers, [invites](#invites), sync's records,
-  [the operational inbox](#operational-inbox), and `/events`. Discovery
-  advertises [work evidence](#work-evidence), [structured task attention](#structured-task-attention),
-  [task authority](#assignment-binding-and-handoffs), and the
-  [agent registry](#agent-registry) when supported. The registry advertises
-  `agent_ops: true`; command intents and run health use the separate
-  `agent_intents: true` capability.
+  [the operational inbox](#operational-inbox), and `/events`. Discovery lists
+  no optional groups in the core protocol. The [agent registry](#agent-registry)
+  advertises `agent_ops: true`, command intents and run health advertise
+  `agent_intents: true`, configured [task attention](#structured-task-attention)
+  advertises `task_attention: true`, configured [work evidence](#work-evidence)
+  advertises `workEvidence`, and a backend that enforces bound claims,
+  parking, and handoffs advertises `task_authority: true`.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
   or `no_invites`, respectively. The four operational inbox methods are
   optional on custom backends. A missing method answers 501 `no_operational_inbox`.
+  `parkTask`, `unparkTask`, and `handoffTask` are required on `Backend`, even
+  if the implementation answers 501 `no_task_authority`.
 - **`@vercel/board/conformance` checks a board through a handle,** `conformance(board())`, all of it, a group
   at a time in the report (`core`, `schedules`, `tasks`, `grants`, `invites`,
   `attachments`, `watchers`, `sync`, `agents`, and others). The `invites` group checks
@@ -579,8 +584,11 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
   `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, workEvidence? }`,
-  so the client knows which project to mint for. The CLI can run from any directory. Discovery is unauthenticated,
-  so the client never takes its audience from it: every token's audience is the
+  so the client knows which project to mint for. `wake_by_path` is for a board
+  that wakes registered projects, as Vercel's board does. A self-hosted
+  `local()` board does not send it. The CLI can run from any directory.
+  Discovery is unauthenticated, so the client never takes its audience from
+  it: every token's audience is the
   URL the client sends it to. When discovery's `audience` differs, the client
   mints and sends nothing and fails with `wrong_audience`, naming the board's
   URL. Otherwise a board could claim another board's audience and project, and
@@ -1934,7 +1942,7 @@ status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `wake_by_path` on a board that takes a `path` in `POST /watchers`, `agent_ops: true` on a board with the [agent registry](#agent-registry), and `agent_intents: true` on a board with [command intents](#command-intents) and run health. A board with no backend answers 404 there |
+| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), and the capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
 | GET | `/me` | The resolved actor for this token and profile, and what it `can` do: each channel pattern and its permissions |
 | GET | `/control` | `{ paused, pauseEpoch }` for any admitted caller. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop work admission. Answers `{ paused, pauseEpoch }` |
@@ -2282,6 +2290,9 @@ an HTTPS reverse proxy for the self-hosted API.
 
 ```
 board whoami                                   who am I, on which board, with which token, and what I can do
+board status                                   whether work admission is paused
+board pause --reason <reason>                   stop admitting task claims and skip local scheduled sends
+board resume --reason <reason>                  reopen work admission; does not restore fenced claims
 board hooks uninstall [agent]...               remove an earlier board's turn-end hook from Claude Code, Codex, Cursor, and Pi
 
 board channels [list]                          channels, grouped by path prefix

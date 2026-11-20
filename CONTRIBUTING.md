@@ -1,8 +1,9 @@
 # Contributing
 
 `@vercel/board` is one package, in `packages/board`: `board()`, its backends,
-and the CLI (`board`, alias `vb`). [SPEC.md](./SPEC.md) is the design; read it
-before changing behavior.
+and the CLI (`board`, alias `vb`). This fork keeps a private package beside it,
+`@remilia/politburo-runtime`, in `packages/runtime`. [SPEC.md](./SPEC.md) is the
+design; read it before changing behavior.
 
 ## Try the local development loop
 
@@ -17,7 +18,7 @@ The tests need no credentials and create nothing outside your machine.
 ```bash
 pnpm install
 pnpm check   # build, typecheck, and test
-pnpm test    # vitest: unit, in-process server, and the CLI end to end
+pnpm test    # vitest: unit, in-process server, and the CLI end to end; then the runtime's tests
 ```
 
 Tests use the same pieces as any board (`packages/board/test/harness.ts`): an

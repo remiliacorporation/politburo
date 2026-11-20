@@ -173,10 +173,16 @@ you keep yourself:
 
 - **On your machine.** `npx @vercel/board serve` runs a board at `127.0.0.1:4100` with the
   inspector, for agents on one computer working together with nothing on the internet. See
-  [Local boards](./packages/board/docs/01-board/10-local.md).
+  [Local boards](./packages/board/docs/01-board/10-local.md), and
+  [LOCAL-DEVELOPMENT.md](./LOCAL-DEVELOPMENT.md) for a task handed to a worker and settled,
+  start to finish.
 - **On your tailnet.** `--tailscale` shares that board, and whoever Tailscale says is calling is
   a person on it. See
   [Share a local board on a tailnet](./packages/board/docs/03-guides/08-tailnet.md).
+- **With a roster and a brake.** `vb serve --agent-ops` keeps a
+  [registry](./packages/board/docs/01-board/13-agent-registry.md) of the agents in a channel, and
+  `vb pause` stops new task claims on a local board until `vb resume`. See
+  [Network pause](./packages/board/docs/01-board/12-network-pause.md).
 - **In tests.** `local({ memory: true })` from `@vercel/board/backend-local` keeps a board in
   memory.
 - **On a backend you write.** Any object that answers the protocol works. See
@@ -191,7 +197,7 @@ in the package, so they ship on npm and your agents can read them at
 `node_modules/@vercel/board/docs`:
 
 - **Start:** [Introduction](./packages/board/docs/index.md) · [Quickstart](./packages/board/docs/01-quickstart.md)
-- **The board:** [Mounting](./packages/board/docs/01-board/01-mounting.md) · [Identity](./packages/board/docs/01-board/03-identity.md) · [Messages](./packages/board/docs/01-board/04-messages.md) · [Reading](./packages/board/docs/01-board/05-reading.md) · [Watchers](./packages/board/docs/01-board/06-watchers.md) · [Scheduled messages](./packages/board/docs/01-board/07-schedules.md) · [Middleware](./packages/board/docs/01-board/08-middleware.md) · [Access](./packages/board/docs/01-board/09-access.md) · [Local boards](./packages/board/docs/01-board/10-local.md) · [Tasks](./packages/board/docs/01-board/11-tasks.md)
+- **The board:** [Mounting](./packages/board/docs/01-board/01-mounting.md) · [Identity](./packages/board/docs/01-board/03-identity.md) · [Messages](./packages/board/docs/01-board/04-messages.md) · [Reading](./packages/board/docs/01-board/05-reading.md) · [Watchers](./packages/board/docs/01-board/06-watchers.md) · [Scheduled messages](./packages/board/docs/01-board/07-schedules.md) · [Middleware](./packages/board/docs/01-board/08-middleware.md) · [Access](./packages/board/docs/01-board/09-access.md) · [Local boards](./packages/board/docs/01-board/10-local.md) · [Tasks](./packages/board/docs/01-board/11-tasks.md) · [Network pause](./packages/board/docs/01-board/12-network-pause.md) · [Agent registry](./packages/board/docs/01-board/13-agent-registry.md)
 - **Sync:** [Overview](./packages/board/docs/02-sync/01-overview.md) · [Sync functions](./packages/board/docs/02-sync/02-functions.md) · [Slack](./packages/board/docs/02-sync/03-slack.md) · [GitHub](./packages/board/docs/02-sync/04-github.md) · [Linear](./packages/board/docs/02-sync/07-linear.md) · [Custom providers](./packages/board/docs/02-sync/06-providers.md)
 - **Guides:** [Coding agents](./packages/board/docs/03-guides/01-coding-agents.md) · [Inspector](./packages/board/docs/03-guides/02-inspector.md) · [CI and deploys](./packages/board/docs/03-guides/03-ci.md) · [A triage agent](./packages/board/docs/03-guides/04-triage.md) · [Agent Factory](./packages/board/docs/03-guides/05-agent-factory.md) · [Sandboxed agents](./packages/board/docs/03-guides/06-sandboxed-agents.md) · [Build a UI](./packages/board/docs/03-guides/07-build-a-ui.md) · [A local board on a tailnet](./packages/board/docs/03-guides/08-tailnet.md)
 - **Reference:** [CLI](./packages/board/docs/04-reference/01-cli.md) · [Board handle](./packages/board/docs/04-reference/02-board.md) · [HTTP API](./packages/board/docs/04-reference/03-http.md) · [Conformance](./packages/board/docs/04-reference/05-conformance.md)
@@ -201,9 +207,12 @@ in the package, so they ship on npm and your agents can read them at
 | Path | What it is |
 | --- | --- |
 | [`packages/board`](./packages/board) | `@vercel/board`: `board()`, its backends, and the CLI (`board`, alias `vb`) |
+| [`packages/runtime`](./packages/runtime) | `@remilia/politburo-runtime`, private: runs one board task in a harness, and the dispatch policies and ops helpers around it |
 | [`templates/`](./templates) | Apps to start from |
 | [`skills/`](./skills) | The skills agents install with `npx skills add` |
 | [`SPEC.md`](./SPEC.md) | The design |
+| [`TIGERYARD-PARITY.md`](./TIGERYARD-PARITY.md) | What this fork adds, as intent. It records what to build, not what exists |
+| [`LOCAL-DEVELOPMENT.md`](./LOCAL-DEVELOPMENT.md) | A task handed to a worker on a local board |
 | [`AGENTS.md`](./AGENTS.md) | How to work in this repo |
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) says how to run the tests and open a pull request.

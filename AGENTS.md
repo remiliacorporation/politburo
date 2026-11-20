@@ -1,15 +1,19 @@
 # agents guide
 
 board is one npm package, `@vercel/board` (`packages/board`): `board()`, the handle that
-serves a board and acts on it, its backends, and the CLI (`board`, alias `vb`). [SPEC.md](./SPEC.md) is
-the design; read it before changing behavior.
+serves a board and acts on it, its backends, and the CLI (`board`, alias `vb`). This fork adds
+a private workspace package beside it, `@remilia/politburo-runtime` (`packages/runtime`), which
+runs one board task in a harness; its [README](./packages/runtime/README.md) is its guide, and
+nothing in `packages/board` imports it. [SPEC.md](./SPEC.md) is the design; read it before
+changing behavior. [LOCAL-DEVELOPMENT.md](./LOCAL-DEVELOPMENT.md) walks a task through a local
+board with this checkout's CLI.
 
 ## run it
 
 ```bash
 pnpm install
 pnpm check          # build + typecheck + test
-pnpm test           # vitest: unit, in-process server, and CLI end to end
+pnpm test           # vitest: unit, in-process server, and CLI end to end; then the runtime's node:test
 ```
 
 CI runs `pnpm check` on every PR and on `main` (`.github/workflows/check.yml`);
