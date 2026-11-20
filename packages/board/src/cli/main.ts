@@ -15,6 +15,7 @@ import { board as boardAt, type Board } from '../server/index.ts'
 import { isBoardName } from '../server/board.ts'
 import { isApiMessageId } from '../server/backend-vercel.ts'
 import { normalizeEmoji } from '../contract/emoji.ts'
+import { AttestationGate, Commit, Verdict } from '../contract/evidence.ts'
 import { ATTACHMENTS_PER_MESSAGE_MAX, DIRECT_UPLOAD_BYTES_MAX, MESSAGE_TEXT_MAX, type Attachment, AttachmentId } from '../contract/schemas.ts'
 import { VERSION } from '../version.ts'
 import { conformance } from '../conformance/index.ts'
@@ -1968,7 +1969,7 @@ async function run(command: string | undefined, args: string[]): Promise<number>
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'unblock', 'reopen', 'assign', 'needs', 'cancel'])
+const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'unblock', 'reopen', 'assign', 'needs', 'cancel', 'submit', 'evidence', 'attest', 'override', 'resolve'])
 const TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled']
 
 /** A task's ID as you'd write it: `#812` or `812`. */
@@ -2434,8 +2435,73 @@ async function tasks(args: string[]): Promise<number> {
     return given
   }
   const { board, claims } = tasksOn()
+  const required = (flag: 'commit' | 'round' | 'artifact' | 'expires-at' | 'if-version') => {
+    const value = flags[flag]
+    if (!value?.trim()) throw usage(`Pass --${flag}.`, { reason: 'missing_arguments' })
+    return value
+  }
+  const number = (flag: 'round' | 'if-version') => {
+    const value = required(flag)
+    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) throw usage(`--${flag} takes a positive integer.`)
+    return Number(value)
+  }
+  const commit = () => {
+    const parsed = Commit.safeParse(required('commit'))
+    if (!parsed.success) throw usage('--commit takes a full lowercase Git commit ID.')
+    return parsed.data
+  }
 
   switch (verb) {
+    case 'submit': {
+      one(rest[1], 'one task')
+      const sha = commit()
+      const artifact = required('artifact')
+      const held = await heldBy(board, claims, id)
+      printTask(await withClaim(claims, id, () => held.submit(sha, artifact)), 'submitted')
+      return 0
+    }
+    case 'evidence': {
+      one(rest[1], 'one task')
+      const work = await board.tasks.evidence(id)
+      if (flags.json) result({ work })
+      else {
+        out(work.submission ? `commit  ${work.submission.commit}\nround   ${work.submission.round}` : 'no current submission')
+        if (work.required.length) out(`gates   ${work.required.join(', ')}`)
+        for (const record of [...(work.submission ? [work.submission] : []), ...work.evidence]) {
+          out(`#${record.id}  ${record.gate} ${record.verdict}${record.expiresAt ? ` until ${record.expiresAt}` : ''}`)
+          out(`  ${terminalText(record.artifactRef)}`)
+        }
+        for (const record of work.overrides) {
+          out(`#${record.id}  ${record.gate} overridden until ${record.expiresAt}`)
+          out(`  ${terminalText(record.by.principal)}: ${terminalText(record.reason)}`)
+        }
+        for (const edge of work.releases) out(`#${edge.needId}  released with #${edge.evidenceId}`)
+      }
+      return 0
+    }
+    case 'attest':
+    case 'override': {
+      one(rest[3], 'a task, gate, and verdict or reason')
+      const gate = AttestationGate.safeParse(rest[1])
+      if (!gate.success) throw usage('Name a gate: tests, review, browserQA, acceptance, or publication.')
+      const target = { commit: commit(), round: number('round'), gate: gate.data }
+      if (verb === 'override') {
+        if (!rest[2]?.trim()) throw usage('Give a reason for the override.', { reason: 'missing_arguments' })
+        printTask(await board.tasks.overrideEvidence(id, { ...target, reason: rest[2], expiresAt: required('expires-at') }), 'overridden')
+      } else {
+        const verdict = Verdict.safeParse(rest[2])
+        if (!verdict.success) throw usage('Give a verdict: pass or fail.')
+        printTask(await board.tasks.recordEvidence(id, { ...target, verdict: verdict.data, artifactRef: required('artifact'), ...(flags['expires-at'] ? { expiresAt: flags['expires-at'] } : {}) }), 'attested')
+      }
+      return 0
+    }
+    case 'resolve': {
+      one(rest[3], 'a task, prerequisite, and evidence ID')
+      const needId = taskId(rest[1])
+      const evidenceId = messageId(rest[2], 'evidence ID')
+      printTask(await board.tasks.resolve(id, { needId, evidenceId, ifVersion: number('if-version') }), 'resolved')
+      return 0
+    }
     case 'renew': {
       one(rest[1], 'one task')
       const lease = seconds('lease')
@@ -2456,7 +2522,8 @@ async function tasks(args: string[]): Promise<number> {
     case 'complete': {
       one(rest[2], 'a task and its result, quoted')
       const held = await heldBy(board, claims, id)
-      const task = await withClaim(claims, id, () => held.complete(rest[1]))
+      const options = flags.commit === undefined ? undefined : { commit: commit() }
+      const task = await withClaim(claims, id, () => held.complete(rest[1], options))
       await claims.drop(id)
       printTask(task, 'completed')
       return 0
@@ -2535,6 +2602,16 @@ function taskFailure(code: string, status: number): { class: Failure['class']; m
   const read = (instruction: string): Recovery[] => (named === undefined ? [] : [{ instruction, argv: [...cli(), 'read', named] }])
   const also = (instruction: string, ...words: string[]): Recovery[] => (named === undefined ? [] : [{ instruction, argv: [...cli(), 'tasks', words[0]!, named, ...words.slice(1)] }])
   switch (code) {
+    case 'evidence_required':
+    case 'stale_candidate':
+    case 'already_submitted':
+      return { class: 'conflict', message: `Can't ${doing()}. Check the current submission and its gates.`, next: also('See the evidence', 'evidence') }
+    case 'invalid_evidence':
+      return { class: 'conflict', message: `Can't ${doing()}. Use current passing evidence from the completed prerequisite.`, next: [] }
+    case 'stale_task':
+      return { class: 'conflict', message: `Can't ${doing()}. The task changed.`, next: read('See the current task') }
+    case 'no_work_evidence':
+      return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board does not support that work evidence operation.`, next: [] } : null
     case 'task_claimed':
       return { class: 'conflict', message: `Can't ${doing()}. Someone holds it.`, next: read('See who holds it, and until when') }
     case 'task_assigned':

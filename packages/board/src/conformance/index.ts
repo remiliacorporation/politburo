@@ -17,7 +17,7 @@ import type { Board } from '../server/board.ts'
  */
 
 /** What a check is about, for the report's headings. */
-export type CheckGroup = 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'
+export type CheckGroup = 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-evidence' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'
 
 export type CheckResult = {
   group: CheckGroup
@@ -161,9 +161,18 @@ type Context = {
   principals: Principals
   /** The board's own Vercel team, as its discovery names it. */
   team: string | null
+  workEvidence?: Awaited<ReturnType<Board['discovery']>>['workEvidence']
 }
 
-type Check = { group: CheckResult['group']; name: string; run: (ctx: Context) => Promise<void | string> }
+type Check = {
+  group: CheckGroup
+  name: string
+  run: (ctx: Context) => Promise<void | string>
+  /** This check needs to complete a task with only the run's own principal. */
+  needsUngatedCompletion?: true
+  /** This check expects completion alone to make a dependent ready. */
+  needsAutomaticRelease?: true
+}
 
 /**
  * The groups a board may keep none of, saying so with a 501: a board without a scheduler answers
@@ -1060,6 +1069,7 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'gives a task to one of the claims that race for it, and takes its result',
+    needsUngatedCompletion: true,
     run: async (ctx) => {
       const { task: root } = await task(ctx, 'conformance: a task to race for')
       const racing = await Promise.allSettled([1, 2, 3].map(() => ctx.board.tasks.claim(root.id, { lease: 60 })))
@@ -1124,8 +1134,43 @@ const CHECKS: Check[] = [
     },
   },
   {
+    group: 'work-evidence',
+    name: 'refuses completion without commit evidence on a gated board',
+    async run(ctx) {
+      if (!ctx.workEvidence?.gates.length) return 'completion gates not enabled here'
+      const { task: root } = await task(ctx, 'conformance: evidence required')
+      const claim = await ctx.board.tasks.claim(root.id)
+      await rejects(claim.complete(), 409, 'evidence_required', 'completion without a submission')
+      const commit = 'a'.repeat(40)
+      await claim.submit(commit, 'conformance/submission')
+      const work = await ctx.board.tasks.evidence(root.id)
+      same(work.submission?.commit, commit, 'the submitted commit')
+      same(work.submission?.by.principal, ctx.me.principal, 'the verified submitter')
+      await rejects(claim.complete(undefined, { commit }), 409, 'evidence_required', 'completion with only a submission')
+      await claim.release()
+    },
+  },
+  {
+    group: 'work-evidence',
+    name: 'leaves a dependent waiting for an explicit release after completion',
+    async run(ctx) {
+      if (!ctx.workEvidence?.releaseDependencies) return 'evidence releases not enabled here'
+      if (ctx.workEvidence.gates.length) return 'this check cannot satisfy gates with its one principal'
+      const { task: need } = await task(ctx, 'conformance: prerequisite with evidence')
+      const { task: dependent } = await task(ctx, 'conformance: explicit release', { needs: [need.id] })
+      const claim = await ctx.board.tasks.claim(need.id)
+      const commit = 'a'.repeat(40)
+      await claim.submit(commit, 'conformance/prerequisite')
+      await claim.complete(undefined, { commit })
+      await rejects(ctx.board.tasks.claim(dependent.id), 409, 'task_waiting', 'claiming an unresolved dependent')
+      same((await ctx.board.tasks.evidence(dependent.id)).releases.length, 0, 'releases after completion alone')
+    },
+  },
+  {
     group: 'tasks',
     name: 'holds a task until the tasks it needs complete, which a failed or canceled one never does',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: first } = await task(ctx, 'conformance: a prerequisite')
       const { task: second } = await task(ctx, 'conformance: a task that waits for it', { needs: [first.id] })
@@ -1226,6 +1271,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'says task.ready each time a task that needs others becomes ready: right after it is made or unblocked, once they have completed',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: first } = await task(ctx, 'conformance: a prerequisite that completes first')
       await (await ctx.board.tasks.claim(first.id, { lease: 60 })).complete()
@@ -1276,6 +1323,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'changes what a task needs: it waits for the new ones, is ready once they have completed, and at once with none',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: done } = await task(ctx, 'conformance: a prerequisite that has completed')
       await (await ctx.board.tasks.claim(done.id, { lease: 60 })).complete()
@@ -1357,6 +1406,7 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'changes what a task needs only while no one holds it and it has not finished',
+    needsUngatedCompletion: true,
     run: async (ctx) => {
       const { task: other } = await task(ctx, 'conformance: something to wait for')
       const { task: root } = await task(ctx, 'conformance: a task someone holds, whose needs stay')
@@ -1383,6 +1433,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'makes several tasks in one write, in the order given: each waits for the ones it names, of the batch or there already, and an id makes them once',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: done } = await task(ctx, 'conformance: a prerequisite that has completed')
       await (await ctx.board.tasks.claim(done.id, { lease: 60 })).complete()
@@ -1612,6 +1664,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'shows a feed that filters on board.task=ready a task becoming ready and being claimed, and never a token',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: first } = await task(ctx, 'conformance: a prerequisite to watch')
       const { task: second } = await task(ctx, 'conformance: a task to watch become ready', { needs: [first.id] })
@@ -2531,11 +2585,18 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
       app: options.principals?.app ?? null,
     },
     team: (discovery as { team_id?: string | null }).team_id ?? null,
+    workEvidence: discovery instanceof Error ? undefined : discovery.workEvidence,
   }
   try {
-    for (const { group, name, run } of CHECKS) {
+    for (const { group, name, run, needsUngatedCompletion, needsAutomaticRelease } of CHECKS) {
+      // Extensions join the report only when advertised; the base protocol always runs.
+      if (group === 'work-evidence' && !ctx.workEvidence) continue
       try {
-        const skipped = await run(ctx)
+        const skipped = needsUngatedCompletion && ctx.workEvidence?.gates.length
+          ? 'this check cannot satisfy completion gates with its one principal'
+          : needsAutomaticRelease && ctx.workEvidence?.releaseDependencies
+            ? 'this check requires completion alone to release dependencies'
+            : await run(ctx)
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {
         if (OPTIONAL.has(group) && error instanceof BoardError && error.status === 501) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })

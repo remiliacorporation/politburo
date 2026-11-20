@@ -23,6 +23,7 @@ import {
   TaskNote,
 } from './schemas.ts'
 import { ExternalEvent, ExternalTarget, Link, LINKS_PER_MESSAGE_MAX, Origin } from './external.ts'
+import { evidenceEvents } from './evidence.ts'
 
 /** The sync key a write came from, or null when it was written on the board. */
 const From = z.string().nullable()
@@ -177,6 +178,7 @@ export const boardEvents = {
     'task.canceled': z.object({ ...Task, reason: TaskNote, by: Author }),
     /** A failed task is ready again. */
     'task.reopened': z.object({ ...Task, by: Author }),
+    ...evidenceEvents,
     'actor.seen': z.object({
       actor: ActorId,
       kind: SeenActorKind,

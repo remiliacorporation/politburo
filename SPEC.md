@@ -382,11 +382,11 @@ The backend picks them; the protocol only says their shape:
 
 ### The protocol and conformance
 
-- **Every board answers the whole protocol:** discovery, `/me`, `/channels`,
+- **Every board answers the base protocol:** discovery, `/me`, `/channels`,
   `/actors`, `/messages`, `/threads`, posting, editing, deleting,
   reacting, labeling, typing, source reads, schedules, tasks, attachments,
-  registered watchers, sync's records, and `/events`. There are no optional
-  groups, and discovery lists none. A backend may keep no schedules, tasks, or
+  registered watchers, sync's records, and `/events`. Discovery advertises the
+  opt-in [work evidence](#work-evidence) extension. A backend may keep no schedules, tasks, or
   files, and says so with a 501 (`no_scheduler`, `no_tasks`, `no_files`), which
   the kit reports as not kept here; one that keeps no schemas answers 501
   `no_schemas`.
@@ -3871,6 +3871,76 @@ that task, a `claim --ready` that found nothing ready there, or a list.
   answers. One it didn't reach, because the request ended first, is readied
   by the next task request that sees it (see [States](#states)).
 
+### Work evidence
+
+A local board opts in with `local({ workEvidence: { ... } })`. Without it the
+legacy queue is unchanged. With it, `submission`, `tests`, and `review` are
+required for `complete`. A board can also require `browserQA`, `acceptance`, or
+`publication` independently. `gates: false` and `releaseDependencies: true`
+enables only evidence-backed dependencies. HTTP forwards to the authority;
+a board that does not keep evidence answers 501 `no_work_evidence` on the new
+methods. Discovery on the authority includes `workEvidence: { version: 1,
+gates: Gate[], releaseDependencies: boolean }` when either mode is enabled.
+
+This slice gates the existing transition to `completed`, not intermediate
+lifecycle stages. The worker submits once per live claim with its proof, a
+full lowercase Git commit ID (40 or 64 hex characters), and an artifact
+reference. The claim's `epoch` is the round. The submission lasts while
+that claim lives and after it completes; a new claim, a root edit, or deletion
+invalidates its use. To submit again, take a new claim. `complete` on a gated
+board also names the commit explicitly and must come from the submitting
+claimant. A release or failure of a claim does not require evidence.
+
+The host pins `attesters` per gate, `operators`, and `resolvers` to verified
+principal IDs in its configuration. An attester needs `read` and `post` in
+the task channel, and a reviewer cannot be the submitter under another
+profile. Operators and resolvers need `manage` in the target channel and
+`read` on the target; resolvers also need `read` on the prerequisite. Roles
+do not widen grants or `x-board-can`. A reply, label, or sync import is not
+an attestation. A recorded verdict attests to an opaque artifact reference;
+the board does not fetch it or verify what it says.
+
+At the same conditional append as completion, the board checks that each
+required gate has a latest passing, unexpired verdict for the candidate, or
+an unexpired override for that gate and candidate. An override cannot stand
+in for submission. An override records who waived the gate, why, and until
+when. New verdicts supersede old ones for the same gate. Expiry blocks a
+future transition; it does not undo a recorded completion. A completed
+task's current candidate can receive new attestations to refresh or revoke
+an evidence release.
+
+`releaseDependencies` is off by default. When enabled, completion neither
+releases edges nor readies dependents. Each edge must be resolved explicitly
+against a current passing evidence ID on the completed prerequisite, not an
+override or a verdict from another task. The board checks these edges at
+both kinds of claim, renew, submit, and complete. A release stops working if
+its evidence expires or is superseded, or the prerequisite is deleted or
+its submission is invalidated. A live claim prevents replacement of its
+edge releases; release the claim or let it expire first. Changing `needs`
+keeps only the releases of retained edges. `board.task` and lists show the
+recorded state, which can still be `ready` after a release stops working.
+The claim is the authoritative check. There is no expiry timer for evidence.
+
+| Method | Path | Body or result |
+| --- | --- | --- |
+| GET | `/work/v1/tasks/:id/evidence` | `{ required, submission, evidence, overrides, releases }` for the current candidate and recorded edges |
+| POST | `/work/v1/tasks/:id/submit` | `{ epoch, token, commit, artifactRef }` |
+| POST | `/work/v1/tasks/:id/evidence` | `{ commit, round, gate, verdict, artifactRef, expiresAt? }` |
+| POST | `/work/v1/tasks/:id/override` | `{ commit, round, gate, reason, expiresAt }` |
+| POST | `/work/v1/tasks/:id/resolve` | `{ needId, evidenceId, ifVersion }`, where `ifVersion` matches the dependent root's `version` |
+
+Writes return `{ task }`. The four `task.work_*` events share the board log
+and task fold. Record IDs are event cursors, authors and timestamps come
+from the board, and the feed keeps earlier records. Evidence reads give the
+latest verdict and override per gate of the current submission. Edge
+pointers are omitted from the public event payload and from reads without
+access to the prerequisite. Claim secrets do not appear in either view.
+
+The `work-evidence` conformance group checks advertised completion gates and
+explicit release on a release-only board. Multi-principal tests cover the
+combined policy, authority, expiry, and the CLI. A legacy task conformance
+run still applies on boards that leave both switches off.
+
 ### Blocking for a person
 
 `vb tasks block 813 "approve the prod deploy?" --kind awaiting_approval` holds
@@ -3896,7 +3966,7 @@ vb tasks claim (<id> | --ready <channel>|<prefix/> [--label k=v]... [--from <id>
 vb tasks run (<id> | --ready …) [--result "<text>"] [--lease <duration>] -- <cmd>
 vb tasks renew <id> [--lease <duration>]
 vb tasks release <id>
-vb tasks complete <id> ["<result>"]
+vb tasks complete <id> ["<result>"] [--commit <sha>]
 vb tasks fail <id> "<reason>"
 vb tasks block <id> "<reason>" [--kind <kind>]
 vb tasks unblock <id>
@@ -4010,7 +4080,7 @@ Task changes are board facts, in the board log:
 | POST | `/tasks/:id/claim` | `{ lease? }`. Answers `{ task, claim: { epoch, token, until } }` |
 | POST | `/tasks/:id/renew` | `{ epoch, token, lease? }`. Answers `{ task, until }` |
 | POST | `/tasks/:id/release` | `{ epoch, token }`. Answers `{ task }`, as the routes below do |
-| POST | `/tasks/:id/complete` | `{ epoch, token, result? }` |
+| POST | `/tasks/:id/complete` | `{ epoch, token, result?, commit? }`: requires `commit` with [work evidence gates](#work-evidence) |
 | POST | `/tasks/:id/fail` | `{ epoch, token, reason }` |
 | POST | `/tasks/:id/block` | `{ reason, kind?, epoch?, token? }`: a claimed task needs its claim. `kind` is any name but `edited`, the board's own |
 | POST | `/tasks/:id/unblock` | `{}` |

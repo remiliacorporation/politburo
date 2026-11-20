@@ -13,6 +13,10 @@ import {
   FailTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
+  SubmitWorkBody,
+  RecordEvidenceBody,
+  OverrideEvidenceBody,
+  ResolveWorkEdgeBody,
   TasksQuery,
   DeleteBody,
   EditBody,
@@ -130,6 +134,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'message':
       return { id, ...ThreadQuery.parse(queryObject(url)) }
     case 'posted':
+    case 'workEvidence':
     case 'synced':
     case 'cancelSchedule':
     case 'unblockTask':
@@ -197,6 +202,14 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...TaskNeedsBody.parse(await body()) }
     case 'cancelTask':
       return { id, ...CancelTaskBody.parse(await body()) }
+    case 'submitWork':
+      return { id, ...SubmitWorkBody.parse(await body()) }
+    case 'recordEvidence':
+      return { id, ...RecordEvidenceBody.parse(await body()) }
+    case 'overrideEvidence':
+      return { id, ...OverrideEvidenceBody.parse(await body()) }
+    case 'resolveWorkEdge':
+      return { id, ...ResolveWorkEdgeBody.parse(await body()) }
     case 'createGrant':
       return GrantBody.parse(await body())
     case 'createGrants':
@@ -1146,10 +1159,9 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    */
   async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Protocol['discovery']['output']> {
     const { projectId, teamId } = await policy.discoveryIdentity(request.headers)
-    const sync = backend.keeps
-      ? (await backend.discovery(OWN, {}, signal)).sync
-      : Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
-    return { version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync }
+    const kept = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
+    const sync = kept?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
+    return { version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync, ...(kept?.workEvidence ? { workEvidence: kept.workEvidence } : {}) }
   }
 
   async function dispatch(request: Request, injected: Caller | PlatformCaller | null): Promise<Response> {

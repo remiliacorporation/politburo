@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import type { Actor } from '../contract/folds.ts'
+import type { EvidenceStatus } from '../contract/evidence.ts'
 import type { Mentioned } from '../contract/mentions.ts'
 import type { Attachment } from '../contract/schemas.ts'
 import type {
@@ -23,6 +24,10 @@ import type {
   ReleaseTaskBody,
   RenewTaskBody,
   TaskClaim,
+  SubmitWorkBody,
+  RecordEvidenceBody,
+  OverrideEvidenceBody,
+  ResolveWorkEdgeBody,
   TasksPage,
   TasksQuery,
   CreateChannelBody,
@@ -146,6 +151,11 @@ export type Protocol = {
   /** 400 `invalid_needs` for a prerequisite that isn't one, or that would make the task wait for itself. The same set is left as it is. */
   setTaskNeeds: { input: Id & Input<typeof TaskNeedsBody>; output: { task: MessageView } }
   cancelTask: { input: Id & Input<typeof CancelTaskBody>; output: { task: MessageView } }
+  workEvidence: { input: Id; output: EvidenceStatus }
+  submitWork: { input: Id & Input<typeof SubmitWorkBody>; output: { task: MessageView } }
+  recordEvidence: { input: Id & Input<typeof RecordEvidenceBody>; output: { task: MessageView } }
+  overrideEvidence: { input: Id & Input<typeof OverrideEvidenceBody>; output: { task: MessageView } }
+  resolveWorkEdge: { input: Id & Input<typeof ResolveWorkEdgeBody>; output: { task: MessageView } }
   /** The board's grants: needs `manage` at `*`, or a team owner. 501 `no_grants` where the board keeps none. */
   grants: { input: Nothing; output: { grants: GrantView[] } }
   /**

@@ -6,6 +6,7 @@ import { actorKind, TASK_LABEL, type ActorKind, type Attachment, type Author, ty
 import type { BoardEvent } from './events.ts'
 import { externalMessageKey, isThreadTarget, type Link, type Origin } from './external.ts'
 import type { Via } from './profiles.ts'
+import { foldEvidence, type TaskEvidence } from './evidence.ts'
 
 // A2 clones state at every read and snapshot boundary, so these folds mutate
 // in place: an event costs O(1) instead of a copy of every message. A key a
@@ -29,7 +30,9 @@ export type Task = {
   /** How many times it's been claimed: a claim's writes carry the epoch it was made at. */
   epoch: number
   /** Who holds it, until when. `token` is the SHA-256 of the claim's secret, hex. */
-  claim: { actor: string; until: string; token: string } | null
+  claim: { actor: string; principal?: string; until: string; token: string } | null
+  evidence?: TaskEvidence
+  releases?: Record<number, string>
   blocked: { kind: string | null; reason: string } | null
   /** What it came to, once it's completed. */
   result: string | null
@@ -211,6 +214,13 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       message.task = { state: needs.length > 0 ? 'waiting' : 'ready', owner: by.principal, by: by.actor, for: event.payload.for, needs: [...needs], epoch: 0, claim: null, blocked: null, result: null, reason: null }
       return labeled(message)
     }
+    case 'task.work_submitted':
+    case 'task.work_evidence':
+    case 'task.work_override':
+    case 'task.work_resolved': {
+      const message = state.byId[event.payload.id]
+      return message && foldEvidence(message, event) ? message : undefined
+    }
     case 'task.assigned':
     case 'task.needs_changed':
     case 'task.ready':
@@ -239,7 +249,7 @@ function labeled(message: Message): Message {
   return message
 }
 
-type TaskEvent = Extract<BoardEvent, { type: `task.${string}` }>
+type TaskEvent = Exclude<Extract<BoardEvent, { type: `task.${string}` }>, { type: `task.work_${string}` }>
 
 /** Whether a claim's write is by the claim that holds the task: the same epoch, while it's claimed. */
 const holds = (task: Task, epoch: number) => task.state === 'claimed' && task.epoch === epoch
@@ -260,6 +270,7 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       // any task: `task.ready` follows at once when they've all completed. One held for a person stays held.
       if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'blocked') return false
       task.needs = [...event.payload.needs]
+      for (const need of Object.keys(task.releases ?? {})) if (!task.needs.includes(Number(need))) delete task.releases![Number(need)]
       if (task.state !== 'blocked') task.state = task.needs.length > 0 ? 'waiting' : 'ready'
       return true
     case 'task.ready':
@@ -271,7 +282,7 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       if (task.state !== 'ready' || epoch !== task.epoch + 1) return false
       task.state = 'claimed'
       task.epoch = epoch
-      task.claim = { actor: by.actor, until, token }
+      task.claim = { actor: by.actor, principal: by.principal, until, token }
       return true
     }
     case 'task.renewed':

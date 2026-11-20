@@ -1,3 +1,4 @@
+import type { Protocol } from '../api/protocol.ts'
 import type {
   ActorView,
   BoardEventView,
@@ -203,7 +204,9 @@ export type HeldTask = {
   renew(lease?: number): Promise<ClaimedTask>
   /** Gives the task back: it's ready again. */
   release(): Promise<MessageView>
-  complete(result?: string): Promise<MessageView>
+  /** Records the exact commit and artifact for this claim's round. */
+  submit(commit: string, artifactRef: string): Promise<MessageView>
+  complete(result?: string, options?: { commit?: string }): Promise<MessageView>
   fail(reason: string): Promise<MessageView>
   /** Holds the task for a person, which ends the claim: `kind` says what for (`needs_input`, `awaiting_approval`). */
   block(reason: string, opts?: { kind?: string }): Promise<MessageView>
@@ -398,6 +401,7 @@ export function createBoardClient(options: ClientOptions) {
 
   /** One write to task `id`, which answers its root. */
   const taskWrite = async (id: string, verb: string, body: object = {}) => (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body })).task
+  const workWrite = async (id: string, verb: string, body: object) => (await call<{ task: MessageView }>('POST', `/work/v1/tasks/${path(id)}/${verb}`, { body })).task
 
   /** What a claim on task `id` does, with the `epoch` and `token` the claim answered. */
   const held = (id: string, proof: { epoch: number; token: string }): HeldTask => {
@@ -408,7 +412,8 @@ export function createBoardClient(options: ClientOptions) {
         return claimed(task, { epoch, token, until })
       },
       release: () => taskWrite(id, 'release', { epoch, token }),
-      complete: (result) => taskWrite(id, 'complete', { epoch, token, ...(result !== undefined ? { result } : {}) }),
+      submit: (commit, artifactRef) => workWrite(id, 'submit', { epoch, token, commit, artifactRef }),
+      complete: (result, options) => taskWrite(id, 'complete', { epoch, token, result, commit: options?.commit }),
       fail: (reason) => taskWrite(id, 'fail', { epoch, token, reason }),
       block: (reason, opts = {}) => taskWrite(id, 'block', { epoch, token, reason, ...opts }),
     }
@@ -672,6 +677,10 @@ export function createBoardClient(options: ClientOptions) {
       list: (query: Omit<TasksQueryInput, 'label' | 'latest'> & { label?: Record<string, string> | string[]; latest?: boolean } = {}) => call<TasksPage>('GET', `/tasks${queryString(query)}`),
       create: createTask,
       createMany: createTasks,
+      evidence: (id: string) => call<Protocol['workEvidence']['output']>('GET', `/work/v1/tasks/${path(id)}/evidence`),
+      recordEvidence: (id: string, input: Omit<Protocol['recordEvidence']['input'], 'id'>) => workWrite(id, 'evidence', input),
+      overrideEvidence: (id: string, input: Omit<Protocol['overrideEvidence']['input'], 'id'>) => workWrite(id, 'override', input),
+      resolve: (id: string, input: Omit<Protocol['resolveWorkEdge']['input'], 'id'>) => workWrite(id, 'resolve', input),
       claim: claimTask,
       /** What a claim you hold does, from the `epoch` and `token` it answered: for a process that kept them, as `vb` does between commands. */
       held,

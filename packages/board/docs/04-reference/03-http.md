@@ -556,6 +556,29 @@ A task is a thread with a state. Its ID is its root's, and its root carries
   schedule, task, or import with `labels`, that sets or unsets one is 400
   `reserved_label`.
 
+#### Work evidence
+
+An authority configured for [commit evidence](../01-board/11-tasks.md#commit-evidence)
+advertises `workEvidence: { version: 1, gates, releaseDependencies }` in
+its discovery. Unavailable evidence methods answer 501 `no_work_evidence`.
+On a gated board `POST /tasks/:id/complete` requires `commit` with the usual
+claim proof.
+
+| Method | Path | Body or result |
+| --- | --- | --- |
+| GET | `/work/v1/tasks/:id/evidence` | `{ required, submission, evidence, overrides, releases }` |
+| POST | `/work/v1/tasks/:id/submit` | `{ epoch, token, commit, artifactRef }` |
+| POST | `/work/v1/tasks/:id/evidence` | `{ commit, round, gate, verdict, artifactRef, expiresAt? }` |
+| POST | `/work/v1/tasks/:id/override` | `{ commit, round, gate, reason, expiresAt }` |
+| POST | `/work/v1/tasks/:id/resolve` | `{ needId, evidenceId, ifVersion }` |
+
+Writes return `{ task }`. `round` is the submitting claim's `epoch`.
+`ifVersion` is the dependent root's `version`. Record IDs are event cursors.
+The board writes the author and timestamp. The `task.work_submitted`,
+`task.work_evidence`, `task.work_override`, and `task.work_resolved` events
+are in the task's feed; edge links are only available from the evidence read
+when the caller can also read the prerequisite.
+
 ### Grants
 
 ```json

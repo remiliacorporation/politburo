@@ -26,10 +26,15 @@ export const CLI_TIMEOUT = 20_000
 vi.setConfig({ testTimeout: CLI_TIMEOUT })
 
 /** Serves the calling file's board before its tests, and stops it after. */
-export function useBoard() {
+export function useBoard(make = () => localBoard({ url: undefined })) {
+  let close: () => Promise<void>
   beforeAll(async () => {
     // No fixed URL: the board infers its own from requests, as when mounted.
-    server = await serve(localBoard({ url: undefined }).fetch)
+    const host = make()
+    close = host.close
+    // Open SQLite in setup, so Node's first-use warning isn't captured as CLI stderr.
+    await host.channel('dev').messages({ limit: 1 })
+    server = await serve(host.fetch)
     url = `${server.origin}/api/board`
     // Nothing of the board's or Vercel's from the shell running the suite, nor a coding agent's around it.
     const clean = Object.fromEntries(
@@ -45,7 +50,10 @@ export function useBoard() {
       XDG_CONFIG_HOME: await tmp('board-'),
     }
   })
-  afterAll(() => server.close())
+  afterAll(async () => {
+    await server?.close()
+    await close?.()
+  })
 }
 
 export function vb(args: string[], extra: NodeJS.ProcessEnv = {}, stdin?: string, cwd?: string) {

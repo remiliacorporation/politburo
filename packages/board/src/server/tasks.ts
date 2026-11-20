@@ -3,6 +3,8 @@ import { consumer, createServer, type A2Scheduler, type A2Store, type ConsumerCo
 import { LEASE_DEFAULT_S, type MessageView, type TaskClaim } from '../api/routes.ts'
 import type { Protocol } from '../api/protocol.ts'
 import { LEASES_SESSION, leasesContract, type LeaseEvents } from '../contract/contract.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
+import { createEvidence, noWorkEvidence } from './evidence.ts'
 import type { BoardEvent } from '../contract/events.ts'
 import { foldMessages, type Message, type MessagesState, type Task } from '../contract/folds.ts'
 import { actorsReducer, channelsReducer } from '../contract/reducers.ts'
@@ -122,7 +124,8 @@ function ownActor(owner: string, actor: string | null | undefined): string | nul
  * read is still the log's last word, so of writes that race, one lands and the rest look again.
  * A claim's lease is timed outside the board log, which holds only what came of it.
  */
-export function createTasks(options: { store?: A2Store | undefined; scheduler?: A2Scheduler | undefined }) {
+export function createTasks(options: { store?: A2Store | undefined; scheduler?: A2Scheduler | undefined; workEvidence?: EvidencePolicy | undefined }) {
+  const evidence = createEvidence(options.workEvidence)
   let bound: WriteContext | null = null
   const writes = (): WriteContext => {
     if (!bound) throw new Error('tasks used before the board bound them')
@@ -330,11 +333,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   function needsAmong(access: Access, named: ReadonlyMap<number, string>, found: ReadonlyMap<number, Message>): { ids: number[]; completed: boolean } {
     for (const [id, value] of named) {
       const need = found.get(id)
-      if (!need?.task || !access.readable(need.channel)) throw invalidNeed(value, "isn't a task")
+      if (!need?.task || !access.readable(need.channel) || (evidence.releaseDependencies && need.deleted)) throw invalidNeed(value, "isn't a task")
       if (need.task.state === 'canceled') throw invalidNeed(value, 'was canceled: it can never complete')
     }
     const ids = [...named.keys()]
-    return { ids, completed: ids.every((id) => found.get(id)!.task!.state === 'completed') }
+    return { ids, completed: ids.every((id) => !evidence.releaseDependencies && found.get(id)!.task!.state === 'completed') }
   }
 
   /**
@@ -365,7 +368,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       for (const at of level) {
         const message = found.get(at)
         const task = message?.task
-        if (!task || (task.state === 'completed' && access.readable(message.channel))) continue
+        if (!task || (!evidence.releaseDependencies && task.state === 'completed' && access.readable(message.channel))) continue
         for (const need of task.needs) {
           if (need === id) throw invalid(from.get(at)!, `waits for #${id} already: they would wait for each other`)
           if (from.has(need)) continue
@@ -383,7 +386,22 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     const ids = task.needs.filter((id) => id !== but)
     if (ids.length === 0) return true
     const found = await writes().reads.tables.messagesAt(ids, position)
+    if (evidence.releaseDependencies) return evidence.satisfied(task, found)
     return ids.every((id) => found.get(id)?.task?.state === 'completed')
+  }
+
+  async function checkEdges(root: Root, position: number) {
+    if (evidence.releaseDependencies && !(await satisfied(root.task, position)))
+      throw conflict('task_waiting', `#${root.id} needs current evidence releases`)
+  }
+
+  async function evidenceWrite(identity: Identity, id: number, decide: (root: Root, position: number) => Events | Promise<Events>) {
+    evidence.checkEnabled()
+    const root = await changeTask(identity, id, (found, position) => {
+      if (found.deleted || !identity.principal.access.readable(found.channel)) throw notFound(`message not found: #${id}`, 'message_not_found')
+      return decide(found, position)
+    })
+    return { task: await shown(identity, root) }
   }
 
   /** Every root that wears `board.task` as one of `states` and matches `filter`, oldest first, all as of `position`. */
@@ -465,6 +483,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       for await (const root of rootsAt(filter, ['ready', 'claimed'], position)) {
         const { task } = root
         if (stateNow(task, now) !== 'ready') continue
+        if (!assignedTo(task, identity) && (task.for !== null || pool !== null || !owners.has(task.owner))) continue
+        if (evidence.releaseDependencies && !(await satisfied(task, position))) continue
         if (assignedTo(task, identity)) {
           mine = root
           break
@@ -664,8 +684,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       authorize(principal.access, 'label', channel)
       const token = sent ?? newToken()
       const made: { claim?: TaskClaim } = {}
-      const root = await changeTask(identity, id, (found) => {
+      const root = await changeTask(identity, id, async (found, position) => {
         const { task } = found
+        await checkEdges(found, position)
         if (sent !== undefined && task.state === 'claimed' && !lapsed(task, Date.now()) && hashes(sent, task.claim!.token)) {
           made.claim = { epoch: task.epoch, token, until: task.claim!.until }
           return []
@@ -697,8 +718,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     async renew(identity: Identity, id: number, proof: Proof, lease: number | undefined): Promise<Protocol['renewTask']['output']> {
       await taskOf(identity.principal.access, id)
       const made = { until: '' }
-      const root = await changeTask(identity, id, (found) => {
+      const root = await changeTask(identity, id, async (found, position) => {
         fenced(found, proof)
+        await checkEdges(found, position)
         made.until = new Date(Date.now() + leaseOf(lease)).toISOString()
         return [{ type: 'task.renewed', payload: { id, thread: found.thread, epoch: proof.epoch, until: made.until, by: identity.author } }]
       })
@@ -711,7 +733,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       identity: Identity,
       id: number,
       proof: Proof,
-      how: { type: 'task.released' } | { type: 'task.completed'; result: string | null } | { type: 'task.failed'; reason: string },
+      how: { type: 'task.released' } | { type: 'task.completed'; result: string | null; commit?: string | undefined } | { type: 'task.failed'; reason: string },
     ): Promise<{ task: MessageView }> {
       await taskOf(identity.principal.access, id)
       const root = await changeTask(identity, id, async (found, position) => {
@@ -719,7 +741,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const about = { id, thread: found.thread, epoch: proof.epoch, by: identity.author }
         if (how.type === 'task.released') return [{ type: 'task.released', payload: about }]
         if (how.type === 'task.failed') return [{ type: 'task.failed', payload: { ...about, reason: how.reason } }]
-        return [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...(await readied(id, position))]
+        await checkEdges(found, position)
+        evidence.complete(found, identity, how.commit)
+        return [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...(evidence.releaseDependencies ? [] : await readied(id, position))]
       })
       return { task: await shown(identity, root) }
     },
@@ -803,10 +827,45 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         return [
           ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
           { type: 'task.needs_changed', payload: { ...about, needs: needs.ids, by: identity.author } },
-          ...(needs.ids.length > 0 && needs.completed && task.state !== 'blocked' ? [{ type: 'task.ready' as const, payload: about }] : []),
+          ...(needs.ids.length > 0 && task.state !== 'blocked' && (evidence.releaseDependencies ? await satisfied({ ...task, needs: needs.ids }, position) : needs.completed)
+            ? [{ type: 'task.ready' as const, payload: about }] : []),
         ]
       })
       return { task: await shown(identity, root) }
+    },
+
+    workCapability: evidence.capability,
+    async workEvidence(identity: Identity, id: number) {
+      evidence.checkEnabled()
+      const ctx = writes()
+      const root = await taskOf(identity.principal.access, id)
+      if (root.deleted) throw notFound(`message not found: #${id}`, 'message_not_found')
+      const released = root.task.needs.filter((need) => root.task.releases?.[need] !== undefined)
+      return evidence.status(root, released.length ? await ctx.reads.messagesAt(released, await ctx.reads.position()) : new Map(), identity.principal.access)
+    },
+    submitWork(identity: Identity, id: number, input: Protocol['submitWork']['input']) {
+      return evidenceWrite(identity, id, async (root, position) => {
+        fenced(root, input)
+        await checkEdges(root, position)
+        return evidence.submit(root, identity, input)
+      })
+    },
+    recordEvidence(identity: Identity, id: number, input: Protocol['recordEvidence']['input']) {
+      return evidenceWrite(identity, id, (root) => evidence.record(root, identity, input))
+    },
+    overrideEvidence(identity: Identity, id: number, input: Protocol['overrideEvidence']['input']) {
+      return evidenceWrite(identity, id, (root) => evidence.override(root, identity, input))
+    },
+    resolveWorkEdge(identity: Identity, id: number, input: Protocol['resolveWorkEdge']['input']) {
+      if (!evidence.releaseDependencies) throw noWorkEvidence()
+      return evidenceWrite(identity, id, async (root, position) => {
+        const needs = await writes().reads.tables.messagesAt(root.task.needs, position)
+        const events = evidence.resolve(root, identity, input, needs)
+        if (finished(root.task)) throw conflict('task_finished', `#${id} is ${root.task.state}`)
+        if (root.task.state !== 'claimed') return events
+        if (!lapsed(root.task, Date.now())) throw conflict('task_claimed', 'release the claim before changing its evidence releases')
+        return [{ type: 'task.expired', payload: { id, thread: root.thread, epoch: root.task.epoch } }, ...events]
+      })
     },
 
     /** Cancels a task that hasn't completed, ending any claim. What waits for it keeps waiting. */

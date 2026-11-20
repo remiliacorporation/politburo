@@ -26,6 +26,7 @@ import { eventView, foldEvent, indexOf, lastFeed, loadBefore, OWN_CODE, pollFeed
 import { createReads, tablesConsumer } from './reads.ts'
 import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createTasks, taskLimits } from './tasks.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
 import { ack, pull, pullInbox, type QueueSession } from './registered.ts'
@@ -56,6 +57,7 @@ export type A2Options = {
    * platform's files where they are. `local()` always passes one.
    */
   blob?: BlobStore
+  workEvidence?: EvidencePolicy | undefined
 }
 
 const boardServer = (options: A2Options) =>
@@ -245,7 +247,7 @@ function build(options: A2Options, binding: BoardBinding) {
     registered: { state: registry.state, accessNow: (principal) => binding.accessNow(principal) },
   })
   const schedules = createSchedules({ store: log, scheduler: options.scheduler })
-  const tasks = createTasks({ store: log, scheduler: options.scheduler })
+  const tasks = createTasks({ store: log, scheduler: options.scheduler, workEvidence: options.workEvidence })
   const projection = tablesConsumer(store.tables)
 
   /** Sync's delivery in progress here: its receipts are its consumer's appends, fenced by its attempt. */
@@ -465,6 +467,7 @@ function build(options: A2Options, binding: BoardBinding) {
         project_id: id,
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
+        ...(tasks.workCapability ? { workEvidence: tasks.workCapability } : {}),
       }
       return body
     },
@@ -697,9 +700,9 @@ function build(options: A2Options, binding: BoardBinding) {
       return tasks.renew(await identityOf(caller), messageAt(id), { epoch, token }, lease)
     },
     releaseTask: async (caller, { id, epoch, token }) => tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.released' }),
-    async completeTask(caller, { id, epoch, token, result }) {
+    async completeTask(caller, { id, epoch, token, result, commit }) {
       taskLimits.note('result', result)
-      return tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.completed', result: result ?? null })
+      return tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.completed', result: result ?? null, commit })
     },
     async failTask(caller, { id, epoch, token, reason }) {
       taskLimits.note('reason', reason)
@@ -721,6 +724,11 @@ function build(options: A2Options, binding: BoardBinding) {
       taskLimits.note('reason', reason)
       return tasks.cancel(await identityOf(caller), messageAt(id), reason)
     },
+    workEvidence: async (caller, { id }) => tasks.workEvidence(await identityOf(caller), messageAt(id)),
+    submitWork: async (caller, input) => tasks.submitWork(await identityOf(caller), messageAt(input.id), input),
+    recordEvidence: async (caller, input) => tasks.recordEvidence(await identityOf(caller), messageAt(input.id), input),
+    overrideEvidence: async (caller, input) => tasks.overrideEvidence(await identityOf(caller), messageAt(input.id), input),
+    resolveWorkEdge: async (caller, input) => tasks.resolveWorkEdge(await identityOf(caller), messageAt(input.id), input),
     grants: async (caller) => access.grants(await identityOf(caller)),
     createGrant: async (caller, body) => access.createGrant(await identityOf(caller), body),
     createGrants: async (caller, body) => access.createGrants(await identityOf(caller), body),

@@ -3709,7 +3709,13 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       const who = whoOf(caller)
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/release`, await proofOf({ epoch, token }), { id, signal })) }
     },
-    async completeTask(caller, { id, epoch, token, result }, signal) {
+    async workEvidence() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
+    async submitWork() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
+    async recordEvidence() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
+    async overrideEvidence() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
+    async resolveWorkEdge() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
+    async completeTask(caller, { id, epoch, token, result, commit }, signal) {
+      if (commit !== undefined) throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence')
       const who = whoOf(caller)
       const body = { ...(await proofOf({ epoch, token })), ...(result !== undefined ? { result } : {}) }
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/complete`, body, { id, signal })) }

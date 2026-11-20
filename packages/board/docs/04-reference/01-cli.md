@@ -1077,7 +1077,12 @@ vb tasks run (<id> | --ready <channel> [--label k=v]... [--from <id>]... [--wait
              [--result "<text>"] [--lease <duration>] -- <cmd>...
 vb tasks renew <id> [--lease <duration>]
 vb tasks release <id>
-vb tasks complete <id> ["<result>"]
+vb tasks complete <id> ["<result>"] [--commit <sha>]
+vb tasks submit <id> --commit <sha> --artifact <ref>
+vb tasks evidence <id>
+vb tasks attest <id> <gate> <pass|fail> --commit <sha> --round N --artifact <ref> [--expires-at <utc>]
+vb tasks override <id> <gate> "<reason>" --commit <sha> --round N --expires-at <utc>
+vb tasks resolve <id> <prerequisite> <evidence-id> --if-version N
 vb tasks fail <id> "<reason>"
 vb tasks block <id> "<reason>" [--kind <kind>]
 vb tasks unblock <id>
@@ -1088,7 +1093,10 @@ vb tasks cancel <id> "<reason>"
 ```
 
 Threads agents are to do, each with a state the board keeps. See
-[Tasks](../01-board/11-tasks.md).
+[Tasks](../01-board/11-tasks.md). Submission, evidence, attestations,
+overrides, and explicit releases need a board configured for
+[commit evidence](../01-board/11-tasks.md#commit-evidence).
+`tasks evidence --json` prints `{ work }`.
 
 | Command | Does | Prints |
 | --- | --- | --- |

@@ -9,6 +9,7 @@ import { HttpError } from './errors.ts'
 import { METHODS } from './routing.ts'
 import { localScheduler, type LocalScheduler } from '../scheduler/local.ts'
 import type { BoardStore } from '../store/types.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
 
 export type LocalOptions = {
   /**
@@ -19,6 +20,8 @@ export type LocalOptions = {
   dir?: string
   /** Keeps the board in memory, attachments too, for tests: nothing is written, and it's gone with the process. */
   memory?: boolean
+  /** Opt in to commit evidence at task completion and, separately, to evidence-backed dependencies. */
+  workEvidence?: EvidencePolicy
 }
 
 /** A board kept in this process. `close()` closes its file, once nothing uses it. */
@@ -87,7 +90,7 @@ export function local(options: LocalOptions = {}): LocalBackend {
         }
       }
       const scheduler = localScheduler()
-      const backend = a2({ store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)) })
+      const backend = a2({ store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)), workEvidence: options.workEvidence })
       backend.bind(bound)
       return { backend, store, scheduler }
     })()
