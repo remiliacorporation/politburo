@@ -9,6 +9,7 @@ import { HttpError } from './errors.ts'
 import { METHODS } from './routing.ts'
 import { localScheduler, type LocalScheduler } from '../scheduler/local.ts'
 import type { BoardStore } from '../store/types.ts'
+import type { AttentionResponders } from '../contract/attention.ts'
 import type { WorkLifecycleOptions } from './tasks.ts'
 
 export type LocalOptions = {
@@ -22,6 +23,10 @@ export type LocalOptions = {
   memory?: boolean
   /** Opt in to staged work for new tasks on this board. */
   workLifecycle?: WorkLifecycleOptions
+  /** Enables structured attention. Each exact channel lists verified people who may answer there with read and post access. */
+  attentionResponders?: AttentionResponders
+  /** Enables the fork's agent registry. Off by default. */
+  agentOps?: boolean
 }
 
 /** A board kept in this process. `close()` closes its file, once nothing uses it. */
@@ -91,7 +96,12 @@ export function local(options: LocalOptions = {}): LocalBackend {
         }
       }
       const scheduler = localScheduler()
-      const backend = a2({ store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)), ...(workLifecycle ? { workLifecycle } : {}) })
+      const backend = a2({
+        store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)),
+        ...(workLifecycle ? { workLifecycle } : {}),
+        ...(options.attentionResponders !== undefined ? { attentionResponders: options.attentionResponders } : {}),
+        agentOps: options.agentOps === true,
+      })
       backend.bind(bound)
       return { backend, store, scheduler }
     })()

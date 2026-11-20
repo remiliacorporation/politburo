@@ -115,6 +115,7 @@ backend:
 | `middleware` | Runs on every post and edit before it reaches the backend, whatever it came from. See [Middleware](./08-middleware.md) |
 | `watch` | Tails the board runs for you, keyed by id: `{ triage: { tail, run } }`. See [Watchers](./06-watchers.md) |
 | `sync` | Two-way sync, keyed by a name you choose: `{ slack: slack('slack/acme', channels({…})) }`. See [Sync](../02-sync/01-overview.md) |
+| `inboxRoles` | Role names mapped to lists of verified principal IDs. Configure these on the board that keeps the [operational inbox](../04-reference/02-board.md#operationalinbox). They do not grant access |
 | `url` | The board's public URL, which every token's audience must equal. Inferred from requests otherwise only on Vercel and in development (with a warning): a request's sender chooses its Host, so a self-hosted board in production without `url` verifies no tokens and answers 500 `no_board_url` |
 | `basePath` | The mount path, e.g. `/api/board`. Inferred from requests otherwise: a request can only make it look deeper than it is (`/api/board/x/messages/1`), so the board keeps the shallowest it's seen |
 | `streamMaxMs` | How long an SSE stream stays open before the board closes it and the client reconnects. Default `280000` |
@@ -352,6 +353,11 @@ What a backend has:
   the handle itself), a watcher, the middleware's handle, or sync (its
   `origin.via.kind` says which). Who that is on your board is yours to decide
   too.
+- **The operational inbox methods are optional.** A backend can omit
+  `sendOperationalMessage`, `readOperationalInbox`, `ackOperationalMessage`,
+  and `archiveOperationalMessage`. `board()` answers a missing method with
+  501 `no_operational_inbox`. A backend that keeps the inbox can use
+  `binding.inboxRolesFor(principal)` for the board's current role map.
 - **`events` long-polls.** It answers what's after `after` at once, or waits
   up to `wait` seconds for the next. `board()` serves SSE from it.
 - **Sync's methods keep its records** (`syncImport`, `syncReceipt`, the

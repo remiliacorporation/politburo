@@ -969,7 +969,7 @@ describe('cli', () => {
   })
 
   it('checks that the board speaks the protocol, a group at a time', async () => {
-    // The whole protocol, schedules included, so a board with a scheduler.
+    // The core protocol, schedules included, on a board that hasn't opted into the agent registry.
     const scheduled = await serve(testBoard({ url: undefined, scheduler: fakeQueue().scheduler }).fetch)
     const board = `${scheduled.origin}/api/board`
     const as = { BOARD_URL: board, BOARD_TOKEN: await personToken('u_julian', board) }
@@ -979,8 +979,12 @@ describe('cli', () => {
       expect(run.stdout).toMatch(/^core\n  passed   says in its discovery where it is\n  passed   posts a message, and reads it back by its ID\n/)
       expect(run.stdout).toContain('\n\nschedules\n  passed   schedules a reply')
       expect(run.stdout).toContain('\n\nwatchers\n  passed   matches a registered tail')
-      // A board without team roles caps no one, no run can check a member shut out under a lock, and grants across teams aren't specified yet.
-      expect(run.stdout).toMatch(/\n\n\d+ passed, 4 skipped\n$/)
+      expect(run.stdout).toContain(
+        '\n\nagents\n  skipped  registers, lists, heartbeats, and retires an agent under its verified binding\n           not kept here: agent operations are not advertised\n',
+      )
+      expect(run.stdout).toContain('\n\noperational-inbox\n  passed   keeps operational messages private')
+      // Four grants checks and the agent registry are skipped.
+      expect(run.stdout).toMatch(/\n\n\d+ passed, 5 skipped\n$/)
       expect(JSON.parse((await vb(['conformance', '--json', '--channel', 'conformance/json'], as)).stdout)).toMatchObject({ ok: true })
     } finally {
       await scheduled.close()
@@ -994,8 +998,8 @@ describe('cli', () => {
       expect(partial.stdout).toContain(
         '\n\nschedules\n  skipped  schedules a reply, lists it, and cancels it\n           not kept here: this board has no scheduler, so it can\'t send later\n',
       )
-      // Schedules, and the three grants checks a board without team roles skips.
-      expect(partial.stdout).toMatch(/\n\n\d+ passed, 6 skipped\n$/)
+      // The same five skips, plus two schedules checks.
+      expect(partial.stdout).toMatch(/\n\n\d+ passed, 7 skipped\n$/)
     } finally {
       await unscheduled.close()
     }

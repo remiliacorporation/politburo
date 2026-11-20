@@ -1,4 +1,5 @@
-import type { BoardEventView, GrantView, Me, MessageView, PrincipalView, ScheduleView, SourceRead, SyncedView, TaskView, ThreadSummaryView } from '../api/routes.ts'
+import type { AttentionView, BoardEventView, GrantView, Me, MessageView, OperationalMessage, PrincipalView, ScheduleView, SourceRead, SyncedView, TaskView, ThreadSummaryView } from '../api/routes.ts'
+import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../contract/schemas.ts'
 import { displayEmoji } from '../contract/emoji.ts'
 import { fileSize } from '../contract/files.ts'
 import { byVercelBot, displayText } from '../contract/bots.ts'
@@ -6,6 +7,7 @@ import { extractMentions, isEmail, replaceMentions } from '../contract/mentions.
 import { findBlocks } from '../contract/blocks.ts'
 import { shownName, type Via } from '../contract/profiles.ts'
 import type { CheckResult, ConformanceReport } from '../conformance/index.ts'
+import { wrap } from './help.ts'
 
 /**
  * Text for a terminal. What boards and platforms say can carry control characters, ESC among them,
@@ -47,6 +49,22 @@ const indent = (text: string, prefix: string) =>
     .split('\n')
     .map((line) => `${prefix}${line}`)
     .join('\n')
+
+/** Operational messages are grouped by ID and topic; the text is what the sender wrote. */
+export function formatOperationalInbox(messages: OperationalMessage[]): string {
+  if (messages.length === 0) return 'no messages'
+  return messages.map((message) => {
+    const to = 'agent' in message.to ? message.to.agent : `role ${message.to.role}`
+    const receipt = message.actedAt ? 'acted' : message.seenAt ? 'seen' : 'unseen'
+    return [
+      `${lineText(message.id)}  ${lineText(message.topic)}`,
+      `  from  ${lineText(message.by.actor)}`,
+      `  to    ${lineText(to)}`,
+      `  ${receipt}`,
+      indent(message.text.replace(/\r\n/g, '\n'), '  '),
+    ].join('\n')
+  }).join('\n\n')
+}
 
 function labels(message: MessageView): string {
   const entries = Object.entries(message.labels)
@@ -168,6 +186,8 @@ function taskState(message: MessageView, task: TaskView, names: Map<string, stri
   else if (task.state === 'completed') parts.push('completed', ...(task.result ? [noteLine(task.result)] : []))
   else if (task.state === 'failed' || task.state === 'canceled') parts.push(task.state, ...(task.reason ? [noteLine(task.reason)] : []))
   else parts.push(task.state)
+  const priority = TaskPriority.safeParse(task.priority).data ?? DEFAULT_TASK_PRIORITY
+  if (priority !== DEFAULT_TASK_PRIORITY) parts.push(`priority ${priority}`)
   if (task.needs.length) parts.push(`needs ${task.needs.map((id) => `#${id}`).join(' ')}`)
   if (task.for !== null) parts.push(`for ${profileOf(task.for)}`)
   if (task.owner !== message.by.principal) parts.push(`owner ${named(task.owner)}`)
@@ -203,8 +223,10 @@ const TASK_NOTE_MIN = 20
  * column is as wide as any state, and the text's at least 30, so one list lines up with the next.
  * What a person wrote about how it ended is cut to fit 80 columns: the rest is in its thread.
  */
-export function formatTasks(tasks: ThreadSummaryView[]): string {
-  const rows = tasks.map(({ message }) => [`#${message.id}`, (message.task?.state ?? '').padEnd(STATE_WIDTH), firstLine(message, TASK_TEXT_MAX).padEnd(TASK_TEXT_MIN)])
+export function formatTasks(tasks: ThreadSummaryView[], showPriority = false): string {
+  const priorities = tasks.map(({ message }) => TaskPriority.safeParse(message.task?.priority).data ?? DEFAULT_TASK_PRIORITY)
+  const withPriority = showPriority || priorities.some((priority) => priority !== DEFAULT_TASK_PRIORITY)
+  const rows = tasks.map(({ message }, at) => [`#${message.id}`, (message.task?.state ?? '').padEnd(STATE_WIDTH), ...(withPriority ? [priorities[at]!] : []), firstLine(message, withPriority ? TASK_TEXT_MIN : TASK_TEXT_MAX).padEnd(TASK_TEXT_MIN)])
   const room = Math.max(TASK_NOTE_MIN, 80 - rows.reduce((widest, row) => Math.max(widest, row.join('  ').length), 0) - 2)
   return table(rows.map((row, at) => {
     const { message } = tasks[at]!
@@ -399,8 +421,35 @@ export function formatSchedule(schedule: ScheduleView, options: { pad?: string; 
   ].join('\n')
 }
 
+/** The snapshot and choices a responder needs before answering. */
+export function formatAttention(attention: AttentionView): string {
+  const row = (subject: string, value: string) => {
+    const lines = terminalText(value).split('\n').flatMap((line) => wrap(line, 70))
+    return (lines.length ? lines : ['']).map((line, i) => `${(i === 0 ? subject : '').padEnd(10)}${line}`.trimEnd())
+  }
+  const rows = [
+    ...row('request', `${lineText(attention.id)}  ${attention.status}`),
+    ...row('kind', attention.kind),
+    ...row('question', attention.question),
+    ...row('context', attention.context),
+    ...row('commit', attention.commit),
+    ...row('expires', attention.expiresAt),
+    ...row('evidence', attention.evidence.map(({ message, revision }) => `#${lineText(message)} (revision ${revision})`).join(', ')),
+    'options',
+  ]
+  for (const { id, label, consequence, next } of attention.options) {
+    rows.push(`  ${lineText(id)}  ${next}`, ...row('', label), ...row('', consequence))
+  }
+  if (attention.status === 'answered') {
+    const { option, by, at, routedTo } = attention.receipt
+    rows.push(...row('answer', `${lineText(option)}  ${routedTo}`), ...row('by', lineText(by.actor)), ...row('at', at))
+  }
+  return rows.join('\n')
+}
+
 /** One line per live event, for `tail` and `wait`. */
 export function formatEvent(event: BoardEventView): string {
+  if (event.type === 'work.control') return `#${event.cursor}  board  ${event.payload.paused ? 'paused' : 'running'}`
   const message = event.message
   if (!message) return `#${event.cursor}  ${event.type}`
   const where = message.re === null ? message.channel : `${message.channel} ↳ #${message.re}`
@@ -430,6 +479,7 @@ export function formatEvent(event: BoardEventView): string {
       return `#${message.id}  ${where}  ✗ didn't reach ${event.payload.target}: ${event.payload.error}`
     case 'task.created':
     case 'task.assigned':
+    case 'task.priority_changed':
     case 'task.needs_changed':
     case 'task.ready':
     case 'task.claimed':
@@ -439,6 +489,8 @@ export function formatEvent(event: BoardEventView): string {
     case 'task.completed':
     case 'task.failed':
     case 'task.blocked':
+    case 'task.attention_requested':
+    case 'task.attention_answered':
     case 'task.unblocked':
     case 'task.canceled':
     case 'task.reopened':
@@ -460,6 +512,8 @@ function taskEvent(event: Extract<BoardEventView, { type: `task.${string}` }>): 
       return `${event.payload.from} to ${event.payload.to}${by}${more(noteLine(event.payload.reason))}`
     case 'task.assigned':
       return event.payload.for !== null ? `assigned to ${profileOf(event.payload.for)}${by}` : `unassigned${by}`
+    case 'task.priority_changed':
+      return `priority ${event.payload.priority}${by}`
     case 'task.needs_changed':
       // What it waits for now, in place of what it waited for.
       return `needs ${event.payload.needs.length ? event.payload.needs.map((id) => `#${id}`).join(' ') : 'nothing'}${by}`
@@ -473,6 +527,10 @@ function taskEvent(event: Extract<BoardEventView, { type: `task.${string}` }>): 
       return `failed${by}${more(noteLine(event.payload.reason))}`
     case 'task.blocked':
       return `blocked${by}${more(event.payload.kind, noteLine(event.payload.reason))}`
+    case 'task.attention_requested':
+      return `attention requested${by}${more(noteLine(event.payload.draft.question))}`
+    case 'task.attention_answered':
+      return `attention answered${by}${more(event.payload.receipt.routedTo)}`
     case 'task.canceled':
       return `canceled${by}${more(noteLine(event.payload.reason))}`
     default:

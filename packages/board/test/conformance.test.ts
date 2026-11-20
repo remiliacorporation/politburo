@@ -3,7 +3,7 @@ import { board } from '../src/server/index.ts'
 import { http } from '../src/backend-http/index.ts'
 import { conformance } from '../src/conformance/index.ts'
 import type { GrantInput } from '../src/api/routes.ts'
-import { bearer, BOARD_URL, caller, deploymentToken, personToken, testBoard, workflowToken } from './harness.ts'
+import { bearer, BOARD_URL, caller, deploymentToken, localBoard, personToken, testBoard, workflowToken } from './harness.ts'
 import { fakeQueue } from './queue.ts'
 
 type Fetch = (request: Request) => Promise<Response>
@@ -91,6 +91,7 @@ const OWN_PROFILES = ['keeps a task assigned to a profile for that actor alone',
 const NEVER_LOCKED_OUT = ["refuses a grant its maker couldn't take back, unless it says lockMeOut", "nothing locks this run out of a channel, so no grant it makes is a lockout: it owns the board, or it's the board's own code"]
 const LOCKED_OUT = ['lets a member grant on a pattern after a lock under it', "a run can't be shut out by a lock and lift it afterwards: the board's own tests check it"]
 const skipped = (report: Awaited<ReturnType<typeof conformance>>) => report.checks.filter((check) => check.status !== 'passed').map((check) => [check.name, check.detail])
+const agentChecks = (report: Awaited<ReturnType<typeof conformance>>) => report.checks.filter((check) => check.group === 'agents')
 
 /** The grants checks of a caller narrowed with x-board-can, which a run that can't send the header skips too. */
 const GRANTS_NARROWED = [
@@ -160,11 +161,14 @@ const watcherStatuses = (report: Awaited<ReturnType<typeof conformance>>) =>
 vi.setConfig({ testTimeout: 30_000 })
 
 describe('the conformance kit', () => {
-  it('passes a board on a2(), checking the whole protocol, and deletes what it posted', async () => {
-    const board = testBoard({ scheduler: fakeQueue().scheduler })
+  it('passes the whole protocol over HTTP against an opted-in local board and deletes what it posted', async ({ onTestFinished }) => {
+    const board = localBoard({ agentOps: true })
+    onTestFinished(() => board.close())
     const client = await clientOf(board.fetch)
-    const report = await conformance(client, { withHeaders: withHeaders(board.fetch) })
+    const report = await conformance(client, { withHeaders: withHeaders(board.fetch), networkPause: true })
     expect(report.checks.filter((check) => check.status === 'failed')).toEqual([])
+    expect(report.checks.filter((check) => check.group === 'network-pause').map((check) => check.status)).toEqual(['passed'])
+    expect(await client.status()).toMatchObject({ paused: false, pauseEpoch: 1 })
     // withHeaders stands in for withCan, so the narrowing checks run too.
     expect(report.checks.filter((check) => [...NARROWED, ...GRANTS_NARROWED].includes(check.name)).map((check) => check.status)).toEqual([...NARROWED, ...GRANTS_NARROWED].map(() => 'passed'))
     expect(report.checks.filter((check) => [...HEADERS, 'shows no session on a message, its event, or you'].includes(check.name)).map((check) => check.status)).toEqual(Array(5).fill('passed'))
@@ -172,8 +176,10 @@ describe('the conformance kit', () => {
     expect(report).toMatchObject({ ok: true, url: BOARD_URL })
     // Every grant it made is gone, the ones that closed a pattern to everyone included.
     expect((await client.grants()).map((grant) => grant.id)).toEqual(['g1', 'g2', 'g3'])
-    expect([...new Set(report.checks.map((check) => check.group))]).toEqual(['core', 'paging', 'search', 'schedules', 'tasks', 'grants', 'schemas', 'attachments', 'watchers', 'sync'])
-    expect(report.checks.filter((check) => check.group === 'tasks').map((check) => check.status)).toEqual(Array.from({ length: 24 }, () => 'passed'))
+    expect([...new Set(report.checks.map((check) => check.group))]).toEqual(['core', 'network-pause', 'paging', 'search', 'schedules', 'tasks', 'grants', 'schemas', 'attachments', 'watchers', 'sync', 'agents', 'operational-inbox'])
+    expect(report.checks.filter((check) => check.group === 'tasks').map((check) => check.status)).toEqual(Array.from({ length: 26 }, () => 'passed'))
+    expect(agentChecks(report)).toMatchObject([{ status: 'passed' }])
+    expect((await client.agents.list('conformance')).agents).toMatchObject([{ status: 'disabled' }])
     const { messages } = await client.channel('conformance').messages({ limit: 500 })
     expect(messages.filter((message) => !message.deleted)).toEqual([])
     // Every task it made went with its root: none is left open, and none still wears a state.
@@ -181,9 +187,12 @@ describe('the conformance kit', () => {
     expect((await client.threads({ channel: 'conformance', label: ['board.task'], limit: 500 })).threads).toEqual([])
   })
 
-  it("passes through a board's own handle, in-process", async () => {
-    const team = testBoard({ scheduler: fakeQueue().scheduler })
+  it("passes through an opted-in local board's own handle, in-process", async ({ onTestFinished }) => {
+    const team = localBoard({ agentOps: true })
+    onTestFinished(() => team.close())
     const report = await conformance(team)
+    expect(report.checks.some((check) => check.group === 'network-pause')).toBe(false)
+    expect(agentChecks(report)).toMatchObject([{ status: 'passed' }])
     // The board's own code needs no grant to keep it in what it closes, and no proxy narrows it. Each
     // of its profiles is a principal of its own there, so none is an actor a task of its own could be for.
     expect(skipped(report)).toEqual([
@@ -204,6 +213,20 @@ describe('the conformance kit', () => {
       [NARROWED[5], NO_CAN],
     ])
     expect((await team.me()).actor).toBe('board:client')
+  })
+
+  it('skips an opted-in network-pause check on a backend that declares it unsupported', async () => {
+    const team = testBoard({ scheduler: fakeQueue().scheduler })
+    const withoutPause: Fetch = (request) => {
+      if (!new URL(request.url).pathname.includes('/control')) return team.fetch(request)
+      if (request.method === 'GET') return Promise.resolve(Response.json({ error: { code: 'no_network_pause', message: 'network pause is not supported' } }, { status: 501 }))
+      throw new Error('unsupported backends should not get a pause or resume request')
+    }
+    const client = await clientOf(withoutPause)
+    const report = await conformance(client, { networkPause: true })
+    expect(report.checks.filter((check) => check.group === 'network-pause')).toMatchObject([
+      { status: 'skipped', detail: 'not kept here: this board does not support network pause' },
+    ])
   })
 
   it("fails a board that lets a profile change another profile's messages, or keeps its principal from changing them", async () => {
@@ -522,7 +545,7 @@ describe('the conformance kit', () => {
     expect(messages.filter((message) => !message.deleted)).toEqual([])
   })
 
-  it('reports schedules and files as not kept here on a board without a scheduler or a blob store', async () => {
+  it('skips unsupported schedules, files, and agent operations', async () => {
     // A board on a2() with only its store answers 501 for each, and the kit reads that.
     const bare = testBoard({ blob: undefined })
     const report = await conformance(await clientOf(bare.fetch), { withHeaders: withHeaders(bare.fetch) })
@@ -537,6 +560,7 @@ describe('the conformance kit', () => {
       ['attachments', 'skipped', 'not kept here: this board keeps no files'],
       ['attachments', 'skipped', 'not kept here: this board keeps no files'],
       ['attachments', 'skipped', 'not kept here: this board keeps no files'],
+      ['agents', 'skipped', expect.stringMatching(/^not kept here:/)],
     ])
   })
 
@@ -553,7 +577,7 @@ describe('the conformance kit', () => {
     const report = await conformance(await clientOf(taskless))
     expect(report.ok).toBe(true)
     const tasks = report.checks.filter((check) => check.group === 'tasks')
-    expect(tasks).toHaveLength(24)
+    expect(tasks).toHaveLength(26)
     // The one that needs no task route is about labels, which a board has either way.
     expect(tasks.filter((check) => check.status !== 'skipped').map((check) => check.name)).toEqual([])
     expect([...new Set(tasks.map((check) => check.detail))]).toEqual(['not kept here: this board keeps no tasks'])

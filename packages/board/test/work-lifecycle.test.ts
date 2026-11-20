@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { oidcTokens } from '../src/access/index.ts'
 import type { MessageView } from '../src/api/routes.ts'
+import type { AttentionDraft } from '../src/contract/attention.ts'
 import { http } from '../src/backend-http/index.ts'
 import { local } from '../src/backend-local/index.ts'
 import { conformance } from '../src/conformance/index.ts'
@@ -25,8 +26,12 @@ afterEach(async () => {
   for (const close of closes.splice(0).reverse()) await close()
 })
 
-async function setup({ enabled = true, dir }: { enabled?: boolean; dir?: string } = {}) {
-  const server = local({ ...(dir ? { dir } : { memory: true }), ...(enabled ? { workLifecycle } : {}) })
+async function setup({ enabled = true, dir, parity = false }: { enabled?: boolean; dir?: string; parity?: boolean } = {}) {
+  const server = local({
+    ...(dir ? { dir } : { memory: true }),
+    ...(enabled ? { workLifecycle } : {}),
+    ...(parity ? { attentionResponders: { work: [OTHER_SCOPER], conformance: [OTHER_SCOPER] }, agentOps: true } : {}),
+  })
   closes.push(() => server.close())
   const team = board({ backend: server, url: BOARD_URL, authenticate: oidcTokens({ ...testAuth, local: testLocal }) })
   const [scoperToken, approverToken, workerToken, webToken] = await Promise.all([
@@ -368,6 +373,54 @@ it('documents the lifecycle write bodies in OpenAPI', async () => {
   expect(schema('reopen').required ?? []).not.toContain('ifVersion')
 })
 
+it('ranks scoped work by priority without admitting proposed work or reviving pre-pause leases', async () => {
+  const { worker, scoper } = await setup({ parity: true })
+  const [low, proposed, high] = await worker.tasks.createMany('work', [
+    { text: 'Low priority', priority: 'low' },
+    { text: 'Urgent but not scoped', priority: 'urgent' },
+    { text: 'High priority', priority: 'high' },
+  ])
+  expect(proposed!.task).toMatchObject({ state: 'waiting', priority: 'urgent', work: PROPOSED })
+  for (const root of [low!, high!]) await scoper.tasks.scope(root.id, 'Ready for implementation')
+  const first = (await worker.tasks.claim({ channel: 'work' }))!
+  expect(first.task).toMatchObject({ id: high!.id, task: { priority: 'high', work: { stage: 'scoped' } } })
+  await scoper.pause('Wait for coordination')
+  await expect(worker.tasks.claim(low!.id)).rejects.toMatchObject({ status: 409, code: 'board_paused' })
+  await scoper.resume('Continue the queue')
+  await expect(first.complete()).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  const next = (await worker.tasks.claim({ channel: 'work' }))!
+  expect(next.task.id).toBe(high!.id)
+  const otherProfile = worker.as('other')
+  await expect(otherProfile.tasks.held(next.task.id, { epoch: next.epoch, token: next.token }).complete())
+    .rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  expect((await next.complete()).task?.work?.stage).toBe('handoff')
+})
+
+it('answers structured attention without skipping scope and closes it on rejection', async () => {
+  const ctx = await setup({ parity: true })
+  const { worker, scoper, approver } = ctx
+  const root = await create(ctx)
+  const draft: AttentionDraft = {
+    kind: 'needs_input', question: 'Which route should we use?', context: 'Either route needs scope.',
+    options: [
+      { id: 'a', label: 'Route A', consequence: 'Use route A', next: 'resume' },
+      { id: 'b', label: 'Route B', consequence: 'Use route B', next: 'resume' },
+    ],
+    revision: root.revision, evidence: [{ message: root.id, revision: root.revision }],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), commit: 'a'.repeat(40),
+  }
+  await expect(worker.tasks.ask(root.id, { ...draft, options: [draft.options[0]!, { ...draft.options[1]!, next: 'fail' }] }))
+    .rejects.toMatchObject(REQUIRED)
+  const { attention } = await worker.tasks.ask(root.id, draft)
+  const answer = await approver.tasks.answer(root.id, attention.id, { option: 'a', commit: draft.commit })
+  expect(answer.task.task).toMatchObject({ state: 'waiting', claim: null, blocked: null, work: PROPOSED })
+  expect(answer.attention).toMatchObject({ status: 'answered', receipt: { routedTo: 'waiting' } })
+  await expect(worker.tasks.claim(root.id)).rejects.toMatchObject(STAGE_ERROR)
+  const { attention: pending } = await worker.tasks.ask(root.id, draft)
+  await scoper.tasks.stage(root.id, 'rejected', 'Do not proceed')
+  expect((await worker.tasks.attention(root.id)).attention).toMatchObject({ id: pending.id, status: 'canceled' })
+})
+
 it('checks lifecycle conformance instead of legacy task conformance on an enabled board', async () => {
   const { scoper, scoperToken, handle } = await setup()
   const report = await conformance(scoper, { withHeaders: (headers) => handle(scoperToken, headers) })
@@ -376,4 +429,16 @@ it('checks lifecycle conformance instead of legacy task conformance on an enable
   const lifecycle = report.checks.filter((check) => check.group === 'work-lifecycle')
   expect(lifecycle.length).toBeGreaterThan(0)
   expect(lifecycle.every((check) => check.status === 'passed')).toBe(true)
+})
+
+it('runs the staged, network pause, registry, and attention conformance checks together', async () => {
+  const { scoper, scoperToken, handle } = await setup({ parity: true })
+  expect(await scoper.discovery()).toMatchObject({ workLifecycle: 1, agent_ops: true, task_attention: true })
+  const report = await conformance(scoper, { networkPause: true, withHeaders: (headers) => handle(scoperToken, headers) })
+  expect(report.checks.filter((check) => check.status === 'failed')).toEqual([])
+  for (const group of ['work-lifecycle', 'network-pause', 'agents', 'tasks']) {
+    const checks = report.checks.filter((check) => check.group === group)
+    expect(checks.length).toBeGreaterThan(0)
+    expect(checks.every((check) => check.status === 'passed')).toBe(true)
+  }
 })

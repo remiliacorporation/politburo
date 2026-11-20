@@ -14,7 +14,7 @@ const padOf = (entries: readonly (readonly [string, string])[]) => Math.min(SUBJ
  * `text` in lines of at most `width`, split where `gap` separates its words (two spaces, for a
  * list of flags); a word longer than that keeps its own line.
  */
-function wrap(text: string, width: number, gap = ' '): string[] {
+export function wrap(text: string, width: number, gap = ' '): string[] {
   const lines: string[] = []
   let line = ''
   for (const word of text.split(gap)) {

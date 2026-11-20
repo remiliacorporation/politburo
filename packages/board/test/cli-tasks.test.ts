@@ -31,6 +31,25 @@ describe('vb tasks', () => {
     expect((await task(fix)).task).toMatchObject({ state: 'completed', result: 'fixed in a1b2c3, tests pass' })
   }, 30_000)
 
+  it('creates, shows, lists and changes task priority without letting the claim raise it', async () => {
+    const normal = await create('priority-work', 'ordinary work')
+    const urgent = JSON.parse(await ok(['tasks', 'create', 'priority-work', 'urgent work', '--priority', 'urgent', '--json'])).task as MessageView
+    expect(urgent.task?.priority).toBe('urgent')
+    expect(await ok(['tasks', 'show', normal])).toMatch(/ready +normal +ordinary work/)
+    expect(await ok(['tasks', 'priority-work'])).toMatch(/ready +urgent +urgent work/)
+    const claimed = JSON.parse(await ok(['tasks', 'claim', '--ready', 'priority-work', '--json']))
+    expect(claimed.task.id).toBe(urgent.id)
+    expect(await ok(['tasks', 'priority', urgent.id, 'low'])).toBe(`${urgent.id}  priority low\n`)
+    const refused = await vb(['tasks', 'priority', urgent.id, 'high', '--json'])
+    expect(refused.code).toBe(1)
+    expect(failure(refused)).toMatchObject({ reason: 'priority_raise_forbidden' })
+    expect(JSON.parse(await ok(['tasks', 'show', urgent.id, '--json']))).toMatchObject({ task: { id: urgent.id, task: { state: 'claimed', priority: 'low' } } })
+    expect(JSON.parse(await ok(['tasks', 'priority-work', '--json'])).tasks.map(({ message }: { message: MessageView }) => message.task?.priority)).toEqual(['normal', 'low'])
+    const invalid = await vb(['tasks', 'create', 'priority-work', 'not created', '--priority', 'medium', '--json'])
+    expect(invalid.code).toBe(2)
+    expect(failure(invalid)).toMatchObject({ reason: 'invalid_priority' })
+  }, 30_000)
+
   it('lists by state, label, author, and profile, a page at a time, and says where the next one starts', async () => {
     const ids: string[] = []
     for (const [text, flags] of [

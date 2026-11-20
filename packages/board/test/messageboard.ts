@@ -8,6 +8,7 @@ import { parseProfileHeader } from '../src/contract/profile-header.ts'
 import { compileAccess, parseCan } from '../src/server/access.ts'
 import { findBlocks } from '../src/contract/blocks.ts'
 import { checkValue } from '../src/contract/data-values.ts'
+import { DEFAULT_TASK_PRIORITY, TaskPriority, priorityRank } from '../src/contract/schemas.ts'
 
 type Principal =
   | { type: 'user'; userId: string }
@@ -74,6 +75,7 @@ type TaskState = 'waiting' | 'ready' | 'claimed' | 'blocked' | 'completed' | 'fa
 /** A thread's task, as Vercel's API keeps it on the thread: of a claim's token, only `hash`, its SHA-256, which no answer shows. */
 type Task = {
   state: TaskState
+  priority?: TaskPriority
   owner: string
   /** The actor its owner made it as: itself, or one of its profiles, which is held to the tasks it made. */
   by: string
@@ -752,7 +754,6 @@ function fakeBoard(shared: Shared, boardId: string) {
   const LOOKS_AGAIN_MS = [200, 800]
   /** What it reads of each place, of ready tasks and of lapsed claims, and of all of them. */
   const PLACE_READS = 25
-  const READY_IN_ALL = 200
   const LAPSED_IN_ALL = 50
   /** What one batch's transaction holds at most, by the count its body gives. */
   const BATCH_ITEMS = 100
@@ -769,7 +770,7 @@ function fakeBoard(shared: Shared, boardId: string) {
   const batchDigest = (body: Record<string, any>) =>
     JSON.stringify([
       body.channelId !== undefined ? { id: body.channelId } : { name: body.channel },
-      (body.tasks as Record<string, any>[]).map((task) => [task.key ?? null, task.text, Object.entries(task.labels ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)), task.noSync ?? false, task.attachments ?? [], task.needs ?? [], task.for ?? null]),
+      (body.tasks as Record<string, any>[]).map((task) => [task.key ?? null, task.text, Object.entries(task.labels ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)), task.noSync ?? false, task.attachments ?? [], task.needs ?? [], task.for ?? null, task.priority ?? DEFAULT_TASK_PRIORITY]),
     ])
   /** A profile's name, as an actor ID ends with one. */
   const PROFILE_PART = /^[a-z0-9][a-z0-9-]{0,31}$/
@@ -937,6 +938,12 @@ function fakeBoard(shared: Shared, boardId: string) {
     }
   }
 
+  function checkedPriority(value: unknown): TaskPriority {
+    const parsed = TaskPriority.safeParse(value)
+    if (!parsed.success) throw bad('Invalid task priority.')
+    return parsed.data
+  }
+
   function checkedTask(actor: Actor, channel: string, spec: Record<string, any>, self: string | null) {
     const owner = principalId(actor.principal)
     const needs = checkedNeeds(actor, spec.needs ?? [], self)
@@ -952,7 +959,7 @@ function fakeBoard(shared: Shared, boardId: string) {
       if (waits) throw new Refused(409, 'task_waiting', 'The task would wait for others.')
       if (assigned !== null && assigned !== actor.id) throw new Refused(409, 'task_assigned', 'The task would be assigned to another actor.')
     }
-    return { owner, needs, for: assigned as string | null, waits, claim }
+    return { owner, needs, for: assigned as string | null, priority: spec.priority === undefined ? undefined : checkedPriority(spec.priority), waits, claim }
   }
   function hold(thread: Thread, actor: Actor, claim: { hash: string; lease: number }, operationId: unknown) {
     const task = thread.task!
@@ -975,7 +982,7 @@ function fakeBoard(shared: Shared, boardId: string) {
   function makeTask(thread: Thread, actor: Actor, checked: ReturnType<typeof checkedTask>, operationId: unknown) {
     // One that needs others waits as it's made, always: when they have all completed already, its `task.ready` follows
     // in the same write, before its claim. One that needs none is ready as it's made, with no `task.ready`.
-    thread.task = { state: checked.needs.length > 0 ? 'waiting' : 'ready', owner: checked.owner, by: actor.id, for: checked.for, needs: checked.needs, epoch: 0, claim: null, blocked: null, result: null, reason: null }
+    thread.task = { state: checked.needs.length > 0 ? 'waiting' : 'ready', owner: checked.owner, by: actor.id, for: checked.for, ...(checked.priority !== undefined ? { priority: checked.priority } : {}), needs: checked.needs, epoch: 0, claim: null, blocked: null, result: null, reason: null }
     taskEvent(thread, 'task.made', actor, undefined, operationId)
     ready(thread, actor, operationId)
     if (checked.claim) hold(thread, actor, checked.claim, operationId)
@@ -1004,7 +1011,7 @@ function fakeBoard(shared: Shared, boardId: string) {
    * claimed in the body's order.
    */
   function makeBatch(actor: Actor, body: Record<string, any>): { made: Thread[] } | { repeat: { channelId: string; threads: string[] } } {
-    type Asked = { key?: string; text: string; labels?: Record<string, string>; noSync?: boolean; attachments?: string[]; needs?: (string | { key: string })[]; for?: string | null }
+    type Asked = { key?: string; text: string; labels?: Record<string, string>; noSync?: boolean; attachments?: string[]; needs?: (string | { key: string })[]; for?: string | null; priority?: TaskPriority }
     const aKey = (value: unknown): value is string => typeof value === 'string' && value.length >= 1 && value.length <= 64
     // The body's shape.
     if (!Array.isArray(body.tasks) || body.tasks.length < 1 || body.tasks.length > 100) throw bad('tasks is 1 to 100 tasks.')
@@ -1012,6 +1019,7 @@ function fakeBoard(shared: Shared, boardId: string) {
     if (body.idempotencyKey !== undefined && (typeof body.idempotencyKey !== 'string' || body.idempotencyKey.length < 1 || body.idempotencyKey.length > 512)) throw bad('idempotencyKey is 1 to 512 characters.')
     for (const task of body.tasks as Record<string, any>[]) {
       if (typeof task !== 'object' || task === null) throw bad('A task is an object.')
+      if (task.priority !== undefined) checkedPriority(task.priority)
       if (task.key !== undefined && !aKey(task.key)) throw bad('key is 1 to 64 characters.')
       if (task.claim !== undefined || task.clientId !== undefined) throw bad('A batch takes no claim and no clientId.')
       const needs: unknown[] = task.needs ?? []
@@ -1099,7 +1107,7 @@ function fakeBoard(shared: Shared, boardId: string) {
       const message = post(actor, thread, { text: task.text, ...(task.labels ? { labels: task.labels } : {}), ...(task.attachments?.length ? { attachments: task.attachments } : {}), ...(task.noSync ? { noSync: true } : {}) })
       message.createdAt = thread.lastActivityAt = first + at
       thread.lastMessage = { ...thread.lastMessage!, createdAt: first + at }
-      makeTask(thread, actor, { owner, needs: [...there[at]!, ...inside[at]!.map((other) => made[other]!.id)], for: task.for ?? null, waits: false, claim: null }, body.operationId)
+      makeTask(thread, actor, { owner, needs: [...there[at]!, ...inside[at]!.map((other) => made[other]!.id)], for: task.for ?? null, priority: task.priority, waits: false, claim: null }, body.operationId)
     }
     if (named !== null) keyed.set(named, { digest, channelId: channel.id, threads: made.map((thread) => thread.id) })
     return { made }
@@ -1147,7 +1155,7 @@ function fakeBoard(shared: Shared, boardId: string) {
   const channelsNamed = (name: string) => (name.endsWith('/') ? channels.filter((c) => c.name === name.slice(0, -1) || c.name.startsWith(name)) : channels.filter((c) => c.name === name))
   const oldestFirst = (a: Thread, b: Thread) => a.createdAt - b.createdAt
 
-  /** The oldest ready task there the caller takes: one assigned to its actor first, then an unassigned one it owns or `from` names. */
+  /** The highest priority ready task there the caller takes, oldest first at equal priority. */
   function claimNext(actor: Actor, body: Record<string, any>, claim: { hash: string; lease: number }, share: { expiries: number; goneOver: number; looks: number; first: boolean }): Thread | null {
     const named = channelsNamed(String(body.channel))
     // Channels where the caller lacks `label` are skipped: with it in none, there's nothing it claims. The limit counts those it may claim in.
@@ -1166,15 +1174,13 @@ function fakeBoard(shared: Shared, boardId: string) {
     })
     const lapsed = (t: Thread) => t.task!.state === 'claimed' && t.task!.claim!.until <= now()
     const longestLapsed = (a: Thread, b: Thread) => a.task!.claim!.until - b.task!.claim!.until
-    /** What's assigned to the caller's actor first, then in `order`. */
-    const assignedFirst = (order: (a: Thread, b: Thread) => number) => (a: Thread, b: Thread) => Number(assignedTo(b.task!, actor)) - Number(assignedTo(a.task!, actor)) || order(a, b)
+    const nextFirst = (a: Thread, b: Thread) => priorityRank(b.task!.priority) - priorityRank(a.task!.priority) || oldestFirst(a, b)
     const look = () => {
       share.looks++
-      // From each place, its oldest ready tasks and its claims whose lease ran out longest ago, a few of each, and of
-      // all those a bounded number, the assigned ones first. Each is the caller's to take, so only `labels` narrow them.
-      const ready = places.flatMap((tasks) => tasks.filter((t) => t.task!.state === 'ready').sort(oldestFirst).slice(0, PLACE_READS)).sort(assignedFirst(oldestFirst)).slice(0, READY_IN_ALL)
-      const over = places.flatMap((tasks) => tasks.filter(lapsed).sort(longestLapsed).slice(0, PLACE_READS)).sort(assignedFirst(longestLapsed)).slice(0, LAPSED_IN_ALL)
-      const mine = [...ready, ...over].filter((t) => wanted.every(([key, value]) => rootLabels(t)[key] === value)).sort(assignedFirst(oldestFirst))
+      const matches = (t: Thread) => wanted.every(([key, value]) => rootLabels(t)[key] === value)
+      const mine = places.flat().filter((t) => (t.task!.state === 'ready' || lapsed(t)) && matches(t)).sort(nextFirst)
+      // Expiry cleanup stays bounded separately from ranking the work the caller can take.
+      const over = places.flatMap((tasks) => tasks.filter(lapsed).sort(longestLapsed).slice(0, PLACE_READS)).sort(longestLapsed).slice(0, LAPSED_IN_ALL)
       return { found: mine[0] ?? null, over }
     }
     let { found, over } = look()
@@ -1349,7 +1355,7 @@ function fakeBoard(shared: Shared, boardId: string) {
       shared.receipt(actor, body.operationId)
       return { tasks: answered.tasks }
     }
-    const worked = /^\/tasks\/([^/]+)\/(claim|renew|release|complete|fail|block|unblock|reopen|assign|needs|cancel)$/.exec(rest)
+    const worked = /^\/tasks\/([^/]+)\/(claim|renew|release|complete|fail|block|unblock|reopen|assign|needs|priority|cancel)$/.exec(rest)
     if (method !== 'POST' || !worked) return undefined
     const verb = worked[2]!
     let wrote = false
@@ -1448,6 +1454,20 @@ function fakeBoard(shared: Shared, boardId: string) {
         if (task.for !== to) {
           task.for = to
           taskEvent(thread, 'task.assigned', actor, from, op)
+        }
+      } else if (verb === 'priority') {
+        const priority = checkedPriority(body.priority)
+        if ((body.claimToken === undefined) !== (body.epoch === undefined)) throw bad('A claim is its claimToken and its epoch.')
+        if (body.claimToken !== undefined) fenced(thread, actor, body)
+        else {
+          ownerOrManage(actor, thread)
+          if (task.claim?.actor === actor.id && task.claim.until > now()) throw new Refused(409, 'task_claimed', 'Use your live claim to change priority.')
+        }
+        if (finishedFor(task) || task.state === 'failed') throw finishedTask(task)
+        if (body.claimToken !== undefined && priorityRank(priority) > priorityRank(task.priority)) throw new Refused(403, 'priority_raise_forbidden', 'A claim can lower priority, not raise it.')
+        if (priority !== (task.priority ?? DEFAULT_TASK_PRIORITY)) {
+          task.priority = priority
+          taskEvent(thread, 'task.priority_changed', actor, from, op)
         }
       } else if (verb === 'needs') {
         ownerOrManage(actor, thread)

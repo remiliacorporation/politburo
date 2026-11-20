@@ -134,7 +134,7 @@ One package, `@vercel/board`, with subpath exports:
 | `@vercel/board/cli` | The CLI, to embed: `createApp()` runs it inside another CLI, without `inspect` and `serve`, `vb()` runs a command in-process on a handle, returning what it prints, and `commandWord()` names the command an argv runs | server |
 | `@vercel/board/inspect` | `inspector({ board, basePath })`, the inspector's page, bundle, and proxy as a route handler (`(Request) => Response`) under `basePath`, acting as that handle under the profile the page picks | server |
 | `@vercel/board/conformance` | `conformance()`, which checks that a board speaks the protocol | isomorphic |
-| `@vercel/board/backend-local` | `local({ dir?, memory?, workLifecycle? })`, a board kept in this process: SQLite under `.board/`, one file per `board({ name })`, whatever its `team` (`local.db` for the default board), attachments beside it, and a scheduler in the process; `memory` for tests. For development, `vb serve`, tests, and working offline | Node |
+| `@vercel/board/backend-local` | `local({ dir?, memory?, workLifecycle?, attentionResponders?, agentOps? })`, a board kept in this process: SQLite under `.board/`, one file per `board({ name })`, whatever its `team` (`local.db` for the default board), attachments beside it, and a scheduler in the process; `memory` for tests. For development, `vb serve`, tests, and working offline | Node |
 | `@vercel/board/sync-slack` | `slack()`, the Slack sync adapter | server |
 | `@vercel/board/sync-github` | `github()`, the GitHub sync adapter | server |
 | `@vercel/board/sync-linear` | `linear()`, the Linear sync adapter | server |
@@ -153,8 +153,8 @@ through `chatSdk()` or a provider of its own.
 
 ### Backends
 
-`board({ backend, name, team, authenticate, access, middleware, watch, sync, url,
-basePath, streamMaxMs })` mounts a board on a backend, which says where the
+`board({ backend, name, team, authenticate, access, middleware, watch, sync,
+inboxRoles, url, basePath, streamMaxMs })` mounts a board on a backend, which says where the
 board lives. `name` says which of the team's boards it is (`security`, or
 none for the team's default board), and `team` whose: another team's, by
 its ID or slug, or none for the team the environment finds. A name is 1 to
@@ -292,7 +292,7 @@ checked with `@vercel/board/conformance`.
   on it serves no requests but wake-ups and webhooks: any other answers 404
   `this board uses Vercel's, and answers only wake-ups and webhooks`, and none
   is verified.
-- **`local({ dir?, memory?, workLifecycle? })`**, from `@vercel/board/backend-local`, keeps
+- **`local({ dir?, memory?, workLifecycle?, attentionResponders?, agentOps? })`**, from `@vercel/board/backend-local`, keeps
   the board in this process, on the board's internal engine (see
   [The local board](#the-local-board)). Its log and tables are one SQLite file
   under `.board/` (or `dir`), named for `board({ name })` (`local.db` for the
@@ -385,21 +385,27 @@ The backend picks them; the protocol only says their shape:
 - **Every board answers the whole protocol:** discovery, `/me`, `/channels`,
   `/actors`, `/messages`, `/threads`, posting, editing, deleting,
   reacting, labeling, typing, source reads, schedules, tasks, attachments,
-  registered watchers, sync's records, and `/events`. There are no optional
-  groups, and discovery lists none. A backend may keep no schedules, tasks, or
+  registered watchers, sync's records, [the operational inbox](#operational-inbox),
+  and `/events`. Discovery lists no optional groups in the core protocol.
+  The fork's opt-in [agent registry](#agent-registry) advertises `agent_ops: true`.
+  A backend may keep no schedules, tasks, or
   files, and says so with a 501 (`no_scheduler`, `no_tasks`, `no_files`), which
   the kit reports as not kept here; one that keeps no schemas answers 501
-  `no_schemas`.
+  `no_schemas`. The four operational inbox methods are optional on custom
+  backends. A missing method answers 501 `no_operational_inbox`.
 - **`@vercel/board/conformance` checks a board through a handle,** `conformance(board())`, all of it, a group
   at a time in the report (`core`, `schedules`, `tasks`, `attachments`,
-  `watchers`, `sync`). It writes to one channel, and for the tasks checks that need two, to `tasks`
+  `watchers`, `sync`, and others). It writes to one channel, and for the tasks checks that need two, to `tasks`
   under it, every post kept on the board and labeled
   with the run, and deletes what it posted. Its `schemas` group registers one
   version, `conformance@1`, the same on every run, which stays: a version is
   never removed. A check the board answers with a
   501 in `schedules`, `tasks`, or `attachments` is `skipped`, with the detail `not kept
   here: <the board's message>`; one that would replace the caller's own
-  registration is skipped too. `vb conformance` runs it as the CLI's identity,
+  registration is skipped too. The `operational-inbox` check sends to the
+  run's principal, tests replacement, receipts, and privacy, and archives the
+  remaining message. It skips a board that answers 501 `no_operational_inbox`.
+  `vb conformance` runs it as the CLI's identity,
   with `withHeaders` for its own credential with headers of the run's (as a
   client or a proxy holding it sends them): an `x-board-can`, so the narrowing
   checks see that caller refused outside its `can`, on its principal's
@@ -552,7 +558,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path? }`, so the client knows
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, task_attention?, agent_ops? }`, so the client knows
   which project to mint for. The CLI can run from any directory. Discovery is unauthenticated,
   so the client never takes its audience from it: every token's audience is the
   URL the client sends it to. When discovery's `audience` differs, the client
@@ -785,6 +791,9 @@ await team.createGrant({ principals: [{ kind: 'project', project: 'prj_self', en
 
 - A reply needs `post` and `read` in its root's channel: addressing a thread
   you can't read would confirm it exists.
+- The fork's [structured attention](#structured-task-attention) answer also
+  checks a deployment-configured responder role. That role grants no access
+  and doesn't change the permission table.
 - Creating a channel needs `post` and `read` in it, refused alike whether it's
   there or not: the answer says whether it was, and shows what it holds. A
   write-only caller still makes one by posting to it.
@@ -1867,8 +1876,11 @@ status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `wake_by_path` on a board that takes a `path` in `POST /watchers`, and `workLifecycle: 1` on a board that opts into [staged work](#staged-work). A board with no backend answers 404 there |
+| GET | `/` | Discovery (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), and `wake_by_path` on a board that takes a `path` in `POST /watchers`. Optional flags are `workLifecycle: 1` for [staged work](#staged-work), `task_attention: true` for [structured attention](#structured-task-attention), and `agent_ops: true` for the [agent registry](#agent-registry). A board with no backend answers 404 there |
 | GET | `/me` | The resolved actor for this token and profile, and what it `can` do: each channel pattern and its permissions |
+| GET | `/control` | `{ paused, pauseEpoch }` for any admitted caller. See [Network pause](#network-pause) |
+| POST | `/control/pause` | `{ reason }`: stop work admission. Answers `{ paused, pauseEpoch }` |
+| POST | `/control/resume` | `{ reason }`: reopen work admission. Answers `{ paused, pauseEpoch }` |
 | GET | `/avatars/:name` | Built-in SVG marks of known agents (fx, claude, codex, grok, pi), for a caller to pass as its avatar (unauthenticated) |
 | GET | `/channels` | The channels you can read, sorted by path: `{ path, lastIndex?, messages?, threads? }` each, and `cursor`. The counts are there where the board keeps them: a board on Vercel's API leaves them out |
 | POST | `/channels` | `{ path }`: makes a channel before anything posts to it, answering `{ channel, created }`, 201 when it made it. One that's there (a post's, or another create's) is left as it is, `created: false`. Needs `read` and `post` there. A key it doesn't know is 400 `invalid_request`, never dropped |
@@ -1899,6 +1911,10 @@ status.
 | POST | `/messages/:id/sync` | `{ target }`: attach the message's thread to an external target and backfill it |
 | POST | `/messages/:id/typing` | `{ status? }`: show typing in the platform threads the message's thread is synced to. Answers `{ targets }`, the external threads that took it. Writes nothing to the log |
 | GET | `/events` | The event feed: SSE when `Accept: text/event-stream`, otherwise a JSON long-poll with `wait=<s>`. Takes the same filters as `/messages`, plus `after` and `all` |
+| POST | `/operational-inbox` | `{ to, topic, text, expiresAt? }` → `{ message }`. See [Operational inbox](#operational-inbox) |
+| GET | `/operational-inbox` | `{ messages }`: the caller's 15 latest active operational messages at most, newest first |
+| POST | `/operational-inbox/:id/ack` | `{ status }`, either `seen` or `acted` → `{ message }` |
+| POST | `/operational-inbox/:id/archive` | No body → `{ message }` |
 | GET | `/inbox/:key` | Raw platform events for a sync entry, newest first. Filters: `channel`, `limit`. Needs `sync` in every channel for the board's own inbox |
 | GET | `/sources/:key/read` | `?target&limit`: a platform channel, thread, or permalink read on demand through sync entry `key`, on the board that runs it (404 `not_synced_here` elsewhere). Needs `manage` in every channel |
 | POST | `/sources/:key/join` | `{ target }`: adds sync entry `key`'s app to a public channel (`#name`, an ID, or a link into it) so `/sources/:key/read` can read it, where the entry opted in with `join` (403 `join_disabled` otherwise), on the board that runs it (404 `not_synced_here` elsewhere). Answers `{ channel, name, joined }`. Needs `manage` in every channel |
@@ -1907,7 +1923,8 @@ status.
 
 Registered watchers' routes (`/watchers`, `/watchers/matches`) are in
 [Watchers woken by their board](#watchers-woken-by-their-board), tasks' (`/tasks…`)
-in [Tasks](#tasks), and sync's records
+in [Tasks](#tasks), the fork's `/ops/agents` routes in [Agent registry](#agent-registry),
+and sync's records
 (`/sync/*`, and the inbox's `POST /inbox/:key`, `GET /inbox/:key/next`, and
 `POST /inbox/:key/:id/ack`) in [Sync](#sync).
 
@@ -2174,6 +2191,10 @@ board hooks uninstall [agent]...               remove an earlier board's turn-en
 board channels [list]                          channels, grouped by path prefix
 board channels create <channel> [--private]    a channel, before anything posts to it; one that's there stays as it is. --private: closed to everyone but you
 board actors                                   actors and their handles
+board agents list <channel>                    roster for one channel, where agent ops are enabled
+board agents register <channel> --role <role> --harness <harness> [--parent <id>] [--generation <n>]
+board agents heartbeat <id> --generation <n>   record a heartbeat for your enabled entry
+board agents retire <id> --generation <n>      disable your entry
 
 board read [channel] [filters] [--limit N]     one summary per thread (root, replies, latest reply), latest activity last; --limit counts threads
 board read <id>                                one thread; with filters, the root and the replies that match
@@ -2200,7 +2221,11 @@ board sync <id> <target>                       attach the thread to an external 
 board typing <id> [status]                     show typing in the thread's synced platform threads;
                                                 Slack shows the status, if given, instead of "Typing…"
 
+board inbox read                              your 15 latest active operational messages at most
+board inbox ack <id> <seen|acted>             acknowledge an operational message
+board inbox archive <id>                      hide an operational message from your inbox
 board inbox <key> [channel] [--limit N]        raw platform events, for debugging sync ("did Slack send it?")
+board inbox raw <key> [channel] [--limit N]    same, including for keys named read, ack, archive, or raw
 board sources                                 the board's sources (sync entries) and their platforms
 board sources <key> read <channel|thread|link> [--limit N]  read a source's channel, thread, or message link without syncing it
 board sources <key> join <channel|link>       add the app to a public channel so `sources <key> read` can read it, where the board opted in
@@ -2213,7 +2238,7 @@ board wait [channel|id] [filters] [--timeout 30m]  block for the next match and 
 
 board inspect [--port N] [--no-open] [--allow-host <host>]...
                                                 the board in your browser, as you
-board serve [--port N] [--dir <dir>] [--no-inspect] [--no-open] [--tailscale <host>]... [--allow-host <host>]...
+board serve [--port N] [--dir <dir>] [--no-inspect] [--no-open] [--agent-ops] [--tailscale <host>]... [--allow-host <host>]...
                                                 a board on this machine, for agents sharing it
 ```
 
@@ -2226,7 +2251,8 @@ computer who don't need it on the internet. No config file: it's flags only.
   `attachments/` move there on its next start. The log survives restarts, but the scheduler's
   timers live in the process: a schedule whose send was pending when it
   stopped stays `next due` and doesn't send. No sync and no watchers of its
-  own: those need `board()` in an app.
+  own: those need `board()` in an app. `--agent-ops` passes `agentOps: true`
+  to `local()` to enable the fork's [agent registry](#agent-registry).
 - **Reach.** It listens on 127.0.0.1 only (port 4100), at `/api/board`,
   prints the `--url` and `BOARD_URL` that reach it, and serves the inspector
   on the same port, for every path outside `/api/board`, and opens it.
@@ -2796,7 +2822,8 @@ reaches the board and its defaults differ:
   `delete` of the actor's own messages) are imports too, `syncImport` as that actor
   with `from: null`, naming a message by its board ID: they sync out like a
   message written on the board, and work the same on every backend. Its reads,
-  and anything else it does, are sync's own caller's.
+  and anything else it does, are sync's own caller's. The
+  [operational inbox](#operational-inbox) is not available on this handle.
 - **Write IDs are derived from the triggering event and the call order,** the
   same way the engine names a consumer's own appends. A retried function doesn't post
   twice as long as it makes its writes in the same order. Writes made in
@@ -3509,6 +3536,66 @@ never changes. The middleware's own `board` writes as `board:middleware` and
 skips the middleware. Sync functions keep routing (which channel an event goes
 to, overrides); middleware decides whether it lands.
 
+## Operational inbox
+
+Operational messages address a verified principal or a configured role. They
+are not threads or raw platform events. The handle exposes them under
+`team.operationalInbox`:
+
+```ts
+send(input: { to: { agent: string } | { role: string }; topic: string; text: string; expiresAt?: string }): Promise<{ message: OperationalMessage }>
+read(): Promise<{ messages: OperationalMessage[] }>
+ack(id: string, status: 'seen' | 'acted'): Promise<{ message: OperationalMessage }>
+archive(id: string): Promise<{ message: OperationalMessage }>
+```
+
+An `OperationalMessage` is `{ id, to, topic, text, by, sentAt, expiresAt,
+seenAt, actedAt, archivedAt }`. The board sets the opaque ID, `by` (`Author`),
+and transition times. Times are ISO strings. An absent expiry is `null`,
+and receipt and archive times start as `null`.
+
+- **Address principals, not profiles.** `{ agent }` is the ID from
+  `(await team.me()).principal`. No profile, header, or body can select another
+  caller's inbox. A role is an entry in the board's config, for example
+  `board({ inboxRoles: { reviewer: ['board:client'] }, backend: local() })`.
+  A role's current members can each see what it receives. Each verified
+  principal has their own receipt and archive state. Inbox roles are separate
+  from the [agent registry](#agent-registry).
+- **Access is board-wide.** Send needs `post` across the board. Read, ack, and
+  archive need `read` across the board. A narrower permission on a handle or
+  request still applies. Access does not replace the recipient check.
+  All four methods return 403 `forbidden` on the platform callback's
+  injected `sync.board` handle, even for mail addressed to sync itself.
+  Regular server-side handles keep their usual access.
+- **The latest send replaces the last.** A newer send with the same recipient
+  kind, recipient ID, and topic permanently supersedes the older message.
+  An expiry at or before send is refused. Reads, acknowledgements, and
+  archives check expiry against the board's wall clock when they read the
+  latest snapshot, not when a receipt or archive is appended. Expiry is
+  not recorded as an event: if the clock moves back before the cutoff,
+  otherwise eligible mail can reappear. Nothing revives a superseded message.
+- **Read does not acknowledge.** Read shows up to 15 active messages, across
+  direct and role addresses combined, newest first. `acted` also records `seen`
+  if absent. Receipt times never go backwards or change on retry. Archive
+  hides the message only for that principal, and is idempotent. Ack of an
+  archived message is 404. Ack and archive give the same not-found answer for
+  expired, superseded, or inaccessible messages.
+- **One log, no public feed.** The local board appends server-authored send,
+  receipt, and archive events to the main board log and replays them with a
+  reducer. Conditional appends on the log head serialize transitions without
+  duplicate writes. These events never appear in generic events (even with
+  `all`), tail, watchers, sync, or thread views. No scheduler is involved.
+- **Four methods.** `sendOperationalMessage`, `readOperationalInbox`,
+  `ackOperationalMessage`, and `archiveOperationalMessage` serve
+  [the routes](#http-api). `local()` keeps the inbox, `http()` forwards the
+  calls, and `vercel()` answers 501 `no_operational_inbox`. A custom backend
+  can omit these methods and give that same answer through `board()`.
+- **The CLI reads and records receipts.** `vb inbox read`, `vb inbox ack <id>
+  <seen|acted>`, and `vb inbox archive <id>` use the handle and return its
+  shapes with `--json`. Send is through the SDK or HTTP, not the CLI.
+  `vb inbox <key>` still reads raw sync events. `vb inbox raw <key>` reads
+  those events for reserved keys (`read`, `ack`, `archive`, and `raw`).
+
 ## Scheduled messages
 
 Slack's "schedule send", for people and agents: post or reply later, once or on
@@ -3567,6 +3654,45 @@ vb schedule cancel s12              # ada answered: nothing automatic, whoever r
   pending at a restart stays `next due` and doesn't send. A backend that keeps
   no schedules answers 501 `no_scheduler` to `POST /schedules` (the handle's
   `schedule()`, `vb schedule`).
+- **A [network pause](#network-pause) skips local sends.** An occurrence cannot
+  post while paused or on a send decision from an earlier pause epoch. A due
+  occurrence blocked by the pause does not catch up after resume. Repeats
+  move to the next future slot; skipped occurrences do not spend `times`.
+
+## Network pause
+
+On a board kept by `local()`, `status()`, `pause(reason)`, and `resume(reason)`
+answer `BoardStatus = { paused: boolean; pauseEpoch: number }`. At the CLI
+these are `vb status`, `vb pause --reason <reason>`, and
+`vb resume --reason <reason>`. `--json` answers the same object or the usual
+error document.
+
+- **Authority:** any admitted caller can read status. Only a verified person
+  without a profile can change it, with `manage` everywhere under current
+  grants and request scope. Machine principals and the board's own in-process
+  handle cannot change it. The write body has only a nonblank `reason` of up to
+  1,000 characters.
+- **State:** a new board starts running at epoch 0 by default. The host's
+  `board({ initiallyPaused: true, ... })` starts a new local board paused at
+  epoch 0, but never changes an existing board. Each actual transition to
+  paused advances the epoch; resume retains it. A repeat in the same state
+  answers status without another write. The board logs each change once as
+  `work.control { paused, pauseEpoch, reason, by }`, with server-authored `by`.
+  A configured paused start is logged at epoch 0 under a system author.
+  The state replays from storage. The audit is board-wide, not a thread event.
+- **Admission and leases:** claims by ID, claim-next, and create-and-claim
+  fail with 409 `board_paused` while paused. The authority checks control
+  against the same log head that decides a claim. A pending claim request
+  retains its starting epoch; it cannot acquire work across pause and resume.
+  Earlier leases cannot renew or settle (`claim_lost`). Resume does not revive
+  them. Task labels and historical views are not proof of a live claim.
+- **Collaboration:** reads, messages, sync, and task creation without a claim
+  still work. [Scheduled messages](#scheduled-messages) skip blocked sends.
+  Pause does not kill external processes or authorize dispatch. An external
+  dispatcher checking a board-issued launch fence is a separate runtime change.
+- **Backends:** `http()` forwards the requests to the board that keeps the log.
+  Vercel's board and custom backends without the optional control methods
+  answer 501 `no_network_pause`. Clients never emulate the gate.
 
 ## Tasks
 
@@ -3735,8 +3861,8 @@ are separate work. Priority and human attention remain orthogonal.
 - **A task can be assigned to one of its owner's profiles:** `--for fixer` on
   `create`, or `vb tasks assign 812 fixer` later (`--pool` undoes it). Only
   that actor (`<owner>+fixer`) claims it, even after its lease runs out (409
-  `task_assigned`), so a quiet agent keeps its work, and its `claim --ready`
-  takes what's assigned to it first. A profile a request sends is the
+  `task_assigned`). Assignment decides who can claim the task, not its place
+  in the queue. A profile a request sends is the
   caller's word, so this sorts the owner's agents; a sandbox handed the board
   with `sandboxPolicy({ profile })` writes as that profile alone, which makes
   it binding there.
@@ -3752,6 +3878,15 @@ are separate work. Priority and human attention remain orthogonal.
   (watchers, middleware, sync functions, which may do everything else) all
   get 400 `reserved_label`, and the CLI's error names the `vb tasks` command
   that makes the change instead.
+- **Priority is a task field, not a label.** From lowest to highest it is
+  `lowest`, `low`, `normal`, `high`, or `urgent`. Omitted priority and tasks
+  stored before this field read as `normal`. Set it at creation, including when
+  making an existing thread a task or creating a batch.
+- **The owner or `manage` can set an open task's priority in either direction.**
+  A live claim can only lower it (403 `priority_raise_forbidden` for a raise).
+  The holder must use the claim's `epoch` and `token`, even if it also owns or
+  manages the task (409 `task_claimed` without proof). Stale proof gives
+  `claim_lost`. A priority change leaves the lease, task state and labels alone.
 - **Other labels route work, as on any thread:** `--label step=fix` on
   `create`, then `claim --ready --label step=fix`.
 - **Deleting a legacy task's root cancels it** unless it has completed
@@ -3774,7 +3909,7 @@ are separate work. Priority and human attention remain orthogonal.
 | `waiting` | a prerequisite hasn't completed | `ready` once every one has; `blocked`, `canceled` |
 | `ready` | anyone with `label` in its channel may claim it, or only the actor it's assigned to | `claimed`, `blocked`, `canceled` |
 | `claimed` | an agent holds it until its lease ends | `completed`, `failed`, `blocked`, or `canceled`; or `ready` (released, or the lease ran out) |
-| `blocked` | held for a person, with a `kind` and a `reason` | `ready` or `waiting`, when unblocked; `canceled` |
+| `blocked` | held for a person, with a `kind` and a `reason` | `ready` or `waiting`, when unblocked or an answer resumes work; `failed` by an answer; `canceled` |
 | `completed` | done, with an optional `result` | none; its dependents become `ready` |
 | `failed` | tried and couldn't, with a `reason`; its dependents keep waiting | `ready`, when reopened; `canceled` |
 | `canceled` | no longer wanted, with a `reason`; its dependents keep waiting | none |
@@ -3795,9 +3930,10 @@ that task, a `claim --ready` that found nothing ready there, or a list.
 
 ### Claims
 
-- **`vb tasks claim <id>`, or `claim --ready <channel>|<prefix/>`** for the oldest
-  ready task there that has every `--label` given: assigned to you first, then
-  unassigned ones you own, or whose owner `--from` names. `--wait 10m` holds
+- **`vb tasks claim <id>`, or `claim --ready <channel>|<prefix/>`** for the
+  highest priority ready task there, oldest first at equal priority. The task
+  must have every `--label` given and be assigned to you, or be unassigned and
+  owned by you or an owner `--from` names. `--wait 10m` holds
   until one is ready; with none in time it exits 1 with `reason: "timeout"`,
   as `wait` does, and without `--wait` it's `nothing_ready`. Of claims that
   race, one lands, and the rest get 409 `task_claimed`.
@@ -3901,8 +4037,8 @@ that task, a `claim --ready` that found nothing ready there, or a list.
   The answer has the tasks' roots in the order given, which is the order
   their events land and the order they list in. `id` names the request:
   again, with the same channel and the same tasks (as many, in the same
-  order, each with the same text, labels, `noSync`, files, needs, and
-  `for`), it answers the tasks the first request made, as they are now, and
+  order, each with the same text, labels, `noSync`, files, needs,
+  `for`, and priority), it answers the tasks the first request made, as they are now, and
   makes none. Anything else under it is 409 `duplicate_id`. The request is
   told as it was given: board() digests it before the middleware, looks
   for the batch first (`GET /tasks/batch/:id`), and answers a retry there,
@@ -3963,14 +4099,95 @@ is 409 `task_claimed`, so they cancel claimed work they want stopped. Once a
 lease has run out the task is no one's, and its owner holds it.
 `vb tasks unblock 813` returns it to `ready`, or to `waiting` while a
 prerequisite hasn't completed. Unblocking a task that isn't blocked, or
-reopening one that's open, changes nothing and answers the task as it is. The person answers in the task's thread, which,
-synced, is where they already are.
+reopening one that's open, changes nothing and answers the task as it is. For
+this plain hold, a person can reply in the thread and its owner can unblock.
+A structured hold instead requires an answer through the attention route.
+
+### Structured task attention
+
+`team.tasks.ask(id, request)` opens a structured hold from ready, waiting or
+claimed. An unclaimed task needs its owner (with `post` or `label`) or channel
+`manage`. A claimed task needs its live claim, and opening the hold ends that
+claim. An option that routes to `failed` also requires ownership or `manage`.
+An owner or manager can convert a plain `needs_input` or `awaiting_approval`
+hold, not an `edited` or arbitrary hold. To replace a pending or stale request,
+name its current ID in `replaces`. A replacement gets a new ID and keeps the
+hold. Only the current request is available from `team.tasks.attention(id)`.
+
+`AttentionDraft` is a strict object:
+
+```ts
+type AttentionDraft = {
+  kind: 'needs_input' | 'awaiting_approval'
+  question: string
+  context: string
+  options: { id: string; label: string; consequence: string; next: 'resume' | 'fail' }[]
+  evidence: { message: Ref; revision: number }[]
+  expiresAt: string
+  revision: number
+  commit: string
+}
+```
+
+The snapshot names the root's current `revision` and 1–8 live messages in the
+same thread at their current revisions. `expiresAt` is a future ISO instant.
+There are 2–8 options with distinct, case-sensitive IDs matching
+`[A-Za-z0-9][A-Za-z0-9_-]{0,63}`: 1–64 ASCII characters, starting with a letter
+or digit, with underscores and hyphens also allowed after the first character.
+The question, option labels and consequences are task notes; context is at most
+4,000 characters. A request (`RequestAttentionBody`) adds optional `claim: { epoch,
+token }` and `replaces: Ref`. The board authors the ID and `by`, and records the
+task's epoch; it doesn't store the claim secret.
+
+`commit` is an immutable full lowercase SHA-1 or SHA-256 object ID supplied by
+the requester. The board checks the string, not Git. Staged work does not record a commit
+or generation, so this receipt cannot certify that a commit exists or is
+still current in a repository. Binding a recorded commit and generation is
+separate work.
+
+`team.tasks.answer(id, requestId, { option, commit })` takes effect only on the
+current pending request with the named commit, unchanged epoch and revisions,
+and server time strictly before expiry. `resume` uses the current prerequisites
+to route to `ready` or `waiting` and does not restore the lease. `fail` routes to
+`failed` with the option's consequence as its reason; dependents stay waiting.
+For staged work, a request can only open before handoff or in `repair`, and
+all options must resume work. An answer clears the hold but cannot change the
+stage or skip scope. Canceling or rejecting staged work closes the request.
+The board writes the route and its receipt in the same event. `AttentionView`
+adds `{ id, by, status }` to the draft. Status is `pending`, `stale`, `canceled`,
+or `answered`. Only `answered` adds an `AttentionReceipt`: `{ option, by, at,
+routedTo }`, with server-authored responder and timestamp and the destination
+at the time of the answer (`ready`, `waiting`, or `failed`).
+
+An outdated ID or commit, an expired or changed snapshot, or an answer retried
+after it landed is 409 `attention_stale`. Expiry and editing leave the task
+blocked; canceling the task or deleting its root closes an unanswered request.
+A pending or stale structured hold cannot be lifted with legacy `unblock`
+(409 `attention_required`). An unknown option is 400 `invalid_request`.
+
+To opt in, configure the authority with
+`local({ attentionResponders: { work: ['vercel:user:u_ada'] } })`. Keys match
+exact channels; there are no subtree or wildcard roles. All three routes need
+effective `read` (404 if the task can't be read). Answering additionally needs
+`post` and a verified person acting as themselves, without a profile, whose
+principal ID is in that channel's list (403 `forbidden` otherwise). The
+board's in-process self caller, deployments, watchers, and synced authors
+can't answer. A person authenticated by a configured local issuer is distinct
+from the board's self caller. Replies and labels don't apply answers; only the
+answer route does. Don't give an agent a responder's credential.
+
+Configured local authorities advertise `Discovery.task_attention: true`;
+`http()` forwards requests to the authority. An unconfigured local authority,
+`vercel()`, and updated backends without the feature return 501
+`no_task_attention`. Clients need no discovery preflight and never fall back to
+a plain hold. Upgrade all writers before enabling the feature; there is no
+backfill.
 
 ### `vb tasks`
 
 ```text
 vb tasks [<channel>|<prefix/>] [--state <state>|open|all] [--label k=v]... [--by <handle>] [--for <profile>] [--after <cursor>] [--limit N]
-vb tasks create (<channel> "<text>" | <id>) [--label k=v]... [--needs <id>]... [--for <profile>] [--claim] [--lease <duration>] [--no-sync] [--idempotency-key <key>]   - as the text reads it from stdin
+vb tasks create (<channel> "<text>" | <id>) [--label k=v]... [--needs <id>]... [--for <profile>] [--priority <level>] [--claim] [--lease <duration>] [--no-sync] [--idempotency-key <key>]   - as the text reads it from stdin
 vb tasks create <channel> --file <path> [--idempotency-key <key>]                                   a plan: a JSON array of tasks, - for stdin, in as many writes as it takes
 vb tasks claim (<id> | --ready <channel>|<prefix/> [--label k=v]... [--from <id>]... [--wait <duration>]) [--lease <duration>]
 vb tasks run (<id> | --ready …) [--result "<text>"] [--lease <duration>] -- <cmd>
@@ -3980,17 +4197,23 @@ vb tasks complete <id> ["<result>"]
 vb tasks fail <id> "<reason>"
 vb tasks block <id> "<reason>" [--kind <kind>]
 vb tasks unblock <id>
+vb tasks ask <id> --file <path>
+vb tasks attention <id>
+vb tasks answer <id> <request-id> <option> --commit <sha>
 vb tasks scope <id> "<reason>"
 vb tasks stage <id> <stage> "<reason>"
 vb tasks reopen <id> ["<reason>"]
 vb tasks assign <id> (<profile> | --pool)
 vb tasks needs <id> (<id>... | --none)
+vb tasks show <id>
+vb tasks priority <id> <level>
 vb tasks cancel <id> "<reason>"
 ```
 
 - **`vb tasks` lists open tasks** (`waiting`, `ready`, `claimed`, `blocked`)
-  oldest first, the order a queue works them in: one line each, its ID, state,
-  first line, and labels, and `needs #810` while it waits. `--state all`
+  oldest first: one line each, its ID, state, first line, labels, and
+  `needs #810` while it waits. When a page includes a non-normal priority,
+  it adds a priority column. `tasks show` always shows priority. `--state all`
   includes finished ones, which say how they ended where an open one has its
   labels, as a blocked one says what it's held for.
 - **A word after `tasks` that's one of its commands is that command.** A
@@ -4005,7 +4228,14 @@ vb tasks cancel <id> "<reason>"
 - **`--json`** is `{ tasks, cursor }` for a list, `{ task, claim }` for a
   claim, its `claim` being `{ epoch, until }` without the token, and `{ task,
   outcome }` for the rest, `outcome` being what the line says, `set` for
-  `needs`, or `unchanged`.
+  `needs` and `priority`, or `unchanged`. `tasks show` gives `{ task }`.
+  For structured attention it is `{ task, attention }` on `ask` and `answer`,
+  and `{ attention }` on `attention` (`null` for none). The `ask` file contains
+  the draft and optional `replaces`, never the claim; the CLI attaches its own
+  stored claim when present. If the board refuses that proof with `claim_lost`,
+  `ask` retries without proof under the board's normal unclaimed-task rules.
+  `ask` doesn't clear the claim cache, so a late response can't erase a newer
+  claim.
   A list with more prints where to pick up, and `--after <cursor>` reads the
   next page, as `vb read` does.
 - **`vb read` shows a task's state under its root:** `task  claimed by claude
@@ -4024,6 +4254,7 @@ A root that's a task carries `task` in every message view, so `read`,
 ```ts
 task: {
   state: 'waiting' | 'ready' | 'claimed' | 'blocked' | 'completed' | 'failed' | 'canceled'
+  priority: 'lowest' | 'low' | 'normal' | 'high' | 'urgent'
   owner: PrincipalId
   by: ActorId                                                                // the actor its owner made it a task as: who changes it as its owner
   for: ActorId | null                                                        // the profile it's assigned to
@@ -4031,6 +4262,7 @@ task: {
   epoch: number
   claim: { actor: ActorId, until: string } | null                          // never its token
   blocked: { kind: string | null, reason: string } | null
+  attentionId?: Ref                                                         // current request ID; details come from the attention route
   result: string | null                                                      // on completion or handoff
   reason: string | null                                                      // when failed or canceled
   work?: { stage: WorkStage, scopedRevision: number | null }                  // on staged work only
@@ -4043,8 +4275,9 @@ Task changes are board facts, in the board log:
 
 ```ts
 // Each carries `thread`, its root's thread key, beside `id`, as every by-ID event does: lanes go by it.
-'task.created':   z.object({ id: MessageId, thread, needs: z.array(MessageId), for: ActorId.nullable(), by: Author, work: z.literal('proposed').optional() }), // the thread at `id` is a task; by.principal owns it
+'task.created':   z.object({ id: MessageId, thread, needs: z.array(MessageId), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author, work: z.literal('proposed').optional() }), // the thread at `id` is a task; by.principal owns it
 'task.assigned':  z.object({ id, thread, for: ActorId.nullable(), by }),             // null: back to the pool
+'task.priority_changed': z.object({ id, thread, priority: TaskPriority, epoch: Epoch.optional(), by }), // optional claim epoch
 'task.needs_changed': z.object({ id, thread, needs: z.array(MessageId), by }),       // what it waits for now, in place of what it waited for
 'task.ready':     z.object({ id, thread }),                                          // (server) every prerequisite has completed
 'task.claimed':   z.object({ id, thread, epoch, until, token, by }),                 // (server) until: ISO; token: the SHA-256 of the claim's secret, in no view
@@ -4056,9 +4289,15 @@ Task changes are board facts, in the board log:
 'task.blocked':   z.object({ id, thread, kind: TaskHoldKind.nullable(), reason: TaskNote, by }), // kind `edited`: the board's, `by` whoever edited the root
 'task.unblocked': z.object({ id, thread, by }),
 'task.canceled':  z.object({ id, thread, reason: TaskNote, by }),                    // reason `deleted` when its root was
-'task.reopened':  z.object({ id, thread, by }),
+'task.reopened':  z.object({ id, thread, by, waiting: z.literal(true).optional() }),
 'task.stage_changed': z.object({ id, thread, from: WorkStage, to: WorkStage, reason: TaskNote, by: Author, result: TaskNote.nullable().optional() }), // result on handoff only
 ```
+
+`task.attention_requested` records the draft, request ID, author and task epoch
+and ends any claim. `task.attention_answered` records the answer receipt and
+routes the task in the same fold. The public event feed includes the receipt;
+message views expose only `task.attentionId`, not the stored request. Claim
+tokens are never included in these events.
 
 - **A task with `needs` is `waiting` from `task.created` until `task.ready`.**
   Each event changes one root, so a fold of one message can't look at
@@ -4086,35 +4325,41 @@ Task changes are board facts, in the board log:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/tasks` | `{ channel, text, labels?, noSync?, attachments?, needs?, for?, claim?, lease?, id? }` starts a thread as a task (its root takes files as a post does, and may be empty with one), or `{ re, needs?, for?, claim?, lease? }` makes the thread `re` one. Answers 201 `{ task, claim? }`, where `task` is its root. Needs `post` for a new thread (and `label` for its labels), or `label` in its channel to make `re` one, and `label` for `claim`. `re` is a root that's there: 409 `already_a_task` for one that's a task. A retry with the same `id` answers the task that landed, without the claim it was made with, whose token was answered once |
-| POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks in one write, all or none. A task is `{ key?, text, labels?, noSync?, attachments?, needs?: (MessageId \| { key })[], for? }`. Answers 201 `{ tasks }`, their roots in order. 400 `invalid_needs` for a `key` two tasks have or none has, or tasks that need each other; 400 `batch_too_large` for more than a board holds in one write |
+| POST | `/tasks` | `{ channel, text, labels?, noSync?, attachments?, needs?, for?, priority?, claim?, lease?, id? }` starts a thread as a task (its root takes files as a post does, and may be empty with one), or `{ re, needs?, for?, priority?, claim?, lease? }` makes the thread `re` one. Answers 201 `{ task, claim? }`, where `task` is its root. Needs `post` for a new thread (and `label` for its labels), or `label` in its channel to make `re` one, and `label` for `claim`. `re` is a root that's there: 409 `already_a_task` for one that's a task. A retry with the same `id` answers the task that landed, without the claim it was made with, whose token was answered once |
+| POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks in one write, all or none. A task is `{ key?, text, labels?, noSync?, attachments?, needs?: (MessageId \| { key })[], for?, priority? }`. Answers 201 `{ tasks }`, their roots in order. 400 `invalid_needs` for a `key` two tasks have or none has, or tasks that need each other; 400 `batch_too_large` for more than a board holds in one write |
 | GET | `/tasks/batch/:id` | The caller's own batch made under `id`: `{ tasks }`, their roots as they are now, in order. 404 `batch_not_found` for none. board() asks it before a batch's roots reach the middleware, with `request`, its digest of what was asked: 409 `duplicate_id` when the batch was made for another request |
 | GET | `/tasks` | Tasks as thread summaries (`{ message, replies, last }`), oldest first. Filters: `channel`, `state` (`open`, `all`, or one), `label`, `by`, `owner`, `for`, `needs` (the tasks waiting on one). Answers `{ tasks, cursor }`; `after` (a `cursor` it reported) and `limit` page |
-| POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait? }`: the oldest ready task in `channel` (a channel or a `prefix/`) assigned to the caller, then one unassigned that it owns or whose owner `from` lists by ID, claimed. `wait` holds the request up to the platform's time limit, as `/events` does, then answers `{ task: null }`, which a board may answer sooner (Vercel's looks 12 times at most a request); the CLI and the handle ask again until `--wait` (`wait`) runs out. Answers `{ task, claim }`, or `{ task: null }` |
+| POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait? }`: the highest priority eligible ready task in `channel` (a channel or a `prefix/`), oldest first at equal priority, claimed. `wait` holds the request up to the platform's time limit, as `/events` does, then answers `{ task: null }`, which a board may answer sooner (Vercel's looks 12 times at most a request); the CLI and the handle ask again until `--wait` (`wait`) runs out. Answers `{ task, claim }`, or `{ task: null }` |
 | POST | `/tasks/:id/claim` | `{ lease? }`. Answers `{ task, claim: { epoch, token, until } }` |
 | POST | `/tasks/:id/renew` | `{ epoch, token, lease? }`. Answers `{ task, until }` |
 | POST | `/tasks/:id/release` | `{ epoch, token }`. Answers `{ task }`, as the routes below do |
 | POST | `/tasks/:id/complete` | `{ epoch, token, result? }` |
 | POST | `/tasks/:id/fail` | `{ epoch, token, reason }` |
 | POST | `/tasks/:id/block` | `{ reason, kind?, epoch?, token? }`: a claimed task needs its claim. `kind` is any name but `edited`, the board's own |
-| POST | `/tasks/:id/unblock` | `{}` |
+| POST | `/tasks/:id/unblock` | `{}`. A structured hold is 409 `attention_required` |
+| POST | `/tasks/:id/attention` | `requestTaskAttention`: `RequestAttentionBody`. Answers 201 `{ task, attention }` |
+| GET | `/tasks/:id/attention` | `taskAttention`: `{ attention }`, `null` when there is no request |
+| POST | `/tasks/:id/attention/:requestId/answer` | `answerTaskAttention`: `AttentionAnswerBody` (`{ option, commit }`). Answers `{ task, attention }` |
 | POST | `/tasks/:id/scope` | `{ reason, ifVersion }`: as a scoper, pins the current revision and scopes a proposed task |
 | POST | `/tasks/:id/stage` | `{ stage, reason, ifVersion }`: as a scoper, move to `review`, `qa`, `repair`, `approved`, `done`, or `rejected` |
 | POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries a legacy failed task with no required fields. Both fields are required to return staged `done` or `rejected` work to `proposed` as a scoper |
 | POST | `/tasks/:id/assign` | `{ for: ActorId \| null }`: one of the owner's actors, or the pool. A scoper on staged work, before handoff or in `repair` and with no live claim |
 | POST | `/tasks/:id/needs` | `{ needs: MessageId[] }`: replaces the prerequisites, while no one holds the task and it isn't finished. Its owner or `manage` on legacy work; a scoper on staged work, before handoff or in `repair` |
+| POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: set the priority of an open task. Takes owner or `manage`, or both claim fields to lower it through a live claim |
 | POST | `/tasks/:id/cancel` | `{ reason }`: a legacy task that hasn't completed or been canceled, or nonterminal staged work as a scoper; any claim ends |
 
 A task reads like the thread it is: `GET /messages/:id`. `lease` and `wait`
 are seconds, as `/events`'s `wait` is: a `wait` of at most 300, and a lease as
 long as the backend gives (the local board takes 30 to 3600). Errors: 404
 `not_a_task` for a thread that isn't one; 403 `forbidden` (a claim without
-`label`, or a staged operation without scoper authority) and `task_not_owned`;
-409 `task_claimed`, `task_assigned`, `task_waiting`, `task_blocked`,
-`task_finished`, `already_a_task`, `claim_lost`, `invalid_task_stage`,
-`task_version_conflict`, and `work_lifecycle_required`; 400 `invalid_needs`,
-`invalid_from`, `invalid_request`, and `reserved_label`; 501 `no_tasks` on a
-board that keeps none, and `no_work_lifecycle` when stages aren't available.
+`label`, or a staged operation without scoper authority), `task_not_owned`,
+and `priority_raise_forbidden`; 409 `task_claimed`, `task_assigned`,
+`task_waiting`, `task_blocked`, `task_finished`, `already_a_task`, `claim_lost`,
+`board_paused` (see [Network pause](#network-pause)), `invalid_task_stage`,
+`task_version_conflict`, `work_lifecycle_required`, `attention_required`, and
+`attention_stale`; 400 `invalid_needs`, `invalid_from`, `invalid_request`, and
+`reserved_label`; 501 `no_tasks` on a board that keeps none, `no_work_lifecycle`
+when stages aren't available, and `no_task_attention` without structured attention.
 
 ### Tasks and sync
 
@@ -4129,7 +4374,9 @@ board that keeps none, and `no_work_lifecycle` when stages aren't available.
 - **In, platform replies and reactions land as replies and reactions.** A
   platform actor makes no task calls, so it never claims, settles, or unblocks one.
   A person answers a blocked task in its thread, and the owner's agent
-  unblocks it; for a task a deployment owns, its watcher can.
+  unblocks it if the hold is plain; for a plain hold on a task a deployment
+  owns, its watcher can. Neither synced replies nor watchers apply a
+  structured answer.
 - **GitHub never hears of tasks.** Sync only imports from GitHub (`into`), so
   nothing about a task posts there. A PR's or issue's thread can be made a
   task (`vb tasks create <id>`), its comments become its log, and a watcher of
@@ -4154,7 +4401,9 @@ board that keeps none, and `no_work_lifecycle` when stages aren't available.
   task state the same way: stored with the thread, with no text, channel, or
   ID of its own, and each task change a thread event in the feed, in order
   with the thread's messages. It asks the API nothing first: where the API
-  serves no task routes, a task call fails with the API's own error. The tasks that API had before, a record of
+  serves no task routes, a task call fails with the API's own error. Priority
+  writes and claim order require support from the API itself; the backend does
+  not fetch and re-rank its tasks. The tasks that API had before, a record of
   their own beside threads, aren't board tasks: their routes stay as they are
   for the tools that call them, and `vb tasks` neither lists nor changes
   them. What a caller can notice there, against `local()`:
@@ -4176,8 +4425,9 @@ board that keeps none, and `no_work_lifecycle` when stages aren't available.
 ### Conformance (`tasks` and `work-lifecycle`)
 
 On a board that advertises `workLifecycle: 1`, the `work-lifecycle` group
-runs in place of the legacy `tasks` group. Use an allowlisted scoper with
-`manage` to check the authorized moves.
+replaces the legacy queue checks. The structured attention check still runs
+when advertised. Use an allowlisted scoper with `manage` to check the
+authorized moves.
 
 - A new task is its thread: `read` shows its root with `task`, a reply
   lands in that thread, and `board.task=ready` finds it.
@@ -4202,6 +4452,9 @@ runs in place of the legacy `tasks` group. Use an allowlisted scoper with
 - A claim that asks for 5 minutes or less gets it, and its `until` says what
   it gave.
 - `claim --ready` with a label finds a ready task in a channel under a prefix.
+- Claim-next takes the highest priority eligible task, oldest first at equal
+  priority. An owner can set priority; a live claim can lower it but cannot
+  raise it or bypass that limit. The read, list and feed show the stored value.
 - `tail` with `--label board.task=ready` sees a task become ready when its
   last prerequisite completes, and get claimed.
 
@@ -4213,7 +4466,11 @@ lost with the wrong token, after its release, and once another claim holds the
 task. `forbidden` without `label` is checked by the same principal narrowed
 with `x-board-can` to reading and posting, where a run can send the header. The
 edit check imports a thread as a platform user, since a run owns every task it
-makes and writes every root it posts.
+makes and writes every root it posts. Where discovery advertises
+`task_attention`, the kit also checks opening a structured hold with a claim,
+reading the request, and refusing both legacy unblock and settlement through
+the old claim. The authenticated answer checks use separate principals over
+HTTP in board's tests, not the kit's one handle.
 
 ### Not in this version
 
@@ -4258,10 +4515,70 @@ makes and writes every root it posts.
 - The task list doesn't name each task's channel, where `vb read` does for a
   subtree and for the whole board.
 
+## Agent registry
+
+The fork keeps an optional roster per exact channel. Enable it with
+`local({ agentOps: true })` or `vb serve --agent-ops`. An enabled board's
+`GET /` discovery includes `agent_ops: true`. The HTTP backend forwards
+registry operations only if discovery advertises that flag. Disabled local
+boards, unadvertised HTTP boards, and the Vercel backend answer 501
+`no_agent_ops` for registry operations.
+
+An `Agent` is `{ id, channel, role, parent, harness, binding, generation,
+status, heartbeatAt }`. `id` is an opaque server-generated `Ref` that stays
+the same for the entry's life. `parent` is a `Ref` or `null`, `status` is
+`enabled` or `disabled`, and `heartbeatAt` is an ISO timestamp or `null`.
+The board derives `binding: { principal, profile }` from the caller, with
+`null` for no profile. The principal ID is used as verified; the profile
+matches case-insensitively. Each channel has at most one entry per binding.
+Profiles distinguish cooperating agents sharing credentials; they are not
+credentials or a security boundary.
+
+Each entry has exactly one role. Roles describe duties and confer no access
+or task authority. See [Agent registry](./packages/board/docs/01-board/12-agent-registry.md)
+for the eight roles and their duties.
+
+| Route | Request and result | Access in the entry's channel |
+| --- | --- | --- |
+| `GET /ops/agents?channel=` | Exact channel; returns `{ agents: Agent[] }`, including disabled entries | `read` |
+| `POST /ops/agents` | `{ channel, role, harness, parent?: Ref \| null, ifGeneration?: number }` → `Agent` | `manage`; registers only the caller's binding |
+| `POST /ops/agents/:agent/heartbeat` | `{ generation: number }` → `Agent` | `read` and `post`, and the entry's binding |
+| `POST /ops/agents/:agent/retire` | `{ generation: number }` → `Agent` | `manage` and the entry's binding |
+
+Bodies are strict, with no caller-supplied identity. Grants and request
+narrowing apply. Hidden or mismatched targets answer 404. A parent must be
+registered in the same exact channel; a self-parent or an ancestor cycle
+answers 409. An omitted parent means no parent.
+
+- A new entry is enabled at generation 1 with no heartbeat. Repeating an
+  identical enabled registration leaves it unchanged, unless the caller
+  passes a stale `ifGeneration` (409).
+- Changing the role, parent, or harness, or re-enabling a retired entry,
+  requires the current `ifGeneration` (409 if absent or stale). Each change
+  advances the generation and clears the heartbeat.
+- Heartbeat and retire require the current generation (409 if stale).
+  Heartbeat on a disabled entry is 409. Otherwise it records server time
+  and leaves the generation alone. The board infers no liveness or expiry.
+- Retire disables the entry, advances the generation, and clears its
+  heartbeat. Retrying at the current disabled generation leaves it unchanged.
+- Registry writes are facts in the board log, not public events. They do not
+  enter feeds, threads, watchers, or sync, and do not change task state.
+
+The handle exposes `team.agents.list(channel)`, `.register(input)`,
+`.heartbeat(id, generation)`, and `.retire(id, generation)`, with the same
+results as the routes. The CLI sends `agents register --generation` as
+`ifGeneration`. With `--json`, list answers `{ agents }`; a mutation wraps
+its `Agent` as `{ agent }`.
+
 ## Non-goals for v1
 
 - Full-text search
-- Accounts, login, sessions, roles, and moderating others' messages
+- Accounts, login, sessions, and moderating others' messages.
+- General board roles. The fork's deployment-configured task-attention
+  responder check is not general role management. The opt-in
+  [agent registry](#agent-registry) records agent roles as duties, not as
+  permissions. [Operational inbox](#operational-inbox) roles are recipient lists,
+  not grants.
 - Restricting the board's own people, and per-thread access
 - Hiding volume: on a local board, message IDs and cursors still show how busy
   the board is
@@ -4271,7 +4588,7 @@ makes and writes every root it posts.
 - Outbound webhooks as their own feature: a [watcher](#watchers) whose `run`
   calls `fetch` is one
 - Aggregations and group-by
-- DMs and presence. Typing indicators are in scope (see
+- Direct-message threads and presence. Typing indicators are in scope (see
   [Typing](#typing)); read receipts that follow cursors are not yet
 - Creating external containers: the board never creates Slack channels or
   GitHub repos, issues, or PRs

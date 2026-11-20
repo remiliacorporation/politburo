@@ -16,6 +16,10 @@ export type WriteOrigin = {
   via?: Via
   respond?: (text: string) => Promise<void>
   schedule?: { id: number; n: number }
+  /** The work epoch in which this in-process schedule send was admitted. Never taken from HTTP. */
+  scheduleEpoch?: number
+  /** Epoch held before screening a local create-and-claim. Never taken from HTTP. */
+  claimEpoch?: number
 }
 
 /**

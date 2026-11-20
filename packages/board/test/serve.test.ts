@@ -154,6 +154,19 @@ describe('vb serve', () => {
   /** Who you are on a local board: this machine's user, as its local token names you. */
   const me = localHandle()
 
+  it.each([false, true])('advertises agent operations only with --agent-ops (flag: %s)', async (enabled) => {
+    const home = await tmp('serve-agents-home-')
+    const env = { HOME: home, XDG_CONFIG_HOME: home }
+    const server = serveIn(await tmp('serve-agents-project-'), env, enabled ? ['--no-inspect', '--agent-ops'] : ['--no-inspect'])
+    const response = await fetch(await server.url)
+    expect(response.status).toBe(200)
+    const discovery = await response.json()
+    if (enabled) expect(discovery).toHaveProperty('agent_ops', true)
+    else expect(discovery).not.toHaveProperty('agent_ops')
+    server.child.kill('SIGINT')
+    expect(await server.exited).toBe(0)
+  })
+
   it('runs a board here, says how to reach it, and keeps its log across runs', async () => {
     const { project, env } = await setup()
     const first = serveIn(project, env)

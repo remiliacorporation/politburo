@@ -92,6 +92,20 @@ describe("sandboxPolicy() on a board this deployment keeps", () => {
     expect(network.blocked).toEqual(['example.com'])
   })
 
+  it('does not give a sandbox access to its deployment’s operational inbox', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    const team = testBoard({ url: BOARD_URL })
+    const token = await deploymentToken('board', PROJECT_ID, 'production', { audience: BOARD_URL })
+    const network = sandboxNetwork(await team.sandboxPolicy({ token, profile: { name: 'fixer' } }), team.fetch)
+    const agent = board({ backend: http(BOARD_URL, { fetch: network.fetch }) }).as(null)
+    expect((await agent.me()).can).toMatchObject({ '*': expect.arrayContaining(['read', 'post']) })
+    const inbox = agent.operationalInbox
+    await expect(inbox.read()).rejects.toMatchObject({ status: 403 })
+    await expect(inbox.send({ to: { role: 'reviewer' }, topic: 'review', text: 'review this' })).rejects.toMatchObject({ status: 403 })
+    await expect(inbox.ack('1', 'seen')).rejects.toMatchObject({ status: 403 })
+    await expect(inbox.archive('1')).rejects.toMatchObject({ status: 403 })
+  })
+
   it("reads can left out as read, post, react, and label everywhere, and refuses a can or profile that isn't one", async () => {
     vi.stubEnv('VERCEL_ENV', 'production')
     const team = testBoard({ url: BOARD_URL })

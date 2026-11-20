@@ -86,6 +86,35 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 
+describe('task priority', () => {
+  it('publishes all five priorities in the creation and change schemas', async () => {
+    const { ada } = setup()
+    const api = await ada('GET', '/openapi.json')
+    expect(api.status).toBe(200)
+    const schema = (path: string) => api.body.paths[path].post.requestBody.content['application/json'].schema
+    const levels = ['lowest', 'low', 'normal', 'high', 'urgent']
+    expect(schema('/tasks').properties.priority.enum).toEqual(levels)
+    expect(schema('/tasks/batch').properties.tasks.items.properties.priority.enum).toEqual(levels)
+    expect(schema('/tasks/{id}/priority').properties.priority.enum).toEqual(levels)
+  })
+
+  it('lets a manager raise priority without disturbing a different holder', async () => {
+    const { ada, bo, board } = setup()
+    const agent = web(board)
+    const root = await task(ada, 'check the release', { priority: 'low' })
+    const held = await claim(agent, root.id)
+    const path = `/tasks/${root.id}/priority`
+    expect(code(await agent('POST', path, { priority: 'high' }))).toEqual([403, 'task_not_owned'])
+    expect(code(await agent('POST', path, { priority: 'high', epoch: held.epoch }))).toEqual([400, 'invalid_request'])
+    const raised = await bo('POST', path, { priority: 'high' })
+    expect(raised.status).toBe(200)
+    expect(raised.body.task).toMatchObject({ labels: { 'board.task': 'claimed' }, task: { priority: 'high', claim: { actor: WEB, until: held.until } } })
+    const lowered = await agent('POST', path, { priority: 'normal', epoch: held.epoch, token: held.token })
+    expect(lowered.status).toBe(200)
+    expect(lowered.body.task.task.priority).toBe('normal')
+  })
+})
+
 describe('a task', () => {
   it('is a thread: its root says what, wears its state as board.task, and reads like any message', async () => {
     const { ada, bo } = setup()
@@ -93,7 +122,7 @@ describe('a task', () => {
     expect(made.status).toBe(201)
     const root = made.body.task as MessageView
     expect(root).toMatchObject({ channel: 'work', text: 'fix CVE-123 in acme/web', re: null, by: { actor: ADA }, labels: { step: 'fix', 'board.task': 'ready' } })
-    expect(root.task).toEqual({ state: 'ready', owner: ADA, by: ADA, for: null, needs: [], epoch: 0, claim: null, blocked: null, result: null, reason: null })
+    expect(root.task).toEqual({ state: 'ready', priority: 'normal', owner: ADA, by: ADA, for: null, needs: [], epoch: 0, claim: null, blocked: null, result: null, reason: null })
     expect(made.body.claim).toBeUndefined()
 
     // Anyone who reads the channel reads it, replies in it, and finds it by its state.
@@ -121,9 +150,9 @@ describe('a task', () => {
     const { ada, bo } = setup()
     const issue = (await bo('POST', '/messages', { channel: 'issues', text: 'export times out past 10k rows', labels: { kind: 'bug' } })).body.message
     const reply = (await bo('POST', '/messages', { re: issue.id, text: 'still happening' })).body.message
-    const made = await ada('POST', '/tasks', { re: issue.id })
+    const made = await ada('POST', '/tasks', { re: issue.id, priority: 'high' })
     expect(made.status).toBe(201)
-    expect(made.body.task).toMatchObject({ id: issue.id, text: 'export times out past 10k rows', by: { actor: BO }, labels: { kind: 'bug', 'board.task': 'ready' }, task: { state: 'ready', owner: ADA } })
+    expect(made.body.task).toMatchObject({ id: issue.id, text: 'export times out past 10k rows', by: { actor: BO }, labels: { kind: 'bug', 'board.task': 'ready' }, task: { state: 'ready', priority: 'high', owner: ADA } })
 
     expect(code(await ada('POST', '/tasks', { re: issue.id }))).toEqual([409, 'already_a_task'])
     expect(code(await bo('POST', '/tasks', { re: issue.id }))).toEqual([409, 'already_a_task'])
@@ -1148,14 +1177,14 @@ describe('claiming the next ready task', () => {
     expect(await stateOf(bo, hers.id)).toBe('ready')
   })
 
-  it('takes one assigned to the caller before an older one from the pool', async () => {
+  it('takes the oldest at equal priority, excluding tasks assigned to someone else', async () => {
     const { ada, board } = setup()
     const fixer = person(board, 'ada', { 'x-board-profile': 'fixer' })
     const pool = await task(ada, 'anyone can do this')
-    const reviewers = await task(ada, 'for the reviewer', { for: `${ADA}+reviewer` })
+    const reviewers = await task(ada, 'for the reviewer', { for: `${ADA}+reviewer`, priority: 'urgent' })
     const mine = await task(ada, 'for the fixer', { for: `${ADA}+fixer` })
-    expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body.task.id).toBe(mine.id)
     expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body.task.id).toBe(pool.id)
+    expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body.task.id).toBe(mine.id)
     expect((await fixer('POST', '/tasks/claim', { channel: 'work' })).body).toEqual({ task: null })
     expect(await stateOf(ada, reviewers.id)).toBe('ready')
   })
@@ -1562,7 +1591,7 @@ describe('task events', () => {
     ])
     // IDs are refs, and who did it is there: an actor, with no session.
     const [created, , , claimed] = tasks
-    expect(created!.payload).toEqual({ id: first.id, thread: first.thread, needs: [], for: null, by: { actor: ADA, principal: ADA, profile: null } })
+    expect(created!.payload).toEqual({ id: first.id, thread: first.thread, needs: [], for: null, priority: 'normal', by: { actor: ADA, principal: ADA, profile: null } })
     expect(tasks[1]!.payload).toMatchObject({ needs: [first.id] })
     expect(claimed).toMatchObject({ payload: { id: first.id, epoch: 1, until: at(15 * MINUTE), by: { actor: `${ADA}+fixer`, principal: ADA, profile: 'fixer' } }, actor: { id: `${ADA}+fixer`, handle: 'u_ada/fixer' } })
     expect(claimed!.payload).not.toHaveProperty('session')

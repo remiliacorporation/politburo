@@ -2,7 +2,7 @@ import { isScheduleId } from '../src/cli/main.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { serve } from './http.ts'
 import { personToken, testBoard } from './harness.ts'
-import { fakeQueue } from './queue.ts'
+import { backgroundWork, fakeQueue } from './queue.ts'
 import { url, useBoard, vb } from './cli-harness.ts'
 
 useBoard()
@@ -13,6 +13,7 @@ describe('cli schedules', () => {
     const scheduled = await serve(testBoard({ url: undefined, scheduler: queue.scheduler }).fetch)
     const board = `${scheduled.origin}/api/board`
     const as = { BOARD_URL: board, BOARD_TOKEN: await personToken('u_julian', board) }
+    const work = backgroundWork()
     try {
       const root = (await vb(['post', 'dev', 'PR #12 is open'], as)).stdout.trim()
       const once = await vb(['schedule', root, 'friendly ping: review?', '--in', '1s'], as)
@@ -35,9 +36,13 @@ describe('cli schedules', () => {
       expect((await vb(['schedules', '--by', 'me', '--as', 'claude'], as)).stdout).toMatch(new RegExp(`^${theirs}  new thread in elsewhere`))
       expect((await vb(['schedule', 'cancel', theirs, '--as', 'claude'], as)).stdout).toBe(`canceled ${theirs}\n`)
 
-      await new Promise((resolve) => setTimeout(resolve, 1100))
+      // Let the board arm the timer, move its clock, then wait for the delivery's drain.
+      await work.settled()
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.now() + 1_000)
       await queue.fire()
-      await vi.waitFor(async () => expect((await vb(['read', root], as)).stdout).toMatch(/↳ #\d+  u_julian · \d+s · scheduled s1\n {4}friendly ping: review\?/))
+      await work.settled()
+      expect((await vb(['read', root], as)).stdout).toMatch(/↳ #\d+  u_julian · \d+s · scheduled s1\n {4}friendly ping: review\?/)
 
       // What `schedules` prints cancels it, as do the bare number an older client sends and the `ss2` an older CLI prints.
       expect((await vb(['schedule', 'cancel', id], as)).stdout).toBe(`canceled ${id}\n`)
@@ -54,6 +59,8 @@ describe('cli schedules', () => {
       expect(await vb(['schedule', root, 'when?'], as)).toMatchObject({ code: 2, stderr: expect.stringMatching(/^error: Can't schedule a message without a time: pass --in 1d, --at <time>, or --every 30m\.\n/) })
       expect((await vb(['schedule', root, 'x', '--at', 'soonish'], as)).code).toBe(2)
     } finally {
+      vi.useRealTimers()
+      work.stop()
       await scheduled.close()
     }
   }, 30_000)
