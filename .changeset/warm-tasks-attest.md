@@ -9,3 +9,5 @@ The five work evidence methods are optional on custom backends. Unimplemented me
 The four work evidence events wake matching local watchers. Conformance on a release-only board requires a successful explicit resolution.
 
 The CLI escapes control characters in evidence text and keeps the selected board and profile flags in evidence recovery commands.
+
+Leases and evidence releases are checked when a write lands, not before: a claim, renewal, submission, completion, resolution, unblock, unpark, or reopen that waits to append while its lease or verdict expires fails or routes to waiting, as it would have a moment later. These writes test only prerequisites the caller can read. An HTTP handle never follows a redirect on a completion that names a commit, a custom backend without `workEvidence` gets 501 `no_work_evidence` for one, and a board that advertises gates and releases can be checked with `conformance(board, { workEvidence: { second } })`.

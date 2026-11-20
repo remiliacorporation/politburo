@@ -11,6 +11,7 @@ const conflict = (code: string, message: string) => new HttpError(409, code, mes
 const stale = () => conflict('stale_candidate', 'the commit and round must name the current submission')
 
 type Root = Message & { task: Task }
+export type UnreadableEdge = 'missing' | 'skip'
 
 export function createEvidence(policy: EvidencePolicy | undefined) {
   const required: Gate[] = !policy || policy.gates === false ? [] : ['submission', 'tests', 'review']
@@ -47,6 +48,15 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
     return state !== null && (state.submission.id === evidenceId || Object.values(state.evidence).some((record) => record.id === evidenceId && record.verdict === 'pass' && unexpired(record, now)))
   }
 
+  function satisfied(task: Task, needs: ReadonlyMap<number, Message>, access: Access | undefined, now: number, unreadable: UnreadableEdge): boolean {
+    return task.needs.every((id) => {
+      const need = needs.get(id)
+      // Claims fail closed. Routing skips hidden edges so it cannot reveal their verdicts.
+      if (need && access && !access.readable(need.channel)) return unreadable === 'skip'
+      return passing(need, task.releases?.[id], now)
+    })
+  }
+
   return {
     capability,
     releaseDependencies,
@@ -64,58 +74,63 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
       if (root.task.evidence?.submission.round === root.task.epoch) throw conflict('already_submitted', 'this claim already submitted work; a new claim starts a new round')
       return [{ type: 'task.work_submitted', payload: { id: root.id, thread: root.thread, by: identity.author, round: root.task.epoch, revision: root.revision ?? root.id, commit, artifactRef } }]
     },
-    record(root: Root, identity: Identity, { commit, round, gate, verdict, artifactRef, expiresAt }: Protocol['recordEvidence']['input'], pauseEpoch: number): Events {
+    attestation(root: Root, pauseEpoch: number, expiresAt: string | undefined, now: number) {
+      return { current: currentEvidence(root, now, pauseEpoch) !== null, fresh: unexpired({ expiresAt: expiresAt ?? null }, now) }
+    },
+    record(root: Root, identity: Identity, { commit, round, gate, verdict, artifactRef, expiresAt }: Protocol['recordEvidence']['input'], pauseEpoch: number, now: number): Events {
       role(identity, root.channel, 'post', attesters.get(gate))
-      const now = Date.now()
       const state = candidate(root, { commit, round }, now, pauseEpoch)
       if (gate === 'review' && state.submission.by.principal === identity.principal.id) throw forbidden('the reviewer must be a different principal from the submitter')
       future(expiresAt, now)
       return [{ type: 'task.work_evidence', payload: { id: root.id, thread: root.thread, by: identity.author, commit, round, gate, verdict, artifactRef, expiresAt: expiresAt ?? null } }]
     },
-    override(root: Root, identity: Identity, { commit, round, gate, reason, expiresAt }: Protocol['overrideEvidence']['input'], pauseEpoch: number): Events {
+    override(root: Root, identity: Identity, { commit, round, gate, reason, expiresAt }: Protocol['overrideEvidence']['input'], pauseEpoch: number, now: number): Events {
       role(identity, root.channel, 'manage', operators)
-      const now = Date.now()
       candidate(root, { commit, round }, now, pauseEpoch)
       future(expiresAt, now)
       return [{ type: 'task.work_override', payload: { id: root.id, thread: root.thread, by: identity.author, commit, round, gate, reason, expiresAt } }]
     },
-    complete(root: Root, commit: string | undefined, pauseEpoch: number) {
-      if (!enabled && commit !== undefined) throw noWorkEvidence()
-      if (!required.length && commit === undefined) return
-      const now = Date.now()
+    completion(root: Root, commit: string | undefined, pauseEpoch: number, now: number): HttpError | null {
+      if (!enabled && commit !== undefined) return noWorkEvidence()
+      if (!required.length && commit === undefined) return null
       const state = currentEvidence(root, now, pauseEpoch)
-      if (!state || commit === undefined) throw conflict('evidence_required', 'completion requires a current submission and its full commit ID')
-      if (state.submission.commit !== commit) throw stale()
+      if (!state || commit === undefined) return conflict('evidence_required', 'completion requires a current submission and its full commit ID')
+      if (state.submission.commit !== commit) return stale()
       for (const gate of required) {
         if (gate === 'submission') continue // Overrides cannot create a submission.
         const record = state.evidence[gate]
         const waiver = state.overrides[gate]
         if (!(record?.verdict === 'pass' && unexpired(record, now)) && !(waiver && unexpired(waiver, now)))
-          throw conflict('evidence_required', `completion requires current passing ${gate} evidence or an override`)
+          return conflict('evidence_required', `completion requires current passing ${gate} evidence or an override`)
       }
+      return null
     },
-    satisfied(task: Task, needs: ReadonlyMap<number, Message>, access?: Access): boolean {
-      const now = Date.now()
-      return task.needs.every((id) => {
-        const need = needs.get(id)
-        // For a claim, an unreadable prerequisite is missing: don't check its evidence.
-        return passing(need && (!access || access.readable(need.channel)) ? need : undefined, task.releases?.[id], now)
-      })
-    },
-    resolve(root: Root, identity: Identity, { needId, evidenceId, ifVersion }: Protocol['resolveWorkEdge']['input'], needs: ReadonlyMap<number, Message>): Events {
+    satisfied,
+    resolve(root: Root, identity: Identity, { needId, evidenceId, ifVersion }: Protocol['resolveWorkEdge']['input'], needs: ReadonlyMap<number, Message>) {
       role(identity, root.channel, 'manage', resolvers)
       if ((root.version ?? root.id) !== ifVersion) throw conflict('stale_task', 'the task changed; read it before resolving the edge')
       const id = indexOf(needId)
       const need = id === null ? undefined : needs.get(id)
-      if (!need || !identity.principal.access.readable(need.channel) || need.deleted) throw notFound('prerequisite not found', 'need_not_found')
-      const now = Date.now()
-      if (!passing(need, evidenceId, now)) throw conflict('invalid_evidence', 'resolution requires current passing evidence from that completed prerequisite')
-      if (root.task.releases?.[need.id] === evidenceId) return []
-      const about = { id: root.id, thread: root.thread }
-      const events: Events = [{ type: 'task.work_resolved', payload: { ...about, needId: need.id, evidenceId, by: identity.author } }]
-      if (root.task.state === 'waiting' && root.task.needs.every((needed) => passing(needs.get(needed), needed === need.id ? evidenceId : root.task.releases?.[needed], now)))
-        events.push({ type: 'task.ready', payload: about })
-      return events
+      const { access } = identity.principal
+      if (!need || !access.readable(need.channel) || need.deleted) throw notFound('prerequisite not found', 'need_not_found')
+      const same = root.task.releases?.[need.id] === evidenceId
+      const others = { ...root.task, needs: root.task.needs.filter((id) => id !== need.id) }
+      const verdict = (now: number) => ({
+        named: passing(need, evidenceId, now),
+        ready: !same && root.task.state === 'waiting' && satisfied(others, needs, access, now, 'skip'),
+      })
+      return {
+        verdict,
+        events({ named, ready }: ReturnType<typeof verdict>): Events {
+          if (!named) throw conflict('invalid_evidence', 'resolution requires current passing evidence from that completed prerequisite')
+          if (same) return []
+          const about = { id: root.id, thread: root.thread }
+          return [
+            { type: 'task.work_resolved', payload: { ...about, needId: need.id, evidenceId, by: identity.author } },
+            ...(ready ? [{ type: 'task.ready' as const, payload: about }] : []),
+          ]
+        },
+      }
     },
   }
 }

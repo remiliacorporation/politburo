@@ -100,7 +100,7 @@ export type AppendGuard = <T>(check: () => void, append: () => Promise<T>) => Pr
 export type BoardStore = {
   /** The board's A2 store. */
   readonly log: A2Store
-  readonly guardAppend?: AppendGuard
+  readonly guardAppend: AppendGuard
   readonly tables: MessageTables
   close(): Promise<void>
 }

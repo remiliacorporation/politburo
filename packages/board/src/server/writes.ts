@@ -41,7 +41,7 @@ export type WriteContext = {
   /** The board's tables, where writes check what they write to. */
   reads: BoardReads
   work: ReturnType<typeof createControl>
-  guardAppend?: AppendGuard | undefined
+  guardAppend: AppendGuard
 }
 
 
@@ -646,7 +646,6 @@ export async function appendFrom(ctx: WriteContext, look: () => Promise<{ positi
     if (events.length === 0) return []
     const append = () => appendIfLast(ctx.session, position, events)
     if (!check) return append()
-    if (!ctx.guardAppend) throw new Error('the board store cannot guard an append')
     return ctx.guardAppend(check, append)
   })
 }

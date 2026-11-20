@@ -13,7 +13,7 @@ import { DEFAULT_TASK_PRIORITY, OPEN_TASK_STATES, priorityRank, TASK_BATCH_MAX, 
 import { batchPlan, type BatchNeed } from '../contract/task-batch.ts'
 import { authorize, type Access, type Permission } from './access.ts'
 import { badRequest, batchTooLarge, forbidden, HttpError, noWorkEvidence, notFound } from './errors.ts'
-import { createEvidence } from './evidence.ts'
+import { createEvidence, type UnreadableEdge } from './evidence.ts'
 import { indexOf, ref, toMessageFilter, view, whoIs } from './feed.ts'
 import type { MessageFilter, ThreadSummary } from '../store/types.ts'
 import { appendFrom, authorizeMessage, movedOn, ownedBy, seenFor, untilApplied, type Along, type AlongEach, type Events, type Identity, type WriteContext } from './writes.ts'
@@ -67,6 +67,14 @@ type Root = Message & { task: Task }
 
 type AttentionChange = { task: MessageView; attention: AttentionView }
 type TaskChange = Events | { events: Events; check: () => void }
+type EdgeOptions = { access?: Access; but?: number; unreadable?: UnreadableEdge }
+
+/** The head fences the log, not the clock: re-run the verdict at append time and look again if time changed it. */
+function atAppend<T>(verdict: (now: number) => T) {
+  const now = Date.now()
+  const decided = verdict(now)
+  return { now, decided, check: () => { if (!isDeepStrictEqual(verdict(Date.now()), decided)) throw movedOn() } }
+}
 
 /** What a claim's own writes show: the `epoch` and `token` its claim answered. */
 type Proof = { epoch: number; token: string }
@@ -110,6 +118,14 @@ export const claimFenced = (task: Task, status: WorkState) => status.paused || s
 
 /** Whether a task's claim has run out its lease or was fenced: it's claimable at once, whatever its label still says. */
 const lapsed = (task: Task, at: number, pauseEpoch: number) => task.state === 'claimed' && (stale(task, pauseEpoch) || Date.parse(task.claim!.until) <= at)
+const holds = (task: Task, pauseEpoch: number) => (now: number) => !lapsed(task, now, pauseEpoch)
+
+function heldAtAppend(task: Task, pauseEpoch: number, id: number): () => void {
+  const held = holds(task, pauseEpoch)
+  const { decided, check } = atAppend((now) => ({ held: held(now) }))
+  if (!decided.held) throw claimLost(id)
+  return check
+}
 
 /** A claim whose lease ran out or was fenced by pause no longer holds the task. */
 const stateNow = (task: Task, at: number, pauseEpoch: number): TaskState => (lapsed(task, at, pauseEpoch) ? 'ready' : task.state)
@@ -153,7 +169,9 @@ function ownActor(owner: string, actor: string | null | undefined): string | nul
  * Tasks on a local board: a thread with a state, kept on its root. Every write here is one
  * conditional append: it reads the task as the tables have it, decides, and lands only while that
  * read is still the log's last word, so of writes that race, one lands and the rest look again.
- * A claim's lease is timed outside the board log, which holds only what came of it.
+ * The log only holds what came of a lease or evidence expiry. A write that requires one to still
+ * be current rechecks inside the append. A write that requires a lease to have already lapsed
+ * cannot be invalidated by more time passing.
  */
 export function createTasks(options: {
   store?: A2Store | undefined
@@ -479,23 +497,26 @@ export function createTasks(options: {
     }
   }
 
-  /** Whether every prerequisite is satisfied at `position`, leaving out `but` in the legacy completion path. */
-  async function satisfied(task: Task, position: number, { access, but }: { access?: Access; but?: number } = {}): Promise<boolean> {
+  /** Reads the prerequisites once, leaving out `but` in the legacy completion path. */
+  async function edgesAt(task: Task, position: number, { access, but, unreadable = 'missing' }: EdgeOptions = {}): Promise<(now: number) => boolean> {
     const ids = task.needs.filter((id) => id !== but)
-    if (ids.length === 0) return true
+    if (ids.length === 0) return () => true
     const found = await writes().reads.tables.messagesAt(ids, position)
-    if (evidence.releaseDependencies) return evidence.satisfied(task, found, access)
-    return ids.every((id) => found.get(id)?.task?.state === 'completed')
+    if (evidence.releaseDependencies) return (now) => evidence.satisfied(task, found, access, now, unreadable)
+    const completed = ids.every((id) => found.get(id)?.task?.state === 'completed')
+    return () => completed
+  }
+
+  async function satisfied(task: Task, position: number, options?: EdgeOptions): Promise<boolean> {
+    return (await edgesAt(task, position, options))(Date.now())
   }
 
   const waitingForEvidence = (id: number) => conflict('task_waiting', `#${id} needs current evidence releases`)
+  const claimEdgesAt = (task: Task, position: number, access: Access) =>
+    evidence.releaseDependencies ? edgesAt(task, position, { access, unreadable: 'missing' }) : () => true
+  const routeEdgesAt = (task: Task, position: number, access: Access) => edgesAt(task, position, { access, unreadable: 'skip' })
 
-  async function checkEdges(root: Root, position: number, access: Access) {
-    if (evidence.releaseDependencies && !(await satisfied(root.task, position, { access })))
-      throw waitingForEvidence(root.id)
-  }
-
-  async function evidenceWrite(identity: Identity, id: number, decide: (root: Root, position: number) => Events | Promise<Events>) {
+  async function evidenceWrite(identity: Identity, id: number, decide: (root: Root, position: number) => TaskChange | Promise<TaskChange>) {
     evidence.checkEnabled()
     const root = await change(identity, id, (found, position) => {
       if (found.deleted || !identity.principal.access.readable(found.channel)) throw notFound(`message not found: #${id}`, 'message_not_found')
@@ -599,12 +620,14 @@ export function createTasks(options: {
       }
       if (!root || signal.aborted) return { position, events: [] }
       // A stale release blocks the winner; it doesn't let lower-priority work jump the queue.
-      if (evidence.releaseDependencies && !(await satisfied(root.task, position, { access: principal.access }))) return { position, events: [] }
+      const edges = await claimEdgesAt(root.task, position, principal.access)
+      const { decided, check } = atAppend((now) => ({ edges: edges(now) }))
+      if (!decided.edges) return { position, events: [] }
       // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (signal.aborted) return { position, events: [] }
       const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding)
       read.taken = { root, claim }
-      return { position, events: seen ? [seen, ...events] : events }
+      return { position, events: seen ? [seen, ...events] : events, ...(evidence.releaseDependencies ? { check } : {}) }
     })
     if (read.taken === null) return null
     const { root, claim } = read.taken
@@ -844,7 +867,7 @@ export function createTasks(options: {
           if (stale(task, pauseEpoch)) throw claimLost(id)
           if (!lapsed(task, Date.now(), pauseEpoch) && (await claimedBy(found, identity)) && !lapsed(task, Date.now(), pauseEpoch)) {
             sameBinding(id, binding, current.binding)
-            await checkEdges(found, position, principal.access)
+            if (evidence.releaseDependencies && !(await satisfied(task, position, { access: principal.access }))) throw waitingForEvidence(id)
             if (!lapsed(task, Date.now(), pauseEpoch)) {
               made.claim = { epoch: task.epoch, token, until: current.until, pauseEpoch, ...(current.binding ? { binding: current.binding } : {}) }
               made.replay = true
@@ -853,10 +876,12 @@ export function createTasks(options: {
           }
         }
         claimable(found, identity, pauseEpoch)
-        await checkEdges(found, position, principal.access)
-        const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding)
-        made.claim = claimed.claim
-        return claimed.events
+        const edges = await claimEdgesAt(task, position, principal.access)
+        const { decided, check } = atAppend((now) => ({ edges: edges(now) }))
+        if (!decided.edges) throw waitingForEvidence(id)
+        const { events, claim } = claiming(found, task, identity, input.lease, token, pauseEpoch, binding)
+        made.claim = claim
+        return evidence.releaseDependencies ? { events, check } : events
       })
       const claim = made.claim!
       if (made.replay) await openAt(undefined, pauseEpoch)
@@ -886,10 +911,13 @@ export function createTasks(options: {
       const made = { until: '' }
       const root = await changeTask(identity, id, async (found, position) => {
         const pauseEpoch = await fenced(found, identity, proof, position)
-        await checkEdges(found, position, identity.principal.access)
-        if (lapsed(found.task, Date.now(), pauseEpoch)) throw claimLost(id)
-        made.until = new Date(Date.now() + leaseOf(lease)).toISOString()
-        return [{ type: 'task.renewed', payload: { id, thread: found.thread, epoch: proof.epoch, until: made.until, by: identity.author } }]
+        const held = holds(found.task, pauseEpoch)
+        const edges = await claimEdgesAt(found.task, position, identity.principal.access)
+        const { now, decided, check } = atAppend((now) => ({ held: held(now), edges: edges(now) }))
+        if (!decided.edges) throw waitingForEvidence(id)
+        if (!decided.held) throw claimLost(id)
+        made.until = new Date(now + leaseOf(lease)).toISOString()
+        return { events: [{ type: 'task.renewed', payload: { id, thread: found.thread, epoch: proof.epoch, until: made.until, by: identity.author } }], check }
       })
       await arm(id, proof.epoch, made.until)
       return { task: await shown(identity, root), until: made.until }
@@ -906,16 +934,21 @@ export function createTasks(options: {
       const root = await changeTask(identity, id, async (found, position) => {
         const pauseEpoch = await fenced(found, identity, proof, position)
         const about = { id, thread: found.thread, epoch: proof.epoch, by: identity.author }
-        if (how.type === 'task.released') return [{ type: 'task.released', payload: about }]
-        if (how.type === 'task.failed') return [{ type: 'task.failed', payload: { ...about, reason: how.reason } }]
-        await checkEdges(found, position, identity.principal.access)
+        if (how.type !== 'task.completed') {
+          const events: Events = how.type === 'task.released'
+            ? [{ type: 'task.released', payload: about }]
+            : [{ type: 'task.failed', payload: { ...about, reason: how.reason } }]
+          return { events, check: heldAtAppend(found.task, pauseEpoch, id) }
+        }
+        const held = holds(found.task, pauseEpoch)
+        const edges = await claimEdgesAt(found.task, position, identity.principal.access)
         const ready = evidence.releaseDependencies ? [] : await readied(id, position)
-        if (lapsed(found.task, Date.now(), pauseEpoch)) throw claimLost(id)
-        const check = () => evidence.complete(found, how.commit, pauseEpoch)
-        check()
-        const events: Events = [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...ready]
-        // The head fences the evidence records, but it doesn't fence time spent waiting to append.
-        return evidence.capability?.gates.length ? { events, check } : events
+        const completion = (now: number) => evidence.completion(found, how.commit, pauseEpoch, now)
+        const { now, decided, check } = atAppend((now) => ({ held: held(now), edges: edges(now), completion: completion(now)?.code ?? null }))
+        if (!decided.edges) throw waitingForEvidence(id)
+        if (!decided.held) throw claimLost(id)
+        if (decided.completion !== null) throw completion(now)
+        return { events: [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...ready], check }
       })
       return { task: await shown(identity, root) }
     },
@@ -929,15 +962,16 @@ export function createTasks(options: {
       if (!input.proof) owns(identity, task)
       const { proof } = input
       const root = await changeTask(identity, id, async (found, position) => {
-        if (proof) await fenced(found, identity, proof, position)
-        else {
+        const pauseEpoch = proof ? await fenced(found, identity, proof, position) : undefined
+        if (pauseEpoch === undefined) {
           if (found.task.parked) throw parked(id)
           const state = stateNow(found.task, Date.now(), await epochAt(position))
           if (state === 'claimed') throw conflict('task_claimed', `#${id} is claimed until ${found.task.claim!.until}: only its claim holds it`)
           if (state === 'blocked') throw conflict('task_blocked', `#${id} is held already: ${found.task.blocked!.reason}`)
           if (finished(found.task)) throw conflict('task_finished', `#${id} is ${found.task.state}`)
         }
-        return [{ type: 'task.blocked', payload: { id, thread: found.thread, kind: input.kind ?? null, reason: input.reason, by: identity.author } }]
+        const events: Events = [{ type: 'task.blocked', payload: { id, thread: found.thread, kind: input.kind ?? null, reason: input.reason, by: identity.author } }]
+        return pauseEpoch === undefined ? events : { events, check: heldAtAppend(found.task, pauseEpoch, id) }
       })
       return { task: await shown(identity, root) }
     },
@@ -949,8 +983,8 @@ export function createTasks(options: {
       const requestId = randomUUID()
       const root = await changeTask(identity, id, async (found, position) => {
         const { task } = found
-        if (claim) await fenced(found, identity, claim, position)
-        else {
+        const pauseEpoch = claim ? await fenced(found, identity, claim, position) : undefined
+        if (!claim) {
           owns(identity, found)
           if (stateNow(task, Date.now(), await epochAt(position)) === 'claimed') throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: only its claim holds it`)
         }
@@ -963,10 +997,11 @@ export function createTasks(options: {
           throw conflict('task_blocked', `#${id} is held already: ${task.blocked!.reason}`)
         }
         if (!(await matchesAttention(found, draft, position))) throw staleAttention()
-        if (attentionExpired(draft, Date.now())) throw badRequest('expiresAt must be in the future')
-        // The evidence read can take time; don't spend a claim that expired while checking it.
-        if (claim) await fenced(found, identity, claim, position)
-        return [{ type: 'task.attention_requested', payload: { id, thread: found.thread, by: identity.author, requestId, epoch: task.epoch, draft, ...(replaces !== undefined ? { replaces } : {}) } }]
+        const held = pauseEpoch === undefined ? () => true : holds(task, pauseEpoch)
+        const { decided, check } = atAppend((now) => ({ held: held(now), fresh: !attentionExpired(draft, now) }))
+        if (!decided.fresh) throw badRequest('expiresAt must be in the future')
+        if (!decided.held) throw claimLost(id)
+        return { events: [{ type: 'task.attention_requested', payload: { id, thread: found.thread, by: identity.author, requestId, epoch: task.epoch, draft, ...(replaces !== undefined ? { replaces } : {}) } }], check }
       })
       return { task: await shown(identity, root), attention: attentionView(root.task!.attention!) }
     },
@@ -1001,11 +1036,12 @@ export function createTasks(options: {
             !(await matchesAttention(found, attention, position)) || attentionExpired(attention, Date.now())) throw staleAttention()
         const option = attention.options.find(({ id }) => id === input.option)
         if (!option) throw badRequest('option is not available on this attention request')
-        const routedTo = option.next === 'fail' ? 'failed' : (await satisfied(task, position)) ? 'ready' : 'waiting'
-        const at = Date.now()
-        if (attentionExpired(attention, at)) throw staleAttention()
-        const receipt: AttentionReceipt = { option: option.id, by: author, at: new Date(at).toISOString(), routedTo }
-        return [{ type: 'task.attention_answered', payload: { id, thread: found.thread, by: author, requestId, epoch: task.epoch, receipt } }]
+        const edges = option.next === 'fail' ? () => false : await routeEdgesAt(task, position, principal.access)
+        const { now, decided, check } = atAppend((now) => ({ edges: edges(now), fresh: !attentionExpired(attention, now) }))
+        if (!decided.fresh) throw staleAttention()
+        const routedTo = option.next === 'fail' ? 'failed' : decided.edges ? 'ready' : 'waiting'
+        const receipt: AttentionReceipt = { option: option.id, by: author, at: new Date(now).toISOString(), routedTo }
+        return { events: [{ type: 'task.attention_answered', payload: { id, thread: found.thread, by: author, requestId, epoch: task.epoch, receipt } }], check }
       })
       return { task: await shown(identity, root), attention: attentionView(root.task!.attention!) }
     },
@@ -1020,8 +1056,10 @@ export function createTasks(options: {
         if (found.task.attention?.status === 'pending') throw conflict('attention_required', `#${id} is held by an attention request`)
         const about = { id, thread: found.thread }
         // The fold puts a task that needs any back to waiting: what it needs may have completed while it was held.
-        const ready = found.task.needs.length > 0 && (await satisfied(found.task, position))
-        return [{ type: 'task.unblocked', payload: { ...about, by: identity.author } }, ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        const edges = found.task.needs.length > 0 ? await routeEdgesAt(found.task, position, identity.principal.access) : () => false
+        const { decided, check } = atAppend((now) => ({ edges: edges(now) }))
+        const events: Events = [{ type: 'task.unblocked', payload: { ...about, by: identity.author } }, ...(decided.edges ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1043,8 +1081,10 @@ export function createTasks(options: {
           return [{ type: 'task.parked', payload: { ...about, reason, by, previous: task.state } }]
         }
         if (!task.parked) return []
-        const ready = !task.blocked && task.needs.length > 0 && (await satisfied(task, position))
-        return [{ type: 'task.unparked', payload: { ...about, reason, by } }, ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        const edges = !task.blocked && task.needs.length > 0 ? await routeEdgesAt(task, position, identity.principal.access) : () => false
+        const { decided, check } = atAppend((now) => ({ edges: edges(now) }))
+        const events: Events = [{ type: 'task.unparked', payload: { ...about, reason, by } }, ...(decided.edges ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1053,12 +1093,12 @@ export function createTasks(options: {
     async handoff(identity: Identity, id: number, proof: Proof, packet: TaskHandoffInput): Promise<{ task: MessageView }> {
       await taskOf(identity.principal.access, id)
       const root = await changeTask(identity, id, async (found, position) => {
-        await fenced(found, identity, proof, position)
+        const pauseEpoch = await fenced(found, identity, proof, position)
         const { commit, packetPath, sha256, supersedes } = packet
         if (supersedes !== found.task.handoff?.id)
           throw conflict('handoff_conflict', `supersedes must name the current handoff on #${id}, or be omitted for the first handoff`)
         const handoff = { id: randomUUID(), commit, packetPath, sha256, ...(supersedes !== undefined ? { supersedes } : {}), by: identity.author, at: new Date().toISOString(), generation: proof.epoch }
-        return [{ type: 'task.handoff', payload: { id, thread: found.thread, handoff } }]
+        return { events: [{ type: 'task.handoff', payload: { id, thread: found.thread, handoff } }], check: heldAtAppend(found.task, pauseEpoch, id) }
       })
       return { task: await shown(identity, root) }
     },
@@ -1071,8 +1111,11 @@ export function createTasks(options: {
         if (task.state === 'completed' || task.state === 'canceled') throw conflict('task_finished', `#${id} is ${task.state}`)
         if (task.state !== 'failed') return []
         const attention = task.attention
-        const waiting = (evidence.releaseDependencies || (attention?.status === 'answered' && attention.receipt.routedTo === 'failed')) && !(await satisfied(task, position))
-        return [{ type: 'task.reopened', payload: { id, thread: found.thread, by: identity.author, ...(waiting ? { waiting: true as const } : {}) } }]
+        const edges = evidence.releaseDependencies || (attention?.status === 'answered' && attention.receipt.routedTo === 'failed')
+          ? await routeEdgesAt(task, position, identity.principal.access) : () => true
+        const { decided, check } = atAppend((now) => ({ edges: edges(now) }))
+        const events: Events = [{ type: 'task.reopened', payload: { id, thread: found.thread, by: identity.author, ...(!decided.edges ? { waiting: true as const } : {}) } }]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1108,12 +1151,15 @@ export function createTasks(options: {
         if (needs.ids.length === task.needs.length && needs.ids.every((need) => task.needs.includes(need))) return []
         await acyclic(principal.access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
         const about = { id, thread: found.thread }
-        return [
+        const edges = needs.ids.length === 0 || task.state === 'blocked' ? () => false
+          : evidence.releaseDependencies ? await routeEdgesAt({ ...task, needs: needs.ids }, position, principal.access) : () => needs.completed
+        const { decided, check } = atAppend((now) => ({ edges: edges(now) }))
+        const events: Events = [
           ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
           { type: 'task.needs_changed', payload: { ...about, needs: needs.ids, by: identity.author } },
-          ...(needs.ids.length > 0 && task.state !== 'blocked' && (evidence.releaseDependencies ? await satisfied({ ...task, needs: needs.ids }, position) : needs.completed)
-            ? [{ type: 'task.ready' as const, payload: about }] : []),
+          ...(decided.edges ? [{ type: 'task.ready' as const, payload: about }] : []),
         ]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1135,26 +1181,39 @@ export function createTasks(options: {
     submitWork(identity: Identity, id: number, input: Protocol['submitWork']['input']) {
       return evidenceWrite(identity, id, async (root, position) => {
         const pauseEpoch = await fenced(root, identity, input, position)
-        await checkEdges(root, position, identity.principal.access)
-        if (lapsed(root.task, Date.now(), pauseEpoch)) throw claimLost(id)
-        return evidence.submit(root, identity, input)
+        const held = holds(root.task, pauseEpoch)
+        const edges = await claimEdgesAt(root.task, position, identity.principal.access)
+        const { decided, check } = atAppend((now) => ({ held: held(now), edges: edges(now) }))
+        if (!decided.edges) throw waitingForEvidence(id)
+        if (!decided.held) throw claimLost(id)
+        return { events: evidence.submit(root, identity, input), check }
       })
     },
     recordEvidence(identity: Identity, id: number, input: Protocol['recordEvidence']['input']) {
-      return evidenceWrite(identity, id, async (root, position) => evidence.record(root, identity, input, await epochAt(position)))
+      return evidenceWrite(identity, id, async (root, position) => {
+        const pauseEpoch = await epochAt(position)
+        const { now, check } = atAppend((now) => evidence.attestation(root, pauseEpoch, input.expiresAt, now))
+        return { events: evidence.record(root, identity, input, pauseEpoch, now), check }
+      })
     },
     overrideEvidence(identity: Identity, id: number, input: Protocol['overrideEvidence']['input']) {
-      return evidenceWrite(identity, id, async (root, position) => evidence.override(root, identity, input, await epochAt(position)))
+      return evidenceWrite(identity, id, async (root, position) => {
+        const pauseEpoch = await epochAt(position)
+        const { now, check } = atAppend((now) => evidence.attestation(root, pauseEpoch, input.expiresAt, now))
+        return { events: evidence.override(root, identity, input, pauseEpoch, now), check }
+      })
     },
     resolveWorkEdge(identity: Identity, id: number, input: Protocol['resolveWorkEdge']['input']) {
       if (!evidence.releaseDependencies) throw noWorkEvidence()
       return evidenceWrite(identity, id, async (root, position) => {
         const needs = await writes().reads.tables.messagesAt(root.task.needs, position)
-        const events = evidence.resolve(root, identity, input, needs)
+        const resolution = evidence.resolve(root, identity, input, needs)
+        const { decided, check } = atAppend(resolution.verdict)
+        const events = resolution.events(decided)
         if (finished(root.task)) throw conflict('task_finished', `#${id} is ${root.task.state}`)
-        if (root.task.state !== 'claimed') return events
+        if (root.task.state !== 'claimed') return { events, check }
         if (!lapsed(root.task, Date.now(), await epochAt(position))) throw conflict('task_claimed', 'release the claim before changing its evidence releases')
-        return [{ type: 'task.expired', payload: { id, thread: root.thread, epoch: root.task.epoch } }, ...events]
+        return { events: [{ type: 'task.expired', payload: { id, thread: root.thread, epoch: root.task.epoch } }, ...events], check }
       })
     },
 
@@ -1163,8 +1222,8 @@ export function createTasks(options: {
       await taskOf(identity.principal.access, id)
       const root = await changeTask(identity, id, async (found, position) => {
         const { task } = found
-        if (proof) await fenced(found, identity, proof, position)
-        else {
+        const pauseEpoch = proof ? await fenced(found, identity, proof, position) : undefined
+        if (!proof) {
           owns(identity, found)
           // A current holder cannot bypass the claim's limit by omitting its proof.
           if (task.claim?.actor === identity.actor.id && !lapsed(task, Date.now(), await epochAt(position)))
@@ -1175,7 +1234,8 @@ export function createTasks(options: {
         if (proof && priorityRank(priority) > priorityRank(previous))
           throw new HttpError(403, 'priority_raise_forbidden', 'a claim may lower priority, not raise it')
         if (priority === previous) return []
-        return [{ type: 'task.priority_changed', payload: { id, thread: found.thread, priority, ...(proof ? { epoch: proof.epoch } : {}), by: identity.author } }]
+        const events: Events = [{ type: 'task.priority_changed', payload: { id, thread: found.thread, priority, ...(proof ? { epoch: proof.epoch } : {}), by: identity.author } }]
+        return pauseEpoch === undefined ? events : { events, check: heldAtAppend(task, pauseEpoch, id) }
       })
       return { task: await shown(identity, root) }
     },

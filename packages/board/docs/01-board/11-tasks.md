@@ -325,6 +325,14 @@ also needs `read` on each prerequisite to use its release. If
 rather than taking a lower-priority task. Release any live claim before
 replacing its edge releases.
 
+The board decides each of these at the moment it records the write, not before.
+A lease or a release that runs out while a claim, renewal, submission, or
+completion waits to land makes that write fail with the answer it would have
+had a moment later. An unblock, unpark, reopen, or resolution then leaves the
+dependent waiting instead of ready. These writes test only the prerequisites
+their caller can read, so their answer never shows a hidden prerequisite's
+verdict. A claim still needs read on every prerequisite.
+
 This switch is off by default. Set `gates: false` alongside it to keep
 ordinary completion rules while requiring evidence to release dependents.
 
