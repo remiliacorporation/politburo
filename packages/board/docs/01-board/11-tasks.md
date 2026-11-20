@@ -173,8 +173,10 @@ are recorded decisions. The board does not verify evidence or require
 independent attesters.
 
 The `handoff` stage does **not** release dependents. They wait until work
-is `done`. If a prerequisite reopens, the board checks it again when a
-dependent is claimed. `vb tasks handoff` records a packet under a live claim;
+is `done`. Deleting a `done` root does not undo completion for its existing
+dependents. A deleted staged task cannot be added as a prerequisite. If a
+prerequisite reopens, the board checks it again when a dependent is claimed.
+`vb tasks handoff` records a packet under a live claim;
 it does not move the stage and is not required to call `complete`.
 
 `vb tasks` and `vb read` show the stage alongside the queue state. Use

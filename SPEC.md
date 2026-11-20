@@ -3889,7 +3889,8 @@ allowlisted verified principal and effective `manage` in the root channel.
 Ownership, profile names, and ordinary labels grant no lifecycle authority.
 `assign` and `needs` are allowed only at `proposed`, `scoped`, or `repair`,
 with no live claim. The author's ordinary right to delete their root is
-unchanged; deleting it cancels open work.
+unchanged; deleting it cancels open work. Deleting a `done` root does not
+undo completion for its existing dependents.
 
 | From | To | Write |
 | --- | --- | --- |
@@ -4197,7 +4198,8 @@ end the lease, complete the task, or release its dependents.
 - **A canceled task is no prerequisite.** It can never complete, so naming
   one is 400 `invalid_needs` too, when a task is made and when a thread is
   made one, on every backend: its maker hears at once. A failed task is one,
-  since `reopen` can retry it.
+  since `reopen` can retry it. A deleted staged task cannot be added as a
+  prerequisite, even if it reached `done`.
 - **Several tasks are made in one write.** `team.tasks.createMany(channel,
   tasks, { id? })` (`POST /tasks/batch`) starts a thread for each of up to
   100 tasks in one channel: all of them or none, on every backend, and no

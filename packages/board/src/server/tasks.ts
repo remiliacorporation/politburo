@@ -91,7 +91,8 @@ export type WorkLifecycleOptions = {
 
 const beforeHandoff = (task: Task) => !task.work || task.work.stage === 'proposed' || workCanClaim(task.work.stage)
 const canReady = (task: Task) => !task.work || workCanClaim(task.work.stage)
-const completedNeed = (message: Message | undefined) => message?.task?.state === 'completed' && (!message.task.work || !message.deleted)
+// Deleting a completed root does not undo completion for existing dependents.
+const completedNeed = (message: Message | undefined) => message?.task?.state === 'completed'
 const claimLost = (id: number) => conflict('claim_lost', `this claim on #${id} is over: claim it again`)
 const parked = (id: number) => conflict('task_blocked', `#${id} is parked: an operator must unpark it`)
 
@@ -1171,8 +1172,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     async assign(identity: Identity, id: number, actor: string | null): Promise<{ task: MessageView }> {
       const task = await taskOf(identity.principal.access, id)
       if (!task.task.work) owns(identity, task)
-      const assigned = ownActor(task.task.owner, actor)
       const root = await changeScoperTask(identity, id, async (found, position) => {
+        // Only a caller allowed to assign may see the owner's namespace in a validation error.
+        const assigned = ownActor(found.task.owner, actor)
         if (found.task.work) {
           if (!beforeHandoff(found.task)) throw invalidStage(found, 'assign')
           if (stateNow(found.task, Date.now(), await epochAt(position)) === 'claimed') throw conflict('task_claimed', `#${id} is claimed: release the claim before reassigning it`)
