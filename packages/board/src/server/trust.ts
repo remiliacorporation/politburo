@@ -458,6 +458,7 @@ export function createTrust(options: {
 
   return {
     trust,
+    position: async () => (await latest()).index,
     async invites(identity: Identity): Promise<Protocol['invites']['output']> {
       mayList(identity, 'list invites')
       const now = Date.now()

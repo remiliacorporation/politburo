@@ -372,7 +372,7 @@ function build(options: A2Options, binding: BoardBinding) {
   // A schedule sends with what its creator may do now, which board()'s `access` says at each send. It
   // posts as its creator, through board(), so the middleware sees it.
   schedules.bind({ writes, accessNow: binding.accessNow, send: async (identity, origin, input) => sendAs(identity, origin, input) })
-  tasks.bind({ writes, accessNow: binding.accessNow })
+  tasks.bind({ writes, accessNow: binding.accessNow, accessPosition: access.position })
   watchers.bind({ reads })
 
   /**

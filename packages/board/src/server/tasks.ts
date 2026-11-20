@@ -180,6 +180,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   const responders = new Map(Object.entries(options.attentionResponders ?? {}).map(([channel, ids]) => [channel, new Set(ids)]))
   let bound: WriteContext | null = null
   let accessNow: BoardBinding['accessNow']
+  let accessPosition: () => Promise<number>
   const writes = (): WriteContext => {
     if (!bound) throw new Error('tasks used before the board bound them')
     return bound
@@ -339,16 +340,32 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   }
 
   /** Recheck effective grants on an append retry or after a claim-next poll wakes. */
-  const accessFor = (identity: Identity) => identity.principal.id.startsWith('board:') ? identity.principal.access : accessNow(identity.principal)
+  const accessFor = async (identity: Identity) => identity.principal.id.startsWith('board:') ? identity.principal.access : accessNow(identity.principal)
 
-  async function scoper(identity: Identity, root: Root): Promise<WorkStage> {
-    if (!scopers || !root.task.work) throw noLifecycle()
-    const access = await accessFor(identity)
-    if (!access?.readable(root.channel)) throw notFound(`message not found: #${root.id}`, 'message_not_found')
+  async function scoper(identity: Identity, root: Root, decide: (access: Access) => Events | Promise<Events>): Promise<Events> {
+    if (!scopers) throw noLifecycle()
+    const hidden = () => notFound(`message not found: #${root.id}`, 'message_not_found')
+    const head = async () => {
+      const index = await accessPosition().catch(() => null)
+      if (index === null) throw hidden()
+      return index
+    }
+    // Grant writes don't move the board's head. If access moved while we decided, look again.
+    const before = identity.principal.id.startsWith('board:') ? null : await head()
+    const access = await accessFor(identity).catch(() => null)
+    if (!access?.readable(root.channel)) throw hidden()
     if (!scopers.has(identity.principal.id) || !access.can('manage', root.channel))
       throw forbidden(`only a work scoper with manage in ${root.channel} can move #${root.id}`)
-    return root.task.work.stage
+    const events = await decide(access)
+    if (before !== null && await head() !== before) throw movedOn()
+    return events
   }
+
+  /** Scoper writes recheck access inside each append look. Legacy writes keep their own checks. */
+  const changeScoperTask = (identity: Identity, id: number, decide: (root: Root, position: number, access: Access) => Events | Promise<Events>) =>
+    changeTask(identity, id, (root, position) => root.task.work
+      ? scoper(identity, root, (access) => decide(root, position, access))
+      : decide(root, position, identity.principal.access))
 
   function atVersion(root: Root, ifVersion: number) {
     if ((root.version ?? root.id) !== ifVersion) throw conflict('task_version_conflict', `#${root.id} changed since version ${ifVersion}`)
@@ -641,9 +658,10 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
 
   return {
     server,
-    bind: (binding: { writes: WriteContext; accessNow: BoardBinding['accessNow'] }) => {
+    bind: (binding: { writes: WriteContext; accessNow: BoardBinding['accessNow']; accessPosition: () => Promise<number> }) => {
       bound = binding.writes
       accessNow = binding.accessNow
+      accessPosition = binding.accessPosition
     },
 
     /**
@@ -1099,8 +1117,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       if (!scopers) throw noLifecycle()
       taskLimits.note('reason', reason)
       await taskOf(identity.principal.access, id)
-      const root = await changeTask(identity, id, async (found, position) => {
-        if (await scoper(identity, found) !== 'proposed') throw invalidStage(found, 'scope')
+      const root = await changeScoperTask(identity, id, (found, position) => {
+        if (!found.task.work) throw noLifecycle()
+        if (found.task.work.stage !== 'proposed') throw invalidStage(found, 'scope')
         atVersion(found, ifVersion)
         return enterWork(found, identity, 'scoped', reason, position)
       })
@@ -1111,8 +1130,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       if (!scopers) throw noLifecycle()
       taskLimits.note('reason', reason)
       await taskOf(identity.principal.access, id)
-      const root = await changeTask(identity, id, async (found, position) => {
-        const from = await scoper(identity, found)
+      const root = await changeScoperTask(identity, id, async (found, position) => {
+        if (!found.task.work) throw noLifecycle()
+        const from = found.task.work.stage
         if (stage === 'rejected' ? workTerminal(from) : !fromStages[stage].includes(from)) throw invalidStage(found, `move to ${stage}`)
         atVersion(found, ifVersion)
         if (stage === 'done' && !(await satisfied(found.task, position))) throw waiting(found)
@@ -1127,9 +1147,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     async reopen(identity: Identity, id: number, reason?: string, ifVersion?: number): Promise<{ task: MessageView }> {
       const task = await taskOf(identity.principal.access, id)
       if (!task.task.work) owns(identity, task)
-      const root = await changeTask(identity, id, async (found, position) => {
+      const root = await changeScoperTask(identity, id, async (found, position) => {
         if (found.task.work) {
-          const from = await scoper(identity, found)
+          const from = found.task.work.stage
           if (from !== 'done' && from !== 'rejected') throw invalidStage(found, 'reopen')
           if (reason === undefined || ifVersion === undefined) throw badRequest('reason and ifVersion are required to reopen staged work')
           taskLimits.note('reason', reason)
@@ -1152,9 +1172,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const task = await taskOf(identity.principal.access, id)
       if (!task.task.work) owns(identity, task)
       const assigned = ownActor(task.task.owner, actor)
-      const root = await changeTask(identity, id, async (found, position) => {
+      const root = await changeScoperTask(identity, id, async (found, position) => {
         if (found.task.work) {
-          await scoper(identity, found)
           if (!beforeHandoff(found.task)) throw invalidStage(found, 'assign')
           if (stateNow(found.task, Date.now(), await epochAt(position)) === 'claimed') throw conflict('task_claimed', `#${id} is claimed: release the claim before reassigning it`)
         }
@@ -1174,17 +1193,16 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const { principal } = identity
       const current = await taskOf(principal.access, id)
       if (!current.task.work) owns(identity, current)
-      const root = await changeTask(identity, id, async (found, position) => {
+      const root = await changeScoperTask(identity, id, async (found, position, access) => {
         const { task } = found
-        if (task.work) await scoper(identity, found)
         if (!beforeHandoff(task)) throw invalidStage(found, 'change prerequisites of')
         if (finished(task)) throw conflict('task_finished', `#${id} is ${task.state}`)
         // A claim whose lease ran out is over: its expiry goes first, in the same append.
         const over = lapsed(task, Date.now(), await epochAt(position))
         if (task.state === 'claimed' && !over) throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: what it needs changes once no one holds it`)
-        const needs = await needsAt(principal.access, refs, position, id)
+        const needs = await needsAt(access, refs, position, id)
         if (needs.ids.length === task.needs.length && needs.ids.every((need) => task.needs.includes(need))) return []
-        await acyclic(principal.access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
+        await acyclic(access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
         const about = { id, thread: found.thread }
         return [
           ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
@@ -1221,9 +1239,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     async cancel(identity: Identity, id: number, reason: string): Promise<{ task: MessageView }> {
       const task = await taskOf(identity.principal.access, id)
       if (!task.task.work) owns(identity, task)
-      const root = await changeTask(identity, id, async (found) => {
+      const root = await changeScoperTask(identity, id, (found) => {
         if (found.task.work) {
-          if (workTerminal(await scoper(identity, found))) throw invalidStage(found, 'cancel')
+          if (workTerminal(found.task.work.stage)) throw invalidStage(found, 'cancel')
           return [stageChanged(found, identity, 'canceled', reason)]
         }
         if (found.task.state === 'completed' || found.task.state === 'canceled') throw conflict('task_finished', `#${id} is ${found.task.state}`)
