@@ -13,6 +13,7 @@ import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Tasks } from './tasks.tsx'
+import { Console } from './console.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, profilesOf, recent, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, Header, nativeMenu, ResizeHandle, type KnownLabels } from './ui.tsx'
@@ -301,6 +302,7 @@ export function App() {
           <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
         )}
         {current.view === 'tasks' && <Tasks state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
+        {current.view === 'console' && <Console state={state} viewer={viewer} now={now} lead={expand} where={where} />}
         {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
         {current.view === 'missing' && (
           <>

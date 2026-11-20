@@ -786,3 +786,71 @@ export function threadSchedules(state: State, root: string): ScheduleView[] {
   if (state.schedules.is !== 'here') return []
   return state.schedules.items.filter((schedule) => schedule.re === root && schedule.state === 'pending').sort((a, b) => (a.next ?? '').localeCompare(b.next ?? ''))
 }
+
+// --- task console -----------------------------------------------------------------------------
+
+export const CONSOLE_LANES = ['Backlog', 'Ready', 'Needs triage', 'Agent repair', 'Started', 'QA review', 'Human attention', 'Closed'] as const
+export type ConsoleLane = (typeof CONSOLE_LANES)[number]
+
+/** A projection of legacy task states, not a new lifecycle. QA has no state of its own yet. */
+export function consoleLane(root: TaskRoot, now: number): ConsoleLane {
+  switch (stateNow(root.task, now)) {
+    case 'waiting': return 'Backlog'
+    case 'ready': return 'Ready'
+    case 'claimed': return 'Started'
+    case 'failed': return 'Agent repair'
+    case 'blocked': return root.task.blocked?.kind === 'edited' ? 'Needs triage' : 'Human attention'
+    case 'completed':
+    case 'canceled': return 'Closed'
+  }
+}
+
+/** The user label is an annotation, not a server task priority. */
+export function consolePriority(root: TaskRoot): '1' | '2' | '3' | '4' | '5' | 'unreported' {
+  const value = root.labels.priority
+  return value === '1' || value === '2' || value === '3' || value === '4' || value === '5' ? value : 'unreported'
+}
+
+export function consoleTasks(
+  state: State,
+  filter: { channel?: string; lane?: ConsoleLane; priority?: ReturnType<typeof consolePriority>; text: string },
+  now: number,
+  through?: Pick<MessageView, 'createdAt' | 'id'>,
+): TaskRoot[] {
+  const text = filter.text.trim().toLowerCase()
+  return tasks(state, { channel: filter.channel, state: 'all', label: [] }, now, through).filter(
+    (root) => !root.deleted &&
+      (filter.lane === undefined || consoleLane(root, now) === filter.lane) &&
+      (filter.priority === undefined || consolePriority(root) === filter.priority) &&
+      (!text || [root.text, root.channel, root.id].some((value) => value.toLowerCase().includes(text))),
+  )
+}
+
+/** Observed reasons a task isn't claimable, not an authorization or dispatch decision. */
+export function consoleBlockers(state: State, root: TaskRoot, viewer: Viewer, now: number, needRefusals: Readonly<Record<string, string>> = {}): string[] {
+  const { task, channel } = root
+  const current = stateNow(task, now)
+  const blockers: string[] = []
+  if (current === 'waiting' || current === 'blocked') {
+    // Prerequisite views may lag across channels. The root still says whether it is waiting.
+    for (const id of new Set(task.needs)) {
+      const need = state.messages[id]?.task
+      if (!need) blockers.push(`Prerequisite #${id}: ${needRefusals[id] ?? 'state not confirmed'}`)
+      else if (need.state !== 'completed') blockers.push(`Prerequisite #${id} last seen ${stateNow(need, now)}, not completed`)
+    }
+    if (current === 'waiting' && blockers.length === 0) blockers.push('Board still reports waiting')
+  }
+  if (current === 'blocked' && task.blocked) {
+    const { kind, reason } = task.blocked
+    blockers.push(`Blocked${kind === null ? '' : ` (${kind})`}: ${reason}`)
+  }
+  if (current === 'claimed' && task.claim && Date.parse(task.claim.until) > now) {
+    blockers.push(`Claimed by ${nameOf(state, task.claim.actor)} until ${task.claim.until}`)
+  }
+  if (task.for !== null && (task.for !== viewer.actor || task.owner !== viewer.principal)) blockers.push(`Assigned to ${nameOf(state, task.for)}`)
+  if (!viewer.may('label', channel)) blockers.push(`Current profile lacks label scope in ${channel}`)
+  if (current === 'completed') blockers.push('Completed')
+  if (current === 'canceled') blockers.push(task.reason === null ? 'Canceled' : `Canceled: ${task.reason}`)
+  if (current === 'failed') blockers.push(task.reason === null ? 'Failed; requires reopen' : `Failed: ${task.reason} (requires reopen)`)
+  return blockers
+}

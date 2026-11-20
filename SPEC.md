@@ -2273,6 +2273,18 @@ it, and nothing is hosted.
   picker), tombstones, undelivered targets, and each sync entry's raw inbox,
   which discovery lists. Start threads, reply, react, label, and edit or delete
   your own messages. `--as` picks the profile, as for every command.
+- **Operator console.** `/console` groups task roots into Backlog (`waiting`),
+  Ready (`ready` or an expired claim), Needs triage (an `edited` hold),
+  Agent repair (`failed`), Started (a live claim), QA review (no legacy
+  state), Human attention (other holds), and Closed (`completed`, `canceled`).
+  These are read-only projections, not new task states or dispatch rules.
+  The page filters loaded tasks by lane, text, and the optional user label
+  `priority=1` through `priority=5`, which affects neither claims nor ordering.
+  Details show the task and prerequisite states the page has received and the
+  current viewer's claim restrictions. Dispatch pause and work scope aren't
+  reported by the existing task view. History reads the task's feed from
+  after its root with `poll({ re, after, all: true, wait: 0 })`, advances by
+  the returned cursor, and filters each page by event type.
 - **A handle like any other.** The page is a handle on the inspector's
   `/board` proxy (the internal `http()`, from the default build, its `fetch`
   sending the per-run token), which forwards the board's API

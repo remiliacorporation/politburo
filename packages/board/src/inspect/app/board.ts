@@ -495,6 +495,30 @@ export async function loadTasks(filter: store.TaskFilter, after?: string): Promi
   }
 }
 
+/** Look up a missing prerequisite without reading its whole thread. A refusal leaves its state unknown. */
+export async function loadConsoleNeed(id: string, signal: AbortSignal): Promise<string | undefined> {
+  if (state.messages[id]?.task) return
+  try {
+    const { message } = await team.thread(id, { limit: 1 })
+    if (!signal.aborted) set((s) => store.merge(s, [message]))
+  } catch (error) {
+    return refusal(error)
+  }
+}
+
+/**
+ * One page of a task thread's events, starting after the root's posting. Pass the board's cursor
+ * back even if no events matched. The feed has no `more` flag and doesn't promise a complete history.
+ * These views don't go into the live store.
+ */
+export async function loadTaskHistory(id: string, after?: string, signal?: AbortSignal): Promise<{ events: BoardEventView[]; cursor: string } | { refused: string }> {
+  try {
+    return await team.poll({ re: id, after: after ?? id, wait: 0, all: true }, signal)
+  } catch (error) {
+    return { refused: refusal(error) }
+  }
+}
+
 /** A task write: the root it answers goes in the store, and a refusal is said in the page's words. */
 async function work(id: string, write: () => Promise<MessageView>): Promise<boolean> {
   try {

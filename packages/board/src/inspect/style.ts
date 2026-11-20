@@ -693,6 +693,31 @@ button:not(:disabled, [aria-disabled="true"]):active {
   .composer-footer .send { margin-left: auto; }
 }
 
+/* --- operator console --- */
+.operator-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 12px; padding: 10px 16px; }
+:is(.operator-filters, .operator-history) label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--faint); }
+:is(.operator-filters, .operator-history) :is(input, select) { max-width: 12rem; padding: 4px 6px; border: 0; border-radius: 4px; color: var(--dim); background: var(--bg); font: inherit; }
+.operator-filters input { cursor: text; }
+.operator-filters .hint { padding-bottom: 4px; }
+.operator-scroller { flex: 1; min-height: 0; overflow: auto; padding: 8px 16px 16px; }
+.operator-lanes { display: grid; grid-auto-columns: minmax(8rem, 1fr); grid-auto-flow: column; gap: 8px; }
+.operator-lane { min-height: 6rem; padding: 7px; background: var(--bg); border-radius: 6px; }
+.operator-lane h2 { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; margin: 0; padding: 0 0 6px; border-bottom: 1px solid var(--hairline); font-size: 12px; }
+.operator-lane ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.operator-card { display: grid; gap: 4px; width: 100%; padding: 7px; border-radius: 4px; background: var(--panel); text-align: left; overflow-wrap: anywhere; }
+.operator-card strong { font-size: 12px; font-weight: 600; }
+.operator-card:is(:hover, [aria-pressed=true]) { color: var(--accent); }
+.operator-card[aria-pressed=true] { box-shadow: inset 0 0 0 1px var(--accent); }
+.operator-scroller > .act { margin-top: 10px; }
+.operator-details { max-height: 42dvh; overflow: auto; padding: 12px 16px; background: var(--bg); font-size: 12px; overflow-wrap: anywhere; }
+.operator-detail-head, .operator-history-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.operator-detail-head { padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
+.operator-detail-head h2, .operator-details h3 { margin: 0; font-size: 13px; }
+.operator-details h3 { margin-top: 10px; }
+.operator-details :is(ol, ul) { padding-inline-start: 1.5rem; }
+.operator-history label { display: inline-flex; margin-top: 6px; }
+.operator-history li { margin-block: 4px; }
+
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 60; }
 .toast { max-width: 420px; padding: 8px 12px; border: 1px solid var(--dim); background: var(--bg); color: var(--bright); }
 

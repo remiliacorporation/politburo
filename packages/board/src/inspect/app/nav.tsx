@@ -175,6 +175,7 @@ export type Route =
   | { view: 'global-chat' }
   | { view: 'activity' }
   | { view: 'tasks' }
+  | { view: 'console' }
   | { view: 'channel'; channel: string }
   | { view: 'settings'; section: Section; open: string | null }
   | { view: 'missing' }
@@ -191,6 +192,7 @@ export function route(path: string): Route {
   if (decoded === GLOBAL_CHAT_PATH || decoded === `/c/${GLOBAL_CHAT}`) return { view: 'global-chat' }
   if (decoded === '/activity') return { view: 'activity' }
   if (decoded === '/tasks') return { view: 'tasks' }
+  if (decoded === '/console') return { view: 'console' }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
   const [, settings, section, ...rest] = decoded.split('/')
   if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))

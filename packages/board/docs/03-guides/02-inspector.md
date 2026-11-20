@@ -103,6 +103,35 @@ for, or make any thread one from its pane.
 The board decides every write. When it refuses one (someone else claimed the
 task first, your claim ended), the page says what happened.
 
+## Operator console
+
+Open Operator console in the sidebar. Use the lane, priority label, channel,
+and search filters to narrow the board. Search matches loaded task text,
+channels, and IDs. `priority=1` through `priority=5` are annotations, not
+scheduling priorities. Load more tasks to search beyond the current list.
+With focus in the console and outside a field, `/` focuses search and `[` or
+`]` steps through the lane filter.
+
+| Lane | What the task reports |
+| --- | --- |
+| Backlog | Waiting on prerequisites |
+| Ready | Ready, or the claim lease has expired |
+| Needs triage | Held because someone edited the task outside its owner |
+| Agent repair | Failed; the task needs reopening before another claim |
+| Started | Claimed; this does not prove a worker is running |
+| QA review | Empty until the board reports a QA stage |
+| Human attention | Held for a person |
+| Closed | Completed or canceled |
+
+Select a card to see why it isn't running and to open its thread. The
+explanation shows known prerequisite states, claims, holds, and restrictions
+on the current profile. A missing prerequisite view isn't evidence of its
+state. The task view doesn't report dispatch pause or work scope.
+
+Task history starts after the root was posted. Switch between task changes,
+messages, and all events on the current page. A page with no matching events
+can still have a next page. The board controls how far back its feed goes.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the board's configuration, a tab
