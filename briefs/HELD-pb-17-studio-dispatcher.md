@@ -1,0 +1,2 @@
+# HELD pb-17 (needs bonklek): 24/7 Mac Studio instance
+Intent: a 24/7 politburo instance on the Mac Studio behind a free Cloudflare tunnel; a dispatcher that feeds the board's tasks to a Cursor cloud agent which runs several pi workers (gpt-6.2-sol) in one VM; work-plan usage only, no paid add-ons. Needs ssh to the Studio and the tunnel hostname: not doable from a cloud mob. Hold until bonklek or core supplies access.
