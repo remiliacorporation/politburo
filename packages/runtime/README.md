@@ -6,6 +6,16 @@ result after releasing it. It never completes or fails the board task. If it
 can't prove the lease is still live, it requests cancellation and returns
 `lease_lost` without settling the task or reporting a late result.
 
+Pass `taskId` to run a specific task or `selection: { channel }` to let the
+board claim the highest priority eligible task, oldest first at equal
+priority. A board pause returns `paused` instead of starting work. On a
+board that issues a `pauseEpoch` with the claim, the runner checks it before
+calling the harness and polls board status at `pollMs` while running. A
+pause or epoch change cancels the attempt through the harness and returns
+`paused` with its task ID. If a start is still unanswered, the runner
+cancels it when the ref arrives. Cancellation requests stop; it does not
+confirm termination. After resume call `runTask` again to get a fresh claim.
+
 ```ts
 import { createHash } from 'node:crypto'
 import { board } from '@vercel/board'
@@ -42,6 +52,130 @@ const outcome = await runTask({
   stop; collect confirms it. There is no checkout, cost enforcement, artifact
   validation, or task settlement. `@remilia/politburo-runtime/conformance`
   exports the shared Node test suite for adapters.
+
+## Routed attempts
+
+`createRouter` takes a server-owned executor and a list of provider/model pairs
+with per-attempt token cost caps in micros. It reads `boardScoreboard` once per
+call and ranks by `quality`, `cost`, or `latency`. Specify the task's budget,
+paths, base commit, and required checks in `work`; the router freezes that
+contract across retries. The router returns a verified candidate or a stopped
+reason. It does not change the task state or own its claim.
+
+```ts
+import { board } from '@vercel/board'
+import { local } from '@vercel/board/backend-local'
+import { boardScoreboard, createRouter, registerScoreboardSchema } from '@remilia/politburo-runtime'
+
+const team = board({ backend: local({ memory: true }) })
+const writer = team.as('router')
+await registerScoreboardSchema(team) // setup with schema-registration permission
+const scoreboard = boardScoreboard({ board: writer, channel: 'runtime/scoreboard', author: (await writer.me()).actor })
+const route = createRouter({
+  scoreboard,
+  models: [{ provider: 'fixture', model: 'small', maxCostMicros: 10 }],
+  maxAttempts: 2,
+  cooldownMs: { quota: 30_000, auth: 60_000, timeout: 5_000 },
+  probeTimeoutMs: 1_000,
+  execute: async () => ({ outcome: 'bad-output', costMicros: 0 }), // fake, no provider call
+})
+const outcome = await route({
+  taskId: 'fixture-task', mode: 'quality',
+  work: {
+    repo: 'acme/web', baseSha: '1'.repeat(40), briefRef: 'fixture-brief', briefSha256: '2'.repeat(64),
+    allowedPaths: ['src/', 'README.md'], requiredCheckIds: ['test'],
+    limits: { wallMs: 30_000, maxCostMicros: 20 },
+  },
+})
+console.log(outcome.status, await scoreboard.read())
+```
+
+Use a dedicated scoreboard channel and restrict its writers. Attempt samples
+are ordinary, unsynced board blocks, attributed by the board. Reads ignore
+other actors and use the latest 100 messages by default. The same writer can
+replay an attempt ID without double counting it.
+
+The executor owns cancellation, in-flight cost enforcement, and evidence from
+an actual checkout and verifier. A returned result must mean the run stopped.
+On `execution-uncertain` or a board write error, reconcile the previous run
+before calling again. Use a caller-held lease around routing; the existing
+`runTask` helper is not a routed executor and its fixture adapters do not meter
+tokens or produce verification evidence. The budget covers one call and its
+retries. Cooldowns and access incidents are in memory. An auth incident gets
+one access probe after cooldown, if configured; only a successful probe clears
+it. A failed probe leaves the provider unavailable in that router instance.
+
+## Remote work
+
+`localGit({ repoDir, identity })` exchanges UTF-8 text files (up to 64 KiB)
+under `remote/<agent>/brief`, `control`, `inbox`, and `status`. Use a Git
+repo root and keep exchange branches out of the worktree. Read returns the
+file and the head it came from. Pass that head to `write`, or `null` to
+create a branch with an empty tree. A stale write throws `RefConflict`;
+read again before retrying. The store never fetches or pushes. Sync with
+ordinary fast-forward Git pushes and fetches. Use `refs/heads/<branch>` on
+both sides of the refspec; remote-tracking refs are not read by the store.
+
+```ts
+import { ghCodeHost, localGit, reviewGate, watchRemote } from '@remilia/politburo-runtime'
+import type { GhOptions, Verdict } from '@remilia/politburo-runtime'
+
+async function pollWork(repoDir: string, token: string, key: Uint8Array,
+    verdicts: readonly Verdict[], withHeadLock: GhOptions['withHeadLock']) {
+  const refs = localGit({ repoDir, identity: { name: 'Worker', email: 'worker@example.test' } })
+  const host = ghCodeHost({ repo: 'acme/web', base: 'main', requiredCheckNames: ['ci'], token, withHeadLock })
+  const watcher = watchRemote({ refs, host })
+  const result = await watcher.poll({
+    statusBranch: 'remote/worker/status', branch: 'work/worker', title: 'Finish worker task',
+  })
+  if (result.status === 'checked') {
+    const gate = reviewGate({ host, key, checkFor: watcher.checkFor, verdictsFor: () => verdicts })
+    return gate.markReadyIfAllowed(result.pr)
+  }
+  return result
+}
+```
+
+- The worker writes `{"state":"finished"}` to `status.json` after publishing
+  its work branch. A missing file or `{"state":"working"}` does nothing.
+  Keep one watcher owner per work branch. Polls reuse the existing PR even
+  if it has closed. Check results are held by SHA in the watcher instance.
+- The GitHub adapter uses `gh` with a caller-supplied token or `exec`. It
+  reads the named GitHub check runs for the exact commit; configure CI to
+  run on PRs or pushes. It does not dispatch workflows.
+- Reviewers call `signVerdict({ sha, reviewer, outcome }, key)`. Pass a
+  shared secret from the caller, not from the exchange files. The gate
+  returns a typed refusal unless there is a pass and a valid clean verdict
+  on the current SHA. A later push needs its own check and review. The gate
+  does not convert an already-ready PR back to draft.
+- GitHub has no atomic compare-head-and-mark-ready operation. The adapter
+  refuses with `readiness_unfenced` unless `withHeadLock` excludes **all**
+  head updates through the transition. A local mutex does not fence pushes
+  on GitHub. Use a host-enforced immutable head or a coordinated write path
+  that can also keep the head fenced if the mutation outcome is uncertain.
+
+## Controller loop
+
+`runController()` follows the event long-poll on a board handle bound to the
+agent's inbox principal. It reads `operationalInbox` after each feed page,
+including empty pages: the generic feed does not expose private inbox mail.
+Feed requests are serial and start at least one configured long-poll interval
+apart, even when a page returns early.
+
+Pass the agent's inbox address, roles, a `parentOf(agent)` adapter, a monotonic
+clock, and an abort signal. The registry adapter maps the inbox identity to the
+registration and returns the immediate parent's inbox address or `null`.
+The loop records `seen` before calling `wake`. Return `'acted'` only after the
+work is done. Returning nothing or throwing leaves the message eligible for
+escalation. The board authors receipts and escalation provenance.
+
+The deadline starts when the loop first observes an unacted message, even if
+the handler is still running. At the deadline the loop checks the inbox once
+more. It sends one reference to the immediate parent only if the message is
+still visible and unacted. It does not forward private message text. The check
+and send are separate board calls, not an atomic operation. Wake and escalation
+deduplication are local to the invocation. The loop does not persist checkpoints
+or coordinate multiple instances.
 
 ## ops
 

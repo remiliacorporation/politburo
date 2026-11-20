@@ -2,16 +2,15 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { decodeJwt } from 'jose'
 import { exchangeVercelOidcToken, getVercelOidcToken, getVercelToken } from '@vercel/oidc'
 import type { Discovery } from '../api/routes.ts'
 import { BoardError, type ProfileOption, type Resolvable } from './client.ts'
+import { configDir, savedJoinToken } from './join-config.ts'
 
-export const configDir = () =>
-  join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'board')
+export { configDir }
 
 /**
  * A Git checkout's root: `.git` is a directory with a `HEAD`, or a worktree's
@@ -335,6 +334,16 @@ export function boardUrl(): string {
   return url
 }
 
+/** Invite redemption must not use the normal credential or Deployment Protection discovery. */
+export function redeemFetch(input: RequestInfo | URL, init: RequestInit = {}, send: typeof fetch = globalThis.fetch): Promise<Response> {
+  const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))
+  for (const name of ['authorization', 'cookie', 'x-board-profile', 'x-board-can', 'x-vercel-protection-bypass', 'x-vercel-trusted-oidc-idp-token']) headers.delete(name)
+  return send(input, { ...init, headers, credentials: 'omit', redirect: 'error' })
+}
+
+/** Where `vb whoami` says a saved join credential came from. */
+export const JOINED = 'vb join'
+
 /** How `vb` reaches a board from Node: a fetch that carries your credentials, and who it found you are. */
 export type NodeTransport = {
   /** Every request to the board, through Deployment Protection, with a token for it (all but discovery). */
@@ -346,8 +355,8 @@ export type NodeTransport = {
 /**
  * How a client reaches the board at `url` from Node: through Deployment Protection, with a token
  * from `token`, the login of an app that runs board's CLI (`appLogin`), `BOARD_TOKEN`, a local
- * board's token file (`vb serve`), GitHub Actions, the Vercel runtime, or your Vercel CLI login,
- * in that order. Who you are is the token's to say: the board
+ * board's token file (`vb serve`), a joined board's credential (`vb join`), GitHub Actions,
+ * the Vercel runtime, or your Vercel CLI login, in that order. Who you are is the token's to say: the board
  * names you from what it verifies. A board with no Vercel project has no token for your login to
  * mint, so a request goes to it with none: what verifies its callers may know you another way, as
  * a board behind `tailscale serve` does.
@@ -357,7 +366,9 @@ export function connect(
   options: { token?: Resolvable<string> | undefined; fetch?: typeof fetch | undefined } = {},
 ): NodeTransport {
   url = url.replace(/\/+$/, '')
-  const doFetch = guarded(url, options.fetch ?? ((input, init) => globalThis.fetch(input, init)), options.token)
+  const rawFetch: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
+  const doFetch = guarded(url, rawFetch, options.token)
+  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: 'error' })
   // Every token is for `url`, the board it's sent to. A board whose discovery claims another
   // audience gets none, so its answer can't get us to mint one it could replay.
   let discovery: Promise<Discovery> | undefined
@@ -413,6 +424,11 @@ export function connect(
       source = 'vb serve'
       return { token: local.token, expiresAt: expiry(local.token) }
     }
+    const joined = await savedJoinToken(url)
+    if (joined) {
+      source = JOINED
+      return { token: joined, expiresAt: Infinity }
+    }
     const discovered = await discover()
     if (process.env.ACTIONS_ID_TOKEN_REQUEST_URL && process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
       const token = await githubActionsToken(url)
@@ -437,16 +453,24 @@ export function connect(
   const send = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const href = input instanceof Request ? input.url : String(input)
     const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
+    if (method === 'POST' && href === `${url}/invites/redeem`) return redeemFetch(input, init, rawFetch)
     const path = (href.startsWith(url) ? href.slice(url.length) : new URL(href).pathname).split('?')[0] || '/'
     const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined))
-    // Discovery is public: it's what a token is minted from.
+    // Discovery is public: it's what a token is minted from. For a joined URL, don't look up
+    // a login or mint OIDC just to read it (whoami reads it alongside the signed request).
+    const publicRead = method === 'GET' && path === '/'
     let bare = false
-    if (!(method === 'GET' && path === '/') && !headers.has('authorization')) {
+    let joined = false
+    if (!publicRead && !headers.has('authorization')) {
       const credential = await token()
       if (credential !== null) headers.set('authorization', `Bearer ${credential}`)
       else bare = true
+      joined = source === JOINED
+    } else if (publicRead && options.token === undefined && !appLogin() && !process.env.BOARD_TOKEN && !localToken(url)) {
+      joined = source === JOINED || (await savedJoinToken(url)) !== null
     }
-    const response = await doFetch(input, { ...init, headers })
+    // The credential is only for this board. It isn't an edge OIDC credential and never follows redirects.
+    const response = await (joined ? joinedFetch : doFetch)(input, { ...init, headers })
     // It went with no token, and the board took it for no one's.
     if (bare && response.status === 401) {
       await response.body?.cancel().catch(() => {})

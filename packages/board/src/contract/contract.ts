@@ -132,7 +132,7 @@ export const StoredPrincipal = z.object({
   handle: Handle,
   facts: z
     .object({
-      issuer: z.enum(['vercel', 'github', 'oidc', 'host']),
+      issuer: z.enum(['vercel', 'github', 'oidc', 'host', 'joined']),
       iss: z.string().max(1000),
       claims: z.record(z.string(), z.union([z.string().max(1000), z.number(), z.boolean()])),
       /** The board's own Vercel team, as the board knew it when it verified the token. */
@@ -290,6 +290,7 @@ const Environments = z.array(z.string().min(1).max(100)).max(16)
 
 /** Who a grant names, as the board keeps it: IDs, with the names it knows beside them. */
 const GrantPrincipal = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('invitee'), id: ActorId }),
   z.object({ kind: z.literal('user'), userId: z.string().min(1).max(200), email: z.string().max(320).optional() }),
   // A project on the team the board was on when the grant named it, where the board knew it.
   z.object({ kind: z.literal('project'), projectId: z.string().min(1).max(200), name: z.string().max(200).optional(), environments: Environments, teamId: z.string().min(1).max(200).optional() }),
@@ -333,6 +334,10 @@ export const accessContract = contract({
     'grant.updated': z.object({ id: z.number().int().positive(), principals: z.array(GrantPrincipal).min(1).max(32), can: GrantCan, by: ActorId }),
     /** A grant revoked. */
     'grant.deleted': z.object({ id: z.number().int().positive(), by: ActorId }),
+    // Only one-way verifiers of 256-bit random values are kept, never either bearer secret.
+    'invite.created': z.object({ id: z.string().uuid(), name: z.string().max(32), digest: z.string().length(64), can: GrantCan, expiresAt: z.number().int(), by: ActorId }),
+    'invite.revoked': z.object({ id: z.string().uuid(), by: ActorId }),
+    'invite.redeemed': z.object({ id: z.string().uuid(), principal: ActorId, digest: z.string().length(64), audience: z.string() }),
     /** From when boards issued tokens: kept so older logs load, and folded into nothing. */
     'token.minted': z.object({ by: ActorId }),
     /** From when boards issued tokens: folded into nothing. */

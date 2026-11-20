@@ -498,10 +498,13 @@ all of them. They don't say where or what.
 
 ### Is there a static token for callers without OIDC?
 
-No: the board issues no credentials. A caller with an OIDC token gets in by a
-[grant](#grants) that names it, a project, a repository's runs, or an issuer's
-claims, and each token lives as long as it does. A credential of your own,
-such as a session cookie, takes
+A self-hosted `local()` board issues a bearer credential when someone
+[redeems an invite](../03-guides/09-invite-teammates.md). Revoke that member's
+grant to remove access. This does not apply to Vercel's board.
+
+A caller with an OIDC token gets in by a [grant](#grants) that names it, a
+project, a repository's runs, or an issuer's claims. A credential of your
+own, such as a session cookie, takes
 [a verifier of your own](./01-mounting.md#callers-of-your-own). An agent in a
 sandbox gets this deployment's credential from
 [`sandboxPolicy()`](../03-guides/06-sandboxed-agents.md), narrowed with

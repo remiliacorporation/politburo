@@ -106,6 +106,29 @@ function claimFields(claim: TaskClaim | undefined) {
 }
 
 describe('structured attention over authenticated HTTP', () => {
+  it('keeps operator parks and structured holds separate', async () => {
+    const { owner, responder, clock } = await setup()
+    const { task } = await make(owner)
+    const supporting = await evidence(owner, task.id)
+    const request = draft(task, supporting, clock.now())
+    const parkPath = `/tasks/${task.id}/park`
+    const unparkPath = `/tasks/${task.id}/unpark`
+
+    expect(code(await owner('POST', parkPath, { reason: 'hold for maintenance' }))).toEqual([200, undefined])
+    expect(code(await owner('POST', pathOf(task.id), request))).toEqual([409, 'task_blocked'])
+    expect((await owner('GET', pathOf(task.id))).body).toEqual({ attention: null })
+    expect(code(await owner('POST', unparkPath, { reason: 'maintenance over' }))).toEqual([200, undefined])
+
+    const { attention } = await ask(owner, task, request)
+    expect(code(await owner('POST', parkPath, { reason: 'cannot replace a request' }))).toEqual([409, 'task_blocked'])
+    const unpark = await owner('POST', unparkPath, { reason: 'cannot answer a request' })
+    expect(code(unpark)).toEqual([200, undefined])
+    expect(unpark.body.task.task).toMatchObject({ state: 'blocked', attentionId: attention.id })
+    const answered = await choose(responder, task, attention.id)
+    expect(code(answered)).toEqual([200, undefined])
+    expect(answered.body.task.task.state).toBe('ready')
+  })
+
   it('routes exactly one racing answer, persists its receipt, and refuses a retry without a second event', async () => {
     const { owner, responder, clock } = await setup()
     const { task } = await make(owner)

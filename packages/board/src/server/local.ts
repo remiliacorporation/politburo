@@ -25,8 +25,10 @@ export type LocalOptions = {
   workLifecycle?: WorkLifecycleOptions
   /** Enables structured attention. Each exact channel lists verified people who may answer there with read and post access. */
   attentionResponders?: AttentionResponders
-  /** Enables the fork's agent registry. Off by default. */
+  /** Enables the fork's agent registry, intents, and health checks. Off by default. */
   agentOps?: boolean
+  /** How many seconds a run probe's report stays fresh, subject to its intent and lease deadlines. Default: 30. */
+  agentHealthFreshnessSeconds?: number
 }
 
 /** A board kept in this process. `close()` closes its file, once nothing uses it. */
@@ -101,6 +103,7 @@ export function local(options: LocalOptions = {}): LocalBackend {
         ...(workLifecycle ? { workLifecycle } : {}),
         ...(options.attentionResponders !== undefined ? { attentionResponders: options.attentionResponders } : {}),
         agentOps: options.agentOps === true,
+        ...(options.agentHealthFreshnessSeconds === undefined ? {} : { agentHealthFreshnessSeconds: options.agentHealthFreshnessSeconds }),
       })
       backend.bind(bound)
       return { backend, store, scheduler }
@@ -118,8 +121,10 @@ export function local(options: LocalOptions = {}): LocalBackend {
     routes: [],
     // The board lives here: board() lets its people and own deployments in by default.
     keeps: true,
+    supportsTaskAuthority: true,
     trust: {
       grants: async () => (await open()).backend.trust.grants(),
+      joined: async (digest, audience) => (await open()).backend.trust.joined(digest, audience),
     } satisfies Trust,
     bind(given: BoardBinding) {
       if (binding) throw new Error('local: this backend already serves a board: create one local() per board()')

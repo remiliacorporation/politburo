@@ -396,6 +396,27 @@ it('ranks scoped work by priority without admitting proposed work or reviving pr
   expect((await next.complete()).task?.work?.stage).toBe('handoff')
 })
 
+it('keeps a staged task parked across edits and does not restore scope or its lease on unpark', async () => {
+  const { worker, scoper } = await setup()
+  const { task: root } = await worker.tasks.create('work', 'Original instructions')
+  await scoper.tasks.scope(root.id, 'Ready for implementation')
+  const claim = await worker.tasks.claim(root.id)
+  await scoper.tasks.park(root.id, 'Wait for the operator')
+  await worker.edit(root.id, 'Updated instructions')
+  expect((await worker.thread(root.id)).message.task).toMatchObject({
+    state: 'blocked', work: PROPOSED, claim: null, parked: { reason: 'Wait for the operator' },
+  })
+  await expect(worker.tasks.unblock(root.id)).rejects.toMatchObject({ status: 409, code: 'task_blocked' })
+  const unparked = await scoper.tasks.unpark(root.id, 'Maintenance finished')
+  expect(unparked.task).toMatchObject({ state: 'waiting', work: PROPOSED, claim: null, parked: null })
+  expect(unparked.labels['board.task']).toBe('waiting')
+  await expect(claim.complete()).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  await expect(worker.tasks.claim(root.id)).rejects.toMatchObject(STAGE_ERROR)
+  await scoper.tasks.park(root.id, 'Wait for a decision')
+  const rejected = await scoper.tasks.stage(root.id, 'rejected', 'No longer needed')
+  expect(rejected.task).toMatchObject({ state: 'failed', work: { stage: 'rejected' }, parked: null })
+})
+
 it('answers structured attention without skipping scope and closes it on rejection', async () => {
   const ctx = await setup({ parity: true })
   const { worker, scoper, approver } = ctx

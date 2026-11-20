@@ -7,15 +7,15 @@ import { caller, personToken, testBoard, BOARD_URL } from './harness.ts'
 
 // vb() on a handle over HTTP to an in-process board: the CLI's commands, output, and exit codes,
 // with files from its options. The CLI itself runs through the same code (cli*.test.ts).
-// With `stall.on`, its board never answers, whatever the request's signal says, and `stall.seen` keeps those requests.
+// `stall.on` holds all requests (or only POSTs) without answering, even if canceled, and `stall.seen` keeps them.
 // With `stall.bodies`, a file's download answers, and its bytes never come; with `stall.breaks`, its connection drops after one byte.
-type Stall = { on: boolean; seen: Request[]; bodies?: boolean; breaks?: boolean }
+type Stall = { on: boolean | 'post'; seen: Request[]; bodies?: boolean; breaks?: boolean }
 async function handle(stall: Stall = { on: false, seen: [] }, served = testBoard()) {
   const token = await personToken('u_ada', BOARD_URL)
   const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
     request.headers.set('authorization', `Bearer ${token}`)
-    if (stall.on) return stall.seen.push(request), new Promise<never>(() => {})
+    if (stall.on === true || (stall.on === 'post' && request.method === 'POST')) return stall.seen.push(request), new Promise<never>(() => {})
     const response = await served.fetch(request)
     const download = request.method === 'GET' && new URL(request.url).pathname.includes('/attachments/')
     if (download && stall.bodies) return new Response(new ReadableStream({ start() {} }), { status: response.status, headers: response.headers })
@@ -147,6 +147,37 @@ describe('vb()', () => {
     stall.breaks = false
     // A signal that never fires changes nothing.
     expect(await vb(team, ['read', 'dev', '--text', 'outage'], { signal: new AbortController().signal })).toMatchObject({ code: 0, stdout: expect.stringMatching(/^dev · 1 thread/) })
+  })
+
+  it.each(['pause', 'resume', 'status'])('reports whether a timed-out %s may have landed', async (command) => {
+    const team = await handle({ on: true, seen: [] })
+    const args = command === 'status' ? [command] : [command, '--reason', 'maintenance']
+    const timedOut = await vb(team, [...args, '--json'], { signal: AbortSignal.timeout(50) })
+    expect(timedOut).toMatchObject({ code: 1, stdout: '' })
+    const error = failure(timedOut)
+    expect(error).toMatchObject({ reason: 'timeout' })
+    if (command === 'status') expect(error).not.toHaveProperty('hint')
+    else expect(error).toHaveProperty('hint', 'It may have happened anyway: read before you run it again.')
+  })
+
+  it.each([
+    ['issue-intent', 'agent-1', 'poke', '--ttl', '30s'],
+    ['issue-role-intent', 'work', 'reviewer', 'poke', '--ttl', '30s'],
+    ['take-intent', 'intent-1'],
+    ['report-intent', 'intent-1', 'ok'],
+  ].map((args) => ({ subcommand: args[0], args })))('warns that an interrupted agents $subcommand may have landed', async ({ args }) => {
+    const stall: Stall = { on: 'post', seen: [] }
+    const team = await handle(stall, testBoard({ agentOps: true }))
+    const controller = new AbortController()
+    const pending = vb(team, ['agents', ...args, '--generation', '1', '--json'], { signal: controller.signal })
+    try {
+      await vi.waitFor(() => expect(stall.seen).toHaveLength(1))
+    } finally {
+      controller.abort()
+    }
+    const stopped = await pending
+    expect(stopped).toMatchObject({ code: 130, stdout: '' })
+    expect(failure(stopped)).toMatchObject({ reason: 'canceled', hint: 'It may have happened anyway: read before you run it again.' })
   })
 
   it('sends nothing for a call whose signal fired while it waited its turn, on a backend that ignores signals', async () => {

@@ -95,6 +95,9 @@ describe("vercel()'s tasks", () => {
       'makes several tasks in one write, in the order given: each waits for the ones it names, of the batch or there already, and an id makes them once': 'passed',
       'makes none of a batch when one of its tasks can not be made, wherever it comes in it': 'passed',
       'holds a task for a person, by its owner or its claim, and gives it back when unblocked': 'passed',
+      'parks a task only as a verified person with manage, and unpark restores work without the claim': 'skipped: not kept here: no task authority',
+      'binds a claim to its verified owner and fences an older generation even with the same token': 'skipped: not kept here: no task authority',
+      'records an immutable handoff and accepts only one of two replacements naming the same predecessor': 'skipped: not kept here: no task authority',
       'keeps a task assigned to a profile for that actor alone': 'passed',
       // This run sends no headers of its own: the kit's run with them, in backend-vercel.test.ts, checks it.
       'lets a profile change only the tasks it made, and its principal all of them': "skipped: this run can't call the board with headers of its own",
@@ -113,6 +116,27 @@ describe("vercel()'s tasks", () => {
     // A deployment does: its sync's platform user is a profile of its own project, and still never the task's owner.
     expect(await statuses('project:prj_pong:production')).toEqual({ ...kept, [edited]: 'passed' })
   }, 60_000)
+
+  it('refuses task authority writes without forwarding a legacy write to the upstream board', async () => {
+    const team = handleOn(fakeMessageboard())
+    const { task } = await team.tasks.create('work', { text: 'review this release' })
+    const thread = await team.post('work', 'adopt me')
+    const { actor, principal } = await team.me()
+    const who = { actor, principal }
+    const binding = { owner: who, controller: who, provider: 'test', model: 'test', session: 'test', branch: 'topic/test', worktree: '/fixture/test', baseCommit: 'a'.repeat(40) }
+    const received = team.sent.length
+    for (const write of [
+      () => team.tasks.park(task.id, 'wait'),
+      () => team.tasks.unpark(task.id, 'resume'),
+      () => team.tasks.claim(task.id, { binding }),
+      () => team.tasks.claim({ channel: 'work', binding }),
+      () => team.tasks.create('work', { text: 'do not make a task', claim: true, binding }),
+      () => team.tasks.create({ re: thread.id }, { claim: true, binding }),
+      () => team.tasks.handoff(task.id, { epoch: 1, token: 'fixture', commit: 'b'.repeat(40), packetPath: 'handoffs/check.md', sha256: 'c'.repeat(64) }),
+    ]) await expect(write()).rejects.toMatchObject({ status: 501, code: 'no_task_authority' })
+    expect(team.sent.slice(received).filter((request) => request.method !== 'GET').map((request) => [request.method, request.path])).toEqual([])
+    expect((await team.tasks.claim(task.id)).task.task?.state).toBe('claimed')
+  })
 
   it("finds no task on the thread routes that carried them before: the fake API has only version 2's task routes, as the API does", async () => {
     const api = fakeMessageboard()

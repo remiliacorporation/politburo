@@ -2,9 +2,11 @@
 // and Vercel's API decide the same way. `@vercel/board/access` exports it.
 import { combine, compileAccess, decide, type Access, type Can, type Level, type Matched, type Permission, type WrittenCan } from './access.ts'
 import type { GrantPrincipal } from './auth.ts'
+import { INVITE_PERMISSIONS } from '../api/routes.ts'
 
 /** Who asks, as a verified token says, in the terms grants name them by. */
 export type Caller =
+  | { kind: 'invitee'; id: string }
   | { kind: 'user'; userId: string }
   | { kind: 'project'; projectId: string; environment: string; teamId?: string }
   | { kind: 'github'; repository: string; repositoryId?: string; workflowRef?: string; ref?: string; event?: string }
@@ -48,6 +50,8 @@ export function levelOf(principal: GrantPrincipal, facts: Pick<GrantFacts, 'call
   switch (principal.kind) {
     case 'everyone':
       return 'everyone'
+    case 'invitee':
+      return caller.kind === 'invitee' && caller.id === principal.id ? 'principal' : null
     case 'all-users':
       return caller.kind === 'user' && facts.member === true ? 'group' : null
     case 'user':
@@ -114,9 +118,12 @@ export function admits<G extends DecidingGrant>(facts: GrantFacts<G>, matched: r
   return matched.some((found) => found.level !== 'everyone')
 }
 
+const capOf = (facts: GrantFacts) => facts.caller.kind === 'invitee' ? INVITE_PERMISSIONS : facts.cap
+
 /** `access`, capped and narrowed by its token. */
 function limited(access: Access, facts: GrantFacts<DecidingGrant>): Access {
-  let out = facts.cap === undefined ? access : access.narrow({ '*': [...facts.cap] })
+  const cap = capOf(facts)
+  let out = cap === undefined ? access : access.narrow({ '*': [...cap] })
   if (facts.can !== undefined) out = out.narrow(compileAccess(facts.can))
   return out
 }
@@ -131,7 +138,10 @@ function limited(access: Access, facts: GrantFacts<DecidingGrant>): Access {
 export function grantAccess<G extends DecidingGrant>(facts: GrantFacts<G>): { caller: Access; own: Access } | null {
   const matched = matchedFor(facts)
   if (!admits(facts, matched)) return null
-  return { caller: limited(combine(matched), facts), own: limited(combine(matchedFor(facts, true)), facts) }
+  const own = limited(combine(matchedFor(facts, true)), facts)
+  const caller = limited(combine(matched), facts)
+  // Public grants can close channels for a joined principal, but never widen its explicit grant.
+  return { caller: facts.caller.kind === 'invitee' ? caller.narrow(own) : caller, own }
 }
 
 /**
@@ -155,8 +165,10 @@ export function explainGrants<G extends DecidingGrant>(facts: GrantFacts<G>, cha
   const matched = matchedFor(facts)
   if (!admits(facts, matched)) return { pattern: null, over: [], level: null, grants: [], capped: false, permissions: [] }
   const decision = decide(matched, channel)
-  const cap = facts.cap === undefined ? null : compileAccess({ '*': [...facts.cap] })
+  const max = capOf(facts)
+  const cap = max === undefined ? null : compileAccess({ '*': [...max] })
   const capped = cap ? decision.permissions.filter((permission) => cap.can(permission, channel)) : [...decision.permissions]
+  const own = facts.caller.kind === 'invitee' ? combine(matchedFor(facts, true)) : null
   const token = facts.can === undefined ? null : compileAccess(facts.can)
   return {
     pattern: decision.pattern,
@@ -164,6 +176,6 @@ export function explainGrants<G extends DecidingGrant>(facts: GrantFacts<G>, cha
     level: decision.level,
     grants: decision.sources.map((source) => source.grant),
     capped: capped.length < decision.permissions.length,
-    permissions: token ? capped.filter((permission) => token.can(permission, channel)) : capped,
+    permissions: capped.filter((permission) => (!token || token.can(permission, channel)) && (!own || own.can(permission, channel))),
   }
 }

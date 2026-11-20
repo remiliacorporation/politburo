@@ -6,7 +6,7 @@ import { join } from 'node:path'
 // Load SQLite before capturing CLI stderr, so Node's one-time warning isn't CLI output.
 import 'node:sqlite'
 import { build } from 'tsdown'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createApp, type Failure } from '../src/cli/embedded.ts'
 import { main, type Command } from '../src/cli/main.ts'
 import { local } from '../src/cli/local.ts'
@@ -73,6 +73,14 @@ const everything = (files: Map<string, string>) => [...files.values()].join('\n'
 
 describe('the embedded CLI', () => {
   useBoard()
+
+  beforeAll(async () => {
+    // The board's first authenticated request warns about its inferred URL. Let it do so
+    // before capturing the CLI's stderr in this same process.
+    const response = await fetch(`${url}/me`, { headers: { authorization: `Bearer ${env.BOARD_TOKEN}` } })
+    expect(response.status).toBe(200)
+    await response.text()
+  })
 
   afterEach(() => {
     vi.unstubAllEnvs()

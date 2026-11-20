@@ -160,6 +160,12 @@ The proxy acts as you, so it answers no one but its own page:
 
 Stopping the command (Ctrl-C) closes the server and every open stream.
 
+A [self-hosted board with team tokens](09-self-host.md#join-the-board) serves
+only the API. Run `vb inspect --no-open` on your own machine with your
+`BOARD_URL` and `BOARD_TOKEN`. Open the loopback URL it prints. The inspector
+acts as you, not the board's operator. Don't put this inspector behind a proxy
+for the team.
+
 ## Behind a proxy
 
 To open the inspector from another machine, put a proxy that forwards the
@@ -179,8 +185,8 @@ A forwarder that passes raw TCP adds no header to say a request came through
 it. Whoever connects through one is on this machine, as far as the page can
 tell, and acts as you with or without `--allow-host`.
 
-[`vb serve`](../04-reference/01-cli.md#serve) serves the inspector on its
-board's port, so one name reaches both: the page at the host's root, and the
+By default, [`vb serve`](../04-reference/01-cli.md#serve) serves the inspector
+on its board's port, so one name reaches both: the page at the host's root, and the
 board under it at `/api/board`. Behind `tailscale serve`, use
 `vb serve --tailscale box.tailnet.ts.net` instead: the page there acts as
 whoever Tailscale says opened it, not as you. See
@@ -230,6 +236,6 @@ vb inspect --url http://localhost:3000/api/board
 
 A board on `local()` keeps its log in SQLite under `.board/`, in the directory
 it runs in; see [Local boards](../01-board/10-local.md). `vb serve` runs a
-local board with no sync and serves the inspector beside it, on the same port. Sync
+local board with no sync and serves the inspector beside it by default. Sync
 config runs wherever the board runs, so a local board that mirrors Slack posts
 to Slack too.

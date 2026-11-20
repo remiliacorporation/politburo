@@ -66,12 +66,12 @@ export const wroteAs = (caller: { principal: Pick<Principal, 'id'>; actor: { id:
  * Principal IDs a board authenticates: its people, deployments, workflows, and its own code. No
  * platform actor sync writes as may have one, or an import could pass for someone signed in.
  */
-export const authenticates = (id: string) => /^(vercel|oidc|local|board):/.test(id) || id.startsWith('github:repo:')
+export const authenticates = (id: string) => /^(vercel|oidc|local|board|joined):/.test(id) || id.startsWith('github:repo:')
 
 /** What a verified token said: its issuer and its claims, never the token itself. */
 export type TokenFacts = {
   /** `host`: a host's own verifier recognized the caller; its claims are when that runs out. */
-  issuer: 'vercel' | 'github' | 'oidc' | 'host'
+  issuer: 'vercel' | 'github' | 'oidc' | 'host' | 'joined'
   iss: string
   claims: Readonly<Record<string, string | number | boolean>>
 }
@@ -145,6 +145,7 @@ export type Known = Pick<Principal, 'id' | 'kind' | 'handle' | 'facts' | 'scope'
  * ID, a repository's `owner/name`.
  */
 export type GrantPrincipal =
+  | { kind: 'invitee'; id: string }
   | { kind: 'user'; userId: string; email?: string }
   | { kind: 'project'; projectId: string; name?: string; environments: readonly string[]; teamId?: string }
   | { kind: 'github'; repository: string; repositoryId?: string; workflow?: string; branch?: string; event?: string }
@@ -327,6 +328,8 @@ export function checkCan(can: unknown): WrittenCan {
 export function removes(removal: GrantPrincipal, principal: GrantPrincipal): boolean {
   if (removal.kind !== principal.kind) return false
   switch (removal.kind) {
+    case 'invitee':
+      return removal.id === (principal as typeof removal).id
     case 'user':
       return removal.userId === (principal as typeof removal).userId
     case 'project':
@@ -376,6 +379,7 @@ export const userIdOf = (id: string) => id.split(':').slice(2).join(':')
  * board's own code.
  */
 export function callerFacts(principal: Known, facts: TokenFacts | null, team: string | null): Pick<GrantFacts, 'caller' | 'member' | 'teamProject'> | null {
+  if (facts?.issuer === 'joined') return { caller: { kind: 'invitee', id: principal.id } }
   const claims = facts?.claims ?? {}
   if (principal.kind === 'person') return { caller: { kind: 'user', userId: userIdOf(principal.id) }, member: true }
   if (facts?.issuer === 'vercel')
@@ -504,6 +508,11 @@ export function createAuthority(options: {
    * it may do nothing.
    */
   async function resolve(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Resolved> {
+    if (principal.facts?.issuer === 'joined') {
+      const { facts } = await factsFor(principal, principal.facts, null, snapshot)
+      if (facts && admits(facts)) return { facts }
+      throw forbidden("this credential has no grant on this board")
+    }
     const hosted = principal.facts?.issuer === 'host'
     // A platform user sync writes as is `external` too, but one a host's verifier returns is the host's to give access.
     if (principal.id.startsWith('board:') || (principal.kind === 'external' && !hosted)) return { fixed: FULL_ACCESS }
@@ -641,7 +650,7 @@ export function hostPrincipal(value: HostPrincipal): Principal {
     throw new TypeError(`authenticate returned an invalid principal: ${why}`)
   }
   if (typeof value !== 'object' || value === null) fail('not an object')
-  if (typeof value.id !== 'string' || !PRINCIPAL_ID.test(value.id) || value.id.startsWith('board:'))
+  if (typeof value.id !== 'string' || !PRINCIPAL_ID.test(value.id) || /^(board|joined):/.test(value.id))
     fail(`id must look like \`vercel:user:<id>\`, got ${JSON.stringify(value.id)}`)
   if (!KINDS.includes(value.kind)) fail(`kind must be one of ${KINDS.join(', ')}`)
   if (typeof value.handle !== 'string' || !/^\S{1,64}$/.test(value.handle)) fail('handle must be 1-64 characters, no spaces')

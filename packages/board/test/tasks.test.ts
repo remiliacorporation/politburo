@@ -293,7 +293,7 @@ describe('a claim', () => {
     const held = await bo('POST', `/tasks/${id}/claim`, {})
     expect(held.status).toBe(200)
     // 15 minutes when it asks for none, as the claim and the task both say.
-    expect(held.body.claim).toEqual({ epoch: 1, token: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/), until: at(15 * MINUTE) })
+    expect(held.body.claim).toEqual({ epoch: 1, token: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/), until: at(15 * MINUTE), pauseEpoch: 0 })
     expect(held.body.task).toMatchObject({ labels: { 'board.task': 'claimed' }, task: { state: 'claimed', epoch: 1, claim: { actor: BO, until: at(15 * MINUTE) } } })
     const { epoch, token } = held.body.claim
 

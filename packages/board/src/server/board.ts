@@ -31,7 +31,7 @@ export type BoardOptions = PolicyOptions & (BackendOptions | DefaultOptions) & {
    * unless `--ensure` is given, so a typo at a terminal makes no board.
    */
   ensure?: boolean
-  /** Start a new local board paused. Defaults to false and never changes an existing board. */
+  /** Start a local board with an empty log paused. Defaults to false and never changes a board with log history. */
   initiallyPaused?: boolean
   /**
    * Whose board this is: another team's, by its ID (`team_…`) or its slug, with `name` or without

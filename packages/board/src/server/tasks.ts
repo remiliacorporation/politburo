@@ -1,12 +1,13 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { consumer, createServer, type A2Scheduler, type A2Store, type ConsumerContext } from 'experimental-a2/server'
-import { LEASE_DEFAULT_S, type MessageView, type TaskClaim } from '../api/routes.ts'
+import { LEASE_DEFAULT_S, type MessageView, type TaskBinding, type TaskClaim, type TaskHandoffInput } from '../api/routes.ts'
 import type { Protocol } from '../api/protocol.ts'
 import type { AttentionAnswerBody, AttentionDraft, AttentionReceipt, AttentionResponders, AttentionView, RequestAttentionBody } from '../contract/attention.ts'
 import { LEASES_SESSION, leasesContract, type LeaseEvents } from '../contract/contract.ts'
-import type { BoardEvent } from '../contract/events.ts'
+import { ALONG_MAX, type BoardEvent } from '../contract/events.ts'
 import { foldMessages, workCanClaim, workTerminal, type Message, type MessagesState, type Task } from '../contract/folds.ts'
-import { actorsReducer, channelsReducer } from '../contract/reducers.ts'
+import { actorsReducer, channelsReducer, type WorkState } from '../contract/reducers.ts'
 import { DEFAULT_TASK_PRIORITY, OPEN_TASK_STATES, priorityRank, TASK_BATCH_MAX, TASK_KEY_MAX, TASK_LABEL, TASK_NEEDS_MAX, TASK_NOTE_MAX, TaskHoldKind, TaskPriority, type TaskState, type WorkStage, type WorkStageTarget } from '../contract/schemas.ts'
 import { batchPlan, type BatchNeed } from '../contract/task-batch.ts'
 import { authorize, type Access, type Permission } from './access.ts'
@@ -67,6 +68,7 @@ type AttentionChange = { task: MessageView; attention: AttentionView }
 
 /** What a claim's own writes show: the `epoch` and `token` its claim answered. */
 type Proof = { epoch: number; token: string }
+type Start = Pick<Protocol['createTask']['input'], 'needs' | 'for' | 'priority' | 'claim' | 'lease' | 'token' | 'binding' | 'id'>
 
 const conflict = (code: string, message: string) => new HttpError(409, code, message)
 const notATask = (id: number) => notFound(`#${id} isn't a task`, 'not_a_task')
@@ -90,6 +92,22 @@ export type WorkLifecycleOptions = {
 const beforeHandoff = (task: Task) => !task.work || task.work.stage === 'proposed' || workCanClaim(task.work.stage)
 const canReady = (task: Task) => !task.work || workCanClaim(task.work.stage)
 const completedNeed = (message: Message | undefined) => message?.task?.state === 'completed' && (!message.task.work || !message.deleted)
+const claimLost = (id: number) => conflict('claim_lost', `this claim on #${id} is over: claim it again`)
+const parked = (id: number) => conflict('task_blocked', `#${id} is parked: an operator must unpark it`)
+
+/** Assignment metadata attests to a controller but never acts as one. The owner is server-derived. */
+function bindingOf(identity: Identity, binding: TaskBinding | undefined): TaskBinding | undefined {
+  if (binding === undefined) return undefined
+  const owner = { principal: identity.principal.id, actor: identity.actor.id }
+  if (binding.owner.principal !== owner.principal || binding.owner.actor !== owner.actor)
+    throw forbidden('the binding owner must be the verified claimant')
+  return { ...binding, owner }
+}
+
+function sameBinding(id: number, requested: TaskBinding | undefined, current: TaskBinding | undefined) {
+  if (requested !== undefined && !isDeepStrictEqual(requested, current))
+    throw conflict('binding_mismatch', `the claim on #${id} already has a different binding or no binding`)
+}
 const staleAttention = () => conflict('attention_stale', 'the attention request or its snapshot is no longer current')
 const attentionExpired = (draft: AttentionDraft, at: number) => !(at < Date.parse(draft.expiresAt))
 
@@ -102,8 +120,13 @@ const hashes = (token: string, hash: string) => timingSafeEqual(Buffer.from(hash
 /** A lease asked for in seconds, as this board gives it, in milliseconds. */
 const leaseOf = (seconds: number | undefined) => Math.min(seconds ?? LEASE_DEFAULT_S, LEASE_CAP_S) * 1000
 
-/** Whether a task's claim has run out its lease: it's claimable at once, whatever its label still says. */
+/** Whether a claim was made in an earlier pause epoch than the board's: a pause fenced it. */
 const stale = (task: Task, pauseEpoch: number) => task.claim !== null && (task.claim.pauseEpoch ?? 0) !== pauseEpoch
+
+/** A pause fences outstanding claims, and resume does not revive them. */
+export const claimFenced = (task: Task, status: WorkState) => status.paused || stale(task, status.pauseEpoch)
+
+/** Whether a task's claim has run out its lease or was fenced: it's claimable at once, whatever its label still says. */
 const lapsed = (task: Task, at: number, pauseEpoch: number) => task.state === 'claimed' && (stale(task, pauseEpoch) || Date.parse(task.claim!.until) <= at)
 
 /** A claim whose lease ran out or was fenced by pause no longer holds the task. */
@@ -337,26 +360,46 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
 
   /** A scoped or repair stage projects to waiting when it has needs, until they're checked at this append. */
   async function enterWork(root: Root, identity: Identity, to: WorkStage, reason: string, position: number): Promise<Events> {
-    const ready = workCanClaim(to) && !root.task.blocked && root.task.needs.length > 0 && await satisfied(root.task, position)
+    const ready = workCanClaim(to) && !root.task.blocked && !root.task.parked && root.task.needs.length > 0 && await satisfied(root.task, position)
     const about = { id: root.id, thread: root.thread }
     return [stageChanged(root, identity, to, reason), ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
   }
 
+  /**
+   * The exact actor and principal that claimed the task. Tables written before the claim carried
+   * its principal recover it from the original event, never from the actor name or the caller.
+   */
+  async function claimedBy(root: Root, identity: Identity): Promise<boolean> {
+    const { task } = root
+    const claim = task.claim!
+    if (claim.actor !== identity.actor.id) return false
+    if (claim.principal !== undefined) return claim.principal === identity.principal.id
+    const { session, reads } = writes()
+    for (let end = root.version ?? (await reads.tables.position()); end > root.id; ) {
+      const start = Math.max(root.id + 1, end - PAGE + 1)
+      const rows = (await session.history({ gte: start, lte: end })) as BoardEvent[]
+      for (const row of rows) {
+        if (row.type !== 'task.claimed') continue
+        const { id, epoch, by, token } = row.payload
+        if (id === root.id && epoch === task.epoch && token === claim.token && by.actor === claim.actor)
+          return by.principal === identity.principal.id
+      }
+      end = start - 1
+    }
+    return false
+  }
+
   const epochAt = async (position: number) => (await writes().work.at(position)).status.pauseEpoch
   const openAt = async (position?: number, epoch?: number) => workOpen((await writes().work.at(position)).status, epoch)
-  const claimLost = (id: number) => conflict('claim_lost', `this claim on #${id} is over: claim it again`)
 
-  /** Legacy claims are bearer proofs; staged claims also pin the worker's identity. */
-  const claimantMatches = (task: Task, identity: Identity) =>
-    !task.work || (task.claim?.actor === identity.actor.id && task.claim.principal === identity.principal.id)
-
-  /** Refuses a claim that ended, ran out of time, or belonged to a different worker or pause epoch. */
+  /** A proof must name this caller's live claim in the current pause epoch; it gives no permissions. */
   async function fenced(root: Root, identity: Identity, proof: Proof, position: number) {
+    authorize(identity.principal.access, 'label', root.channel)
     const { task } = root
-    if (task.work) authorize(identity.principal.access, 'label', root.channel)
     const { status } = await writes().work.at(position)
-    if (status.paused || lapsed(task, Date.now(), status.pauseEpoch) || task.state !== 'claimed' || task.epoch !== proof.epoch ||
-        !claimantMatches(task, identity) || !hashes(proof.token, task.claim!.token)) throw claimLost(root.id)
+    if (status.paused || task.state !== 'claimed' || task.epoch !== proof.epoch || lapsed(task, Date.now(), status.pauseEpoch) || !hashes(proof.token, task.claim!.token))
+      throw claimLost(root.id)
+    if (!(await claimedBy(root, identity)) || lapsed(task, Date.now(), status.pauseEpoch)) throw claimLost(root.id)
   }
 
   /**
@@ -372,6 +415,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     if (task.work && !scopers) throw noLifecycle()
     if (task.work && !workCanClaim(task.work.stage)) throw invalidStage(root, 'claim')
     if (task.state === 'waiting') throw waiting(root)
+    if (task.parked) throw parked(root.id)
     if (task.state === 'blocked') throw conflict('task_blocked', `#${root.id} is held for a person: ${task.blocked!.reason}`)
     if (finished(task)) throw conflict('task_finished', `#${root.id} is ${task.state}`)
     if (task.for !== null && !assignedTo(task, identity)) throw conflict('task_assigned', `#${root.id} is assigned to ${task.for}`)
@@ -384,16 +428,17 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
    * A claim of a task as it stands, by `identity`: the events, and what the claim answers. A claim
    * whose lease ran out expires in the same append, so the log says what happened to it.
    */
-  function claiming(root: { id: number; thread: string }, task: Pick<Task, 'state' | 'epoch'> | null, identity: Identity, lease: number | undefined, token: string, pauseEpoch: number): { events: Events; claim: TaskClaim } {
+  function claiming(root: { id: number; thread: string }, task: Pick<Task, 'state' | 'epoch'> | null, identity: Identity, lease: number | undefined, token: string, pauseEpoch: number, binding: TaskBinding | undefined): { events: Events; claim: TaskClaim } {
     const about = { id: root.id, thread: root.thread }
     const epoch = (task?.epoch ?? 0) + 1
     const until = new Date(Date.now() + leaseOf(lease)).toISOString()
+    const metadata = binding === undefined ? {} : { binding }
     return {
       events: [
         ...(task?.state === 'claimed' ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
-        { type: 'task.claimed', payload: { ...about, epoch, ...(pauseEpoch === 0 ? {} : { pauseEpoch }), until, token: hashOf(token), by: identity.author } },
+        { type: 'task.claimed', payload: { ...about, epoch, ...(pauseEpoch === 0 ? {} : { pauseEpoch }), until, token: hashOf(token), by: identity.author, ...metadata } },
       ],
-      claim: { epoch, token, until },
+      claim: { epoch, token, until, pauseEpoch, ...metadata },
     }
   }
 
@@ -536,7 +581,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   }
 
   /** Claims the highest priority ready task the caller can take, oldest first at equal priority. */
-  async function claimNext(identity: Identity, input: Protocol['claimReadyTask']['input'], signal: AbortSignal, pauseEpoch: number): Promise<{ root: Message; claim: TaskClaim } | null> {
+  async function claimNext(identity: Identity, input: Protocol['claimReadyTask']['input'], signal: AbortSignal, pauseEpoch: number, binding: TaskBinding | undefined): Promise<{ root: Message; claim: TaskClaim } | null> {
     const ctx = writes()
     const { principal } = identity
     const access = scopers ? await accessFor(identity) : principal.access
@@ -566,7 +611,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       let best = -1
       for await (const candidate of rootsAt(filter, ['ready', 'claimed'], position)) {
         const { task } = candidate
-        if (stateNow(task, now, pauseEpoch) !== 'ready' || !canReady(task) || (task.work && !scopers)) continue
+        if (task.parked || stateNow(task, now, pauseEpoch) !== 'ready' || !canReady(task) || (task.work && !scopers)) continue
         if (scopers && (!current.readable(candidate.channel) || !current.can('label', candidate.channel))) continue
         if (!assignedTo(task, identity) && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
@@ -577,7 +622,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       }
       // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }
-      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch)
+      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding)
       read.taken = { root, claim }
       return { position, events: seen ? [seen, ...events] : events }
     })
@@ -598,18 +643,19 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     /**
      * What makes a new thread a task, to append with its root: `task.created`, `task.ready` when
      * the tasks it needs have all completed, and its claim when it asks for one. `claimed(id)` is
-     * what that claim answers once root `id` landed: null for a task made without one, or one this
-     * request didn't make (a retry of a post that landed gets the post back, and no claim).
+     * what that claim answers once root `id` landed. A retry recovers only the original, live
+     * claim, and only with the caller's own token.
      */
     async starting(
       identity: Identity,
-      input: { channel: string; needs?: string[] | undefined; for?: string | null | undefined; priority?: TaskPriority | undefined; claim?: boolean | undefined; lease?: number | undefined; token?: string | undefined },
+      input: Start & { channel: string },
       screenedEpoch?: number,
     ): Promise<{ along: Along; workEpoch: number | undefined; committed: () => void; claimed: (id: number) => Promise<TaskClaim | null> }> {
       const { principal, actor, author } = identity
       const assigned = ownActor(principal.id, input.for)
       // Claiming is what `label` gives, on a task made in the same write as on any other.
       if (input.claim) authorize(principal.access, 'label', input.channel)
+      const binding = bindingOf(identity, input.binding)
       const workEpoch = input.claim ? await openAt(undefined, screenedEpoch) : undefined
       const token = input.token ?? newToken()
       let planned: TaskClaim | null = null
@@ -629,7 +675,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
             const events: Events = [{ type: 'task.created', payload: { ...about, needs: needs.ids, for: assigned, priority: input.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }]
             if (!scopers && needs.ids.length > 0 && !waits) events.push({ type: 'task.ready', payload: about })
             if (workEpoch !== undefined) {
-              const taken = claiming(root, null, identity, input.lease, token, workEpoch)
+              const taken = claiming(root, null, identity, input.lease, token, workEpoch, binding)
               planned = taken.claim
               events.push(...taken.events)
             }
@@ -638,9 +684,37 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         }
       }
       const claimed = async (id: number): Promise<TaskClaim | null> => {
-        if (!committed || !planned) return null
-        await arm(id, planned.epoch, planned.until)
-        return planned
+        if (!input.claim) return null
+        const replay = !committed && input.token !== undefined
+        let created: BoardEvent<'task.claimed'> | undefined
+        if (input.id !== undefined && (binding !== undefined || replay)) {
+          const events = (await writes().session.history({ gte: id, lte: id + ALONG_MAX })) as BoardEvent[]
+          const post = events[0]
+          const along = post?.type === 'message.posted' ? post.payload.along ?? 0 : 0
+          created = events.slice(1, 1 + along).find((row) => row.type === 'task.claimed')
+          // An idempotent bound create cannot pretend to have written a different binding.
+          sameBinding(id, binding, created?.payload.binding)
+        }
+        if (committed && planned) {
+          await arm(id, planned.epoch, planned.until)
+          return planned
+        }
+        if (!replay || !created) return null
+        const ctx = writes()
+        const { status, index } = await ctx.work.at()
+        if (status.paused || status.pauseEpoch !== workEpoch) return null
+        const found = (await ctx.reads.messagesAt([id], index)).get(id)
+        const task = found?.task
+        // A later claim can reuse the same token but is not the one created with this post.
+        if (!task || task.state !== 'claimed' || task.epoch !== created.payload.epoch) return null
+        const current = task.claim
+        if (!current || !hashes(token, current.token) || lapsed(task, Date.now(), status.pauseEpoch)) return null
+        if (!(await claimedBy(found as Root, identity))) return null
+        const { status: now } = await ctx.work.at()
+        if (now.paused || lapsed(task, Date.now(), now.pauseEpoch)) return null
+        sameBinding(id, binding, current.binding)
+        await arm(id, task.epoch, current.until)
+        return { epoch: task.epoch, token, until: current.until, pauseEpoch: now.pauseEpoch, ...(current.binding ? { binding: current.binding } : {}) }
       }
       return { along, workEpoch, committed: () => { committed = true }, claimed }
     },
@@ -683,13 +757,14 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
      * Makes the thread rooted at `id` a task, as it is: `label` in its channel, and the caller's
      * principal owns it. A reply names no task, and neither does a root that's gone.
      */
-    async adopt(identity: Identity, id: number, input: { needs?: string[] | undefined; for?: string | null | undefined; priority?: TaskPriority | undefined; claim?: boolean | undefined; lease?: number | undefined; token?: string | undefined }): Promise<{ task: MessageView; claim?: TaskClaim }> {
+    async adopt(identity: Identity, id: number, input: Start): Promise<{ task: MessageView; claim?: TaskClaim }> {
       const { principal, actor, author } = identity
       const start = input.claim ? (await writes().work.at()).status : undefined
       await authorizeMessage(writes(), principal.access, 'label', id)
       const pauseEpoch = start === undefined ? undefined : workOpen(start)
       if (scopers && input.claim) requireScope()
       const assigned = ownActor(principal.id, input.for)
+      const binding = bindingOf(identity, input.binding)
       const token = input.token ?? newToken()
       const made: { claim: TaskClaim | null } = { claim: null }
       const root = await change(identity, id, async (found, position) => {
@@ -706,7 +781,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const events: Events = [{ type: 'task.created', payload: { ...about, needs: needs.ids, for: assigned, priority: input.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }]
         if (!scopers && needs.ids.length > 0 && !waits) events.push({ type: 'task.ready', payload: about })
         if (pauseEpoch !== undefined) {
-          const claimed = claiming(found, null, identity, input.lease, token, pauseEpoch)
+          const claimed = claiming(found, null, identity, input.lease, token, pauseEpoch, binding)
           events.push(...claimed.events)
           made.claim = claimed.claim
         }
@@ -774,30 +849,33 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
      * Claims a task: `label` in its channel, whoever owns it. Of claims that race, one lands. With
      * the token of the claim that holds it now, it answers that claim as it is.
      */
-    async claim(identity: Identity, id: number, lease: number | undefined, sent: string | undefined): Promise<Protocol['claimTask']['output']> {
+    async claim(identity: Identity, id: number, input: Protocol['claimTask']['input']): Promise<Protocol['claimTask']['output']> {
       const { principal } = identity
       const { status: start } = await writes().work.at()
       const { channel } = await taskOf(principal.access, id)
       authorize(principal.access, 'label', channel)
       const pauseEpoch = workOpen(start)
-      const token = sent ?? newToken()
+      const binding = bindingOf(identity, input.binding)
+      const token = input.token ?? newToken()
       const made: { claim?: TaskClaim; replay?: boolean } = {}
       const root = await changeTask(identity, id, async (found, position) => {
         made.replay = false
         await openAt(position, pauseEpoch)
         const { task } = found
         if (task.work && !scopers) throw noLifecycle()
-        if (sent !== undefined && task.claim && claimantMatches(task, identity) && hashes(sent, task.claim.token)) {
+        const current = task.claim
+        if (input.token !== undefined && current && hashes(token, current.token)) {
           if (stale(task, pauseEpoch)) throw claimLost(id)
-          if (!lapsed(task, Date.now(), pauseEpoch)) {
-            made.claim = { epoch: task.epoch, token, until: task.claim.until }
+          if (!lapsed(task, Date.now(), pauseEpoch) && (await claimedBy(found, identity)) && !lapsed(task, Date.now(), pauseEpoch)) {
+            sameBinding(id, binding, current.binding)
+            made.claim = { epoch: task.epoch, token, until: current.until, pauseEpoch, ...(current.binding ? { binding: current.binding } : {}) }
             made.replay = true
             return []
           }
         }
         claimable(found, identity, pauseEpoch)
         if (scopers && !(await satisfied(task, position))) throw waiting(found)
-        const claimed = claiming(found, task, identity, lease, token, pauseEpoch)
+        const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding)
         made.claim = claimed.claim
         return claimed.events
       })
@@ -809,12 +887,13 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
 
     /** Claims the next ready task there, waiting up to `wait` seconds for one. */
     async claimReady(identity: Identity, input: Protocol['claimReadyTask']['input'], signal: AbortSignal): Promise<Protocol['claimReadyTask']['output']> {
+      const binding = bindingOf(identity, input.binding)
       const deadline = Date.now() + (input.wait ?? 0) * 1000
       const pauseEpoch = await openAt()
       for (let pause = 100; ; pause = Math.min(pause * 2, 1000)) {
         // Looked at again before every try: the caller may have gone while this waited.
         if (signal.aborted) return { task: null }
-        const next = await claimNext(identity, input, signal, pauseEpoch)
+        const next = await claimNext(identity, input, signal, pauseEpoch, binding)
         if (next) return { task: await shown(identity, next.root), claim: next.claim }
         await openAt(undefined, pauseEpoch)
         if (Date.now() >= deadline) return { task: null }
@@ -852,10 +931,13 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           if (how.type === 'task.failed') throw conflict('work_lifecycle_required', 'release the claim for another attempt, or ask a scoper to reject the task')
           if (!workCanClaim(found.task.work.stage)) throw invalidStage(found, 'hand off')
           if (!(await satisfied(found.task, position))) throw waiting(found)
+          if (Date.parse(found.task.claim!.until) <= Date.now()) throw claimLost(id)
           return [stageChanged(found, identity, 'handoff', how.result ?? 'implementation complete', how.result)]
         }
         if (how.type === 'task.failed') return [{ type: 'task.failed', payload: { ...about, reason: how.reason } }]
-        return [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...(await readied(id, position))]
+        const ready = await readied(id, position)
+        if (Date.parse(found.task.claim!.until) <= Date.now()) throw claimLost(id)
+        return [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...ready]
       })
       return { task: await shown(identity, root) }
     },
@@ -872,6 +954,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (proof) await fenced(found, identity, proof, position)
         else {
           if (!beforeHandoff(found.task)) throw invalidStage(found, 'block')
+          if (found.task.parked) throw parked(id)
           const state = stateNow(found.task, Date.now(), await epochAt(position))
           if (state === 'claimed') throw conflict('task_claimed', `#${id} is claimed until ${found.task.claim!.until}: only its claim holds it`)
           if (state === 'blocked') throw conflict('task_blocked', `#${id} is held already: ${found.task.blocked!.reason}`)
@@ -898,6 +981,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const canFail = draft.options.some(({ next }) => next === 'fail')
         if (claim && canFail) owns(identity, found)
         if (finished(task) || found.deleted) throw conflict('task_finished', `#${id} is ${task.state}`)
+        if (task.parked) throw parked(id)
         if (!beforeHandoff(task)) throw invalidStage(found, 'request attention on')
         if (task.work && canFail) throw conflict('work_lifecycle_required', 'only a scoper can reject staged work')
         if (task.attention?.status === 'pending' ? task.attention.id !== replaces : replaces !== undefined) throw staleAttention()
@@ -956,6 +1040,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     async unblock(identity: Identity, id: number): Promise<{ task: MessageView }> {
       owns(identity, await taskOf(identity.principal.access, id))
       const root = await changeTask(identity, id, async (found, position) => {
+        if (found.task.parked) throw parked(id)
         if (finished(found.task)) throw conflict('task_finished', `#${id} is ${found.task.state}`)
         if (found.task.state !== 'blocked') return []
         if (found.task.attention?.status === 'pending') throw conflict('attention_required', `#${id} is held by an attention request`)
@@ -963,6 +1048,43 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         // The fold puts a task that needs any back to waiting: what it needs may have completed while it was held.
         const ready = canReady(found.task) && found.task.needs.length > 0 && (await satisfied(found.task, position))
         return [{ type: 'task.unblocked', payload: { ...about, by: identity.author } }, ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
+      })
+      return { task: await shown(identity, root) }
+    },
+
+    /** Places or lifts an operator's hold without reviving any lease. */
+    async park(identity: Identity, id: number, reason: string, action: 'park' | 'unpark'): Promise<{ task: MessageView }> {
+      await taskOf(identity.principal.access, id)
+      const root = await changeTask(identity, id, async ({ task, thread, channel }, position) => {
+        if (identity.principal.kind !== 'person' || identity.actor.kind !== 'person' || identity.author.profile !== null)
+          throw forbidden('only a verified person acting as themselves can park or unpark a task')
+        authorize(identity.principal.access, 'manage', channel)
+        if (finished(task)) throw conflict('task_finished', `#${id} is ${task.state}`)
+        const about = { id, thread }
+        const by = identity.author
+        if (action === 'park') {
+          if (task.parked) return []
+          if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'claimed')
+            throw conflict('task_blocked', `#${id} is already blocked`)
+          return [{ type: 'task.parked', payload: { ...about, reason, by, previous: task.state } }]
+        }
+        if (!task.parked) return []
+        const ready = !task.blocked && canReady(task) && task.needs.length > 0 && (await satisfied(task, position))
+        return [{ type: 'task.unparked', payload: { ...about, reason, by } }, ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
+      })
+      return { task: await shown(identity, root) }
+    },
+
+    /** Records a packet reference, fencing both the claim and the handoff it replaces. */
+    async handoff(identity: Identity, id: number, proof: Proof, packet: TaskHandoffInput): Promise<{ task: MessageView }> {
+      await taskOf(identity.principal.access, id)
+      const root = await changeTask(identity, id, async (found, position) => {
+        await fenced(found, identity, proof, position)
+        const { commit, packetPath, sha256, supersedes } = packet
+        if (supersedes !== found.task.handoff?.id)
+          throw conflict('handoff_conflict', `supersedes must name the current handoff on #${id}, or be omitted for the first handoff`)
+        const handoff = { id: randomUUID(), commit, packetPath, sha256, ...(supersedes !== undefined ? { supersedes } : {}), by: identity.author, at: new Date().toISOString(), generation: proof.epoch }
+        return [{ type: 'task.handoff', payload: { id, thread: found.thread, handoff } }]
       })
       return { task: await shown(identity, root) }
     },

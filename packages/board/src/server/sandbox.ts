@@ -4,6 +4,7 @@
 // doesn't depend on the SDK: what it returns is one, and `Sandbox.create({ networkPolicy })` takes it.
 
 import { routes } from '../api/routes.ts'
+import { boundTaskPaths } from '../api/task-authority.ts'
 import { canText, compileAccess, parseCan, type Can } from './access.ts'
 import { DEFAULT_CAN } from './auth.ts'
 import { HttpError } from './errors.ts'
@@ -108,12 +109,12 @@ export function canHeader(can: Can | string | undefined): string {
 
 /**
  * Routes under a board that the policy never adds the credential to: what hands out what outreaches
- * the policy (a grant, a watcher's registration, sync's records and a platform's events), and what a
+ * the policy (a grant, an invite, a watcher's registration, sync's records and a platform's events), and what a
  * platform or the board's own deployments call (webhooks, wake-ups), where the credential could speak
  * for them.
  */
 // A sandbox shares its deployment's principal, so a profile can't isolate an operational inbox.
-const WITHHELD = ['grants', 'watchers', 'wake', 'webhooks', 'sync', 'inbox', 'operational-inbox', 'sources']
+const WITHHELD = ['grants', 'invites', 'watchers', 'wake', 'webhooks', 'sync', 'inbox', 'operational-inbox', 'sources']
 
 const escaped = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -128,7 +129,10 @@ const SEGMENT = "(?:[A-Za-z0-9_.@~:+=,!$&'*-]|%[0-9A-Fa-f]{2})+"
  * named whole, because a board mounted without a `basePath` matches a route as the end of a path, and
  * `/api/board/x/grants` would be its `/grants` under `/api/board/x`.
  */
-export const PROTOCOL_ROUTES: readonly SandboxRoute[] = (Object.values(routes) as SandboxRoute[])
+export const PROTOCOL_ROUTES: readonly SandboxRoute[] = [
+  ...Object.values(routes),
+  ...Object.values(boundTaskPaths).map((path) => ({ method: 'POST' as const, path })),
+]
   .filter(({ path }) => !path.startsWith('/control/') && !WITHHELD.includes(path.split('/').filter(Boolean)[0] ?? ''))
   .map(({ method, path }) => ({ method, path: path === '/' ? '' : path }))
 

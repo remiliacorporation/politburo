@@ -8,10 +8,18 @@ import type {
   OperationalMessage,
   SendOperationalMessageBody,
   ActorView,
+  AgentHealth,
+  AgentIntent,
   AgentView,
+  IssueOpsIntentBody,
+  IssueOpsRoleIntentBody,
   ListOpsAgentsQuery,
+  ListOpsIntentsQuery,
   OpsAgentGenerationBody,
+  OpsIntentsIssued,
+  OpsIntentsPage,
   RegisterOpsAgentBody,
+  ReportOpsIntentBody,
   AssignTaskBody,
   AttentionAnswerBody,
   AttentionView,
@@ -33,6 +41,8 @@ import type {
   CreateTasksBody,
   CreatedTasksQuery,
   FailTaskBody,
+  HandoffTaskBody,
+  ParkTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
   ReopenTaskBody,
@@ -49,6 +59,10 @@ import type {
   CreateGrantsBody,
   GrantBody,
   RevokeGrantBody,
+  CreateInviteBody,
+  CreatedInvite,
+  InviteView,
+  Joined,
   GrantView,
   UpdateGrantBody,
   ExplainQuery,
@@ -141,6 +155,14 @@ export type Protocol = {
   registerOpsAgent: { input: Input<typeof RegisterOpsAgentBody>; output: AgentView }
   heartbeatOpsAgent: { input: OpsAgentId & Input<typeof OpsAgentGenerationBody>; output: AgentView }
   retireOpsAgent: { input: OpsAgentId & Input<typeof OpsAgentGenerationBody>; output: AgentView }
+  issueOpsIntent: { input: OpsAgentId & Input<typeof IssueOpsIntentBody>; output: OpsIntentsIssued }
+  issueOpsRoleIntent: { input: Input<typeof IssueOpsRoleIntentBody>; output: OpsIntentsIssued }
+  /** Pending intents, oldest first, with expiry and generation fences applied. */
+  listOpsIntents: { input: OpsAgentId & Input<typeof ListOpsIntentsQuery>; output: OpsIntentsPage }
+  takeOpsIntent: { input: Id & Input<typeof OpsAgentGenerationBody>; output: AgentIntent }
+  reportOpsIntent: { input: Id & Input<typeof ReportOpsIntentBody>; output: AgentIntent }
+  /** Health from a status probe's report for the exact live task claim. */
+  getOpsHealth: { input: { task: string }; output: AgentHealth }
   /** Tasks, oldest first, each as its thread's summary. 501 `no_tasks` where the board keeps none. */
   tasks: { input: Input<typeof TasksQuery>; output: TasksPage }
   /** `task` is the task's root. `claim` comes with a task made with `claim`; a retry of one that landed gets the task without it. */
@@ -174,6 +196,9 @@ export type Protocol = {
   answerTaskAttention: { input: Id & { requestId: string } & AttentionAnswerBody; output: { task: MessageView; attention: AttentionView } }
   /** A task that isn't blocked is left as it is. */
   unblockTask: { input: Id; output: { task: MessageView } }
+  parkTask: { input: Id & Input<typeof ParkTaskBody>; output: { task: MessageView } }
+  unparkTask: { input: Id & Input<typeof ParkTaskBody>; output: { task: MessageView } }
+  handoffTask: { input: Id & Input<typeof HandoffTaskBody>; output: { task: MessageView } }
   /** Retry a legacy failed task, or return staged done/rejected work to proposed with a reason. */
   reopenTask: { input: Id & Input<typeof ReopenTaskBody>; output: { task: MessageView } }
   /** Authorize the current root revision of proposed work. */
@@ -187,6 +212,12 @@ export type Protocol = {
   cancelTask: { input: Id & Input<typeof CancelTaskBody>; output: { task: MessageView } }
   /** The board's grants: needs `manage` at `*`, or a team owner. 501 `no_grants` where the board keeps none. */
   grants: { input: Nothing; output: { grants: GrantView[] } }
+  /** Invite management needs board-wide admin access. A board not keeping invites answers 501 `no_invites`. */
+  invites: { input: Nothing; output: { invites: InviteView[] } }
+  createInvite: { input: Input<typeof CreateInviteBody>; output: CreatedInvite }
+  revokeInvite: { input: Id; output: { revoked: boolean } }
+  /** No existing caller. The audience is set by board(), never by the body. */
+  redeemInvite: { input: { secret: string; audience: string }; output: Joined }
   /**
    * A new grant, always: the same principals again are another. Needs `manage` at each pattern its
    * `can` names. One its caller couldn't take back is 409 `grant_lockout`, unless it says `lockMeOut`.

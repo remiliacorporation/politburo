@@ -1,30 +1,34 @@
 ---
 title: Identity
-description: No accounts. Every request carries an OIDC token, and every event records the verified principal that wrote it.
+description: How the board verifies credentials and records who wrote each event.
 ---
 
-## Every request carries a token
+## Board credentials
 
-Every request sends `Authorization: Bearer <OIDC JWT>`, and the token's `aud`
+Most requests send `Authorization: Bearer <token>`. An OIDC token's `aud`
 must be the board's URL, exactly as [discovery](./01-mounting.md#discovery)
-returns it. A token minted for one board is useless against any other, even
-another board on the same origin. That's `board()`'s default `authenticate`;
-a host can recognize its own credentials too: see
+returns it. A token minted for one board cannot be used against another, even
+on the same origin. A self-hosted board also accepts its own
+[member credential](../03-guides/09-invite-teammates.md) at the URL where it
+was issued. A host can recognize its own credentials too: see
 [Callers of your own](./01-mounting.md#callers-of-your-own).
 
-Only a few routes take no token: discovery, the built-in avatars, the OpenAPI
-document, and `/webhooks/:key`, which the platform's adapter authenticates instead. A
+Discovery, the built-in avatars, the OpenAPI document, and
+`POST /invites/redeem` take no bearer. The sync adapter authenticates
+`/webhooks/:key` instead. A
 route whose watchers Vercel's board runs also answers
 `POST /wake` without one: a wake-up only says to pull.
 
 ## Where tokens come from
 
-The CLI and `board()` in Node find a token themselves. The first match wins:
+The CLI and `board()` in Node find a token themselves for a board at a URL.
+The first match wins:
 
 | Where | How | Principal |
 | --- | --- | --- |
 | Explicit | `BOARD_TOKEN`: an OIDC JWT for the board's audience, from Vercel, GitHub Actions, or an issuer a grant names; or a placeholder a sandbox's network policy replaces with the real credential | the issuer's |
 | A board from `vb serve` | the token it writes to a file only you can read, for its `127.0.0.1` URL | `local:user:<your OS user>` |
+| A board you joined | the bearer credential `vb join` saved for this board URL | a board-issued principal named by the member's grant |
 | GitHub Actions | the job's OIDC token, for the board's audience; needs `permissions: id-token: write` | `github:repo:<repository_id>` |
 | A Vercel deployment | `getVercelOidcToken({ audience })` from `@vercel/oidc`, when `VERCEL=1` | `vercel:project:<project_id>:<env>` |
 | A local terminal | your `vercel login`, minted for the board's project and exchanged for its audience | `vercel:user:<user_id>` |
@@ -40,7 +44,7 @@ since nothing finds them. See the [handle reference](../04-reference/02-board.md
 
 ### From your terminal
 
-There's no login command. The CLI reads the board's discovery document, which
+There's no OIDC login command. The CLI reads the board's discovery document, which
 names the board's project. With your Vercel CLI login, it asks Vercel which
 project the board's host is a deployment of: a deployment URL, a branch alias,
 or a domain. When the two agree, it asks Vercel for a development token for that
@@ -119,6 +123,7 @@ A **principal** is who holds the credential. It's a readable string:
 | --- | --- |
 | `vercel:user:u_abc123` | a person, from their `vercel login` |
 | `local:user:ada` | a person on a `vb serve` board |
+| `joined:user:<id>` | someone who redeemed an invite on a self-hosted board |
 | `tailscale:user:ada@example.com` | a person on a `vb serve` board [behind Tailscale](../03-guides/08-tailnet.md), by their login |
 | `vercel:project:prj_x:production` | a deployment of a Vercel project |
 | `github:repo:123456` | a GitHub Actions workflow in that repo |

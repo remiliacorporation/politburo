@@ -1,7 +1,7 @@
+import type { Contract, EventDefs } from 'experimental-a2'
 import { createServer, type A2Store } from 'experimental-a2/server'
 import type { Protocol } from '../api/protocol.ts'
-import { ACCESS_SESSION, INBOXES_SESSION, REGISTRY_SESSION, SCHEDULES_SESSION, SCHEMAS_SESSION, workSettingsContract } from '../contract/contract.ts'
-import { BOARD_SESSION } from '../contract/events.ts'
+import { accessContract, ACCESS_SESSION, inboxContract, INBOXES_SESSION, registryContract, REGISTRY_SESSION, schedulesContract, SCHEDULES_SESSION, schemasContract, SCHEMAS_SESSION, workSettingsContract } from '../contract/contract.ts'
 import { workReducer, type WorkState } from '../contract/reducers.ts'
 import type { BoardSession } from './a2.ts'
 import { HttpError } from './errors.ts'
@@ -9,18 +9,24 @@ import { HttpError } from './errors.ts'
 const CONTROL_AUTHOR = { actor: 'board:control', principal: 'board:control', profile: null }
 const headMoved = (error: unknown) => (error as { code?: string } | null)?.code === 'LAST_INDEX_MISMATCH'
 
-/** The boot option is applied only once. After that the board log alone changes control. */
+/** The boot option is applied only once. After that the A2 log alone decides work control. */
 export function createControl(log: A2Store, session: BoardSession, initiallyPaused: boolean) {
   const settings = createServer({ contract: workSettingsContract, store: log }).session('work-settings')
+  const first = <D extends EventDefs>(contract: Contract<D>, id: string) =>
+    createServer({ contract, store: log }).session(id).history({ lte: 1 })
   let boot: Promise<void> | undefined
   async function chooseInitial(): Promise<boolean> {
     const [found] = await settings.history({ lte: 1 })
     if (found) return found.payload.paused
     // A legacy board can have grants or schedules without ever having posted a message.
-    const existing = initiallyPaused && (await Promise.all(
-      [BOARD_SESSION, SCHEDULES_SESSION, ACCESS_SESSION, SCHEMAS_SESSION, REGISTRY_SESSION, INBOXES_SESSION]
-        .map((id) => log.read(id, { throughIndex: 1 })),
-    )).some((events) => events.length > 0)
+    const existing = initiallyPaused && (await Promise.all([
+      session.history({ lte: 1 }),
+      first(schedulesContract, SCHEDULES_SESSION),
+      first(accessContract, ACCESS_SESSION),
+      first(schemasContract, SCHEMAS_SESSION),
+      first(registryContract, REGISTRY_SESSION),
+      first(inboxContract, INBOXES_SESSION),
+    ])).some((events) => events.length > 0)
     try {
       await settings.append.ifLastIndex(0, { type: 'work.initialized', payload: { paused: initiallyPaused && !existing } })
       return initiallyPaused && !existing
@@ -30,7 +36,7 @@ export function createControl(log: A2Store, session: BoardSession, initiallyPaus
     }
   }
   async function initialize(): Promise<void> {
-    if (!await chooseInitial() || (await log.read(BOARD_SESSION, { throughIndex: 1 })).length > 0) return
+    if (!await chooseInitial() || (await session.history({ lte: 1 })).length > 0) return
     // The decision above survives a restart between choosing it and writing the initial state.
     await session.append.ifLastIndex(0, {
       type: 'work.control',
