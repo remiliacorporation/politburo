@@ -70,6 +70,40 @@ it('keeps the selected board and profile in the evidence recovery command', asyn
   expect(await ok(json.next![0]!.argv.slice(1), elsewhere)).toContain('no current submission')
 })
 
+it('keeps the selected board and profile when submit has no claim', async () => {
+  const board = ['--url', url, '--as', 'worker']
+  const elsewhere = { BOARD_URL: 'http://env.invalid/api/board' }
+  const id = await create('work', 'Build the patch', board, elsewhere)
+  const args = ['tasks', 'submit', id, '--commit', commit, '--artifact', 'builds/1', ...board]
+  const argv = ['vb', 'tasks', 'claim', id, ...board]
+  const human = await vb(args, elsewhere)
+  expect(human).toMatchObject({ code: 1, stdout: '' })
+  expect.soft(human.stderr.split('\n')).toContain(`    ${argv.join(' ')}`)
+  const json = await vb([...args, '--json'], elsewhere)
+  expect(json).toMatchObject({ code: 1, stdout: '' })
+  expect(failure(json)).toMatchObject({ reason: 'claim_not_held', next: [{ argv }] })
+})
+
+it.each(['submit', 'complete'])('keeps the selected board and profile when %s with a commit loses its claim', async (verb) => {
+  const board = ['--url', url, '--as', 'worker']
+  const elsewhere = { BOARD_URL: 'http://env.invalid/api/board' }
+  for (const json of [false, true]) {
+    const { task } = JSON.parse(await create('work', 'Build the patch', ['--claim', '--json', ...board], elsewhere))
+    const id = task.id as string
+    await ok(['tasks', 'cancel', id, 'superseded', '--url', url], elsewhere)
+    const args = ['tasks', verb, id, '--commit', commit, ...(verb === 'submit' ? ['--artifact', 'builds/1'] : []), ...board]
+    const ran = await vb([...args, ...(json ? ['--json'] : [])], elsewhere)
+    expect(ran).toMatchObject({ code: 1, stdout: '' })
+    const read = ['vb', 'read', id, ...board]
+    const claim = ['vb', 'tasks', 'claim', id, ...board]
+    if (json) expect(failure(ran)).toMatchObject({ reason: 'claim_lost', next: [{ argv: read }, { argv: claim }] })
+    else {
+      expect.soft(ran.stderr.split('\n')).toContain(`    ${read.join(' ')}`)
+      expect.soft(ran.stderr.split('\n')).toContain(`    ${claim.join(' ')}`)
+    }
+  }
+})
+
 it('keeps the selected board and profile when recovery reads a changed task', async () => {
   const need = await create('work', 'build the patch')
   const dependent = await create('work', 'ship the patch', ['--needs', need])

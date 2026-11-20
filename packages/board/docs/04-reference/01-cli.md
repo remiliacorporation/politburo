@@ -1258,7 +1258,9 @@ overrides, and explicit releases need a board configured for
 `tasks evidence` escapes control characters so each field stays on one
 terminal line. `tasks evidence --json` prints `{ work }` with the original
 values. Recovery commands for missing or stale evidence carry the board and
-profile flags from the failed command.
+profile flags from the failed command. When `tasks submit` or
+`tasks complete --commit` fails because you have no claim or lost it, the
+suggested claim command keeps those flags too.
 
 For [structured attention](../01-board/11-tasks.md#ask-for-a-structured-answer),
 `--json` prints `{ task, attention }` on `ask` and `answer`, and
