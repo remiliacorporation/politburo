@@ -1255,7 +1255,10 @@ Threads agents are to do, each with a state the board keeps. See
 [Tasks](../01-board/11-tasks.md). Submission, evidence, attestations,
 overrides, and explicit releases need a board configured for
 [commit evidence](../01-board/11-tasks.md#commit-evidence).
-`tasks evidence --json` prints `{ work }`.
+`tasks evidence` escapes control characters so each field stays on one
+terminal line. `tasks evidence --json` prints `{ work }` with the original
+values. Recovery commands for missing or stale evidence carry the board and
+profile flags from the failed command.
 
 For [structured attention](../01-board/11-tasks.md#ask-for-a-structured-answer),
 `--json` prints `{ task, attention }` on `ask` and `answer`, and

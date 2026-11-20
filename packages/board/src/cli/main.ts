@@ -1133,7 +1133,10 @@ function report(failure: Failure, json: boolean): number {
     const safe = redactCredentials(encoded)
     app.onError(safe === encoded ? failure : JSON.parse(safe) as Failure, { json })
   } else if (json) io.error(`${redactCredentials(JSON.stringify(failureDocument(failure)))}\n`)
-  else io.error(`${redactCredentials(terminalText(formatFailure(failure)))}\n`)
+  else {
+    const escapeLine = isEvidenceCommand() || failure.reason === 'evidence_required' ? lineText : undefined
+    io.error(`${redactCredentials(terminalText(formatFailure(failure, escapeLine)))}\n`)
+  }
   return exitCode(failure)
 }
 
@@ -2389,6 +2392,13 @@ const TASK_READS = new Set(['show', 'attention', 'evidence'])
 // Evidence verbs take a task ID. A bare word still names the channel to list.
 const isTaskVerb = (word: string, target: string | undefined) =>
   TASK_VERBS.has(word) && (target !== undefined || !TASK_EVIDENCE_VERBS.has(word))
+
+function isEvidenceCommand(): boolean {
+  const { command, args: [verb, target] } = current
+  return command === 'tasks' && verb !== undefined && target !== undefined
+    && (TASK_EVIDENCE_VERBS.has(verb) || (verb === 'complete' && flags.commit !== undefined))
+}
+
 const TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled']
 
 /** A task's ID as you'd write it: `#812` or `812`. */
@@ -2623,7 +2633,7 @@ const profileActor = (principal: string, profile: string) => `${principal}+${pro
 /** A write to a task that answers its root: with `--json`, the task and what happened to it. */
 function printTask(task: MessageView, outcome: string, more: object = {}) {
   if (flags.json) result({ task, outcome, ...more })
-  else out(`${outcome} ${messageRef(task.id)}`)
+  else out(`${outcome} ${lineText(messageRef(task.id))}`)
 }
 
 /** A claim: the task, how long it's yours, and what it is. With `--json`, the task and the claim, without its token, which the CLI keeps. */
@@ -2966,17 +2976,20 @@ async function tasks(args: string[]): Promise<number> {
       const work = await board.tasks.evidence(id)
       if (flags.json) result({ work })
       else {
-        out(work.submission ? `commit  ${work.submission.commit}\nround   ${work.submission.round}` : 'no current submission')
-        if (work.required.length) out(`gates   ${work.required.join(', ')}`)
+        if (work.submission) {
+          out(lineText(`commit  ${work.submission.commit}`))
+          out(lineText(`round   ${work.submission.round}`))
+        } else out('no current submission')
+        if (work.required.length) out(lineText(`gates   ${work.required.join(', ')}`))
         for (const record of [...(work.submission ? [work.submission] : []), ...work.evidence]) {
-          out(`#${record.id}  ${record.gate} ${record.verdict}${record.expiresAt ? ` until ${record.expiresAt}` : ''}`)
-          out(`  ${terminalText(record.artifactRef)}`)
+          out(lineText(`#${record.id}  ${record.gate} ${record.verdict}${record.expiresAt ? ` until ${record.expiresAt}` : ''}`))
+          out(lineText(`  ${record.artifactRef}`))
         }
         for (const record of work.overrides) {
-          out(`#${record.id}  ${record.gate} overridden until ${record.expiresAt}`)
-          out(`  ${terminalText(record.by.principal)}: ${terminalText(record.reason)}`)
+          out(lineText(`#${record.id}  ${record.gate} overridden until ${record.expiresAt}`))
+          out(lineText(`  ${record.by.principal}: ${record.reason}`))
         }
-        for (const edge of work.releases) out(`#${edge.needId}  released with #${edge.evidenceId}`)
+        for (const edge of work.releases) out(lineText(`#${edge.needId}  released with #${edge.evidenceId}`))
       }
       return 0
     }
@@ -3184,11 +3197,11 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
     case 'evidence_required':
     case 'stale_candidate':
     case 'already_submitted':
-      return { class: 'conflict', message: `Can't ${doing()}. Check the current submission and its gates.`, next: also('See the evidence', 'evidence') }
+      return { class: 'conflict', message: `Can't ${doing()}. Check the current submission and its gates.`, next: also('See the evidence', 'evidence', ...onSameBoard(), ...asTyped()) }
     case 'invalid_evidence':
       return { class: 'conflict', message: `Can't ${doing()}. Use current passing evidence from the completed prerequisite.`, next: [] }
     case 'stale_task':
-      return { class: 'conflict', message: `Can't ${doing()}. The task changed.`, next: read('See the current task') }
+      return { class: 'conflict', message: `Can't ${doing()}. The task changed.`, next: read('See the current task', ...onSameBoard(), ...asTyped()) }
     case 'no_work_evidence':
       return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board does not support that work evidence operation.`, next: [] } : null
     case 'task_claimed':
