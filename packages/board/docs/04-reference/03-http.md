@@ -96,8 +96,8 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`, and `wake_by_path` says `POST /watchers` takes a `path`. `workLifecycle: 1` signals staged work. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound writes, parking, and handoffs. A board with no backend has none: it answers only wake-ups and webhooks |
-| GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. A `board()` that uses a remote backend answers 404 here |
+| GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, via?, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
 | POST | `/control/resume` | `{ reason }`: reopen work admission |
@@ -123,12 +123,12 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | GET | `/schedules` | `{ schedules }`. Query: `re`, `channel`, `by`, `all` |
 | POST | `/schedules/:id/cancel` | Cancel one, by the ID the board gave it (`s12` on `local()`, which also takes `12`). Its creator (as a profile, only what that profile scheduled), or `manage` in its channel. Answers `{ schedule, canceled }` |
 | POST | `/tasks` | `{ channel, text, labels?, noSync?, attachments?, id?, needs?, for?, priority?, claim?, lease?, token?, binding? }` starts a thread as a task, or `{ re, needs?, for?, priority?, claim?, lease?, token?, binding? }` makes the thread `re` names a task. Answers 201 `{ task, claim? }`, where `task` is its root. See [Tasks](#tasks) |
-| POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks, in one write. A task is `{ key?, text, labels?, noSync?, attachments?, needs?, for? }`. Answers 201 `{ tasks }`, their roots in order |
+| POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks, in one write. A task is `{ key?, text, labels?, noSync?, attachments?, needs?, for?, priority? }`. Answers 201 `{ tasks }`, their roots in order |
 | GET | `/tasks/batch/:id` | The batch you made under that `id`: `{ tasks }`, their roots as they are now, in order. 404 `batch_not_found` when you made none |
 | GET | `/tasks` | `{ tasks, cursor }`: tasks as thread summaries, oldest first. Query: `channel`, `state`, `label`, `by`, `owner`, `for`, `needs`, `after`, `limit` |
 | POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait?, token?, binding? }`: claims the highest priority eligible ready task in a channel or subtree. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. Answers `{ task, claim }`, or `{ task: null }` |
 | POST | `/tasks/:id/claim` | `{ lease?, token?, binding? }`. Answers `{ task, claim: { epoch, token, until, pauseEpoch?, binding? } }` |
-| POST | `/tasks/create-bound`, `/tasks/claim-bound`, `/tasks/:id/claim-bound` | Same as `/tasks`, `/tasks/claim`, and `/tasks/:id/claim`, respectively, with `binding` required. |
+| POST | `/tasks/create-bound`, `/tasks/claim-bound`, `/tasks/:id/claim-bound` | Same as `/tasks`, `/tasks/claim`, and `/tasks/:id/claim`, respectively, with `binding` required. A bound create also needs `claim: true` and accepts `id` for a new thread |
 | POST | `/tasks/:id/renew` | `{ epoch, token, lease? }`. Answers `{ task, until }` |
 | POST | `/tasks/:id/release` | `{ epoch, token }`. Answers `{ task }`, as the routes below do |
 | POST | `/tasks/:id/complete` | `{ epoch, token, result? }` |
@@ -146,7 +146,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries failed legacy work with no required fields. A failed legacy task reopens as `ready`, or as `waiting` if a structured attention answer failed it and its prerequisites are incomplete. Open legacy tasks stay as they are; completed or canceled legacy tasks return 409 `task_finished`. Both fields are required to return staged `done` or `rejected` work to `proposed` |
 | POST | `/tasks/:id/assign` | `{ for }`: one of the owner's actors, or `null` for anyone who may claim it. Staged work requires a scoper |
 | POST | `/tasks/:id/needs` | `{ needs }`: the IDs of the tasks it waits for now, in place of what it waited for. Staged work requires a scoper |
-| POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: sets the priority of an open task. A live holder can only lower it, using both claim fields |
+| POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: sets an open task's priority as its owner or with `manage` in its channel. With a live claim, send both claim fields to lower it |
 | POST | `/tasks/:id/cancel` | `{ reason }`: a legacy task that hasn't completed or been canceled, or nonterminal staged work as a scoper |
 | GET | `/grants` | `{ grants }`: each one's `id`, `principals`, `can`, `capped`, `by`, and `at`. Needs `manage` at `*`, or a team owner. See [Grants](#grants) |
 | POST | `/grants` | `{ principals, can }`: a new grant, even for principals another grant names. Needs `manage` at each pattern in `can`, and under each wherever your `x-board-can`'s or your own grants' limits narrow you, and what `everyone` gives wherever it gives something; `manage` everywhere to name an `oidc` principal. A key it doesn't know is 400. Answers `{ grant }` One its caller couldn't take back, since it takes their own `manage` at a pattern it names, is 409 `grant_lockout` unless the body says `lockMeOut: true`, as any grant write's may |
@@ -162,7 +162,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | GET | `/schemas/:id` | `{ schema }`: one version, by `name@version` |
 | POST | `/schemas` | `{ name, version, description?, schema }`: register a version, for good. Needs `manage` at `*`. Answers `{ schema, created }`, `created` false for one that's there with the same definition |
 | GET | `/events` | The event feed. See [Event feed](#event-feed) |
-| POST | `/watchers` | `{ watch, sync? }` or `{ path, branch?, watch, sync? }`: registers the caller's watchers (at most 32, each `{ tail, when? }`), its sync entries, and where to wake it, replacing its last registration. Without a `path` the caller pulls its matches. A `url` answers 501 `no_wake_by_url` on a `local()` board, which wakes nothing, and 400 on Vercel's board. On a board whose discovery says `wake_by_path`, a `path` on the caller's own Vercel project, which the board finds from the caller's token and wakes through its Deployment Protection: production's best domain, or with `branch`, a preview's latest ready deployment of that branch (403 `not_a_project` for a caller that isn't a Vercel project, 501 `no_wake_by_path` on a board that can't). Needs `read` somewhere, and `sync` somewhere for sync entries. Answers the registration, `{ owner, url: null, watch, sync, hash }`, or `{ owner, url: null, path, branch?, watch, sync, hash }`. On a deployment's board on Vercel's, it takes no token and registers that board's own watchers with Vercel's API |
+| POST | `/watchers` | `{ watch, sync? }` or `{ path, branch?, watch, sync? }`: registers the caller's watchers (at most 64 on `local()`, each `{ tail, when? }`), its sync entries, and where to wake it, replacing its last registration. Without a `path` the caller pulls its matches. A `url` answers 501 `no_wake_by_url` on a `local()` board, which wakes nothing, and 400 on Vercel's board. On a board whose discovery says `wake_by_path`, a `path` on the caller's own Vercel project, which the board finds from the caller's token and wakes through its Deployment Protection: production's best domain, or with `branch`, a preview's latest ready deployment of that branch (403 `not_a_project` for a caller that isn't a Vercel project, 501 `no_wake_by_path` on a board that can't). Needs `read` somewhere, and `sync` somewhere for sync entries. Answers the registration, `{ owner, url: null, watch, sync, hash }`, or `{ owner, url: null, path, branch?, watch, sync, hash }`. On a deployment's board on Vercel's, it takes no token and registers that board's own watchers with Vercel's API |
 | GET | `/watchers` | `{ watchers }`: the caller's registration, or every one for `manage` in every channel |
 | GET | `/watchers/matches` | `{ matches }`: the caller's matches it can run now, one thread at a time and in order, each `{ id, watcher, thread, lease, attempt, event }` and leased to it for 5 minutes. Query: `limit` (10 by default, at most 50), `wait` (seconds to hold for one, at most 25). 404 `no_registration` without a registration |
 | POST | `/watchers/matches/:id/ack` | `{ lease, error?, skip? }`: done, an error to try again after a wait (after 5 tries it's `watch.failed`), or `skip` to drop it. 404 `no_match`, 409 `stale_lease` for a lease that ran out |
@@ -568,7 +568,9 @@ rules below describe the legacy queue except where noted.
   claims it in the same write. On a local board, a retry with the same `id`
   returns the task. It also returns the original claim if the same caller
   supplies the matching `token`, the claim is still live, and any supplied
-  `binding` matches. The retry does not extend the lease. Without a supplied
+  `binding` matches. This also applies to `/tasks/create-bound`, which
+  requires the original binding on retry. A different binding is 409
+  `binding_mismatch`. The retry does not extend the lease. Without a supplied
   token, the board returns the claim only on the first write.
 - **`POST /tasks/batch`** makes several tasks in one channel in one write:
   all of them or none, with no event of any before all have landed. Each task
@@ -1003,11 +1005,12 @@ the thread key:
 | `message.sync_failed` | `id`, `target`, `error` | (server) a delivery gave up after its retries |
 | `actor.seen` | `actor`, `kind`, `handle`, `name`, `avatar`, `host`, `verified` | an actor writes for the first time or changes its display details. `host` (server) marks a principal a host's `authenticate` made, or one of its profiles, which sync never writes as. `verified` (server) says this write's credential named the actor as shown: under the handle it gave the principal, as itself or after `via`; each `actor.seen` says it anew, and its absence clears it |
 | `work.control` | `paused`, `pauseEpoch`, `reason`, `by` | (server) work admission changes, or a new board starts paused |
-| `task.created` | `id`, `needs`, `for`, `by` | the thread rooted at `id` becomes a task, owned by `by.principal`. It waits while it has `needs` |
+| `task.created` | `id`, `needs`, `for`, `priority?`, `by` | the thread rooted at `id` becomes a task, owned by `by.principal`. It waits while it has `needs` |
 | `task.assigned` | `id`, `for`, `by` | a task is assigned to an actor, or with `null` to anyone |
+| `task.priority_changed` | `id`, `priority`, `epoch?`, `by` | a task's priority is set. `epoch` is there when a live claim lowered it |
 | `task.needs_changed` | `id`, `needs`, `by` | what a task waits for changes. It waits while it has `needs`, until `task.ready`, and with none it's ready |
 | `task.ready` | `id` | (server) every task it needs has completed |
-| `task.claimed` | `id`, `epoch`, `until`, `by` | (server) `by` holds it until `until`. The log keeps the hash of the claim's token, which no view shows |
+| `task.claimed` | `id`, `epoch`, `until`, `pauseEpoch?`, `binding?`, `by` | (server) `by` holds it until `until`. On `local()`, an absent `pauseEpoch` in the event means zero. The log keeps the hash of the claim's token, which no view shows |
 | `task.renewed` | `id`, `epoch`, `until`, `by` | a claim's lease is extended |
 | `task.released` | `id`, `epoch`, `by` | a claim gives the task back |
 | `task.expired` | `id`, `epoch` | (server) a claim's lease ran out |
@@ -1031,6 +1034,7 @@ the thread key:
   imported users say, or else its ID.
 - **`actor.seen` kinds** are `person`, `agent`, `deployment`, `workflow`, and
   `external` (a platform user).
+- **The feed never carries the agent registry, agent intents, or the operational inbox.** Their records stay out of the feed, even with `all`.
 - **The feed hides bookkeeping** by default: `actor.seen`, `thread.synced`,
   `message.synced`, `message.files_synced`, and `task.renewed` appear with `all`. Events that
   concern no message (including `work.control`) appear only with `all`,
