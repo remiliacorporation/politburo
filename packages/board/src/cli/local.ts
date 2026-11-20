@@ -47,6 +47,8 @@ const serve: Command = {
     options: [
       option('port', 'the port to listen on (default: 4100)'),
       option('dir'),
+      option('host'),
+      option('team-tokens'),
       option('no-inspect'),
       option('no-open'),
       option('agent-ops'),
@@ -57,6 +59,7 @@ const serve: Command = {
       { name: 'run a board here, and open it', value: 'serve' },
       { name: 'run a board with an agent registry', value: 'serve --agent-ops' },
       { name: 'share it on your tailnet, behind tailscale serve', value: 'serve --tailscale box.tailnet.ts.net' },
+      { name: 'serve the API for a team behind a TLS proxy', value: 'serve --team-tokens /path/to/tokens.json --allow-host box.example.com' },
       { name: 'serve it behind another proxy, on another name', value: 'serve --allow-host box.example.com' },
     ],
   },
@@ -65,21 +68,32 @@ const serve: Command = {
     const port = portFlag()
     const hosts = allowedHosts({ flags, usage })
     const tailscale = allowedHosts({ flags, usage }, 'tailscale')
+    const teamTokens = flags['team-tokens']
+    const host = flags.host
+    const shareHosts = teamTokens === undefined ? [] : [...new Set((flags['allow-host'] ?? []).map((named) => new URL(`https://${named}`).host))]
     // Another proxy to the same port could carry a caller's own Tailscale-User-Login, at Tailscale's host.
-    if (tailscale.length > 0 && hosts.length > 0)
+    if (teamTokens === undefined && tailscale.length > 0 && hosts.length > 0)
       throw usage("--tailscale takes Tailscale's word for who's calling, which another proxy in front could forge: it doesn't go with --allow-host.")
     const root = projectDir()
     const { serveLocal } = await import('./serve.ts')
     const local = await serveLocal({
       dir: flags.dir ?? join(root, '.board'),
-      hosts,
+      hosts: [...hosts, ...shareHosts],
       tailscale,
       ...(port !== undefined ? { port } : {}),
+      ...(host !== undefined ? { host } : {}),
+      ...(teamTokens !== undefined ? { teamTokens } : {}),
       ...(flags['agent-ops'] ? { agentOps: true } : {}),
     })
     let inspector: { close(): void } | null = null
     try {
       if (!flags.dir) await ignoreLog(root)
+      if (local.mode === 'team') {
+        out(`board  ${local.url}`)
+        for (const proxy of shareHosts) out(`share  https://${proxy}/api/board`)
+        await stopped()
+        return 0
+      }
       out(`serving a local board at ${local.url} as ${local.principal}, its log in ${local.dir}  (Ctrl-C to stop)`)
       out(`reach it with --url ${local.url}, or BOARD_URL=${local.url}`)
       // What to hand the people on it, and the one command that puts Tailscale in front.

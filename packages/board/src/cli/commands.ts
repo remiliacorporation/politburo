@@ -107,6 +107,8 @@ export const options = {
   times: { type: 'string', value: 'N', description: 'repeating this many times' },
   can: { type: 'string', multiple: true, value: 'pattern=perms', description: 'what they may do, repeated: perms, all, or none' },
   'lock-me-out': { type: 'boolean', description: "go ahead with a change you couldn't take back" },
+  out: { type: 'string', value: 'file', description: 'required: save the secret to a new private file' },
+  'expires-in': { type: 'string', value: 'seconds', description: 'when the invite expires, in seconds (1 to 604800; default: 86400)' },
   // Grants: whom one names, each flag a principal, with the modifiers after it.
   user: { type: 'string', multiple: true, value: 'email', description: 'a person on the team' },
   project: { type: 'string', multiple: true, short: 'p', value: 'name|id', description: "a project's deployments" },
@@ -145,13 +147,18 @@ export const options = {
   description: { type: 'string', value: 'text', description: 'what it holds, in a sentence' },
   port: { type: 'string', value: 'N', description: 'the port to listen on' },
   dir: { type: 'string', value: 'dir', description: 'where the board keeps its log (default: .board/)' },
+  host: { type: 'string', value: 'bind-ip', description: 'the IP to listen on (default: 127.0.0.1); requires --team-tokens' },
+  'team-tokens': { type: 'string', value: 'file', description: 'serve only the API, using team tokens from a JSON file; cannot be used with --tailscale' },
   'no-inspect': { type: 'boolean', description: "don't start the inspector" },
   // Agent registry.
-  'agent-ops': { type: 'boolean', description: 'enable the fork-only agent registry' },
+  'agent-ops': { type: 'boolean', description: 'enable the fork-only agent registry and intents' },
   role: { type: 'string', value: 'role', description: 'required: coordinator, issues, controller, implementation-worker, reviewer, qa-owner, qa-runner, or user-watcher' },
   harness: { type: 'string', value: 'harness', description: 'required: the harness running this agent' },
   parent: { type: 'string', value: 'id', description: 'the ID of a registered parent in the same channel (default: no parent)' },
   generation: { type: 'string', value: 'N', description: 'required: the current generation, as agents list shows it' },
+  ttl: { type: 'string', value: 'duration', description: 'required: how long to keep the intent, e.g. 20s (max 60s, or 30s for a run probe)' },
+  task: { type: 'string', value: 'id', description: 'with status: probe the live claim on this task' },
+  epoch: { type: 'string', value: 'N', description: 'with --task: the epoch of its live claim' },
   // Tasks.
   state: { type: 'string', value: 'state', description: 'in a state: waiting, ready, claimed, blocked, completed, failed, canceled, open, or all (default: open)' },
   needs: { type: 'string', multiple: true, value: 'id', description: 'wait for a task to complete first' },
@@ -160,6 +167,8 @@ export const options = {
   from: { type: 'string', multiple: true, value: 'id', description: "with --ready: take this owner's tasks too, by their ID" },
   wait: { type: 'string', value: 'duration', description: 'with --ready: how long to wait for one, e.g. 10m' },
   lease: { type: 'string', value: 'duration', description: 'how long to hold it: 30s to 1h (default: 15m, or what the board gives)' },
+  binding: { type: 'string', value: 'JSON', description: 'claim metadata: controller, owner, provider, model, session, branch, worktree, and baseCommit' },
+  supersedes: { type: 'string', value: 'id', description: 'the current handoff ID when replacing one' },
   result: { type: 'string', value: 'text', description: 'what it came to, when the command exits 0' },
   kind: { type: 'string', value: 'kind', description: 'what the hold is for: needs_input, awaiting_approval' },
   pool: { type: 'boolean', description: 'back to anyone who may claim it' },
@@ -201,6 +210,9 @@ const text = (description = 'what it says: - reads it from stdin, and it may be 
 /** An agent registry's channel or agent ID. */
 const agentChannel: CliArgument = { name: 'channel', required: true, description: 'the exact channel, such as work/review' }
 const agentId = () => id('the agent ID, as agents list shows it')
+const intentId = () => id('the intent ID, as agents intents shows it')
+const intentVerb: CliArgument = { name: 'verb', required: true, description: 'inspect, status, pause, interrupt, resume, collect, or poke' }
+const issueOptions = [option('generation'), option('ttl'), option('task'), option('epoch'), option('idempotency-key', 'retry the same issue request without sending it twice')]
 
 /** A task's ID: its thread's root's. */
 const task = (description = "a task's ID, as tasks shows it (#812)"): CliArgument => ({ name: 'id', required: true, description })
@@ -223,6 +235,48 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
     arguments: [],
     options: [],
     examples: [{ name: 'see who you are on the board', value: 'whoami' }],
+  },
+  {
+    group: 'you',
+    name: 'join',
+    description: 'redeem an invite and save a credential for that board URL',
+    arguments: [
+      { name: 'url', required: true, description: 'the board URL: HTTPS, or HTTP on loopback' },
+      { name: 'invite', required: true, description: 'the secret, or - to read it from stdin' },
+    ],
+    options: [],
+    examples: [{ name: 'join without putting the secret in the command line', value: 'join https://board.example.com/api/board - < invite.txt' }],
+  },
+  {
+    group: 'the board',
+    name: 'invite',
+    description: 'give someone access to the board with a one-time invite',
+    arguments: [],
+    options: [],
+    examples: [],
+    subcommands: [
+      {
+        name: 'create',
+        description: 'create an invite and save its secret to a new private file',
+        arguments: [{ name: 'name', required: true, description: 'starts with a letter; up to 32 letters, digits, and hyphens' }],
+        options: [option('out'), option('expires-in'), option('can', 'pattern=permissions, repeated: read, post, react, label, or sync')],
+        examples: [{ name: 'invite a member', value: 'invite create sam --out invite.txt' }],
+      },
+      {
+        name: 'list',
+        description: 'list invites and their states, without secrets',
+        arguments: [],
+        options: [],
+        examples: [],
+      },
+      {
+        name: 'revoke',
+        description: 'revoke a pending invite',
+        arguments: [{ name: 'id', required: true, description: 'the ID from invite list' }],
+        options: [],
+        examples: [],
+      },
+    ],
   },
   {
     group: 'the board',
@@ -663,6 +717,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
           option('for', 'only this profile of yours claims it', 'profile'),
           claimNow,
           option('lease', 'with --claim: how long to hold it'),
+          option('binding', 'with --claim: assignment metadata as JSON'),
           option('file', 'a plan, from a JSON file (- reads stdin): an array of tasks, each { key?, text, labels?, needs?, for?, priority?, noSync?, attachments? }, all made, in as many writes as it takes'),
           option('no-sync'),
           option('idempotency-key', 'sending the same one again makes it once'),
@@ -692,7 +747,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         name: 'claim',
         description: 'hold a task by ID, or claim the highest priority ready task with --ready',
         arguments: [{ name: 'id|channel', required: true, description: "a task's ID, or with --ready a channel or a path prefix (work/)" }],
-        options: [option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease')],
+        options: [option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease'), option('binding')],
         examples: [
           { name: 'claim a task', value: 'tasks claim 812' },
           { name: 'claim the next fix, waiting for one', value: 'tasks claim --ready work/ --label step=fix --wait 10m' },
@@ -705,7 +760,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
           { name: 'id|channel', required: true, description: "a task's ID, or with --ready a channel or a path prefix" },
           { name: 'cmd', required: true, multiple: true, description: 'the command, after --: it gets BOARD_TASK, the task\'s ID' },
         ],
-        options: [option('result'), option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease')],
+        options: [option('result'), option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease'), option('binding')],
         examples: [
           { name: 'run the tests as a task', value: 'tasks run 812 --result "tests pass" -- make test' },
           { name: 'work the next fix', value: 'tasks run --ready work/ --label step=fix -- ./fix.sh' },
@@ -810,6 +865,32 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         examples: [{ name: 'lift a hold', value: 'tasks unblock 813' }],
       },
       {
+        name: 'park',
+        description: 'put a task on operator hold and end any claim: as yourself with manage in its channel',
+        arguments: [task(), { name: 'reason', required: true, description: 'why, in a line' }],
+        options: [],
+        examples: [{ name: 'park a task', value: 'tasks park 813 "waiting for the maintenance window"' }],
+      },
+      {
+        name: 'unpark',
+        description: 'lift an operator hold without restoring the claim: as yourself with manage in its channel',
+        arguments: [task(), { name: 'reason', required: true, description: 'why, in a line' }],
+        options: [],
+        examples: [{ name: 'unpark a task', value: 'tasks unpark 813 "maintenance window opened"' }],
+      },
+      {
+        name: 'handoff',
+        description: 'record a handoff with your claim, without reading the packet or ending the lease',
+        arguments: [
+          task(),
+          { name: 'commit', required: true, description: 'a full lowercase commit ID' },
+          { name: 'packet-path', required: true, description: 'the path to the packet relative to the repository root' },
+          { name: 'sha256', required: true, description: 'the lowercase SHA-256 digest of the packet' },
+        ],
+        options: [option('supersedes')],
+        examples: [],
+      },
+      {
         name: 'reopen',
         description: 'make a failed task ready again, as its owner',
         arguments: [task()],
@@ -848,7 +929,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
   {
     group: 'agents',
     name: 'agents',
-    description: 'the channel roster on a board that opts into the agent registry',
+    description: 'the channel roster, command intents, and task run health on an opt-in board',
     arguments: [],
     options: [],
     examples: [],
@@ -880,6 +961,48 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         arguments: [agentId()],
         options: [option('generation')],
         examples: [],
+      },
+      {
+        name: 'issue-intent',
+        description: 'send an intent to one agent',
+        arguments: [agentId(), intentVerb],
+        options: issueOptions,
+        examples: [{ name: 'ask an agent for its status', value: 'agents issue-intent "$agent" status --generation 1 --ttl 20s' }],
+      },
+      {
+        name: 'issue-role-intent',
+        description: 'send an intent to the enabled agents of one role in a channel',
+        arguments: [agentChannel, { name: 'role', required: true, description: 'a role, as agents list shows it' }, intentVerb],
+        options: issueOptions,
+        examples: [{ name: 'poke the reviewers', value: 'agents issue-role-intent work reviewer poke --generation 1 --ttl 20s' }],
+      },
+      {
+        name: 'intents',
+        description: 'list pending intents for an agent, oldest first',
+        arguments: [agentId()],
+        options: [option('after', 'continue from the next cursor agents intents printed', 'cursor')],
+        examples: [],
+      },
+      {
+        name: 'take-intent',
+        description: 'take one pending intent addressed to your agent',
+        arguments: [intentId()],
+        options: [option('generation')],
+        examples: [],
+      },
+      {
+        name: 'report-intent',
+        description: 'report an outcome for an intent you took',
+        arguments: [intentId(), { name: 'outcome', required: true, description: 'ok or failed, or for a run probe: running, not_running, or unknown' }],
+        options: [option('generation')],
+        examples: [],
+      },
+      {
+        name: 'health',
+        description: 'show whether a recent probe confirms the task is working',
+        arguments: [task()],
+        options: [],
+        examples: [{ name: 'check task 812', value: 'agents health 812' }],
       },
     ],
   },

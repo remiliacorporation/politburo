@@ -148,6 +148,8 @@ export function formatMessage(message: MessageView, options: { reply?: boolean; 
   }${message.schedule ? ` · scheduled ${message.schedule.id}` : ''}${labels(message)}`
   const body = message.deleted ? `${pad}(message removed)` : indent(shownText(message, options.handles), pad)
   const task = message.task ? [`${pad}task  ${taskState(message, message.task, options.names ?? new Map(), options.now ?? Date.now())}`] : []
+  const handoff = message.task?.handoff
+  if (handoff) task.push(`${pad}handoff  ${lineText(handoff.id)} · ${lineText(handoff.packetPath)}`)
   const files = (message.attachments ?? []).map((a) => `${pad}file ${a.name} · ${a.type} · ${fileSize(a.size)} · ${a.id}`)
   const links = message.deleted ? [] : (message.links ?? []).flatMap((link) => embed(link, pad))
   const reacted = reactions(message, options.names ?? new Map())
@@ -182,7 +184,8 @@ function taskState(message: MessageView, task: TaskView, names: Map<string, stri
   if (task.state === 'claimed' && task.claim) {
     const left = Date.parse(task.claim.until) - now
     parts.push(`claimed by ${named(task.claim.actor)}`, left > 0 ? `${leaseLeft(task.claim.until, now)} left` : 'its lease ran out')
-  } else if (task.state === 'blocked' && task.blocked) parts.push('blocked', ...(task.blocked.kind ? [task.blocked.kind] : []), noteLine(task.blocked.reason))
+  } else if (task.state === 'blocked' && task.parked) parts.push('parked', noteLine(task.parked.reason))
+  else if (task.state === 'blocked' && task.blocked) parts.push('blocked', ...(task.blocked.kind ? [task.blocked.kind] : []), noteLine(task.blocked.reason))
   else if (task.state === 'completed') parts.push('completed', ...(task.result ? [noteLine(task.result)] : []))
   else if (task.state === 'failed' || task.state === 'canceled') parts.push(task.state, ...(task.reason ? [noteLine(task.reason)] : []))
   else parts.push(task.state)
@@ -204,6 +207,7 @@ export const claimLine = (task: MessageView, until: string, now = Date.now()): s
 function taskNote(message: MessageView, task: TaskView, room: number): string {
   if (task.state === 'completed' && task.result) return noteLine(task.result, room)
   if ((task.state === 'failed' || task.state === 'canceled') && task.reason) return noteLine(task.reason, room)
+  if (task.state === 'blocked' && task.parked) return `parked · ${noteLine(task.parked.reason, room - 'parked · '.length)}`
   if (task.state === 'blocked' && task.blocked) return noteLine(task.blocked.reason, room)
   // Its state has a column of its own, so the label that says it again is left out.
   const own = Object.entries(message.labels).filter(([key]) => !key.startsWith('board.')).map(([key, value]) => `${key}=${lineText(value)}`).join(' ')
@@ -331,6 +335,8 @@ export function principalFlags(principal: PrincipalView): string {
       return `--all-projects --environment ${principal.environments.join(',')}`
     case 'app':
       return `--app ${principal.name ?? principal.clientId}`
+    case 'invitee':
+      return principal.id
     default:
       return `--${principal.kind}`
   }
@@ -486,6 +492,9 @@ export function formatEvent(event: BoardEventView): string {
     case 'task.attention_requested':
     case 'task.attention_answered':
     case 'task.unblocked':
+    case 'task.parked':
+    case 'task.unparked':
+    case 'task.handoff':
     case 'task.canceled':
     case 'task.reopened':
     case 'task.work_submitted':
@@ -522,6 +531,11 @@ function taskEvent(event: Extract<BoardEventView, { type: `task.${string}` }>): 
       return `failed${by}${more(noteLine(event.payload.reason))}`
     case 'task.blocked':
       return `blocked${by}${more(event.payload.kind, noteLine(event.payload.reason))}`
+    case 'task.parked':
+    case 'task.unparked':
+      return `${event.type.slice('task.'.length)}${by}${more(noteLine(event.payload.reason))}`
+    case 'task.handoff':
+      return `handed off${by}${more(lineText(event.payload.handoff.id))}`
     case 'task.attention_requested':
       return `attention requested${by}${more(noteLine(event.payload.draft.question))}`
     case 'task.attention_answered':

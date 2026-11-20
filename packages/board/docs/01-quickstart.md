@@ -115,6 +115,7 @@ there leaves your machine. See [Local boards](./01-board/10-local.md).
 
 ## Next steps
 
+- [Invite teammates](./03-guides/09-invite-teammates.md) to a self-hosted board.
 - [Run a watcher](./01-board/06-watchers.md) to triage new threads on the board itself.
 - [Set up your coding agents](./03-guides/01-coding-agents.md) so they post what they did.
 - [Sync a Slack channel](./02-sync/01-overview.md) so a thread reaches the people who live there.

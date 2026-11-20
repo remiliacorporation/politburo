@@ -1,13 +1,16 @@
+import { randomBytes, randomUUID } from 'node:crypto'
 import { reducer } from 'experimental-a2'
 import { createServer } from 'experimental-a2/server'
 import type { Protocol } from '../api/protocol.ts'
-import type { GrantView, PrincipalView } from '../api/routes.ts'
+import type { GrantView, InviteView, PrincipalView } from '../api/routes.ts'
+import { sha256 } from '../client/ids.ts'
 import { ACCESS_SESSION, accessContract, type AccessEvent } from '../contract/contract.ts'
 import { checkGrantChange, compileAccess, parseCan, type Access, type GrantShape, type WrittenCan } from './access.ts'
 import {
   checkCan,
   checkGrant,
   checkPrincipal,
+  DEFAULT_CAN,
   GITHUB_ISSUER,
   grantIssuers,
   issuerName,
@@ -26,10 +29,20 @@ import { badRequest, forbidden, HttpError, notFound } from './errors.ts'
 
 /** A grant as the fold keeps it: `event` is the index of the event that made it, null for the one the board starts with. */
 type GrantRow = { id: number; event: number | null; principals: GrantPrincipal[]; can: WrittenCan; by: string | null; at: number | null }
-/** Grants by ID, and the next ID. The log keeps every event. */
+type InviteRow = Omit<InviteView, 'expiresAt' | 'state'> & {
+  expiresAt: number
+  state: Exclude<InviteView['state'], 'expired'>
+  digest: string
+  by: string
+}
+
+/** Grants and onboarding bookkeeping, in the same session so a redemption and its grant land together. */
 export type AccessState = {
   grants: Record<string, GrantRow>
   nextGrant: number
+  invites: Record<string, InviteRow>
+  pending: Record<string, string>
+  joined: Record<string, { id: string; name: string; audience: string }>
 }
 
 /**
@@ -53,7 +66,7 @@ const STARTING_GRANTS: Record<string, GrantRow> = {
 }
 
 /** The access session before its first event: the grants every board starts with. */
-export const startingAccess = (): AccessState => ({ grants: structuredClone(STARTING_GRANTS), nextGrant: 4 })
+export const startingAccess = (): AccessState => ({ grants: structuredClone(STARTING_GRANTS), nextGrant: 4, invites: {}, pending: {}, joined: {} })
 
 /** The access session's fold. */
 export function foldAccess(state: AccessState, event: AccessEvent): AccessState {
@@ -80,14 +93,36 @@ export function foldAccess(state: AccessState, event: AccessEvent): AccessState 
     case 'grant.deleted':
       delete state.grants[event.payload.id]
       break
+    case 'invite.created': {
+      const { id, digest, can } = event.payload
+      state.invites[id] = { ...event.payload, can: can as InviteView['can'], state: 'pending' }
+      state.pending[digest] = id
+      break
+    }
+    case 'invite.revoked': {
+      const row = state.invites[event.payload.id]!
+      row.state = 'revoked'
+      delete state.pending[row.digest]
+      break
+    }
+    case 'invite.redeemed': {
+      const { id, principal, digest, audience } = event.payload
+      const row = state.invites[id]!
+      row.state = 'redeemed'
+      delete state.pending[row.digest]
+      state.joined[digest] = { id: principal, name: row.name, audience }
+      const grant = state.nextGrant++
+      state.grants[grant] = { id: grant, event: event.index, principals: [{ kind: 'invitee', id: principal }], can: row.can, by: row.by, at }
+      break
+    }
   }
   return state
 }
 
 export const accessReducer = reducer({
   contract: accessContract,
-  // v4 since it keeps no tokens: the grants are folded again from the log, without them.
-  name: 'board.access.v4',
+  // v5 folds the invite bookkeeping alongside the grants.
+  name: 'board.access.v5',
   initialState: startingAccess(),
 }).fold(foldAccess)
 
@@ -101,6 +136,8 @@ function indexOf(id: string): number | null {
 /** A principal as views show it: the IDs, and the names the board knows, which on a local board are none. */
 function principalView(principal: GrantPrincipal): PrincipalView {
   switch (principal.kind) {
+    case 'invitee':
+      return { kind: 'invitee', id: principal.id }
     case 'user':
       return { kind: 'user', userId: principal.userId, email: principal.email ?? null }
     case 'project':
@@ -129,6 +166,12 @@ const grantView = (row: GrantRow): GrantView => ({
 })
 
 const storedGrant = (row: GrantRow): StoredGrant => ({ id: grantId(row.id), principals: row.principals, can: row.can })
+
+const inviteState = (row: InviteRow, now: number): InviteView['state'] => row.state === 'pending' && row.expiresAt <= now ? 'expired' : row.state
+const inviteView = (row: InviteRow, now: number): InviteView => ({
+  id: row.id, name: row.name, can: row.can, expiresAt: new Date(row.expiresAt).toISOString(), state: inviteState(row, now),
+})
+const invalidInvite = () => new HttpError(403, 'invalid_invite', 'this invite is invalid, expired, revoked, or already used')
 
 /**
  * The principal an explain query names, as a token of its would make it: a person by user ID, a
@@ -365,10 +408,20 @@ export function createTrust(options: {
   /** The grants as they are now, and the index a conditional write holds them at. */
   const latest = () => session.state(accessReducer, { through: 'latest' })
 
-  const trust: Trust = {
+  const trust = {
     async grants(): Promise<StoredGrant[]> {
       return Object.values((await read()).grants).map(storedGrant)
     },
+    async joined(digest: string, audience: string) {
+      const entry = (await read()).joined[digest]
+      return entry?.audience === audience ? { id: entry.id, name: entry.name } : null
+    },
+  } satisfies Trust
+
+  async function inviteAdmin(identity: Identity, what: string, grants: readonly StoredGrant[]) {
+    const standing = await changerAccess(identity, grants, accessIn)
+    if (standing !== null && !standing.caller.at('manage', '*')) throw forbidden(`this token can't ${what}: it needs manage at *`)
+    return standing
   }
 
   /**
@@ -405,6 +458,55 @@ export function createTrust(options: {
 
   return {
     trust,
+    async invites(identity: Identity): Promise<Protocol['invites']['output']> {
+      mayList(identity, 'list invites')
+      const now = Date.now()
+      return { invites: Object.values((await read()).invites).map((row) => inviteView(row, now)) }
+    },
+    async createInvite(identity: Identity, input: Protocol['createInvite']['input']): Promise<Protocol['createInvite']['output']> {
+      mayList(identity, 'create invites')
+      const can = checkCan(input.can ?? DEFAULT_CAN) as InviteView['can']
+      const id = randomUUID()
+      const secret = `vbi_${randomBytes(32).toString('base64url')}`
+      const digest = await sha256(secret)
+      const invite = await whileHeadMoves(async () => {
+        const { state, index } = await latest()
+        const before = Object.values(state.grants).map(storedGrant)
+        const standing = await inviteAdmin(identity, 'create invites', before)
+        judge(identity, standing, { changed: { can } }, before, { what: 'this invite', doing: 'this invite' })
+        const now = Date.now()
+        const payload = { id, name: input.name, can, digest, expiresAt: now + (input.expiresIn ?? 86400) * 1000, by: identity.actor.id }
+        await session.append.ifLastIndex(index, { type: 'invite.created', payload })
+        return inviteView({ ...payload, state: 'pending' }, now)
+      })
+      return { invite, secret }
+    },
+    async revokeInvite(identity: Identity, { id }: Protocol['revokeInvite']['input']): Promise<Protocol['revokeInvite']['output']> {
+      mayList(identity, 'revoke invites')
+      return whileHeadMoves(async () => {
+        const { state, index } = await latest()
+        await inviteAdmin(identity, 'revoke invites', Object.values(state.grants).map(storedGrant))
+        const row = Object.hasOwn(state.invites, id) ? state.invites[id] : undefined
+        if (!row || inviteState(row, Date.now()) !== 'pending') return { revoked: false }
+        await session.append.ifLastIndex(index, { type: 'invite.revoked', payload: { id, by: identity.actor.id } })
+        return { revoked: true }
+      })
+    },
+    async redeemInvite({ secret, audience }: Protocol['redeemInvite']['input']): Promise<Protocol['redeemInvite']['output']> {
+      const key = await sha256(secret)
+      const principal = `joined:user:${randomUUID()}`
+      const token = `vbj_${randomBytes(32).toString('base64url')}`
+      const digest = await sha256(token)
+      await whileHeadMoves(async () => {
+        const { state, index } = await latest()
+        const id = state.pending[key]
+        const row = id === undefined ? undefined : state.invites[id]
+        if (!row || inviteState(row, Date.now()) !== 'pending') throw invalidInvite()
+        // A loser of a concurrent redemption or revocation must look again, not issue a second credential.
+        await session.append.ifLastIndex(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
+      })
+      return { principal, token }
+    },
     async grants(identity: Identity): Promise<Protocol['grants']['output']> {
       mayList(identity, 'list grants')
       return { grants: Object.values((await read()).grants).sort((a, b) => a.id - b.id).map(grantView) }

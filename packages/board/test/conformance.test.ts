@@ -30,6 +30,19 @@ const clientOf = async (fetch: Fetch) => clientAs(fetch, () => personToken())
 const clientAs = async (fetch: Fetch, token: () => Promise<string>) =>
   board({ backend: http(BOARD_URL, { fetch: bearer((input, init) => fetch(new Request(input, init)), token) }) }).as(null)
 
+/** Same fixed in-memory endpoint as the admin, with no credential fallback or redirects. */
+const boardWithInviteToken = (fetch: Fetch, token: string) =>
+  board({
+    backend: http(BOARD_URL, {
+      fetch: (input, init) => {
+        const request = new Request(input, { ...init, redirect: 'error' })
+        if (!request.url.startsWith(`${BOARD_URL}/`)) throw new Error('unexpected invite endpoint')
+        request.headers.set('authorization', `Bearer ${token}`)
+        return fetch(request)
+      },
+    }),
+  }).as(null)
+
 /** The same handle as `token` gives, narrowed with `x-board-can`, as `vb conformance` opens one. */
 const withCan =
   (fetch: Fetch, token: () => Promise<string> = () => personToken()) =>
@@ -66,6 +79,9 @@ const HEADERS = [
   'ignores x-board-session: who writes is the principal and its profile',
 ]
 const NO_HEADERS = "this run can't call the board with headers of its own"
+const INVITE_RACE = 'redeems an invite for only one of the callers that race for it'
+const INVITE_ACCESS = 'lets a joined caller read and post only as granted'
+const NO_INVITE_TOKEN = "this run can't call the board with a joined caller's token"
 
 /** The checks of a caller narrowed with x-board-can, which a run that can't send the header skips. */
 const NARROWED = [
@@ -77,6 +93,11 @@ const NARROWED = [
   "refuses a caller narrowed with x-board-can sync's records: imports, receipts, and the inbox",
 ]
 const NO_CAN = "this run can't call the board with an x-board-can header"
+const TASK_AUTHORITY = [
+  'parks a task only as a verified person with manage, and unpark restores work without the claim',
+  'binds a claim to its verified owner and fences an older generation even with the same token',
+  'records an immutable handoff and accepts only one of two replacements naming the same predecessor',
+]
 
 /** The grants checks a board without team roles skips, and why: a run names no viewer, and grants don't cross teams yet. */
 const NO_ROLES = ['caps a person by their team role, so a viewer reads but neither posts nor manages', 'name a viewer in principals to check it: a board without team roles caps no one']
@@ -165,10 +186,21 @@ describe('the conformance kit', () => {
     const board = localBoard({ agentOps: true })
     onTestFinished(() => board.close())
     const client = await clientOf(board.fetch)
-    const report = await conformance(client, { withHeaders: withHeaders(board.fetch), networkPause: true })
+    const report = await conformance(client, {
+      withHeaders: withHeaders(board.fetch),
+      withInviteToken: (token) => boardWithInviteToken(board.fetch, token),
+      networkPause: true,
+    })
     expect(report.checks.filter((check) => check.status === 'failed')).toEqual([])
     expect(report.checks.filter((check) => check.group === 'network-pause').map((check) => check.status)).toEqual(['passed'])
     expect(await client.status()).toMatchObject({ paused: false, pauseEpoch: 1 })
+    expect(report.checks.filter((check) => check.group === 'invites').map(({ name, status }) => [name, status])).toEqual([
+      ['lists a pending invite and refuses it once revoked', 'passed'],
+      ['lists a short-lived invite as expired and refuses it', 'passed'],
+      [INVITE_RACE, 'passed'],
+      [INVITE_ACCESS, 'passed'],
+    ])
+    expect((await client.invites()).some((invite) => invite.state === 'pending')).toBe(false)
     // withHeaders stands in for withCan, so the narrowing checks run too.
     expect(report.checks.filter((check) => [...NARROWED, ...GRANTS_NARROWED].includes(check.name)).map((check) => check.status)).toEqual([...NARROWED, ...GRANTS_NARROWED].map(() => 'passed'))
     expect(report.checks.filter((check) => [...HEADERS, 'shows no session on a message, its event, or you'].includes(check.name)).map((check) => check.status)).toEqual(Array(5).fill('passed'))
@@ -176,10 +208,11 @@ describe('the conformance kit', () => {
     expect(report).toMatchObject({ ok: true, url: BOARD_URL })
     // Every grant it made is gone, the ones that closed a pattern to everyone included.
     expect((await client.grants()).map((grant) => grant.id)).toEqual(['g1', 'g2', 'g3'])
-    expect([...new Set(report.checks.map((check) => check.group))]).toEqual(['core', 'network-pause', 'paging', 'search', 'schedules', 'tasks', 'grants', 'schemas', 'attachments', 'watchers', 'sync', 'agents', 'operational-inbox'])
-    expect(report.checks.filter((check) => check.group === 'tasks').map((check) => check.status)).toEqual(Array.from({ length: 26 }, () => 'passed'))
-    expect(agentChecks(report)).toMatchObject([{ status: 'passed' }])
-    expect((await client.agents.list('conformance')).agents).toMatchObject([{ status: 'disabled' }])
+    expect([...new Set(report.checks.map((check) => check.group))]).toEqual(['core', 'network-pause', 'paging', 'search', 'schedules', 'tasks', 'grants', 'invites', 'schemas', 'attachments', 'watchers', 'sync', 'agents', 'operational-inbox'])
+    expect(report.checks.filter((check) => check.group === 'tasks').map((check) => check.status)).toEqual(Array.from({ length: 26 + TASK_AUTHORITY.length }, () => 'passed'))
+    expect(report.checks.filter((check) => TASK_AUTHORITY.includes(check.name)).map((check) => check.status)).toEqual(TASK_AUTHORITY.map(() => 'passed'))
+    expect(agentChecks(report).map(({ status }) => status)).toEqual(['passed', 'passed'])
+    expect((await client.agents.list('conformance')).agents.map(({ status }) => status)).toEqual(['disabled', 'disabled'])
     const { messages } = await client.channel('conformance').messages({ limit: 500 })
     expect(messages.filter((message) => !message.deleted)).toEqual([])
     // Every task it made went with its root: none is left open, and none still wears a state.
@@ -192,7 +225,7 @@ describe('the conformance kit', () => {
     onTestFinished(() => team.close())
     const report = await conformance(team)
     expect(report.checks.some((check) => check.group === 'network-pause')).toBe(false)
-    expect(agentChecks(report)).toMatchObject([{ status: 'passed' }])
+    expect(agentChecks(report)).toMatchObject([{ status: 'passed' }, { status: 'skipped', detail: 'this run has no verified agent credential' }])
     // The board's own code needs no grant to keep it in what it closes, and no proxy narrows it. Each
     // of its profiles is a principal of its own there, so none is an actor a task of its own could be for.
     expect(skipped(report)).toEqual([
@@ -208,11 +241,53 @@ describe('the conformance kit', () => {
       NEVER_LOCKED_OUT,
       LOCKED_OUT,
       CROSS_TEAM,
+      [INVITE_ACCESS, NO_INVITE_TOKEN],
       [NARROWED[3], NO_CAN],
       [NARROWED[4], NO_CAN],
       [NARROWED[5], NO_CAN],
+      ['confirms a claimed run only through a taken and reported status probe', 'this run has no verified agent credential'],
     ])
     expect((await team.me()).actor).toBe('board:client')
+  })
+
+  it('keeps credentials out of the report even when a board echoes them in errors', async () => {
+    const team = testBoard({ scheduler: fakeQueue().scheduler })
+    let echoed = ''
+    const leaking: Fetch = async (request) => {
+      const response = await team.fetch(request.clone())
+      if (request.method !== 'POST' || !new URL(request.url).pathname.endsWith('/invites/redeem') || !response.ok) return response
+      const { token } = await response.json()
+      echoed = token
+      return Response.json({ error: { code: token, message: token, hint: token } }, { status: 500 })
+    }
+    const client = await clientOf(leaking)
+    const report = await conformance(client)
+    expect(echoed.length > 0).toBe(true)
+    expect(JSON.stringify(report).includes(echoed)).toBe(false)
+    expect(report.checks.find((check) => check.name === INVITE_RACE)?.status).toBe('failed')
+    // The write succeeded, despite the failed response. Cleanup still takes back its grant.
+    expect((await client.grants()).some((grant) => grant.principals.some((principal) => principal.kind === 'invitee'))).toBe(false)
+  })
+
+  it('fails a board that returns a successful redemption more than once', async () => {
+    const team = testBoard({ scheduler: fakeQueue().scheduler })
+    // A transport that replays the same answer to concurrent uses of the same invite, as if joins
+    // were idempotent. It keeps sensitive request and response bodies in memory, never in assertions.
+    const answered = new Map<string, Promise<Response>>()
+    const replay: Fetch = async (request) => {
+      if (request.method !== 'POST' || !new URL(request.url).pathname.endsWith('/invites/redeem')) return team.fetch(request)
+      const key = await request.clone().text()
+      let answer = answered.get(key)
+      if (!answer) answered.set(key, (answer = team.fetch(request)))
+      return (await answer).clone()
+    }
+    const client = await clientOf(replay)
+    const report = await conformance(client)
+    expect(report.checks.filter((check) => check.group === 'invites' && check.status === 'failed').map(({ name, detail }) => [name, detail])).toEqual([
+      [INVITE_RACE, 'exactly one redemption should succeed, got 3'],
+    ])
+    expect(report.ok).toBe(false)
+    expect((await client.grants()).some((grant) => grant.principals.some((principal) => principal.kind === 'invitee'))).toBe(false)
   })
 
   it('skips an opted-in network-pause check on a backend that declares it unsupported', async () => {
@@ -272,6 +347,46 @@ describe('the conformance kit', () => {
       ['changes what a task needs only while no one holds it and it has not finished', 'changing what a claimed task needs: expected 409 task_claimed, and it succeeded'],
     ])
   }, 60_000)
+
+  it('catches a park that does nothing, a claim that drops its binding, and a handoff that cannot be superseded', async () => {
+    const board = testBoard({ scheduler: fakeQueue().scheduler })
+    // Each change breaks one extension promise at the wire, leaving board's log and verifier real.
+    const regressions: Fetch = async (request) => {
+      const path = new URL(request.url).pathname
+      const write = request.method === 'POST' ? /\/tasks\/([^/]+)\/(park|claim|handoff)(?:-bound)?$/.exec(path) : null
+      if (!write) return board.fetch(request)
+      const [, id, action] = write
+      if (action === 'park') {
+        const read = await board.fetch(new Request(`${BOARD_URL}/messages/${id}`, { headers: request.headers }))
+        return Response.json({ task: (await read.json()).message })
+      }
+      const body = await request.clone().json()
+      if (action === 'handoff' && body.supersedes) {
+        return Response.json({ error: { code: 'no_task_authority', message: 'a late refusal of supersession' } }, { status: 501 })
+      }
+      if (action === 'claim' && body.binding) {
+        delete body.binding
+        // A server (or an intermediary) silently downgrades the requested bound write.
+        return board.fetch(new Request(request.url.replace(/-bound$/, ''), { method: 'POST', headers: request.headers, body: JSON.stringify(body) }))
+      }
+      return board.fetch(request)
+    }
+    const report = await conformance(await clientOf(regressions))
+    expect(report.checks.filter((check) => TASK_AUTHORITY.includes(check.name))).toMatchObject([
+      { status: 'failed', detail: 'the parked task: expected "blocked", got "claimed"' },
+      { status: 'failed', detail: 'the claim should show the complete binding that was supplied' },
+      { status: 'failed', detail: 'the number of supersessions that won the race: expected 1, got 0' },
+    ])
+  })
+
+  it('does not mark unrecognized 501 errors as a missing task authority', async () => {
+    const board = testBoard({ scheduler: fakeQueue().scheduler })
+    const broken: Fetch = (request) => new URL(request.url).pathname.endsWith('/park')
+      ? Promise.resolve(Response.json({ error: { code: 'unexpected', message: 'park is broken' } }, { status: 501 }))
+      : board.fetch(request)
+    const report = await conformance(await clientOf(broken))
+    expect(report.checks.find((check) => check.name === TASK_AUTHORITY[0])).toMatchObject({ status: 'failed', detail: 'park is broken' })
+  })
 
   it("fails a board that answers a create under a reply's ID with the task its thread is", async () => {
     const board = testBoard({ scheduler: fakeQueue().scheduler })
@@ -557,9 +672,11 @@ describe('the conformance kit', () => {
       ['grants', 'skipped', NO_APPS[1]],
       ['grants', 'skipped', LOCKED_OUT[1]],
       ['grants', 'skipped', CROSS_TEAM[1]],
+      ['invites', 'skipped', NO_INVITE_TOKEN],
       ['attachments', 'skipped', 'not kept here: this board keeps no files'],
       ['attachments', 'skipped', 'not kept here: this board keeps no files'],
       ['attachments', 'skipped', 'not kept here: this board keeps no files'],
+      ['agents', 'skipped', expect.stringMatching(/^not kept here:/)],
       ['agents', 'skipped', expect.stringMatching(/^not kept here:/)],
     ])
   })
@@ -577,7 +694,8 @@ describe('the conformance kit', () => {
     const report = await conformance(await clientOf(taskless))
     expect(report.ok).toBe(true)
     const tasks = report.checks.filter((check) => check.group === 'tasks')
-    expect(tasks).toHaveLength(26)
+    expect(tasks.map((check) => check.name)).toEqual(expect.arrayContaining(TASK_AUTHORITY))
+    expect(tasks).toHaveLength(26 + TASK_AUTHORITY.length)
     // The one that needs no task route is about labels, which a board has either way.
     expect(tasks.filter((check) => check.status !== 'skipped').map((check) => check.name)).toEqual([])
     expect([...new Set(tasks.map((check) => check.detail))]).toEqual(['not kept here: this board keeps no tasks'])

@@ -69,6 +69,8 @@ export function refusal(error: unknown): string {
 /** Who a grant names, the way people say it. */
 export function principalName(principal: PrincipalView): string {
   switch (principal.kind) {
+    case 'invitee':
+      return principal.id
     case 'user':
       return principal.email ?? principal.userId
     case 'project':

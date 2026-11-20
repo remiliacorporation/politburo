@@ -42,13 +42,6 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
     if (expiresAt !== undefined && !unexpired({ expiresAt }, now)) throw badRequest('expiresAt must be in the future')
   }
 
-  function heldBy(root: Root, identity: Identity) {
-    const claim = root.task.claim
-    if (claim?.principal !== identity.principal.id || claim.actor !== identity.actor.id)
-      throw conflict('claim_lost', 'work evidence requires the actor that holds the claim')
-    authorize(identity.principal.access, 'label', root.channel)
-  }
-
   function passing(need: Message | undefined, evidenceId: string | undefined, now: number): boolean {
     if (!need || need.task?.state !== 'completed' || evidenceId === undefined) return false
     const state = currentEvidence(need, now)
@@ -69,7 +62,6 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
       return { required: [...required], submission: state?.submission ?? null, evidence: Object.values(state?.evidence ?? {}), overrides: Object.values(state?.overrides ?? {}), releases }
     },
     submit(root: Root, identity: Identity, { commit, artifactRef }: Protocol['submitWork']['input']): Events {
-      heldBy(root, identity)
       if (root.task.evidence?.submission.round === root.task.epoch) throw conflict('already_submitted', 'this claim already submitted work; a new claim starts a new round')
       return [{ type: 'task.work_submitted', payload: { id: root.id, thread: root.thread, by: identity.author, round: root.task.epoch, revision: root.revision ?? root.id, commit, artifactRef } }]
     },
@@ -88,10 +80,9 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
       future(expiresAt, now)
       return [{ type: 'task.work_override', payload: { id: root.id, thread: root.thread, by: identity.author, commit, round, gate, reason, expiresAt } }]
     },
-    complete(root: Root, identity: Identity, commit: string | undefined, pauseEpoch: number) {
+    complete(root: Root, commit: string | undefined, pauseEpoch: number) {
       if (!enabled && commit !== undefined) throw noWorkEvidence()
       if (!required.length && commit === undefined) return
-      heldBy(root, identity)
       const now = Date.now()
       const state = currentEvidence(root, now, pauseEpoch)
       if (!state || commit === undefined) throw conflict('evidence_required', 'completion requires a current submission and its full commit ID')

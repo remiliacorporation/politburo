@@ -94,6 +94,43 @@ describe('watchers on a board on http()', () => {
     }
   })
 
+  it('creates one bound task when a watcher retries the same event', async () => {
+    const owner = { principal: V0, actor: `${V0}+intake` }
+    const binding = {
+      controller: owner,
+      owner,
+      provider: 'fixture-provider',
+      model: 'fixture-model',
+      session: 'session-1',
+      branch: 'topic/review',
+      worktree: '/fixture/worktrees/review',
+      baseCommit: 'a'.repeat(40),
+    }
+    const wrote: string[] = []
+    const intake = recorder('feedback', async ({ event, board }) => {
+      if (event.type !== 'message.posted' || event.message?.re !== null) return
+      await board.tasks.create('work', { text: `triage: ${event.message.text}`, claim: true, binding })
+      wrote.push(event.cursor)
+      if (wrote.length === 1) throw new Error('timed out after creating the task')
+    })
+    const t = await team({ intake: intake.watcher })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await t.started()
+      const julian = await julianOn(t.remote.fetch)
+      expect((await julian('POST', '/messages', { channel: 'feedback', text: 'export is broken' })).status).toBe(201)
+      await vi.waitFor(() => expect(wrote).toHaveLength(2), { timeout: 5000 })
+      expect(wrote[1]).toBe(wrote[0])
+      const listed = await julian('GET', '/tasks?channel=work&state=all')
+      expect(listed.status).toBe(200)
+      expect(listed.body.tasks).toHaveLength(1)
+      expect(listed.body.tasks[0].message).toMatchObject({ text: 'triage: export is broken', task: { claim: { binding } } })
+    } finally {
+      t.backend.close()
+      errors.mockRestore()
+    }
+  })
+
   it("never runs on what the deployment can't read", async () => {
     const fix = recorder('--all')
     const t = await team({ fix: fix.watcher }, { feedback: ['read', 'post'] })

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, vi } from 'vitest'
+import { beforeAll, vi } from 'vitest'
 import { serve } from './http.ts'
 import { localBoard, personToken } from './harness.ts'
 
@@ -27,14 +27,13 @@ vi.setConfig({ testTimeout: CLI_TIMEOUT })
 
 /** Serves the calling file's board before its tests, and stops it after. */
 export function useBoard(make = () => localBoard({ url: undefined })) {
-  let close: () => Promise<void>
   beforeAll(async () => {
     // No fixed URL: the board infers its own from requests, as when mounted.
-    const host = make()
-    close = host.close
-    // Open SQLite in setup, so Node's first-use warning isn't captured as CLI stderr.
-    await host.channel('dev').messages({ limit: 1 })
-    server = await serve(host.fetch)
+    const team = make()
+    // Open the store before a command captures stdout and stderr in this process. Node 22
+    // warns on SQLite's first load, even for an in-memory store.
+    await team.discovery()
+    server = await serve(team.fetch)
     url = `${server.origin}/api/board`
     // Nothing of the board's or Vercel's from the shell running the suite, nor a coding agent's around it.
     const clean = Object.fromEntries(
@@ -49,10 +48,10 @@ export function useBoard(make = () => localBoard({ url: undefined })) {
       HOME: await tmp('board-home-'),
       XDG_CONFIG_HOME: await tmp('board-'),
     }
-  })
-  afterAll(async () => {
-    await server?.close()
-    await close?.()
+    return async () => {
+      await server.close()
+      await team.close()
+    }
   })
 }
 

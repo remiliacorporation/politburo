@@ -9,7 +9,10 @@ import {
   Author,
   AgentGeneration,
   AgentHarness,
+  AgentIntent,
   AgentRole,
+  IntentOutcome,
+  IntentReceipt,
   ChannelPath,
   Emoji,
   Handle,
@@ -31,6 +34,7 @@ import { ExternalEvent, ExternalTarget, Link, LINKS_PER_MESSAGE_MAX, Origin } fr
 import { AttentionDraft, AttentionReceipt } from './attention.ts'
 import { evidenceEvents } from './evidence.ts'
 import { operationalEvents } from './operational-inbox.ts'
+import { TaskBinding, TaskHandoff, TaskPark } from './task-authority.ts'
 
 /** The sync key a write came from, or null when it was written on the board. */
 const From = z.string().nullable()
@@ -175,8 +179,8 @@ export const boardEvents = {
     'task.needs_changed': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), by: Author }),
     /** (server) Every task it needs has completed. */
     'task.ready': z.object(Task),
-    /** (server) `by` holds it until `until` in this pause epoch. Old claims were granted in epoch zero. */
-    'task.claimed': z.object({ ...Task, epoch: Epoch, pauseEpoch: z.number().int().nonnegative().optional(), until: Until, token: z.string().regex(/^[0-9a-f]{64}$/), by: Author }),
+    /** (server) `by` holds it until `until` in this pause epoch (zero for old claims). No view shows the token hash. */
+    'task.claimed': z.object({ ...Task, epoch: Epoch, pauseEpoch: z.number().int().nonnegative().optional(), until: Until, token: z.string().regex(/^[0-9a-f]{64}$/), by: Author, binding: TaskBinding.optional() }),
     /** A board-wide authority change, never a message or a dispatch ticket. */
     'work.control': z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative(), reason: TaskNote, by: Author }),
     'task.renewed': z.object({ ...Task, epoch: Epoch, until: Until, by: Author }),
@@ -188,6 +192,9 @@ export const boardEvents = {
     /** Held for a person, which ends any claim. Kind `edited` is the board's: `by` edited its root, and isn't its owner. */
     'task.blocked': z.object({ ...Task, kind: TaskHoldKind.nullable(), reason: TaskNote, by: Author }),
     'task.unblocked': z.object({ ...Task, by: Author }),
+    'task.parked': z.object({ ...Task, ...TaskPark.shape }),
+    'task.unparked': z.object({ ...Task, reason: TaskNote, by: Author }),
+    'task.handoff': z.object({ ...Task, handoff: TaskHandoff }),
     /** Reason `deleted` when its root was. */
     'task.canceled': z.object({ ...Task, reason: TaskNote, by: Author }),
     ...evidenceEvents,
@@ -210,6 +217,26 @@ export const boardEvents = {
         heartbeatAt: Until.nullable(),
       }),
     }),
+    /** One private atomic snapshot, with only the issuer facts needed for policy rechecks. */
+    'ops.intents_issued': z.object({
+      intents: z.array(AgentIntent).min(1).max(64),
+      requestKey: z.string(),
+      requestHash: z.string(),
+      issuer: z.object({
+        id: ActorId,
+        kind: z.enum(['person', 'deployment', 'workflow', 'external']),
+        handle: Handle,
+        facts: z.object({
+          issuer: z.enum(['vercel', 'github', 'oidc', 'host', 'joined']),
+          iss: z.string(),
+          claims: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+        }).optional(),
+        scope: z.string().max(CAN_MAX).optional(),
+        expiresAt: Until.nullable(),
+      }),
+    }),
+    'ops.intent_taken': z.object({ intentId: Ref, receipt: IntentReceipt }),
+    'ops.intent_reported': z.object({ intentId: Ref, receipt: IntentReceipt.extend({ outcome: IntentOutcome }) }),
     'actor.seen': z.object({
       actor: ActorId,
       kind: SeenActorKind,

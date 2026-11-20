@@ -1,6 +1,8 @@
 import type { Protocol } from '../api/protocol.ts'
 import type {
   ActorView,
+  AgentHealth,
+  AgentIntent,
   AgentView,
   AttentionAnswerBody,
   BoardEventView,
@@ -11,6 +13,12 @@ import type {
   FiltersInput,
   InboxEntry,
   InboxItem,
+  IntentOutcome,
+  IssueOpsIntentInput,
+  IssueOpsRoleIntentInput,
+  ListOpsIntentsInput,
+  OpsIntentsIssued,
+  OpsIntentsPage,
   OperationalMessage,
   OperationalStatus,
   SendOperationalMessageInput,
@@ -37,10 +45,17 @@ import type {
   RequestAttentionBody,
   ScheduleView,
   SchedulesQueryInput,
+  TaskBindingInput,
   TaskClaim,
+  TaskHandoffInput,
+  TaskHandoffWrite,
   TasksPage,
   TasksQueryInput,
   GrantInput,
+  CreateInviteInput,
+  CreatedInvite,
+  InviteView,
+  Joined,
   GrantWriteOptions,
   GrantView,
   UpdateGrantInput,
@@ -54,6 +69,7 @@ import type {
   ThreadView,
   TypingResult,
 } from '../api/routes.ts'
+import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Actor } from '../contract/folds.ts'
 import type { Mentioned } from '../contract/mentions.ts'
 import { ATTACHMENT_BYTES_MAX, DIRECT_UPLOAD_BYTES_MAX, typeOf } from '../contract/files.ts'
@@ -187,7 +203,11 @@ export type TaskOptions = {
   claim?: boolean
   lease?: number
   token?: string
+  binding?: TaskBindingInput
 }
+
+type ClaimOptions = Pick<TaskOptions, 'lease' | 'token' | 'binding'>
+type ClaimNext = ClaimOptions & { channel: string; label?: Record<string, string>; from?: string[]; wait?: number }
 
 /** A new thread that's a task: its root's text, labels, `noSync`, `attachments`, and `id`, as a post takes them, and what makes it a task. */
 export type NewTaskOptions = TaskOptions & Pick<PostOptions, 'text' | 'labels' | 'noSync' | 'attachments' | 'id'>
@@ -222,6 +242,8 @@ export type HeldTask = {
   priority(priority: TaskPriority): Promise<MessageView>
   /** Holds the task for a person, which ends the claim: `kind` says what for (`needs_input`, `awaiting_approval`). */
   block(reason: string, opts?: { kind?: string }): Promise<MessageView>
+  /** Records packet metadata without settling the claim or verifying the packet. */
+  handoff(packet: TaskHandoffInput): Promise<MessageView>
 }
 
 /**
@@ -378,7 +400,7 @@ export function createBoardClient(options: ClientOptions) {
   async function raw(
     method: string,
     path: string,
-    init: { body?: unknown; auth?: boolean; headers?: Record<string, string>; signal?: AbortSignal } = {},
+    init: { body?: unknown; auth?: boolean; headers?: Record<string, string>; signal?: AbortSignal; redirect?: RequestRedirect } = {},
   ): Promise<Response> {
     const response = await doFetch(`${base}${path}`, {
       method,
@@ -389,6 +411,7 @@ export function createBoardClient(options: ClientOptions) {
       },
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
       ...(init.signal ? { signal: init.signal } : {}),
+      ...(init.redirect ? { redirect: init.redirect } : {}),
     })
     if (!response.ok) throw await toError(response)
     return response
@@ -416,12 +439,13 @@ export function createBoardClient(options: ClientOptions) {
   const workWrite = async (id: string, verb: string, body: object) => (await call<{ task: MessageView }>('POST', `/work/v1/tasks/${path(id)}/${verb}`, { body })).task
 
   /** What a claim on task `id` does, with the `epoch` and `token` the claim answered. */
-  const held = (id: string, proof: { epoch: number; token: string }): HeldTask => {
-    const { epoch, token } = proof
+  const held = (id: string, proof: Omit<TaskClaim, 'until'>): HeldTask => {
+    const { epoch, token, pauseEpoch } = proof
     return {
       async renew(lease) {
         const { task, until } = await call<{ task: MessageView; until: string }>('POST', `/tasks/${path(id)}/renew`, { body: { epoch, token, ...(lease !== undefined ? { lease } : {}) } })
-        return claimed(task, { epoch, token, until })
+        const binding = task.task?.claim?.binding
+        return claimed(task, { epoch, token, until, ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
       },
       release: () => taskWrite(id, 'release', { epoch, token }),
       submit: (commit, artifactRef) => workWrite(id, 'submit', { epoch, token, commit, artifactRef }),
@@ -429,6 +453,7 @@ export function createBoardClient(options: ClientOptions) {
       fail: (reason) => taskWrite(id, 'fail', { epoch, token, reason }),
       priority: (priority) => taskWrite(id, 'priority', { epoch, token, priority }),
       block: (reason, opts = {}) => taskWrite(id, 'block', { epoch, token, reason, ...opts }),
+      handoff: (packet) => taskWrite(id, 'handoff', { ...packet, epoch, token }),
     }
   }
 
@@ -446,7 +471,8 @@ export function createBoardClient(options: ClientOptions) {
     const where = typeof target === 'string' ? { channel: target } : { re: target.re }
     // A new thread's root takes files as a post does: uploads, or their IDs.
     const made = typeof input === 'string' ? { text: input } : 'attachments' in input && input.attachments?.length ? { ...input, attachments: input.attachments.map((file) => (typeof file === 'string' ? file : file.id)) } : input
-    const { task, claim, mentions } = await call<{ task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] }>('POST', '/tasks', { body: { ...where, ...made } })
+    const route = 'binding' in made && made.binding !== undefined ? boundTaskPaths.createTask : '/tasks'
+    const { task, claim, mentions } = await call<{ task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] }>('POST', route, { body: { ...where, ...made } })
     return { task, ...(claim ? { claim: claimed(task, claim) } : {}), ...(mentions ? { mentions } : {}) }
   }
 
@@ -472,25 +498,27 @@ export function createBoardClient(options: ClientOptions) {
    * is how long you hold it, in seconds, the board's default without one: a board says how short
    * and how long one may be, and the claim's `until` says what it gave.
    */
-  async function claimTask(target: string, opts?: { lease?: number; token?: string; signal?: AbortSignal }): Promise<ClaimedTask>
-  async function claimTask(target: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; token?: string }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
+  async function claimTask(target: string, opts?: ClaimOptions & { signal?: AbortSignal }): Promise<ClaimedTask>
+  async function claimTask(target: ClaimNext, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
   async function claimTask(
-    target: string | { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; token?: string },
-    opts: { lease?: number; token?: string; signal?: AbortSignal } = {},
+    target: string | ClaimNext,
+    opts: ClaimOptions & { signal?: AbortSignal } = {},
   ): Promise<ClaimedTask | null> {
-    const signal = opts.signal ? { signal: opts.signal } : {}
+    const { signal: abort, ...body } = opts
+    const signal = abort ? { signal: abort } : {}
     if (typeof target === 'string') {
-      const body = { ...(opts.lease !== undefined ? { lease: opts.lease } : {}), ...(opts.token !== undefined ? { token: opts.token } : {}) }
-      const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', `/tasks/${path(target)}/claim`, { body, ...signal })
+      const route = body.binding !== undefined ? boundTaskPaths.claimTask.replace(':id', () => path(target)) : `/tasks/${path(target)}/claim`
+      const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', route, { body, ...signal })
       return claimed(task, claim)
     }
     const { wait, ...ready } = target
+    const route = ready.binding !== undefined ? boundTaskPaths.claimReadyTask : '/tasks/claim'
     const deadline = Date.now() + (wait ?? 0) * 1000
     for (;;) {
       const asked = Date.now()
       // The board holds each request up to its own limit: it asks again until `wait` runs out.
       const hold = Math.max(0, Math.min(CLAIM_WAIT_S, (deadline - asked) / 1000))
-      const answer = await call<{ task: MessageView; claim: TaskClaim } | { task: null }>('POST', '/tasks/claim', { body: { ...ready, ...(hold > 0 ? { wait: hold } : {}) }, ...signal })
+      const answer = await call<{ task: MessageView; claim: TaskClaim } | { task: null }>('POST', route, { body: { ...ready, ...(hold > 0 ? { wait: hold } : {}) }, ...signal })
       if (answer.task) return claimed(answer.task, answer.claim)
       if (Date.now() >= deadline || opts.signal?.aborted) return null
       // A board that answered at once instead of holding isn't asked again right away.
@@ -680,12 +708,20 @@ export function createBoardClient(options: ClientOptions) {
     /** Stops a schedule: yours, or any with manage in its channel. `canceled` is false when it was already done or canceled. */
     cancelSchedule: (id: string) =>
       call<{ schedule: ScheduleView; canceled: boolean }>('POST', `/schedules/${path(id)}/cancel`, { body: {} }),
-    /** The fork's agent registry. Boards that don't opt in answer 501 `no_agent_ops`. */
+    /** The fork's agent registry, command intents, and task health. Boards that don't opt in answer 501 `no_agent_ops`. */
     agents: {
       list: (channel: string) => call<{ agents: AgentView[] }>('GET', `/ops/agents${queryString({ channel })}`),
       register: (input: RegisterOpsAgentInput) => call<AgentView>('POST', '/ops/agents', { body: input }),
       heartbeat: (id: string, generation: number) => call<AgentView>('POST', `/ops/agents/${path(id)}/heartbeat`, { body: { generation } }),
       retire: (id: string, generation: number) => call<AgentView>('POST', `/ops/agents/${path(id)}/retire`, { body: { generation } }),
+      issueIntent: (agent: string, input: IssueOpsIntentInput) => call<OpsIntentsIssued>('POST', `/ops/agents/${path(agent)}/intents`, { body: input }),
+      issueRoleIntent: (input: IssueOpsRoleIntentInput) => call<OpsIntentsIssued>('POST', '/ops/intents', { body: input }),
+      /** The agent's pending intents, oldest first. Pass the returned `next` as `after` to read on. */
+      intents: (agent: string, query: ListOpsIntentsInput = {}) => call<OpsIntentsPage>('GET', `/ops/agents/${path(agent)}/intents${queryString(query)}`),
+      takeIntent: (id: string, generation: number) => call<AgentIntent>('POST', `/ops/intents/${path(id)}/take`, { body: { generation } }),
+      reportIntent: (id: string, generation: number, outcome: IntentOutcome) => call<AgentIntent>('POST', `/ops/intents/${path(id)}/report`, { body: { generation, outcome } }),
+      /** Whether a fresh run probe reported that this task's current claim is working. */
+      health: (task: string) => call<AgentHealth>('GET', `/ops/health/${path(task)}`),
     },
     /**
      * Tasks: threads someone's agents are to do, with a state the board keeps. A task's ID is its
@@ -722,6 +758,12 @@ export function createBoardClient(options: ClientOptions) {
         call<Protocol['answerTaskAttention']['output']>('POST', `/tasks/${path(id)}/attention/${path(requestId)}/answer`, { body: answer }),
       /** Lifts a plain hold: the task is ready again, or waiting while a task it needs hasn't completed. */
       unblock: (id: string) => taskWrite(id, 'unblock'),
+      /** A verified person with manage parks the task, ending any claim. */
+      park: (id: string, reason: string) => taskWrite(id, 'park', { reason }),
+      /** Lifts an operator park without restoring its former claim. */
+      unpark: (id: string, reason: string) => taskWrite(id, 'unpark', { reason }),
+      /** Records packet metadata using explicit claim proof. */
+      handoff: (id: string, input: TaskHandoffWrite) => taskWrite(id, 'handoff', input),
       /** Makes a failed task ready again, in place: what waits for it still does. */
       reopen: (id: string) => taskWrite(id, 'reopen'),
       /** Assigns a task to one of its owner's actors (`<owner>+<profile>`), the only one that claims it then, or with null to anyone who may. */
@@ -773,6 +815,12 @@ export function createBoardClient(options: ClientOptions) {
     },
     /** The board's grants. Needs manage at `*`, or a team owner. */
     grants: async () => (await call<{ grants: GrantView[] }>('GET', '/grants')).grants,
+    /** Creates a single-use invite. Deliver `secret` privately; it never comes back in a list. */
+    createInvite: ({ can, ...input }: CreateInviteInput) => call<CreatedInvite>('POST', '/invites', { body: { ...input, ...(can !== undefined ? { can: wireCan(can) } : {}) } }),
+    invites: async () => (await call<{ invites: InviteView[] }>('GET', '/invites')).invites,
+    revokeInvite: (id: string) => call<{ revoked: boolean }>('POST', `/invites/${path(id)}/revoke`),
+    /** Redeems an invite on this board. Keep the returned bearer token private. */
+    join: (secret: string) => call<Joined>('POST', '/invites/redeem', { body: { secret }, auth: false, redirect: 'error' }),
     /** `revoked` is false when it was already gone. Its principals' next requests are refused. */
     revokeGrant: (id: string, options: GrantWriteOptions = {}) => call<{ revoked: boolean }>('POST', `/grants/${path(id)}/revoke`, { body: goAhead(options) }),
     /** Every schema: the built-ins, then the board's own, by name and version. */

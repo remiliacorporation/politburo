@@ -5,6 +5,10 @@ import {
   AgentGeneration,
   AgentHarness,
   AgentRole,
+  AgentRun,
+  IntentOutcome,
+  IntentVerb,
+  type AgentIntent,
   AttachmentId,
   ATTACHMENTS_PER_MESSAGE_MAX,
   CHANNEL_PATTERN_MAX,
@@ -34,6 +38,7 @@ import { AttentionAnswerBody, RequestAttentionBody } from '../contract/attention
 import { ExternalAuthor, ExternalEvent, ExternalTarget, Link as LinkSchema, LINKS_PER_MESSAGE_MAX, MENTIONED_PER_MESSAGE_MAX, Origin } from '../contract/external.ts'
 import type { BoardEvent, PublicBoardEvent } from '../contract/events.ts'
 import { OperationalRecipient, OperationalStatus, OperationalTopic } from '../contract/operational-inbox.ts'
+import { TaskBinding, TaskPacket } from '../contract/task-authority.ts'
 import type { Link } from '../contract/external.ts'
 import type { Actor, Channel, ExternalCopy, Message, Task } from '../contract/folds.ts'
 import type { Via } from '../contract/profiles.ts'
@@ -41,7 +46,7 @@ import type { AccessSummary, Permission, WrittenCan } from '../server/access.ts'
 
 export { Ref }
 export { AttentionAnswerBody, AttentionDraft, AttentionReceipt, AttentionView, RequestAttentionBody } from '../contract/attention.ts'
-export type { AgentRole } from '../contract/schemas.ts'
+export type { AgentHealth, AgentIntent, AgentRole, AgentRun, IntentOutcome, IntentReceipt, IntentVerb } from '../contract/schemas.ts'
 
 export const ListOpsAgentsQuery = z.strictObject({ channel: ChannelPath })
 export const RegisterOpsAgentBody = z.strictObject({
@@ -57,6 +62,29 @@ export type RegisterOpsAgentInput = z.input<typeof RegisterOpsAgentBody>
 export type OpsAgentGenerationInput = z.input<typeof OpsAgentGenerationBody>
 export type Agent = BoardEvent<'ops.agent_changed'>['payload']['agent']
 export type AgentView = Agent
+
+const IssueIntentFields = {
+  verb: IntentVerb,
+  run: AgentRun.optional(),
+  generation: AgentGeneration,
+  ttlSeconds: z.number().int().min(1).max(60),
+  requestId: Ref,
+}
+const checkRunProbe = (input: { verb: IntentVerb; run?: AgentRun | undefined; ttlSeconds: number }, ctx: z.RefinementCtx) => {
+  if (input.run === undefined) return
+  if (input.verb !== 'status') ctx.addIssue({ code: 'custom', path: ['run'], message: 'only status intents can name a run' })
+  if (input.ttlSeconds > 30) ctx.addIssue({ code: 'custom', path: ['ttlSeconds'], message: 'a run probe lasts at most 30 seconds' })
+}
+export const IssueOpsIntentBody = z.strictObject(IssueIntentFields).superRefine(checkRunProbe)
+export const IssueOpsRoleIntentBody = z.strictObject({ ...IssueIntentFields, channel: ChannelPath, role: AgentRole }).superRefine(checkRunProbe)
+export const ListOpsIntentsQuery = z.strictObject({ after: Ref.optional() })
+export const ReportOpsIntentBody = z.strictObject({ generation: AgentGeneration, outcome: IntentOutcome })
+
+export type IssueOpsIntentInput = z.input<typeof IssueOpsIntentBody>
+export type IssueOpsRoleIntentInput = z.input<typeof IssueOpsRoleIntentBody>
+export type ListOpsIntentsInput = z.input<typeof ListOpsIntentsQuery>
+export type OpsIntentsIssued = { intents: AgentIntent[] }
+export type OpsIntentsPage = { intents: AgentIntent[]; next: string | null }
 
 /** The message's `revision` as it was read: if it's been edited or deleted since, 409 `revision_conflict`. */
 const Revision = z.number().int().positive()
@@ -328,6 +356,7 @@ export const CreateTaskBody = z
     claim: z.boolean().optional(),
     lease: Lease.optional(),
     ...ClaimToken,
+    binding: TaskBinding.optional(),
     id: z.string().min(1).max(200).refine(storable, 'id has a NUL character or a lone surrogate').optional(),
   })
   .refine((body) => (body.channel === undefined) !== (body.re === undefined), {
@@ -340,6 +369,7 @@ export const CreateTaskBody = z
   })
   .refine((body) => body.lease === undefined || body.claim === true, { message: '`lease` goes with `claim`', path: ['lease'] })
   .refine((body) => body.token === undefined || body.claim === true, { message: '`token` goes with `claim`', path: ['token'] })
+  .refine((body) => body.binding === undefined || body.claim === true, { message: '`binding` goes with `claim`', path: ['binding'] })
 
 /** A digest of what a batch asks for: what tells the same request under an `id` from another. */
 const BatchRequest = z.string().min(1).max(64)
@@ -417,7 +447,7 @@ export const TasksQuery = z.object({
 })
 
 
-export const ClaimTaskBody = z.object({ lease: Lease.optional(), ...ClaimToken }).optional()
+export const ClaimTaskBody = z.object({ lease: Lease.optional(), binding: TaskBinding.optional(), ...ClaimToken }).optional()
 
 /**
  * Claims the highest priority eligible ready task in `channel`, oldest first at equal priority.
@@ -432,6 +462,7 @@ export const ClaimReadyTaskBody = z.object({
   from: z.array(z.string().min(1).max(256)).optional(),
   lease: Lease.optional(),
   wait: z.number().min(0).max(300).optional(),
+  binding: TaskBinding.optional(),
   ...ClaimToken,
 })
 
@@ -463,6 +494,8 @@ export const TaskPriorityBody = z.object({
   token: Claimed.token.optional(),
 }).refine((body) => (body.epoch === undefined) === (body.token === undefined), { message: 'a claim is its `epoch` and its `token`: pass both, or neither' })
 export const CancelTaskBody = z.object({ reason: SentTaskNote })
+export const ParkTaskBody = z.strictObject({ reason: TaskNote })
+export const HandoffTaskBody = TaskPacket.extend(Claimed)
 
 /** Why a person is pausing or resuming the board. The authority supplies the audit author. */
 export const ControlBody = z.strictObject({ reason: TaskNote })
@@ -504,6 +537,14 @@ export const PrincipalInput = z.discriminatedUnion('kind', [
 
 /** What a grant lets its principals do: a map from channel pattern to `'all'` or a list, `[]` for none. Kept as written. */
 export const GrantCan = z.record(z.string().min(1).max(CHANNEL_PATTERN_MAX), CanGrant)
+
+export const INVITE_PERMISSIONS = ['read', 'post', 'react', 'label', 'sync'] as const
+export const CreateInviteBody = z.strictObject({
+  name: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,31}$/, 'names start with a letter and use up to 32 letters, numbers, and hyphens'),
+  can: z.record(z.string().min(1).max(CHANNEL_PATTERN_MAX), z.array(z.enum(INVITE_PERMISSIONS)).max(INVITE_PERMISSIONS.length)).optional(),
+  expiresIn: z.number().int().min(1).max(604800).optional(),
+})
+export const RedeemInviteBody = z.strictObject({ secret: z.string().regex(/^vbi_[A-Za-z0-9_-]{43}$/) })
 
 /**
  * Says to go ahead with a grant change its caller couldn't take back: one that takes their own
@@ -870,6 +911,17 @@ export type CanAt = 'all' | 'none' | readonly Permission[]
 export type GrantCan = Readonly<Record<string, CanAt>>
 /** A grant, as a handle takes it: who it names, and what they may do. */
 export type GrantInput = { principals: readonly PrincipalInput[]; can: GrantCan }
+
+export type CreateInviteInput = { name: string; can?: GrantCan; expiresIn?: number }
+export type InviteView = {
+  id: string
+  name: string
+  can: Record<string, (typeof INVITE_PERMISSIONS)[number][]>
+  expiresAt: string
+  state: 'pending' | 'expired' | 'revoked' | 'redeemed'
+}
+export type CreatedInvite = { invite: InviteView; secret: string }
+export type Joined = { principal: string; token: string }
 /**
  * What a grant write takes beside its change. `lockMeOut` goes ahead with one you couldn't take
  * back: it takes your own `manage` at a pattern it names, and is 409 `grant_lockout` without it.
@@ -930,6 +982,7 @@ export type Explanation = {
 /** A principal as a grant keeps it: IDs, with the names the board knows beside them. */
 export type PrincipalView =
   | { kind: 'user'; userId: string; email: string | null }
+  | { kind: 'invitee'; id: string }
   | { kind: 'project'; projectId: string; name: string | null; environments: string[]; teamId: string | null }
   | { kind: 'github'; repositoryId: string | null; repository: string; workflow?: string; branch?: string; event?: string }
   | { kind: 'oidc'; issuer: string; claims: Record<string, string | string[]> }
@@ -980,11 +1033,24 @@ export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention' |
   /** The tasks it waits for, by their IDs. */
   needs: string[]
   /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
-  claim: { actor: string; until: string } | null
+  claim: { actor: string; until: string; binding?: TaskBinding } | null
 }
 
-/** What a claim answers, once: `epoch` and `token` go on every write the claim makes, until `until`. */
-export type TaskClaim = { epoch: number; token: string; until: string }
+/** Assignment metadata attested by a claimant, not a grant of authority. */
+export type TaskBindingInput = z.input<typeof TaskBinding>
+export type TaskHandoffInput = z.input<typeof TaskPacket>
+export type TaskHandoffWrite = z.input<typeof HandoffTaskBody>
+export type { TaskBinding, TaskHandoff, TaskPark } from '../contract/task-authority.ts'
+
+/** What a claim answers: `epoch` and `token` go on every write the claim makes, until `until`. */
+export type TaskClaim = {
+  epoch: number
+  token: string
+  until: string
+  /** Board pause epoch at admission, when the backend supports network pause. */
+  pauseEpoch?: number
+  binding?: TaskBinding
+}
 
 /**
  * `kind` says who wrote it: a `person` or a platform user (`external`), an agent (`profile`), or a deployment or workflow.
@@ -1083,6 +1149,8 @@ export type Discovery = {
    */
   wake_by_path?: boolean
   workEvidence?: { version: 1; gates: Gate[]; releaseDependencies: boolean }
+  /** True when the board enforces bound claims, parking, and handoffs. */
+  task_authority?: boolean
   /** Whether this board is configured to keep structured task attention requests. */
   task_attention?: true
   /** This board opts into the fork's agent registry. */
@@ -1313,6 +1381,12 @@ export const routes = {
   registerOpsAgent: { method: 'POST', path: '/ops/agents', body: RegisterOpsAgentBody },
   heartbeatOpsAgent: { method: 'POST', path: '/ops/agents/:agent/heartbeat', body: OpsAgentGenerationBody },
   retireOpsAgent: { method: 'POST', path: '/ops/agents/:agent/retire', body: OpsAgentGenerationBody },
+  issueOpsIntent: { method: 'POST', path: '/ops/agents/:agent/intents', body: IssueOpsIntentBody },
+  issueOpsRoleIntent: { method: 'POST', path: '/ops/intents', body: IssueOpsRoleIntentBody },
+  listOpsIntents: { method: 'GET', path: '/ops/agents/:agent/intents', query: ListOpsIntentsQuery },
+  takeOpsIntent: { method: 'POST', path: '/ops/intents/:id/take', body: OpsAgentGenerationBody },
+  reportOpsIntent: { method: 'POST', path: '/ops/intents/:id/report', body: ReportOpsIntentBody },
+  getOpsHealth: { method: 'GET', path: '/ops/health/:task' },
   /** Tasks, oldest first: open ones unless `state` says otherwise. */
   tasks: { method: 'GET', path: '/tasks', query: TasksQuery },
   /** Starts a thread as a task (`post` there, and `label` for its labels), or makes the thread `re` roots one (`label` there). */
@@ -1337,6 +1411,11 @@ export const routes = {
   answerTaskAttention: { method: 'POST', path: '/tasks/:id/attention/:requestId/answer', body: AttentionAnswerBody },
   /** What a task's owner does, or `manage` in its channel. */
   unblockTask: { method: 'POST', path: '/tasks/:id/unblock' },
+  /** A verified person with manage parks or unparks a task. A park ends its claim. */
+  parkTask: { method: 'POST', path: '/tasks/:id/park', body: ParkTaskBody },
+  unparkTask: { method: 'POST', path: '/tasks/:id/unpark', body: ParkTaskBody },
+  /** Records a packet reference and hash under a live claim; it verifies no external bytes. */
+  handoffTask: { method: 'POST', path: '/tasks/:id/handoff', body: HandoffTaskBody },
   reopenTask: { method: 'POST', path: '/tasks/:id/reopen' },
   assignTask: { method: 'POST', path: '/tasks/:id/assign', body: AssignTaskBody },
   /** Replaces what a task waits for, while no one holds it and it isn't finished. */
@@ -1357,6 +1436,10 @@ export const routes = {
   /** Which grant decides a channel, for the caller or, with `manage` at `*`, a principal it names. */
   explain: { method: 'GET', path: '/grants/explain', query: ExplainQuery },
   revokeGrant: { method: 'POST', path: '/grants/:id/revoke', body: RevokeGrantBody },
+  invites: { method: 'GET', path: '/invites' },
+  createInvite: { method: 'POST', path: '/invites', body: CreateInviteBody },
+  revokeInvite: { method: 'POST', path: '/invites/:id/revoke' },
+  redeemInvite: { method: 'POST', path: '/invites/redeem', body: RedeemInviteBody },
   /** Every schema: the built-ins, then the board's own. Anyone the board lets in reads them. */
   schemas: { method: 'GET', path: '/schemas' },
   /** One schema version, by `name@version`. */

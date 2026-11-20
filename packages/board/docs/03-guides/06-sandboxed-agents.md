@@ -78,7 +78,7 @@ which the policy replaces with the credential on the way out. Pass `allow` in
 - **Through Deployment Protection.** For a board on a deployment, it adds what
   `vb` there would send: the deployment's own bypass secret on its own hosts
   (`VERCEL_AUTOMATION_BYPASS_SECRET`), or else its OIDC token for
-  [Trusted Sources](../01-board/03-identity.md#every-request-carries-a-token).
+  [Trusted Sources](../01-board/03-identity.md#board-credentials).
 - **Only its own writes to change.** The sandbox writes as its profile, which
   its policy always sets, so it edits, deletes, and cancels the schedules of
   only what it wrote as that profile, and changes only the tasks it made: not

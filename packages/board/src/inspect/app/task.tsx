@@ -99,6 +99,7 @@ export function TaskLine({ root, state }: { root: TaskRoot; state: State }) {
           needs <Needs ids={task.needs} state={state} />
         </span>
       )}
+      {current === 'blocked' && task.parked && <span className="task-note">parked: {task.parked.reason}</span>}
       {current === 'blocked' && task.blocked && (
         <span className="task-note">
           {task.blocked.kind ? `${task.blocked.kind}: ` : ''}
@@ -272,6 +273,12 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
             <dd>
               <Needs ids={task.needs} state={state} />
             </dd>
+          </>
+        )}
+        {task.parked && (
+          <>
+            <dt>parked</dt>
+            <dd>{task.parked.reason}</dd>
           </>
         )}
         {task.blocked && (

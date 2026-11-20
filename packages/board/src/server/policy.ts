@@ -1,3 +1,4 @@
+import { sha256 } from '../client/ids.ts'
 import { compileAccess, parseCan, PERMISSIONS, type Access, type Level, type Permission } from './access.ts'
 import { explainGrants } from './grants.ts'
 import { resolveActor } from './actors.ts'
@@ -49,6 +50,9 @@ export type Serving = {
   ownTeamId(): Promise<string | null>
   discoveryIdentity(headers: Headers | null): Promise<ProjectIdentity>
 }
+
+/** Whether a bearer belongs to the board's joined credential namespace, valid or not. */
+export const isJoinedCredential = (credential: string | null): credential is string => credential?.startsWith('vbj_') === true
 
 /** board()'s policy: who each request is, and what principals may do, now and at every send and match. */
 export type Policy = ReturnType<typeof createPolicy>
@@ -143,6 +147,11 @@ export function createPolicy(options: PolicyOptions, keeps: boolean, serving: ((
   }
 
   async function verify(request: CallerRequest): Promise<Principal> {
+    if (trust?.joined && isJoinedCredential(request.credential)) {
+      const found = /^vbj_[A-Za-z0-9_-]{43}$/.test(request.credential) ? await trust.joined(await sha256(request.credential), request.audience) : null
+      if (!found) throw unauthorized('invalid board credential')
+      return { id: found.id, handle: found.name, kind: 'person', expiresAt: null, facts: { issuer: 'joined', iss: '', claims: {} } }
+    }
     if (request.credential !== null) await learnIssuers(request.credential)
     const authenticate = await verifier()
     let result: Awaited<ReturnType<Authenticate>>

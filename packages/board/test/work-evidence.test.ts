@@ -219,6 +219,45 @@ describe('work evidence through the HTTP backend', () => {
     await denied(operator.tasks.resolve(dependent.id, await resolve(b.id, bId)), 404, 'need_not_found')
   })
 
+  it('returns a failed task to waiting when its evidence release has expired', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const { worker, ci, operator } = setup({ ...policy, gates: false, releaseDependencies: true })
+    const prerequisite = await create(worker)
+    const dependent = await create(worker, [prerequisite.id])
+    const claim = await worker.tasks.claim(prerequisite.id)
+    await claim.submit(commit, artifactRef)
+    await ci.tasks.recordEvidence(prerequisite.id, { ...attest(claim.epoch, 'tests'), expiresAt: expiry(5_000) })
+    await claim.complete()
+    const [record] = (await worker.tasks.evidence(prerequisite.id)).evidence
+    await operator.tasks.resolve(dependent.id, { needId: prerequisite.id, evidenceId: record!.id, ifVersion: dependent.version })
+    await (await worker.tasks.claim(dependent.id)).fail('retry later')
+    vi.setSystemTime(Date.now() + 5_000)
+    expect((await worker.tasks.reopen(dependent.id)).task?.state).toBe('waiting')
+    await denied(worker.tasks.claim(dependent.id), 409, 'task_waiting')
+  })
+
+  it('keeps a bound claim subject to the evidence gate after an operator parks the task', async () => {
+    const { worker, ci, reviewer, operator } = setup()
+    expect(await worker.discovery()).toMatchObject({ task_authority: true, workEvidence: { version: 1 } })
+    const root = await create(worker)
+    const owner = { principal: principal('worker'), actor: principal('worker') }
+    const binding = { owner, controller: owner, provider: 'test', model: 'test', session: 'first', branch: 'topic/evidence', worktree: '/workspace', baseCommit: commit }
+    const claim = await worker.tasks.claim(root.id, { binding })
+    await claim.submit(commit, artifactRef)
+    await ci.tasks.recordEvidence(root.id, attest(claim.epoch, 'tests'))
+    await reviewer.tasks.recordEvidence(root.id, attest(claim.epoch, 'review'))
+    await operator.tasks.park(root.id, 'hold for maintenance')
+    expect((await worker.tasks.evidence(root.id)).submission).toBeNull()
+    await denied(claim.complete(undefined, { commit }), 409, 'claim_lost')
+    await operator.tasks.unpark(root.id, 'resume work')
+    const fresh = await worker.tasks.claim(root.id, { binding: { ...binding, session: 'second' } })
+    await fresh.submit(commit, artifactRef)
+    await denied(fresh.complete(undefined, { commit }), 409, 'evidence_required')
+    await ci.tasks.recordEvidence(root.id, attest(fresh.epoch, 'tests'))
+    await reviewer.tasks.recordEvidence(root.id, attest(fresh.epoch, 'review'))
+    expect((await fresh.complete(undefined, { commit })).task?.state).toBe('completed')
+  })
+
   it('keeps unconfigured boards unchanged and runs the advertised conformance checks', async () => {
     const legacy = testBoard()
     const worker = client(legacy, 'worker')

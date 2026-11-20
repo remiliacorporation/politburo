@@ -8,6 +8,7 @@ import type { AttentionResponders } from '../contract/attention.ts'
 import { BOARD_SESSION, type BoardEvent, type BoardEvents } from '../contract/events.ts'
 import { createTrust } from './trust.ts'
 import { createAgents } from './agents.ts'
+import { createAgentIntents } from './agent-intents.ts'
 import { createSchemas } from './schemas.ts'
 import type { ExternalAuthor, Link, Origin } from '../contract/external.ts'
 import { actorsReducer, channelsReducer } from '../contract/reducers.ts'
@@ -65,6 +66,7 @@ export type A2Options = {
   /** Enables structured attention; only these verified people may answer in each exact channel. */
   attentionResponders?: AttentionResponders
   agentOps?: boolean
+  agentHealthFreshnessSeconds?: number
 }
 
 const boardServer = (options: A2Options) =>
@@ -240,6 +242,10 @@ function build(options: A2Options, binding: BoardBinding) {
    * included; this deployment's own code everything.
    */
   const identityOf = async (caller: Caller): Promise<Identity> => ('identity' in caller ? caller.identity : selfIdentity(caller))
+  const boundClaimIdentity = (caller: Caller, input: { binding?: unknown }) => {
+    if (input.binding !== undefined && !('identity' in caller)) throw forbidden('a bound claim needs a verified claimant')
+    return identityOf(caller)
+  }
   /** Its own code's handle, which reaches it in process. */
   let ownHandle: ReturnType<BoardBinding['handle']> | null = null
   const tails = Object.fromEntries(
@@ -301,7 +307,7 @@ function build(options: A2Options, binding: BoardBinding) {
   const session = server.session(BOARD_SESSION)
   const operationalInbox = createOperationalInbox(session, binding.inboxRolesFor ?? (() => []))
   const reads = createReads(store.tables, session, projection)
-  const work = createControl(log, session, binding.initiallyPaused && !store.beforeWorkControl)
+  const work = createControl(log, session, binding.initiallyPaused)
   const writes: WriteContext = { session, reads, work }
 
   async function setPaused(caller: Caller, paused: boolean, reason: string) {
@@ -320,6 +326,11 @@ function build(options: A2Options, binding: BoardBinding) {
   }
 
   const agents = options.agentOps === true ? createAgents(writes) : null
+  const intents = agents ? createAgentIntents(writes, binding, options.agentHealthFreshnessSeconds) : null
+  const agentIntents = () => {
+    if (!intents) throw noAgentOps()
+    return intents
+  }
   const agentRegistry = () => {
     if (!agents) throw noAgentOps()
     return agents
@@ -511,6 +522,7 @@ function build(options: A2Options, binding: BoardBinding) {
         ...(attentionEnabled ? { task_attention: true } : {}),
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
+        task_authority: true,
         ...(tasks.workCapability ? { workEvidence: tasks.workCapability } : {}),
         ...(agents ? { agent_ops: true } : {}),
       }
@@ -701,6 +713,24 @@ function build(options: A2Options, binding: BoardBinding) {
     async retireOpsAgent(caller, { agent, generation }) {
       return agentRegistry().retire(await agentIdentityOf(caller), agent, generation)
     },
+    async issueOpsIntent(caller, input) {
+      return agentIntents().issue(caller, input)
+    },
+    async issueOpsRoleIntent(caller, input) {
+      return agentIntents().issue(caller, input)
+    },
+    async listOpsIntents(caller, { agent, after }) {
+      return agentIntents().list(await agentIdentityOf(caller), agent, after)
+    },
+    async takeOpsIntent(caller, { id, generation }) {
+      return agentIntents().take(caller, id, generation)
+    },
+    async reportOpsIntent(caller, { id, generation, outcome }) {
+      return agentIntents().report(caller, id, generation, outcome)
+    },
+    async getOpsHealth(caller, { task }) {
+      return agentIntents().health(await identityOf(caller), task)
+    },
 
     tasks: async (caller, query) => tasks.list(await identityOf(caller), query),
     async createTask(caller, body) {
@@ -708,14 +738,14 @@ function build(options: A2Options, binding: BoardBinding) {
       if (body.re === undefined) withinLimits({ text: body.text ?? '', attachments: body.attachments })
       taskLimits.needs(body.needs)
       taskLimits.lease(body.lease)
-      const identity = await identityOf(caller)
+      const identity = await boundClaimIdentity(caller, body)
       const { principal } = identity
-      const about = { needs: body.needs, for: body.for, priority: body.priority, claim: body.claim, lease: body.lease, token: body.token }
+      const about = { needs: body.needs, for: body.for, priority: body.priority, claim: body.claim, lease: body.lease, token: body.token, binding: body.binding }
       if (body.re !== undefined) return tasks.adopt(identity, messageAt(body.re), about)
       // A new thread, posted as any is: `post` where it lands, and `label` for the labels it carries.
       const proofs = await authorizePost(writes, principal.access, { channel: body.channel, labels: body.labels })
       ownId(caller, principal, body.id)
-      const made = await tasks.starting(identity, { channel: body.channel!, ...about }, caller.origin.claimEpoch)
+      const made = await tasks.starting(identity, { channel: body.channel!, id: body.id, ...about }, caller.origin.claimEpoch)
       const attachments = await attachmentsFor(principal, body.attachments)
       const task = await writePost(writes, { attachments, identity, proofs, channel: body.channel, text: body.text ?? '', labels: body.labels, noSync: body.noSync, id: body.id, with: made.along, workEpoch: made.workEpoch, onCommit: made.committed })
       // A retry gets back the post that landed with its ID: one that was no task's is another write's.
@@ -759,11 +789,11 @@ function build(options: A2Options, binding: BoardBinding) {
     async claimReadyTask(caller, body, signal) {
       taskLimits.lease(body.lease)
       taskLimits.from(body.from)
-      return tasks.claimReady(await identityOf(caller), body, signal)
+      return tasks.claimReady(await boundClaimIdentity(caller, body), body, signal)
     },
-    async claimTask(caller, { id, lease, token }) {
-      taskLimits.lease(lease)
-      return tasks.claim(await identityOf(caller), messageAt(id), lease, token)
+    async claimTask(caller, body) {
+      taskLimits.lease(body.lease)
+      return tasks.claim(await boundClaimIdentity(caller, body), messageAt(body.id), body)
     },
     async renewTask(caller, { id, epoch, token, lease }) {
       taskLimits.lease(lease)
@@ -787,6 +817,15 @@ function build(options: A2Options, binding: BoardBinding) {
     taskAttention: async (caller, { id }) => tasks.attention(await identityOf(caller), attentionAt(id)),
     answerTaskAttention: async (caller, { id, requestId, ...body }) => tasks.answerAttention(await identityOf(caller), attentionAt(id), requestId, body, fromRequest(caller)),
     unblockTask: async (caller, { id }) => tasks.unblock(await identityOf(caller), messageAt(id)),
+    parkTask: async (caller, { id, reason }) => {
+      if (!('identity' in caller)) throw forbidden('parking a task needs a verified person')
+      return tasks.park(caller.identity, messageAt(id), reason, 'park')
+    },
+    unparkTask: async (caller, { id, reason }) => {
+      if (!('identity' in caller)) throw forbidden('unparking a task needs a verified person')
+      return tasks.park(caller.identity, messageAt(id), reason, 'unpark')
+    },
+    handoffTask: async (caller, { id, epoch, token, ...packet }) => tasks.handoff(await identityOf(caller), messageAt(id), { epoch, token }, packet),
     reopenTask: async (caller, { id }) => tasks.reopen(await identityOf(caller), messageAt(id)),
     assignTask: async (caller, { id, for: actor }) => tasks.assign(await identityOf(caller), messageAt(id), actor),
     setTaskPriority: async (caller, { id, priority, epoch, token }) =>
@@ -810,6 +849,10 @@ function build(options: A2Options, binding: BoardBinding) {
     updateGrant: async (caller, input) => access.updateGrant(await identityOf(caller), input),
     explain: async (caller, query) => access.explain(await identityOf(caller), query),
     revokeGrant: async (caller, input) => access.revokeGrant(await identityOf(caller), input),
+    invites: async (caller) => access.invites(await identityOf(caller)),
+    createInvite: async (caller, input) => access.createInvite(await identityOf(caller), input),
+    revokeInvite: async (caller, input) => access.revokeInvite(await identityOf(caller), input),
+    redeemInvite: async (_caller, input) => access.redeemInvite(input),
     // Anyone board() let in reads the schemas: they say what anyone posting has to send.
     schemas: async () => schemaRegistry.schemas(),
     schema: async (_caller, input) => schemaRegistry.schema(input),
@@ -1496,9 +1539,11 @@ export function a2(options: A2Options) {
     routes: [] as BackendRoute[],
     // The board lives here: board() lets its people and own deployments in by default.
     keeps: true,
+    supportsTaskAuthority: true,
     // Its grants, in its log: board() checks requests against them.
     trust: {
       grants: async () => (await ready()).trust.grants(),
+      joined: async (digest, audience) => now().trust.joined(digest, audience),
     } satisfies Trust,
     bind(given: BoardBinding) {
       if (binding) throw new Error('this backend already serves a board: create one per board()')

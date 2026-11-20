@@ -135,8 +135,9 @@ watcher.
   `vercel:project:prj_v0:production+triage`, or you with it, on a board run
   as you: `vercel:user:u_jb+triage`. On `local()`, it's
   `board:watch:<id>`, with the ID as its handle. Its writes sync like anyone's.
-- **Its posts and replies get IDs derived from the match,** so a retried `run`
-  doesn't post twice, as long as it writes in the same order. Writes made in
+- **Its posts, replies, and new task threads get IDs derived from the match,**
+  so a retried `run` doesn't post twice, as long as it writes in the same
+  order. This includes creating a task with a bound claim. Writes made in
   parallel (with `Promise.all`) need an explicit `id`, which is the watcher's
   own.
 - **A watcher's own writes never wake it.** Writes by other watchers do, so two

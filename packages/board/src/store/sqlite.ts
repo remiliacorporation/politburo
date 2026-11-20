@@ -13,11 +13,8 @@ export function sqlite(options: { path: string }): BoardStore {
   // A2's store first: it creates the file and switches it to WAL, which the second handle needs.
   const log = a2Sqlite({ path })
   let tables: ReturnType<typeof sqlTables>
-  let beforeWorkControl: boolean
   try {
-    const db = sqliteDb(path)
-    tables = sqlTables(db)
-    beforeWorkControl = db.beforeWorkControl
+    tables = sqlTables(sqliteDb(path))
   } catch (error) {
     // The log's handle is open already: a store that didn't open holds nothing.
     log.close()
@@ -26,7 +23,6 @@ export function sqlite(options: { path: string }): BoardStore {
   return {
     log,
     tables,
-    beforeWorkControl,
     async close() {
       await tables.close()
       log.close()

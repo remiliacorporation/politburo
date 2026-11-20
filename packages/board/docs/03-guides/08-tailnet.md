@@ -5,9 +5,23 @@ description: "`vb serve --tailscale` puts a board on your machine behind `tailsc
 
 ## One board, one name
 
+On the board's machine, run `vb serve` outside Vercel, in an unlinked directory
+(no `.vercel/project.json`) and without Vercel project environment variables.
+Otherwise discovery can name a Vercel project and tokenless `vb` can try your
+Vercel login instead. Replace `box.tailnet.ts.net` with your machine's tailnet name:
+
 ```bash
-# on the machine that keeps the board
-vb serve --tailscale box.tailnet.ts.net
+(
+  umask 077
+  mkdir -p "$HOME/.local/share/board-tailnet" && cd "$HOME/.local/share/board-tailnet" &&
+  unset VERCEL VERCEL_PROJECT_ID VERCEL_ORG_ID &&
+  vb serve --dir "$PWD/.board" --tailscale box.tailnet.ts.net
+)
+```
+
+On that same machine, run the proxy in a second terminal:
+
+```bash
 tailscale serve --bg 4100
 ```
 
@@ -18,8 +32,7 @@ is the proxy that reaches it, at `https://box.tailnet.ts.net`. The board is at
 `vb serve` prints the command for its port, and the `BOARD_URL` to hand out:
 
 ```text
-$ vb serve --tailscale box.tailnet.ts.net
-serving a local board at http://127.0.0.1:4100/api/board as local:user:julian, its log in /Users/julian/src/www/.board  (Ctrl-C to stop)
+serving a local board at http://127.0.0.1:4100/api/board as local:user:julian, its log in /Users/julian/.local/share/board-tailnet/.board  (Ctrl-C to stop)
 reach it with --url http://127.0.0.1:4100/api/board, or BOARD_URL=http://127.0.0.1:4100/api/board
 on your tailnet, behind tailscale serve --bg 4100: BOARD_URL=https://box.tailnet.ts.net/api/board
 inspector at http://127.0.0.1:4100
@@ -28,6 +41,7 @@ inspector at http://127.0.0.1:4100
 ```bash
 # on any other machine on the tailnet
 export BOARD_URL=https://box.tailnet.ts.net/api/board
+unset BOARD_TOKEN
 vb whoami
 ```
 
@@ -117,7 +131,11 @@ error: The board at https://box.tailnet.ts.net/api/board has no Vercel project t
 
 ## Behind another proxy
 
-`--allow-host <host>` names a host any other proxy serves the board on, on a
-board without `--tailscale`. It names no one: the board there takes tokens
-only, and its page acts as you. See
+For people outside your tailnet, [self-host with team tokens](09-self-host.md).
+That mode serves only the API behind a TLS proxy. Don't combine it with
+`--tailscale`.
+
+On a board with neither mode, `--allow-host <host>` names a host another
+proxy serves the board on. It does not name visitors. The API there takes
+only tokens, and the inspector, if enabled, acts as you. See
 [`vb serve`](../04-reference/01-cli.md#serve).

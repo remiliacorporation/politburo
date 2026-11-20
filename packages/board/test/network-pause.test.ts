@@ -1,10 +1,16 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it, vi } from 'vitest'
 import { oidcTokens } from '../src/access/index.ts'
 import { local } from '../src/backend-local/index.ts'
+import { boardContract, schemasContract, SCHEMAS_SESSION, workSettingsContract } from '../src/contract/contract.ts'
+import { BOARD_SESSION } from '../src/contract/events.ts'
 import { memory } from '../src/store/memory.ts'
+import { ddl } from '../src/store/sql.ts'
+import { sqlite } from '../src/store/sqlite.ts'
+import type { BoardStore } from '../src/store/types.ts'
 import { board, BOARD_URL, caller, deploymentToken, personToken, PROJECT_ID, testAuth, testBoard } from './harness.ts'
 import { backgroundWork, fakeQueue } from './queue.ts'
 
@@ -40,6 +46,15 @@ function hold() {
 function expectConflict(result: Awaited<ReturnType<Call>>, error: typeof pausedError) {
   // A bad board may grant a claim; don't print its response (it contains the claim credential).
   expect({ status: result.status, code: result.body.error?.code }).toEqual({ status: error.status, code: error.body.error.code })
+}
+
+const boardLog = `${boardContract.name}\u001f${BOARD_SESSION}`
+const schemasLog = `${schemasContract.name}\u001f${SCHEMAS_SESSION}`
+const settingsLog = `${workSettingsContract.name}\u001fwork-settings`
+
+async function replaySession(from: BoardStore, to: BoardStore, session: string) {
+  const events = await from.log.read(session)
+  await to.log.append(session, events.map(({ id, type, payload }) => ({ id, type, payload })))
 }
 
 describe('network pause', () => {
@@ -129,6 +144,53 @@ describe('network pause', () => {
     }
   })
 
+  it.each(['messages', 'schemas'] as const)('starts running on a replay of legacy %s despite the paused boot option', async (history) => {
+    const source = testBoard()
+    if (history === 'messages') {
+      await source.post('work', 'written before network pause')
+    } else {
+      const call = caller(source.fetch, await personToken())
+      expect((await call('POST', '/schemas', { name: 'work-item', version: 1, schema: { type: 'object' } })).status).toBe(200)
+    }
+    // Copy the legacy history without initialization or any SQLite metadata.
+    const store = memory()
+    await replaySession(source.store, store, history === 'messages' ? boardLog : schemasLog)
+    expect(await testBoard({ store, initiallyPaused: true }).status()).toEqual({ paused: false, pauseEpoch: 0 })
+  })
+
+  it('starts paused with an empty log and restores that decision from the log alone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'board-pause-replay-'))
+    try {
+      // The read tables exist, but the board has never written a log event.
+      const path = join(dir, 'local.db')
+      const db = new DatabaseSync(path)
+      try {
+        db.exec(ddl().join(';\n'))
+      } finally {
+        db.close()
+      }
+      const store = sqlite({ path })
+      try {
+        const paused = { paused: true, pauseEpoch: 0 }
+        expect(await testBoard({ store, initiallyPaused: true }).status()).toEqual(paused)
+
+        const replay = memory()
+        await replaySession(store, replay, settingsLog)
+        await replaySession(store, replay, boardLog)
+        expect(await testBoard({ store: replay, initiallyPaused: false }).status()).toEqual(paused)
+
+        // A restart can happen after recording the decision but before the first control event.
+        const interrupted = memory()
+        await replaySession(store, interrupted, settingsLog)
+        expect(await testBoard({ store: interrupted, initiallyPaused: false }).status()).toEqual(paused)
+      } finally {
+        await store.close()
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('stops every new claim, fences old leases, and leaves reads and human writes open', async () => {
     const team = testBoard()
     const ada = caller(team.fetch, await personToken('u_ada'))
@@ -165,6 +227,7 @@ describe('network pause', () => {
     const fresh = await agent('POST', `/tasks/${already}/claim`, {})
     expect(fresh.status).toBe(200)
     expect(fresh.body.claim.epoch).toBeGreaterThan(proof.epoch)
+    expect(fresh.body.claim.pauseEpoch).toBe(1)
     expectConflict(await agent('POST', `/tasks/${already}/complete`, proof), lostClaim)
   })
 

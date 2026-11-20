@@ -18,6 +18,8 @@ import {
   CreateTasksBody,
   CreatedTasksQuery,
   FailTaskBody,
+  HandoffTaskBody,
+  ParkTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
   SubmitWorkBody,
@@ -32,8 +34,11 @@ import {
   InboxNextQuery,
   InboxPushBody,
   InboxQuery,
+  IssueOpsIntentBody,
+  IssueOpsRoleIntentBody,
   LabelBody,
   ListOpsAgentsQuery,
+  ListOpsIntentsQuery,
   MatchesQuery,
   OpsAgentGenerationBody,
   PostBody,
@@ -44,8 +49,11 @@ import {
   Ref,
   RegisterBody,
   RegisterOpsAgentBody,
+  ReportOpsIntentBody,
   ScheduleBody,
   CreateGrantsBody,
+  CreateInviteBody,
+  RedeemInviteBody,
   GrantBody,
   RevokeGrantBody,
   UpdateGrantBody,
@@ -67,6 +75,7 @@ import {
   type MessageView,
 } from '../api/routes.ts'
 import type { Method, Protocol } from '../api/protocol.ts'
+import { boundTaskPaths } from '../api/task-authority.ts'
 import type { ExternalAuthor } from '../contract/external.ts'
 import type { Actor } from '../contract/folds.ts'
 import { ATTACHMENT_BYTES_MAX, MESSAGE_TEXT_MAX, RESERVED_LABEL_PREFIX, TASK_BATCH_MAX, type Attachment, type Labels } from '../contract/schemas.ts'
@@ -80,20 +89,23 @@ import { derivedId, sha256 } from '../client/ids.ts'
 import { claimsOf, KNOWN_AGENTS, viaOf } from './actors.ts'
 import { importedHandle, userIdOf } from '../contract/profiles.ts'
 import type { CallerRequest } from './auth.ts'
+import { isJoinedCredential } from './policy.ts'
 import { avatarSvg } from './avatars.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notFound, toErrorResponse } from './errors.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notFound, toErrorResponse, unauthorized } from './errors.ts'
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
-import { ATTENTION_METHODS, createRouter, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
-import { FULL_ACCESS, parseCan, type Access } from './access.ts'
+import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
+import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
 import type { WatcherContext } from './watcher.ts'
 import { VERSION } from '../version.ts'
 
 /** The methods whose answer is something new. */
-const CREATED = new Set<Method>(['post', 'schedule', 'createTask', 'createTasks', 'requestTaskAttention', 'upload', 'uploadFinish', 'sendOperationalMessage'])
+const CREATED = new Set<Method>(['post', 'schedule', 'createTask', 'createTasks', 'requestTaskAttention', 'upload', 'uploadFinish', 'createInvite', 'sendOperationalMessage'])
 const CONTROL = new Set<Method>(['status', 'pause', 'resume'])
+const noInvites = () => new HttpError(501, 'no_invites', 'this board keeps no invites')
+const SECRET_RESPONSE = { 'cache-control': 'no-store' }
 
 /**
  * Refuses a label write under `board.`: those keys are the board's own, which only its task writes
@@ -140,6 +152,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'actors':
     case 'watchers':
     case 'grants':
+    case 'invites':
     case 'schemas':
     case 'status':
     case 'readOperationalInbox':
@@ -165,6 +178,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'schema':
     case 'attachment':
     case 'uploadFinish':
+    case 'revokeInvite':
       return { id }
     case 'channelMessages':
       return ChannelMessagesQuery.parse(queryObject(url))
@@ -179,6 +193,18 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'heartbeatOpsAgent':
     case 'retireOpsAgent':
       return { agent: Ref.parse(params.agent), ...OpsAgentGenerationBody.parse(await body()) }
+    case 'issueOpsIntent':
+      return { agent: Ref.parse(params.agent), ...IssueOpsIntentBody.parse(await body()) }
+    case 'issueOpsRoleIntent':
+      return IssueOpsRoleIntentBody.parse(await body())
+    case 'listOpsIntents':
+      return { agent: Ref.parse(params.agent), ...ListOpsIntentsQuery.parse(queryObject(url)) }
+    case 'takeOpsIntent':
+      return { id: Ref.parse(id), ...OpsAgentGenerationBody.parse(await body()) }
+    case 'reportOpsIntent':
+      return { id: Ref.parse(id), ...ReportOpsIntentBody.parse(await body()) }
+    case 'getOpsHealth':
+      return { task: Ref.parse(params.task) }
     case 'matches':
       return MatchesQuery.parse(queryObject(url))
     case 'events': {
@@ -226,6 +252,11 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...FailTaskBody.parse(await body()) }
     case 'blockTask':
       return { id, ...BlockTaskBody.parse(await body()) }
+    case 'parkTask':
+    case 'unparkTask':
+      return { id, ...ParkTaskBody.parse(await body()) }
+    case 'handoffTask':
+      return { id, ...HandoffTaskBody.parse(await body()) }
     case 'requestTaskAttention':
       return { id, ...RequestAttentionBody.parse(await body()) }
     case 'answerTaskAttention':
@@ -250,6 +281,8 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return GrantBody.parse(await body())
     case 'createGrants':
       return CreateGrantsBody.parse(await body())
+    case 'createInvite':
+      return CreateInviteBody.parse(await body())
     case 'updateGrant':
       return { id, ...UpdateGrantBody.parse(await body()) }
     case 'revokeGrant':
@@ -388,6 +421,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     const credential = header.match(/^Bearer\s+(.+)$/i)?.[1] ?? null
     // Only a token is checked against the audience: a request without one (a cookie, no one) needs no URL to be sure of.
     const audience = credential === null ? (options.url?.replace(/\/+$/, '') ?? at) : audienceOf(at)
+    if (backend.trust?.joined && isJoinedCredential(credential) && !atAudience(at, audience)) throw unauthorized('invalid board credential')
     return { credential, claims: claimsOf(request.headers), audience, headers: request.headers }
   }
 
@@ -412,6 +446,9 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     warned = true
     return at
   }
+
+  /** Joined credentials only work at the public mount itself, not at aliases or deeper mounts. */
+  const atAudience = (at: string, audience: string) => URL.parse(audience)?.href.replace(/\/+$/, '') === at
 
   /**
    * What a board that serves no requests answers them: one that uses another board's. One on
@@ -1012,6 +1049,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       }
       case 'createTask': {
         const body = input as Protocol['createTask']['input']
+        if (body.binding !== undefined && backend.supportsTaskAuthority === false) return backend.createTask(caller, body, signal)
         ownLabels(body.labels)
         // A thread that's there becomes a task as it is: nothing is posted, so the middleware has nothing to see.
         if (body.channel === undefined) return backend.createTask(caller, body, signal)
@@ -1023,7 +1061,18 @@ export async function createServe(context: BoardContext): Promise<Serve> {
           caller = { ...caller, origin: { ...caller.origin, claimEpoch: status.pauseEpoch } }
         }
         // A new one's root is a post: its blocks are checked and the middleware sees it, as any post's.
-        const { channel, labels, noSync, attachments, id } = body
+        const { channel, labels, noSync, attachments, id, claim, binding } = body
+        // Check claim authority before screening the root. A proxy cannot infer the upstream claimant.
+        if (claim) {
+          const access = accessOf(caller)
+          if (access) authorize(access, 'label', channel)
+          if (binding && backend.keeps) {
+            if (!('identity' in caller)) throw forbidden('a bound claim needs a verified claimant')
+            const { principal, actor } = caller.identity
+            if (binding.owner.principal !== principal.id || binding.owner.actor !== actor.id)
+              throw forbidden('the binding owner must be the verified claimant')
+          }
+        }
         // It may be empty when the root has files, as a post's may.
         const sent = body.text ?? ''
         await checkWrite(caller, sent, { channel }, signal)
@@ -1114,6 +1163,34 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         }
         return (method as (caller: Caller, input: unknown, signal: AbortSignal) => Promise<unknown>).call(backend, caller, input, signal)
       }
+    }
+  }
+
+  /** Redeeming the invite proves admission; neither headers nor an existing login can name the new principal. */
+  async function redeem(request: Request, at: string, injected: boolean): Promise<Response> {
+    if (!backend.redeemInvite) throw noInvites()
+    // http() forwards only the secret; its remote board binds the bearer to its own mount.
+    const audience = injected ? (backend.keeps ? ownUrl() : at) : audienceOf(at)
+    if (audience === null)
+      throw new HttpError(500, 'no_board_url', 'this board needs a public URL to redeem an invite in-process', {
+        hint: 'Pass board({ url }) with the URL people reach it at.',
+      })
+    if (!injected && !atAudience(at, audience)) throw notFound('this is not the public board mount')
+    const invalid = () => badRequest('send an invite secret in the request body', 'invalid_invite')
+    let body: unknown
+    try {
+      body = JSON.parse(new TextDecoder().decode(await readCapped(request, 1024)))
+    } catch {
+      throw invalid()
+    }
+    const parsed = RedeemInviteBody.safeParse(body)
+    if (!parsed.success) throw invalid()
+    try {
+      return json(await backend.redeemInvite(OWN, { ...parsed.data, audience }, request.signal), 201, SECRET_RESPONSE)
+    } catch (error) {
+      if (error instanceof HttpError) throw error
+      // A failure on a secret-bearing request must not log the input or serialize a raw exception.
+      throw new HttpError(500, 'internal', 'could not redeem the invite')
     }
   }
 
@@ -1219,6 +1296,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     const sync = capabilities?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
     return {
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
+      ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
       ...(capabilities?.workEvidence ? { workEvidence: capabilities.workEvidence } : {}),
@@ -1257,9 +1335,12 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       const ops = target.kind === 'protocol' && isAgentOpsMethod(target.name)
       if (!injected && !policy.open) throw ops ? noAgentOps() : servesOnly()
       if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
+      if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
-        && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function')
+        && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {
+        if (INVITE_METHODS.has(target.name)) throw noInvites()
         throw ops ? noAgentOps() : notFound(`no route: ${request.method} ${url.pathname}`)
+      }
       // A sync callback's client does everything but its own writes as sync, except private mail.
       if (injected && 'platform' in injected && target.kind === 'protocol' && isOperationalInboxMethod(target.name))
         throw forbidden('platform callbacks cannot use the operational inbox')
@@ -1268,14 +1349,19 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       const caller: Caller = own ?? (await callerOf(asked!))
       if (target.kind === 'board') return await serve(target.name, caller, request, url, match.params)
 
+      if (INVITE_METHODS.has(target.name) && narrowed(caller)) throw forbidden("this caller is narrowed and can't manage invites")
       const input = await inputOf(target.name, request, url, match.params)
+      if (match.requiresTaskBinding && !(input as { binding?: unknown }).binding) throw badRequest('a bound task request needs binding')
       if (target.name === 'events' && (request.headers.get('accept') ?? '').includes('text/event-stream'))
         return await sse(caller, input as Protocol['events']['input'], request, asked ? () => callerOf(asked) : null)
       const output = injected && 'platform' in injected ? await asPlatform(target.name, injected, input, request.signal) : await invoke(target.name, caller, input, request.signal)
       if (target.name === 'attachment') return attachmentResponse(output as Protocol['attachment']['output'])
       // A channel that was there already is answered, not created.
       const made = CREATED.has(target.name) || (target.name === 'createChannel' && (output as Protocol['createChannel']['output']).created)
-      return json(output, made ? 201 : 200, isOperationalInboxMethod(target.name) ? { 'cache-control': 'private, no-store' } : undefined)
+      // Pending intents and health can change with time alone; a poll must not reuse a cached answer.
+      const headers = target.name === 'createInvite' ? SECRET_RESPONSE
+        : (ops && request.method === 'GET') || isOperationalInboxMethod(target.name) ? { 'cache-control': 'private, no-store' } : undefined
+      return json(output, made ? 201 : 200, headers)
     } catch (error) {
       // Stopped by its caller (a page reloaded, a long-poll let go): no one reads the answer, and
       // the abort isn't the board's failure. Any other failure still is, caller there or not.
@@ -1289,7 +1375,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     async inject(request, caller, trigger, writes) {
       // What it posts, a task's new thread included, gets an ID from what triggered it, so a retry posts once.
       const pathname = new URL(request.url).pathname
-      if (trigger !== null && request.method === 'POST' && (pathname.endsWith('/messages') || pathname.endsWith('/tasks') || pathname.endsWith('/tasks/batch'))) {
+      if (trigger !== null && request.method === 'POST' && (pathname.endsWith('/messages') || pathname.endsWith('/tasks') || pathname.endsWith('/tasks/batch') || pathname.endsWith(boundTaskPaths.createTask))) {
         const body = ((await request.json()) ?? {}) as Record<string, unknown>
         if (pathname.endsWith('/messages') || body.channel !== undefined) body.id ??= await derivedId('board-inbound', trigger, 'client', String(writes.made++))
         request = new Request(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(body) })

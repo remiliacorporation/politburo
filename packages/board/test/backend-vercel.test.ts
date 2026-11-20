@@ -77,6 +77,7 @@ describe('vercel()', () => {
     const api = fakeMessageboard()
     // The API looks names up, so the grants checks name a project, a repository, a viewer, and an app its team has.
     const report = await conformance(handleOn(api), { withHeaders: withHeadersOn(api), principals: { project: 'prj_web', repository: 'acme/api', viewer: 'val@acme.com', app: 'ship' } })
+    expect(report.checks.filter((check) => check.group === 'invites').slice(0, 3).map((check) => check.detail)).toEqual(Array(3).fill('not kept here: this board keeps no invites'))
     const statuses = Object.fromEntries(report.checks.map((check) => [`${check.group}: ${check.name}`, check.status]))
     expect(statuses).toEqual({
       'core: says in its discovery where it is': 'passed',
@@ -135,6 +136,9 @@ describe('vercel()', () => {
       'tasks: makes several tasks in one write, in the order given: each waits for the ones it names, of the batch or there already, and an id makes them once': 'passed',
       'tasks: makes none of a batch when one of its tasks can not be made, wherever it comes in it': 'passed',
       'tasks: holds a task for a person, by its owner or its claim, and gives it back when unblocked': 'passed',
+      'tasks: parks a task only as a verified person with manage, and unpark restores work without the claim': 'skipped',
+      'tasks: binds a claim to its verified owner and fences an older generation even with the same token': 'skipped',
+      'tasks: records an immutable handoff and accepts only one of two replacements naming the same predecessor': 'skipped',
       'tasks: keeps a task assigned to a profile for that actor alone': 'passed',
       'tasks: lets a profile change only the tasks it made, and its principal all of them': 'passed',
       'tasks: takes label in its channel to claim a task: a caller narrowed to reading and posting claims none': 'passed',
@@ -163,6 +167,10 @@ describe('vercel()', () => {
       'grants: makes several grants in one write, or none of them, a lock with the grant that keeps its maker in': 'passed',
       'grants: lets a member grant on a pattern after a lock under it': 'skipped',
       'grants: lets a project on another team in, in its environments': 'skipped',
+      'invites: lists a pending invite and refuses it once revoked': 'skipped',
+      'invites: lists a short-lived invite as expired and refuses it': 'skipped',
+      'invites: redeems an invite for only one of the callers that race for it': 'skipped',
+      'invites: lets a joined caller read and post only as granted': 'skipped',
       'schemas: lists the built-in schemas first, and reads a schema by its ID': 'passed',
       'schemas: registers a schema version once: the same definition again changes nothing, and another is refused': 'passed',
       "schemas: refuses a built-in's name, and a definition it couldn't check a value against": 'passed',
@@ -179,8 +187,9 @@ describe('vercel()', () => {
       "sync: takes an edit of a long message in its sync's inbox, under the longest event ID the protocol allows, and refuses a longer one": 'skipped',
       'sync: hands a sync each message change as a match of its @sync watcher': 'skipped',
       'sync: keeps noSync on a post and a reply, so sync sends neither': 'passed',
-      // The agent registry and operational inbox are not part of Vercel's API.
+      // The agent registry, run health, and operational inbox are not part of Vercel's API.
       'agents: registers, lists, heartbeats, and retires an agent under its verified binding': 'skipped',
+      'agents: confirms a claimed run only through a taken and reported status probe': 'skipped',
       'operational-inbox: keeps operational messages private, supersedes by topic, and keeps receipts once': 'skipped',
     })
     // It leaves the grants as it found them.

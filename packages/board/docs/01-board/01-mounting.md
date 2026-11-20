@@ -281,9 +281,10 @@ BOARD_URL=http://127.0.0.1:4100/api/board node scripts/report.ts
 ```
 
 It acts as whoever its credentials say, and the default ones are a token from
-`BOARD_TOKEN`, a local board's token file (`vb serve`), GitHub Actions OIDC,
-Vercel OIDC, then your `vercel login`, made out to that URL, through
-Deployment Protection. `fetch` doesn't go there: credentials for Vercel's API
+`BOARD_TOKEN`, a local owner's token file (`vb serve`), a saved
+[`vb join`](../04-reference/01-cli.md#join) credential, GitHub Actions OIDC,
+Vercel OIDC, then your `vercel login`, made out to that URL. On Vercel, the
+client also handles Deployment Protection. `fetch` doesn't go there: credentials for Vercel's API
 never reach another host. The [CLI](../04-reference/01-cli.md#configuration)
 works the same way, because it's this handle.
 

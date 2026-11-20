@@ -1,6 +1,7 @@
-import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { isIP, type AddressInfo } from 'node:net'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose'
@@ -10,6 +11,9 @@ import { local } from '../server/local.ts'
 import { oidcTokens } from '../server/tokens.ts'
 import { board } from '../server/index.ts'
 import { hostCheckedBy } from '../server/board.ts'
+import type { Authenticate, HostPrincipal } from '../server/auth.ts'
+import { unauthorized } from '../server/errors.ts'
+import { Failed } from './main.ts'
 import { tailscale, tailscaleLogin } from './tailscale.ts'
 
 export const DEFAULT_SERVE_PORT = 4100
@@ -22,11 +26,18 @@ const BODY_MAX = 8 * 1024 * 1024
 /** What answers a request on the board's server that isn't for the board. */
 type Handler = (request: IncomingMessage, response: ServerResponse) => void
 
-export type LocalBoard = {
-  /** The board's URL, `http://127.0.0.1:<port>/api/board`. */
+type ServingBoard = {
+  /** The board's direct URL at `/api/board`. */
   url: string
   /** The port its server listens on, where a page beside the board is served too. */
   port: number
+  /** Where its log and attachments live. */
+  dir: string
+  close(): Promise<void>
+}
+
+export type LocalBoard = ServingBoard & {
+  mode: 'local'
   /** Answers every request outside the board's mount (`/api/board`) with `handler`: the inspector. Without one, the board answers them 404. */
   page(handler: Handler): void
   /**
@@ -40,9 +51,19 @@ export type LocalBoard = {
   handle: string
   /** Your token for it, also in `localTokenFile(url)`. */
   token: string
-  /** Where its log and attachments live. */
+}
+
+type TeamBoard = ServingBoard & { mode: 'team' }
+
+type ServeOptions = {
   dir: string
-  close(): Promise<void>
+  host?: string
+  port?: number
+  teamTokens?: string
+  handle?: string
+  hosts?: readonly string[]
+  tailscale?: readonly string[]
+  agentOps?: true
 }
 
 /** Your OS username as a handle: lowercase letters, digits, `.`, `_`, `-`. */
@@ -72,26 +93,94 @@ async function carryOver(dir: string) {
   if ((await there('attachments')) && !(await there('local'))) await rename(join(dir, 'attachments'), join(dir, 'local'))
 }
 
+/** Validate the bind IP without ever including the supplied value in an error. */
+function bindHost(options: ServeOptions) {
+  const { host, teamTokens, tailscale } = options
+  const invalid = (message: string) => new Failed({ class: 'usage', reason: 'invalid_arguments', message })
+  if (teamTokens !== undefined && tailscale?.length)
+    throw invalid("--team-tokens can't be used with --tailscale.")
+  if (host === undefined) return { ip: '127.0.0.1', hostname: '127.0.0.1' }
+  if (teamTokens === undefined) throw invalid('--host requires --team-tokens.')
+  const version = isIP(host)
+  if (version === 0 || host.includes('%')) throw invalid('--host needs an IPv4 or IPv6 address.')
+  const hostname = version === 6 ? new URL(`http://[${host}]`).hostname : host
+  if (hostname === '0.0.0.0' || hostname === '[::]' || hostname === '[::ffff:0:0]')
+    throw invalid('--host needs a specific IP address, not an unspecified address.')
+  return { ip: host, hostname }
+}
+
+const TEAM_HANDLE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
+const TEAM_TOKEN = /^[a-f0-9]{64}$/
+const digest = (token: string) => createHash('sha256').update(token).digest('hex')
+
+/** The file is read once at startup. The verifier keeps digests, not the raw bearer tokens. */
+async function teamVerifier(file: string): Promise<Authenticate> {
+  const text = await readFile(file, 'utf8').catch(() => {
+    throw new Failed({
+      class: 'usage', reason: 'unreadable_team_tokens', message: "Can't read the --team-tokens file.",
+      next: [{ instruction: 'Pass the path to a readable JSON file' }],
+    })
+  })
+  const invalid = () => new Failed({
+    class: 'usage', reason: 'invalid_team_tokens', message: 'The --team-tokens file is invalid.',
+    next: [{ instruction: 'Use a nonempty JSON object mapping lowercase handles to unique 64-character lowercase hex tokens' }],
+  })
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    // A JSON parse error can include the raw input.
+    throw invalid()
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw invalid()
+  const people = new Map<string, HostPrincipal>()
+  for (const [handle, token] of Object.entries(parsed)) {
+    if (!TEAM_HANDLE.test(handle) || typeof token !== 'string' || !TEAM_TOKEN.test(token)) throw invalid()
+    const key = digest(token)
+    if (people.has(key)) throw invalid()
+    people.set(key, { id: `team:user:${handle}`, kind: 'person', handle })
+  }
+  if (people.size === 0) throw invalid()
+  return ({ credential }) => {
+    if (credential === null) return null
+    const person = TEAM_TOKEN.test(credential) ? people.get(digest(credential)) : undefined
+    if (person === undefined) throw unauthorized('invalid team token')
+    return person
+  }
+}
+
+async function localIssuer() {
+  const { publicKey, privateKey } = await generateKeyPair('ES256')
+  const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: 'local', alg: 'ES256' }] })
+  return {
+    authenticate: oidcTokens({ local: { issuer: ISSUER, jwks } }),
+    sign: (url: string, handle: string) => new SignJWT({})
+      .setProtectedHeader({ alg: 'ES256', kid: 'local' })
+      .setIssuer(ISSUER)
+      .setAudience(url)
+      .setSubject(handle)
+      .setIssuedAt()
+      .setExpirationTime('30d')
+      .sign(privateKey),
+  }
+}
+
 /**
- * A board on this machine, for agents and people sharing one computer: `local()` under `dir`, its
- * log in SQLite, attachments next to it, a scheduler in this process, no sync, on 127.0.0.1 only.
- * Its keys live in memory for this run; it signs one token, for you, into a file only you can read
- * (`localTokenFile`), which `vb` on this machine picks up. `hosts` adds names a proxy in front of
- * it serves it on: a request for one reaches the board at that host's URL, which a token must be
- * minted for there, and your token is for its own. Its server answers the board under `/api/board`,
- * and what `page` is given everywhere else. `tailscale` names the hosts `tailscale serve` is the
- * proxy for: they're allowed like `hosts`, and a request for one with no token is the person
- * Tailscale says sent it (`tailscale()`).
+ * A standalone `local()` board with SQLite and attachments under `dir` and no sync. `hosts` adds
+ * proxy names for discovery and auth. Normally it listens on loopback and writes a local JWT for
+ * you; `tailscale` names the proxies it can also trust for identity. With `teamTokens` it serves
+ * only the API and trusts only that file's credentials, even on loopback.
  */
-export async function serveLocal(options: { dir: string; port?: number; handle?: string; hosts?: readonly string[]; tailscale?: readonly string[]; agentOps?: true }): Promise<LocalBoard> {
+export async function serveLocal(options: ServeOptions): Promise<LocalBoard | TeamBoard> {
+  const { ip, hostname } = bindHost(options)
+  const auth = options.teamTokens === undefined
+    ? await localIssuer()
+    : { authenticate: await teamVerifier(options.teamTokens) }
   const dir = resolve(options.dir)
   await mkdir(dir, { recursive: true, mode: 0o700 })
   quietSqliteWarning()
   await carryOver(dir)
   const backend = local({ dir, ...(options.agentOps ? { agentOps: true } : {}) })
-
-  const { publicKey, privateKey } = await generateKeyPair('ES256')
-  const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: 'local', alg: 'ES256' }] })
 
   const tailnet = new Set((options.tailscale ?? []).map((host) => host.toLowerCase()))
   const hosts = new Set([...(options.hosts ?? []).map((host) => host.toLowerCase()), ...tailnet])
@@ -114,53 +203,58 @@ export async function serveLocal(options: { dir: string; port?: number; handle?:
   })
   let port: number
   try {
-    port = await listen(server, options.port ?? DEFAULT_SERVE_PORT)
+    port = await listen(server, ip, options.port ?? DEFAULT_SERVE_PORT)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE')
       throw new BoardError('port_taken', `Port ${options.port ?? DEFAULT_SERVE_PORT} is taken. Is a board already running there?`, 0)
     throw error
   }
-  origin = `http://127.0.0.1:${port}`
+  origin = `http://${hostname}:${port}`
   const url = `${origin}${MOUNT}`
-  const tokens = oidcTokens({ local: { issuer: ISSUER, jwks } })
   const team = board(hostCheckedBy({
     // Its timers live in this process, which runs as long as the board does.
     backend,
     // At a host Tailscale serves it on, a request's URL is that host's, since `originOf` allowed it.
-    authenticate: tailnet.size > 0 ? tailscale(tokens, (audience) => servedAt(tailnet, audience)) : tokens,
+    authenticate: tailnet.size > 0 ? tailscale(auth.authenticate, (audience) => servedAt(tailnet, audience)) : auth.authenticate,
     // No `url`: the board is at the URL a request reaches it at, a token's audience there, and
     // `originOf` lets a request name only this server's own or a host you allowed. So this handle
     // knows no URL of its own: its `url` is the in-process one, and `sandboxPolicy()` has none to
     // give. It only serves requests here: hand it nothing that needs either.
     basePath: MOUNT,
   }))
+  const close = async () => {
+    const closed = new Promise<void>((done) => server.close(() => done()))
+    server.closeAllConnections()
+    await closed
+    await backend.close()
+  }
+  const serving = { url, port, dir, close }
+  let handle: string
+  let token: string
+  let file: string
   try {
     // Opened now, so a directory it can't write says so before it serves.
     await team.channels({ limit: 1 })
+    if (!('sign' in auth)) {
+      handler = team.fetch
+      return { mode: 'team', ...serving }
+    }
+    handle = options.handle ?? localHandle()
+    token = await auth.sign(url, handle)
+    file = localTokenFile(url)
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+    await writeFile(file, JSON.stringify({ url, token, handle }), { mode: 0o600 })
+    handler = team.fetch
   } catch (error) {
-    server.close()
+    await close()
     throw error
   }
-  handler = team.fetch
-
-  const handle = options.handle ?? localHandle()
-  const token = await new SignJWT({})
-    .setProtectedHeader({ alg: 'ES256', kid: 'local' })
-    .setIssuer(ISSUER)
-    .setAudience(url)
-    .setSubject(handle)
-    .setIssuedAt()
-    .setExpirationTime('30d')
-    .sign(privateKey)
-  const file = localTokenFile(url)
-  await mkdir(dirname(file), { recursive: true, mode: 0o700 })
-  await writeFile(file, JSON.stringify({ url, token, handle }), { mode: 0o600 })
 
   // One client a person at each host: the page's requests reach the board in this process, as Tailscale named them.
   const visitors = new Map<string, BoardClient>()
   return {
-    url,
-    port,
+    mode: 'local',
+    ...serving,
     page(handler) {
       page = handler
     },
@@ -190,12 +284,9 @@ export async function serveLocal(options: { dir: string; port?: number; handle?:
     principal: `local:user:${handle}`,
     handle,
     token,
-    dir,
     async close() {
       await rm(file, { force: true })
-      server.closeAllConnections()
-      await new Promise<void>((done) => server.close(() => done()))
-      await backend.close()
+      await close()
     },
   }
 }
@@ -210,10 +301,10 @@ function quietSqliteWarning() {
   }) as typeof process.emitWarning
 }
 
-function listen(server: Server, port: number): Promise<number> {
+function listen(server: Server, ip: string, port: number): Promise<number> {
   return new Promise((done, fail) => {
     server.once('error', fail)
-    server.listen(port, '127.0.0.1', () => {
+    server.listen(port, ip, () => {
       server.off('error', fail)
       done((server.address() as AddressInfo).port)
     })

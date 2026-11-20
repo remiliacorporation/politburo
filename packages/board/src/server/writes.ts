@@ -809,14 +809,15 @@ const EDITED = 'its text was edited by someone who does not own the task'
 /**
  * The hold an edit of a task's root brings, by anyone but the task's owner: the thread's author when
  * someone else made it a task, or a platform's edit, whichever principal's sync imported it. The task says what its owner read, so it waits
- * for them to read it again, and whoever held it has lost it. One that's held or finished stays as it is.
+ * for them to read it again, and whoever held it has lost it. An operator's park does not
+ * acknowledge edited instructions; record the edit hold beneath it.
  */
 function heldByEdit(root: Message | undefined, editor: Identity): Events {
   const task = root?.task
   // A platform user is never the owner, even one the owner's own sync speaks for: they write as its profile.
   const owner = task !== undefined && ownedBy(task, editor) && editor.principal.kind !== 'external'
   if (!root || root.deleted || !task || owner) return []
-  if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'claimed') return []
+  if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'claimed' && !(task.parked && !task.blocked)) return []
   return [{ type: 'task.blocked', payload: { id: root.id, thread: root.thread, kind: EDITED_HOLD, reason: EDITED, by: editor.author } }]
 }
 

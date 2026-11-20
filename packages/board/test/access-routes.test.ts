@@ -10,18 +10,19 @@ import { fakeQueue } from './queue.ts'
  * 403. A new route fails the first test until it has an entry here.
  */
 type Fixture = {
-  secret: { root: number; reply: number; schedule: number; file: string; task: number; agent: string }
-  open: { root: number; schedule: number; task: number; agent: string }
+  secret: { root: number; reply: number; schedule: number; file: string; task: number; agent: string; intent: string }
+  open: { root: number; schedule: number; task: number; agent: string; intent: string }
 }
 type Call = { method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown; status: number; check?: (body: any) => void }
 type Walk = 'public' | ((fixture: Fixture) => Call[])
 
+const INTENT = { verb: 'inspect', generation: 1, ttlSeconds: 60, requestId: 'walker' }
 const SLACK_USER = { id: 'slack:user:U1', handle: 'eve', name: 'Eve', avatar: null, isBot: false }
 
 const nothingFrom = (field: string) => (body: any) => expect(JSON.stringify(body[field])).not.toContain('secret')
-const work = (verb: string, body: object, openStatus = 403): Walk => ({ secret, open }) => [
+const work = (verb: string, body: object): Walk => ({ secret, open }) => [
   { method: 'POST', path: `/work/v1/tasks/${secret.task}/${verb}`, body, status: 404 },
-  { method: 'POST', path: `/work/v1/tasks/${open.task}/${verb}`, body, status: openStatus },
+  { method: 'POST', path: `/work/v1/tasks/${open.task}/${verb}`, body, status: 403 },
 ]
 const candidate = { commit: 'a'.repeat(40), round: 1, gate: 'tests' }
 const artifactRef = 'build/1'
@@ -150,40 +151,55 @@ const WALK: Record<RouteName, Walk> = {
     { method: 'POST', path: `/tasks/${secret.task}/claim`, body: {}, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/claim`, body: {}, status: 403 },
   ],
-  // What a claim does takes the claim: one it can't read isn't there, and one it reads is lost without the claim's secret.
+  // Proof writes take both label in the channel and the claim: a reader gets 403 even before validation of the proof.
   renewTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/renew`, body: { epoch: 1, token: 'guess' }, status: 404 },
-    { method: 'POST', path: `/tasks/${open.task}/renew`, body: { epoch: 1, token: 'guess' }, status: 409 },
+    { method: 'POST', path: `/tasks/${open.task}/renew`, body: { epoch: 1, token: 'guess' }, status: 403 },
   ],
   releaseTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/release`, body: { epoch: 1, token: 'guess' }, status: 404 },
-    { method: 'POST', path: `/tasks/${open.task}/release`, body: { epoch: 1, token: 'guess' }, status: 409 },
+    { method: 'POST', path: `/tasks/${open.task}/release`, body: { epoch: 1, token: 'guess' }, status: 403 },
   ],
   completeTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/complete`, body: { epoch: 1, token: 'guess' }, status: 404 },
-    { method: 'POST', path: `/tasks/${open.task}/complete`, body: { epoch: 1, token: 'guess' }, status: 409 },
+    { method: 'POST', path: `/tasks/${open.task}/complete`, body: { epoch: 1, token: 'guess' }, status: 403 },
   ],
   workEvidence: ({ secret, open }) => [
     { method: 'GET', path: `/work/v1/tasks/${secret.task}/evidence`, status: 404 },
     { method: 'GET', path: `/work/v1/tasks/${open.task}/evidence`, status: 200, check: (body) => expect(body.submission).toBeNull() },
   ],
-  submitWork: work('submit', { epoch: 1, token: 'guess', commit: candidate.commit, artifactRef }, 409),
+  submitWork: work('submit', { epoch: 1, token: 'guess', commit: candidate.commit, artifactRef }),
   recordEvidence: work('evidence', { ...candidate, verdict: 'pass', artifactRef }),
   overrideEvidence: work('override', { ...candidate, reason: 'why', expiresAt: '2099-01-01T00:00:00Z' }),
   resolveWorkEdge: work('resolve', { needId: '2', evidenceId: '3', ifVersion: 1 }),
   failTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/fail`, body: { epoch: 1, token: 'guess', reason: 'mine now' }, status: 404 },
-    { method: 'POST', path: `/tasks/${open.task}/fail`, body: { epoch: 1, token: 'guess', reason: 'mine now' }, status: 409 },
+    { method: 'POST', path: `/tasks/${open.task}/fail`, body: { epoch: 1, token: 'guess', reason: 'mine now' }, status: 403 },
   ],
   blockTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/block`, body: { reason: 'mine now' }, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/block`, body: { reason: 'mine now' }, status: 403 },
-    { method: 'POST', path: `/tasks/${open.task}/block`, body: { reason: 'mine now', epoch: 1, token: 'guess' }, status: 409 },
+    { method: 'POST', path: `/tasks/${open.task}/block`, body: { reason: 'mine now', epoch: 1, token: 'guess' }, status: 403 },
   ],
   unblockTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/unblock`, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/unblock`, status: 403 },
   ],
+  parkTask: ({ secret, open }) => [
+    { method: 'POST', path: `/tasks/${secret.task}/park`, body: { reason: 'hold' }, status: 404 },
+    { method: 'POST', path: `/tasks/${open.task}/park`, body: { reason: 'hold' }, status: 403 },
+  ],
+  unparkTask: ({ secret, open }) => [
+    { method: 'POST', path: `/tasks/${secret.task}/unpark`, body: { reason: 'resume' }, status: 404 },
+    { method: 'POST', path: `/tasks/${open.task}/unpark`, body: { reason: 'resume' }, status: 403 },
+  ],
+  handoffTask: ({ secret, open }) => {
+    const body = { epoch: 1, token: 'guess', commit: 'a'.repeat(40), packetPath: 'handoffs/check.md', sha256: 'b'.repeat(64) }
+    return [
+      { method: 'POST', path: `/tasks/${secret.task}/handoff`, body, status: 404 },
+      { method: 'POST', path: `/tasks/${open.task}/handoff`, body, status: 403 },
+    ]
+  },
   requestTaskAttention: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/attention`, body: draft(secret.task), status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/attention`, body: draft(open.task), status: 403 },
@@ -226,6 +242,21 @@ const WALK: Record<RouteName, Walk> = {
   // Even where an agent is visible, it is no target for another caller's writes.
   heartbeatOpsAgent: ({ secret, open }) => [secret.agent, open.agent].map((id) => ({ method: 'POST', path: `/ops/agents/${encodeURIComponent(id)}/heartbeat`, body: { generation: 1 }, status: 404 })),
   retireOpsAgent: ({ secret, open }) => [secret.agent, open.agent].map((id) => ({ method: 'POST', path: `/ops/agents/${encodeURIComponent(id)}/retire`, body: { generation: 1 }, status: 404 })),
+  issueOpsIntent: ({ secret, open }) => [
+    { method: 'POST', path: `/ops/agents/${encodeURIComponent(secret.agent)}/intents`, body: INTENT, status: 404 },
+    { method: 'POST', path: `/ops/agents/${encodeURIComponent(open.agent)}/intents`, body: INTENT, status: 403 },
+  ],
+  issueOpsRoleIntent: () => [
+    { method: 'POST', path: '/ops/intents', body: { ...INTENT, role: 'reviewer', channel: 'secret' }, status: 404 },
+    { method: 'POST', path: '/ops/intents', body: { ...INTENT, role: 'reviewer', channel: 'open' }, status: 403 },
+  ],
+  listOpsIntents: ({ secret, open }) => [secret.agent, open.agent].map((id) => ({ method: 'GET', path: `/ops/agents/${encodeURIComponent(id)}/intents`, status: 404 })),
+  takeOpsIntent: ({ secret, open }) => [secret.intent, open.intent].map((id) => ({ method: 'POST', path: `/ops/intents/${encodeURIComponent(id)}/take`, body: { generation: 1 }, status: 404 })),
+  reportOpsIntent: ({ secret, open }) => [secret.intent, open.intent].map((id) => ({ method: 'POST', path: `/ops/intents/${encodeURIComponent(id)}/report`, body: { generation: 1, outcome: 'ok' }, status: 404 })),
+  getOpsHealth: ({ secret, open }) => [
+    { method: 'GET', path: `/ops/health/${secret.task}`, status: 404 },
+    { method: 'GET', path: `/ops/health/${open.task}`, status: 200, check: (body) => expect(body).toEqual({ state: 'not_confirmed' }) },
+  ],
   // Listing grants takes manage at *, and changing one manage at each pattern it names: g1 names *.
   grants: () => [{ method: 'GET', path: '/grants', status: 403 }],
   createGrant: () => [
@@ -247,6 +278,11 @@ const WALK: Record<RouteName, Walk> = {
     { method: 'GET', path: '/grants/explain?channel=open&user=u_julian', status: 403 },
   ],
   revokeGrant: () => [{ method: 'POST', path: '/grants/g1/revoke', status: 403 }],
+  invites: () => [{ method: 'GET', path: '/invites', status: 403 }],
+  createInvite: () => [{ method: 'POST', path: '/invites', body: { name: 'teammate' }, status: 403 }],
+  revokeInvite: () => [{ method: 'POST', path: '/invites/unknown/revoke', status: 403 }],
+  // The invite secret itself is the credential, not access to any channel.
+  redeemInvite: 'public',
   // Schemas are the whole board's and hold no channel's messages: anyone the board let in reads them, and only manage at * registers one.
   schemas: () => [{ method: 'GET', path: '/schemas', status: 200, check: (body) => expect(body.schemas.map((schema: any) => schema.id)).toEqual(['git-commit@1', 'vercel-deployment@1']) }],
   schema: () => [{ method: 'GET', path: '/schemas/git-commit@1', status: 200 }],
@@ -349,11 +385,14 @@ async function setup() {
   // And a batch of them under an id, which finds it again for whoever made it, and no one else.
   expect((await keeper('POST', '/tasks/batch', { channel: 'secret', id: 'secret-plan', tasks: [{ text: 'hush, a plan', labels: { private: 'yes' } }] })).status).toBe(201)
   expect((await keeper('GET', '/tasks/batch/secret-plan')).body.tasks).toMatchObject([{ text: 'hush, a plan' }])
-  const register = (channel: string) => board.agents.register({ channel, role: 'reviewer', harness: 'shell' })
-  const [secretAgent, openAgent] = [await register('secret'), await register('open')]
+  const agentAndIntent = async (send: typeof keeper, channel: string) => {
+    const { body: agent } = await send('POST', '/ops/agents', { channel, role: 'reviewer', harness: 'shell' })
+    const { body: { intents: [intent] } } = await send('POST', `/ops/agents/${encodeURIComponent(agent.id)}/intents`, INTENT)
+    return { agent: agent.id as string, intent: intent.id as string }
+  }
   const fixture: Fixture = {
-    secret: { root, reply, schedule, file, task, agent: secretAgent.id },
-    open: { root: openRoot, schedule: openSchedule, task: openTask, agent: openAgent.id },
+    secret: { root, reply, schedule, file, task, ...await agentAndIntent(keeper, 'secret') },
+    open: { root: openRoot, schedule: openSchedule, task: openTask, ...await agentAndIntent(host, 'open') },
   }
   return { board, fixture, outsider: caller(board.fetch, await workflowToken()) }
 }
