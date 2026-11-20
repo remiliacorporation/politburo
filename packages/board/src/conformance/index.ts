@@ -1327,7 +1327,7 @@ const CHECKS: Check[] = [
   },
   {
     group: 'work-evidence',
-    name: 'leaves a dependent waiting for an explicit release after completion',
+    name: 'keeps a dependent waiting after completion and readies it on explicit release',
     async run(ctx) {
       if (!ctx.workEvidence?.releaseDependencies) return 'evidence releases not enabled here'
       if (ctx.workEvidence.gates.length) return 'this check cannot satisfy gates with its one principal'
@@ -1339,6 +1339,13 @@ const CHECKS: Check[] = [
       await claim.complete(undefined, { commit })
       await rejects(ctx.board.tasks.claim(dependent.id), 409, 'task_waiting', 'claiming an unresolved dependent')
       same((await ctx.board.tasks.evidence(dependent.id)).releases.length, 0, 'releases after completion alone')
+      const { submission } = await ctx.board.tasks.evidence(need.id)
+      check(submission, 'the completed prerequisite should have its submission')
+      const { message: waiting } = await ctx.board.thread(dependent.id)
+      const release = { needId: need.id, evidenceId: submission.id }
+      const resolved = await ctx.board.tasks.resolve(dependent.id, { ...release, ifVersion: waiting.version })
+      same(resolved.task?.state, 'ready', 'the dependent after explicit release')
+      alike((await ctx.board.tasks.evidence(dependent.id)).releases, [release], 'the recorded release')
     },
   },
   {

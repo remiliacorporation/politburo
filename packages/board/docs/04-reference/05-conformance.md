@@ -156,9 +156,11 @@ not use it on a shared board. The default run never pauses the board.
 
 When discovery advertises [work evidence](../01-board/11-tasks.md#commit-evidence),
 the `work-evidence` group checks that completion rejects missing evidence.
-On a release-only board it checks that completion does not release dependencies
-without an explicit resolution. The report skips legacy checks that require
-ungated completion or automatic dependency release when that behavior is disabled.
+On a release-only board (`releaseDependencies: true`, `gates: false`), it
+checks that the dependent waits after completion and becomes ready after an
+explicit resolution. Run as a configured resolver with `manage` on the test
+channel. The report skips legacy checks that require ungated completion or
+automatic dependency release when that behavior is disabled.
 
 The `tasks` group also checks structured attention on boards that advertise
 `task_attention: true`. It opens and reads a request using a live claim, and

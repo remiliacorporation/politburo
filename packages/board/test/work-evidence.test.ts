@@ -2,11 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { BoardEventView } from '../src/api/routes.ts'
 import { http } from '../src/backend-http/index.ts'
 import { local } from '../src/backend-local/index.ts'
 import { oidcTokens } from '../src/access/index.ts'
 import type { AttestationGate, EvidencePolicy } from '../src/contract/evidence.ts'
 import { conformance } from '../src/conformance/index.ts'
+import { HttpError } from '../src/server/index.ts'
 import { memory } from '../src/store/memory.ts'
 import { sqlite } from '../src/store/sqlite.ts'
 import { board, BOARD_URL, caller, personToken, testAuth, testBoard } from './harness.ts'
@@ -64,6 +66,37 @@ describe('work evidence through the HTTP backend', () => {
         expect(response.body, path).toMatchObject({ error: { code } })
       }
     }
+  })
+
+  it('wakes a local channel watcher on all four work evidence events, as shown in the feed', async () => {
+    const seen: BoardEventView[] = []
+    const isWorkEvent = (event: BoardEventView) => event.type.startsWith('task.work_')
+    const host = testBoard({
+      workEvidence: { ...policy, releaseDependencies: true },
+      watch: { audit: { tail: 'work', run: ({ event }) => { if (isWorkEvent(event)) seen.push(event) } } },
+    })
+    const worker = client(host, 'worker')
+    const ci = client(host, 'ci')
+    const operator = client(host, 'operator')
+    const need = await create(worker)
+    const dependent = await create(worker, [need.id])
+    const claim = await worker.tasks.claim(need.id)
+    await claim.submit(commit, artifactRef)
+    await ci.tasks.recordEvidence(need.id, attest(claim.epoch, 'tests'))
+    await operator.tasks.overrideEvidence(need.id, { commit, round: claim.epoch, gate: 'review', reason: 'approved exception', expiresAt: expiry(60_000) })
+    await claim.complete(undefined, { commit })
+    const [record] = (await worker.tasks.evidence(need.id)).evidence
+    await operator.tasks.resolve(dependent.id, { needId: need.id, evidenceId: record!.id, ifVersion: dependent.version })
+
+    const { events } = await worker.poll({ channel: 'work', after: need.id })
+    const evidenceEvents = events.filter(isWorkEvent)
+    expect(evidenceEvents.map(({ type, message }) => [type, message?.id])).toEqual([
+      ['task.work_submitted', need.id],
+      ['task.work_evidence', need.id],
+      ['task.work_override', need.id],
+      ['task.work_resolved', dependent.id],
+    ])
+    await vi.waitFor(() => expect(seen).toEqual(expect.arrayContaining(evidenceEvents)))
   })
 
   it('rejects discovery returned for an evidence read by an older HTTP board', async () => {
@@ -449,7 +482,7 @@ describe('work evidence through the HTTP backend', () => {
     const root = await create(worker)
     await denied(worker.tasks.evidence(root.id), 501, 'no_work_evidence')
     expect((await (await worker.tasks.claim(root.id)).complete()).task?.state).toBe('completed')
-    for (const config of [policy, { gates: false, releaseDependencies: true }, { ...policy, releaseDependencies: true }]) {
+    for (const config of [policy, { gates: false, releaseDependencies: true, resolvers: [principal('worker')] }, { ...policy, releaseDependencies: true }]) {
       const { worker } = setup(config)
       const report = await conformance(worker)
       expect(report.checks.filter((check) => check.status === 'failed')).toEqual([])
@@ -459,6 +492,25 @@ describe('work evidence through the HTTP backend', () => {
         expect.objectContaining({ name: expect.stringMatching(/^refuses a change of needs/), status: 'passed' }),
       ]))
     }
+  }, 20_000)
+
+  it('fails work-evidence conformance when an advertised explicit release returns 501', async ({ onTestFinished }) => {
+    const base = local({ memory: true, workEvidence: { gates: false, releaseDependencies: true, resolvers: [principal('worker')] } })
+    onTestFinished(() => base.close())
+    const host = board({
+      backend: {
+        ...base,
+        async resolveWorkEdge() {
+          throw new HttpError(501, 'no_work_evidence', 'explicit release is not implemented')
+        },
+      },
+      authenticate: oidcTokens(testAuth), url: BOARD_URL,
+    })
+    const report = await conformance(client(host, 'worker'))
+    expect(report.checks.filter((check) => check.status === 'failed')).toMatchObject([
+      { group: 'work-evidence', detail: expect.stringContaining('explicit release is not implemented') },
+    ])
+    expect(report.ok).toBe(false)
   }, 20_000)
 
   it('reads submission, evidence and override audit after reopening a SQLite board', async () => {

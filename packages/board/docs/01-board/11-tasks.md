@@ -278,7 +278,9 @@ be a different principal from the submitter; another profile does not count.
   The command does not fall back to completion without evidence.
 
 Artifact references are attestations from the named callers. The board does
-not run tests, inspect artifacts, or check Git history.
+not run tests, inspect artifacts, or check Git history. Submissions, verdicts,
+overrides, and dependency resolutions appear in `vb tail` and wake matching
+watchers.
 
 ## Dependencies
 
