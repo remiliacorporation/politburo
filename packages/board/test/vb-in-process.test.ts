@@ -353,6 +353,9 @@ describe('vb()', () => {
     const listing = await stoppedWhile(['tasks', 'work'])
     expect(listing).toMatchObject({ code: 130, reason: 'canceled', message: 'Stopped before it could list tasks in work.' })
     expect(listing.hint).toBeUndefined()
+    const evidence = await stoppedWhile(['tasks', 'evidence', next])
+    expect(evidence).toMatchObject({ code: 130, reason: 'canceled', message: `Stopped before it could read work evidence for task #${next}.` })
+    expect(evidence.hint).toBeUndefined()
     stall.on = false
     expect(JSON.parse((await vb(team, ['read', next, '--json'])).stdout).message.task.state).toBe('ready')
   })

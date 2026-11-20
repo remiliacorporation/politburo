@@ -12,7 +12,7 @@ import { compileAccess, parseCan, parsePattern, PERMISSIONS, type AccessSummary,
 import { type Backend, type BackendRoute, type BoardBinding, type Caller, type InviteMethod, type ProtocolMethods } from './backend.ts'
 import { mediaType } from '../contract/files.ts'
 import { uploadName } from './file-names.ts'
-import { badRequest, duplicateId, HttpError, json, noAgentOps, notFound } from './errors.ts'
+import { badRequest, duplicateId, HttpError, json, noAgentOps, noWorkEvidence, notFound } from './errors.ts'
 import { carried } from './carried.ts'
 import { deployedOnVercel, registrant, wakePath, type WakeAt } from './registrant.ts'
 import { INVITE_METHODS, isAgentOpsMethod, METHODS } from './routing.ts'
@@ -3739,13 +3739,8 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       const who = whoOf(caller)
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/release`, await proofOf({ epoch, token }), { id, signal })) }
     },
-    async workEvidence() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
-    async submitWork() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
-    async recordEvidence() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
-    async overrideEvidence() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
-    async resolveWorkEdge() { throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence') },
     async completeTask(caller, { id, epoch, token, result, commit }, signal) {
-      if (commit !== undefined) throw new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence')
+      if (commit !== undefined) throw noWorkEvidence()
       const who = whoOf(caller)
       const body = { ...(await proofOf({ epoch, token })), ...(result !== undefined ? { result } : {}) }
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/complete`, body, { id, signal })) }

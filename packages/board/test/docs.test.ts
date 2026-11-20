@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { BOARD_URL, testBoard } from './harness.ts'
 
 const docs = new URL('../docs/', import.meta.url)
 const page = (path: string) => readFileSync(new URL(path, docs), 'utf8')
@@ -11,6 +12,16 @@ function snippet(markdown: string, heading: string): string {
   if (!code) throw new Error(`no ts snippet under "## ${heading}"`)
   return code
 }
+
+it('documents the task completion body as published in OpenAPI', async () => {
+  const response = await testBoard().fetch(new Request(`${BOARD_URL}/openapi.json`))
+  const { paths } = await response.json()
+  const schema = paths['/tasks/{id}/complete'].post.requestBody.content['application/json'].schema
+  const fields = Object.keys(schema.properties).map((name) => schema.required.includes(name) ? name : `${name}?`)
+  const row = page('04-reference/03-http.md').split('\n').find((line) => line.startsWith('| POST | `/tasks/:id/complete` |'))
+  const documented = row?.match(/`\{\s*([^}]+)\}`/)?.[1]?.split(',').map((field) => field.trim())
+  expect(documented?.sort()).toEqual(fields.sort())
+})
 
 describe('the docs show the short way to sync with Vercel Connect', () => {
   const pages = [

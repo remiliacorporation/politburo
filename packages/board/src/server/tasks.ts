@@ -12,8 +12,8 @@ import { actorsReducer, channelsReducer, type WorkState } from '../contract/redu
 import { DEFAULT_TASK_PRIORITY, OPEN_TASK_STATES, priorityRank, TASK_BATCH_MAX, TASK_KEY_MAX, TASK_LABEL, TASK_NEEDS_MAX, TASK_NOTE_MAX, TaskHoldKind, TaskPriority, type TaskState } from '../contract/schemas.ts'
 import { batchPlan, type BatchNeed } from '../contract/task-batch.ts'
 import { authorize, type Access, type Permission } from './access.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, notFound } from './errors.ts'
-import { createEvidence, noWorkEvidence } from './evidence.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, noWorkEvidence, notFound } from './errors.ts'
+import { createEvidence } from './evidence.ts'
 import { indexOf, ref, toMessageFilter, view, whoIs } from './feed.ts'
 import type { MessageFilter, ThreadSummary } from '../store/types.ts'
 import { appendFrom, authorizeMessage, movedOn, ownedBy, seenFor, untilApplied, type Along, type AlongEach, type Events, type Identity, type WriteContext } from './writes.ts'
@@ -490,9 +490,10 @@ export function createTasks(options: {
 
   async function evidenceWrite(identity: Identity, id: number, decide: (root: Root, position: number) => Events | Promise<Events>) {
     evidence.checkEnabled()
-    const root = await changeTask(identity, id, (found, position) => {
+    const root = await change(identity, id, (found, position) => {
       if (found.deleted || !identity.principal.access.readable(found.channel)) throw notFound(`message not found: #${id}`, 'message_not_found')
-      return decide(found, position)
+      if (!found.task) throw notATask(id)
+      return decide(found as Root, position)
     })
     return { task: await shown(identity, root) }
   }
@@ -579,13 +580,15 @@ export function createTasks(options: {
         if (!assignedTo(task, identity) && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
         if (rank <= best) continue
-        if (evidence.releaseDependencies && !(await satisfied(task, position))) continue
         root = candidate
         best = rank
         if (best === TaskPriority.options.length - 1) break
       }
-      // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }
+      // A stale release blocks the winner; it doesn't let lower-priority work jump the queue.
+      if (evidence.releaseDependencies && !(await satisfied(root.task, position))) return { position, events: [] }
+      // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
+      if (signal.aborted) return { position, events: [] }
       const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding)
       read.taken = { root, claim }
       return { position, events: seen ? [seen, ...events] : events }

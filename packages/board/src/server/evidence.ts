@@ -3,11 +3,10 @@ import type { Discovery } from '../api/routes.ts'
 import { currentEvidence, unexpired, type AttestationGate, type EvidencePolicy, type Gate } from '../contract/evidence.ts'
 import type { Message, Task } from '../contract/folds.ts'
 import { authorize, type Access, type Permission } from './access.ts'
-import { badRequest, forbidden, HttpError, notFound } from './errors.ts'
+import { badRequest, forbidden, HttpError, noWorkEvidence, notFound } from './errors.ts'
 import { indexOf, ref } from './feed.ts'
 import type { Events, Identity } from './writes.ts'
 
-export const noWorkEvidence = () => new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence for this operation')
 const conflict = (code: string, message: string) => new HttpError(409, code, message)
 const stale = () => conflict('stale_candidate', 'the commit and round must name the current submission')
 

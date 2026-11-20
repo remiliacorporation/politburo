@@ -91,10 +91,10 @@ import { importedHandle, userIdOf } from '../contract/profiles.ts'
 import type { CallerRequest } from './auth.ts'
 import { isJoinedCredential } from './policy.ts'
 import { avatarSvg } from './avatars.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notFound, toErrorResponse, unauthorized } from './errors.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, noWorkEvidence, notFound, toErrorResponse, unauthorized } from './errors.ts'
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
-import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
+import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentOpsMethod, isOperationalInboxMethod, isWorkEvidenceMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
 import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
@@ -1159,6 +1159,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         if (typeof method !== 'function') {
           if (CONTROL.has(name)) throw new HttpError(501, 'no_network_pause', 'this board does not support network pause')
           if (ATTENTION_METHODS.has(name)) throw new HttpError(501, 'no_task_attention', 'this board does not support task attention')
+          if (isWorkEvidenceMethod(name)) throw noWorkEvidence()
           throw notFound(`no route: ${name}`)
         }
         return (method as (caller: Caller, input: unknown, signal: AbortSignal) => Promise<unknown>).call(backend, caller, input, signal)
@@ -1337,7 +1338,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
       if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
-        && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {
+        && !isOperationalInboxMethod(target.name) && !isWorkEvidenceMethod(target.name) && typeof backend[target.name] !== 'function') {
         if (INVITE_METHODS.has(target.name)) throw noInvites()
         throw ops ? noAgentOps() : notFound(`no route: ${request.method} ${url.pathname}`)
       }

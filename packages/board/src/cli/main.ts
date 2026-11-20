@@ -841,7 +841,7 @@ function doing(): string {
       if (a === 'health') return `check run health for task ${ref(b)}`
       return 'work with agents'
     case 'tasks': {
-      if (a === undefined || !TASK_VERBS.has(a)) return a === undefined ? 'list tasks' : `list tasks in ${a}`
+      if (a === undefined || !isTaskVerb(a, b)) return a === undefined ? 'list tasks' : `list tasks in ${a}`
       const one = b === undefined ? 'a task' : `task ${ref(b)}`
       // `run` fails as its claim does, before its command starts, or as what it settles with after.
       if (a === 'claim' || a === 'run') return flags.ready ? `claim a task in ${b ?? 'a channel'}` : `claim ${one}`
@@ -852,6 +852,7 @@ function doing(): string {
       if (a === 'needs') return `change what ${one} needs`
       if (a === 'ask') return `request attention on ${one}`
       if (a === 'attention') return `read the attention request on ${one}`
+      if (a === 'evidence') return `read work evidence for ${one}`
       if (a === 'answer') return `answer the attention request on ${one}`
       return `${a} ${one}`
     }
@@ -2378,7 +2379,12 @@ async function agents(args: string[]): Promise<number> {
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel', 'submit', 'evidence', 'attest', 'override', 'resolve'])
+const TASK_EVIDENCE_VERBS = new Set(['submit', 'evidence', 'attest', 'override', 'resolve'])
+const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel', ...TASK_EVIDENCE_VERBS])
+const TASK_READS = new Set(['show', 'attention', 'evidence'])
+// Evidence verbs take a task ID. A bare word still names the channel to list.
+const isTaskVerb = (word: string, target: string | undefined) =>
+  TASK_VERBS.has(word) && (target !== undefined || !TASK_EVIDENCE_VERBS.has(word))
 const TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled']
 
 /** A task's ID as you'd write it: `#812` or `812`. */
@@ -2713,7 +2719,7 @@ async function tasks(args: string[]): Promise<number> {
   if (flags.binding !== undefined && verb !== 'claim' && verb !== 'run' && verb !== 'create')
     throw usage('--binding goes with tasks claim, tasks run, or tasks create --claim.')
   if (flags.supersedes !== undefined && verb !== 'handoff') throw usage('--supersedes goes with tasks handoff.')
-  if (verb === undefined || !TASK_VERBS.has(verb)) {
+  if (verb === undefined || !isTaskVerb(verb, rest[0])) {
     if (rest.length > 0) {
       // Two words, the first no verb: the list takes one channel, so it's a command this one doesn't have.
       const guess = closest(verb!, TASK_VERBS)
@@ -2977,7 +2983,7 @@ async function tasks(args: string[]): Promise<number> {
       } else {
         const verdict = Verdict.safeParse(rest[2])
         if (!verdict.success) throw usage('Give a verdict: pass or fail.')
-        printTask(await board.tasks.recordEvidence(id, { ...target, verdict: verdict.data, artifactRef: required('artifact'), ...(flags['expires-at'] ? { expiresAt: flags['expires-at'] } : {}) }), 'attested')
+        printTask(await board.tasks.recordEvidence(id, { ...target, verdict: verdict.data, artifactRef: required('artifact'), ...(flags['expires-at'] !== undefined ? { expiresAt: required('expires-at') } : {}) }), 'attested')
       }
       return 0
     }
@@ -3394,9 +3400,8 @@ function stopped(reason: unknown): Failed {
   const timedOut = reason instanceof Error && reason.name === 'TimeoutError'
   // A subcommand that writes is `channels create`'s first word, `sources <key> join`'s second.
   const sub = current.command === 'sources' ? current.args[1] : current.args[0]
-  // Only show and attention are read-only task verbs.
   const writes = WRITES.has(current.command ?? '') || ['create', 'update', 'revoke', 'cancel', 'join'].includes(sub ?? '')
-    || (current.command === 'tasks' && sub !== 'show' && sub !== 'attention' && TASK_VERBS.has(sub ?? ''))
+    || (current.command === 'tasks' && sub !== undefined && isTaskVerb(sub, current.args[1]) && !TASK_READS.has(sub))
     || (current.command === 'agents' && AGENT_WRITES.has(sub ?? ''))
     || (current.command === 'inbox' && (sub === 'ack' || sub === 'archive'))
   return new Failed({

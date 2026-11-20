@@ -263,6 +263,16 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
       if (!status.success) throw new HttpError(502, 'remote_error', 'the remote board did not answer with a control status')
       return status.data
     }
+    if (method === 'workEvidence') {
+      // An older mount can answer an unknown GET with its discovery document.
+      const work = (await response.json().catch(() => null)) as Partial<Protocol['workEvidence']['output']> | null
+      if (!work || !Array.isArray(work.required) || !Array.isArray(work.evidence) || !Array.isArray(work.overrides)
+        || !Array.isArray(work.releases) || !(work.submission === null || (work.submission && typeof work.submission === 'object')))
+        throw new HttpError(501, 'no_work_evidence', 'the remote board did not answer with work evidence', {
+          origin: 'handle', hint: 'Use a board that supports work evidence.',
+        })
+      return work
+    }
     return response.json()
   }
 

@@ -4182,7 +4182,8 @@ end the lease, complete the task, or release its dependents.
 ### Work evidence
 
 A local board opts in with `local({ workEvidence: { ... } })`. Without it the
-legacy queue is unchanged. With it, `submission`, `tests`, and `review` are
+legacy queue is unchanged. Custom backends can omit the five work evidence methods.
+With it, `submission`, `tests`, and `review` are
 required for `complete`. A board can also require `browserQA`, `acceptance`, or
 `publication` independently. `gates: false` and `releaseDependencies: true`
 enables only evidence-backed dependencies. HTTP forwards to the authority;
@@ -4228,7 +4229,10 @@ its submission is invalidated. A live claim prevents replacement of its
 edge releases; release the claim or let it expire first. Changing `needs`
 keeps only the releases of retained edges. `board.task` and lists show the
 recorded state, which can still be `ready` after a release stops working.
-The claim is the authoritative check. There is no expiry timer for evidence.
+The claim is the authoritative check. Claim-next picks the highest-priority
+candidate first, then checks its releases. It returns no claim rather than
+skipping to a lower-priority task if the winner's releases are stale.
+There is no expiry timer for evidence.
 
 | Method | Path | Body or result |
 | --- | --- | --- |

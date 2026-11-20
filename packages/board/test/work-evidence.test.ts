@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { http } from '../src/backend-http/index.ts'
 import { local } from '../src/backend-local/index.ts'
+import { oidcTokens } from '../src/access/index.ts'
 import type { AttestationGate, EvidencePolicy } from '../src/contract/evidence.ts'
 import { conformance } from '../src/conformance/index.ts'
-import { board, BOARD_URL, caller, personToken, testBoard } from './harness.ts'
+import { board, BOARD_URL, caller, personToken, testAuth, testBoard } from './harness.ts'
 
 const principal = (name: string) => `vercel:user:u_${name}`
 const commit = 'a'.repeat(40)
@@ -43,6 +44,55 @@ const denied = (promise: Promise<unknown>, status: number, code: string) => expe
 afterEach(() => vi.useRealTimers())
 
 describe('work evidence through the HTTP backend', () => {
+  it('returns the same error for unreadable non-tasks and missing IDs on every evidence write', async () => {
+    const { host, worker } = setup({ ...policy, releaseDependencies: true })
+    const hidden = await worker.post('private', 'private note')
+    const visible = await worker.post('work', 'ordinary note')
+    const write = caller(host.fetch, await personToken('u_operator'), { 'x-board-can': 'work=manage' })
+    const operations = {
+      submit: { epoch: 1, token: 'A'.repeat(43), commit, artifactRef },
+      evidence: attest(1, 'tests'),
+      override: { commit, round: 1, gate: 'tests', reason: 'CI offline', expiresAt: expiry(60_000) },
+      resolve: { needId: visible.id, evidenceId: '1', ifVersion: visible.version },
+    }
+    for (const [path, body] of Object.entries(operations)) {
+      for (const [id, code] of [[hidden.id, 'message_not_found'], ['999999', 'message_not_found'], [visible.id, 'not_a_task']]) {
+        const response = await write('POST', `/work/v1/tasks/${id}/${path}`, body)
+        expect(response.status, path).toBe(404)
+        expect(response.body, path).toMatchObject({ error: { code } })
+      }
+    }
+  })
+
+  it('rejects discovery returned for an evidence read by an older HTTP board', async () => {
+    const legacy = testBoard()
+    // Older mounts return discovery for an unknown GET, including the evidence path.
+    const worker = client({ fetch: () => legacy.fetch(new Request(BOARD_URL)) }, 'worker')
+    expect((await worker.discovery()).workEvidence).toBeUndefined()
+    await expect(worker.tasks.evidence('1')).rejects.toMatchObject({
+      status: 501, code: 'no_work_evidence', message: expect.stringMatching(/work evidence/),
+    })
+  })
+
+  it('returns 501 for all five work evidence methods on a custom backend that omits them', async () => {
+    const base = local({ memory: true })
+    const { workEvidence, submitWork, recordEvidence, overrideEvidence, resolveWorkEdge, ...backend } = base
+    const host = board({ backend, authenticate: oidcTokens(testAuth), url: BOARD_URL })
+    try {
+      const worker = client(host, 'worker')
+      const root = await create(worker)
+      const claim = await worker.tasks.claim(root.id)
+      await denied(worker.tasks.evidence(root.id), 501, 'no_work_evidence')
+      await denied(claim.submit(commit, artifactRef), 501, 'no_work_evidence')
+      await denied(worker.tasks.recordEvidence(root.id, attest(claim.epoch, 'tests')), 501, 'no_work_evidence')
+      await denied(worker.tasks.overrideEvidence(root.id, { commit, round: claim.epoch, gate: 'tests', reason: 'CI offline', expiresAt: expiry(60_000) }), 501, 'no_work_evidence')
+      await denied(worker.tasks.resolve(root.id, { needId: '1', evidenceId: '1', ifVersion: root.version }), 501, 'no_work_evidence')
+      expect((await claim.complete()).task?.state).toBe('completed')
+    } finally {
+      await base.close()
+    }
+  })
+
   it('gates completion on the current submission, latest tests, and an independent review', async () => {
     const { host, worker, ci, reviewer } = setup()
     expect((await worker.discovery()).workEvidence).toEqual({ version: 1, gates: ['submission', 'tests', 'review'], releaseDependencies: false })
@@ -91,7 +141,7 @@ describe('work evidence through the HTTP backend', () => {
 
   it('expires both verdicts and overrides and exposes every override in the audit feed', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
-    const { worker, reviewer, ci, operator } = setup()
+    const { host, worker, reviewer, ci, operator } = setup()
     const root = await create(worker)
     const claim = await worker.tasks.claim(root.id)
     const round = claim.epoch
@@ -103,6 +153,8 @@ describe('work evidence through the HTTP backend', () => {
     vi.setSystemTime(Date.now() + 1_000)
     await denied(claim.complete(undefined, { commit }), 409, 'evidence_required')
     await denied(worker.tasks.overrideEvidence(root.id, waive), 403, 'forbidden')
+    const narrowed = client(host, 'operator', { 'x-board-can': 'work=read,post;elsewhere=manage' })
+    await denied(narrowed.tasks.overrideEvidence(root.id, waive), 403, 'forbidden')
     await operator.tasks.overrideEvidence(root.id, waive)
     vi.setSystemTime(Date.now() + 1_000)
     await denied(claim.complete(undefined, { commit }), 409, 'evidence_required')
@@ -133,6 +185,24 @@ describe('work evidence through the HTTP backend', () => {
     await second.submit(commit, artifactRef)
     await denied(ci.tasks.recordEvidence(root.id, attest(first.epoch, 'tests')), 409, 'stale_candidate')
     await denied(second.complete(undefined, { commit }), 409, 'evidence_required')
+  })
+
+  it('cannot complete a reclaimed, unedited task using the previous claim’s verdicts', async () => {
+    const { worker, ci, reviewer } = setup()
+    const root = await create(worker)
+    const first = await worker.tasks.claim(root.id)
+    await first.submit(commit, artifactRef)
+    await ci.tasks.recordEvidence(root.id, attest(first.epoch, 'tests'))
+    await reviewer.tasks.recordEvidence(root.id, attest(first.epoch, 'review'))
+    await first.release()
+
+    const second = await worker.tasks.claim(root.id)
+    await denied(second.complete(undefined, { commit }), 409, 'evidence_required')
+    expect((await worker.tasks.evidence(root.id)).submission).toBeNull()
+    await second.submit(commit, artifactRef)
+    await ci.tasks.recordEvidence(root.id, attest(second.epoch, 'tests'))
+    await reviewer.tasks.recordEvidence(root.id, attest(second.epoch, 'review'))
+    expect((await second.complete(undefined, { commit })).task?.state).toBe('completed')
   })
 
   it('does not accept evidence for a claim invalidated by a pause', async () => {
@@ -178,6 +248,8 @@ describe('work evidence through the HTTP backend', () => {
     expect((await read(worker, dependent.id)).task?.state).toBe('waiting')
     await denied(worker.tasks.claim(dependent.id), 409, 'task_waiting')
     await denied(worker.tasks.resolve(dependent.id, await resolve(a.id, aId)), 403, 'forbidden')
+    const manageNeedOnly = client(host, 'operator', { 'x-board-can': 'work=read,post;proofs=manage' })
+    await denied(manageNeedOnly.tasks.resolve(dependent.id, await resolve(a.id, aId)), 403, 'forbidden')
     const narrowed = client(host, 'operator', { 'x-board-can': 'work=manage' })
     await denied(narrowed.tasks.resolve(dependent.id, await resolve(a.id, aId)), 404, 'need_not_found')
     await denied(operator.tasks.resolve(dependent.id, await resolve(a.id, aWork.overrides[0]!.id)), 409, 'invalid_evidence')
@@ -197,9 +269,8 @@ describe('work evidence through the HTTP backend', () => {
     expect(await worker.tasks.claim({ channel: 'work' })).toBeNull()
     await worker.tasks.priority(dependent.id, 'urgent')
     const fallback = (await worker.tasks.create('work', { text: 'Still eligible', priority: 'low' })).task
-    const fallbackClaim = await worker.tasks.claim({ channel: 'work' })
-    expect(fallbackClaim?.task.id).toBe(fallback.id)
-    await fallbackClaim!.release()
+    expect(await worker.tasks.claim({ channel: 'work' })).toBeNull()
+    expect((await read(worker, fallback.id)).task?.state).toBe('ready')
     const reattest = async (verdict: 'pass' | 'fail') => {
       await ci.tasks.recordEvidence(a.id, attest(ap.epoch, 'tests', verdict))
       return (await worker.tasks.evidence(a.id)).evidence[0]!.id

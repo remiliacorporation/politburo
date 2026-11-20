@@ -43,6 +43,7 @@ export const textTooLong = () =>
     hint: 'Put the long part in a file and attach it to a message, with a short summary as the text.',
   })
 export const noAgentOps = () => new HttpError(501, 'no_agent_ops', 'this board does not keep an agent registry')
+export const noWorkEvidence = () => new HttpError(501, 'no_work_evidence', 'this board keeps no work evidence for this operation')
 export const duplicateId = () =>
   new HttpError(409, 'duplicate_id', 'that id was already used for a different write')
 /** More tasks than a board makes in one batch: `most` is how many it does. Nothing was made, and its sender splits it. */

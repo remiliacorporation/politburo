@@ -41,6 +41,10 @@ export const OPERATIONAL_INBOX_METHODS = ['sendOperationalMessage', 'readOperati
 export type OperationalInboxMethod = (typeof OPERATIONAL_INBOX_METHODS)[number]
 export const isOperationalInboxMethod = (name: Method): name is OperationalInboxMethod => (OPERATIONAL_INBOX_METHODS as readonly Method[]).includes(name)
 
+const WORK_EVIDENCE_METHODS = ['workEvidence', 'submitWork', 'recordEvidence', 'overrideEvidence', 'resolveWorkEdge'] as const
+export type WorkEvidenceMethod = (typeof WORK_EVIDENCE_METHODS)[number]
+export const isWorkEvidenceMethod = (name: Method): name is WorkEvidenceMethod => (WORK_EVIDENCE_METHODS as readonly Method[]).includes(name)
+
 /** Every protocol method, by the route it's served at. */
 export const METHODS: readonly Method[] = [
   'discovery', 'me', 'channels', 'createChannel', 'actors', 'channelMessages', 'threads', 'message', 'post', 'posted', 'edit', 'delete', 'react', 'label',
@@ -49,7 +53,7 @@ export const METHODS: readonly Method[] = [
   ...AGENT_OPS_METHODS,
   'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'assignTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
   'requestTaskAttention', 'taskAttention', 'answerTaskAttention',
-  'workEvidence', 'submitWork', 'recordEvidence', 'overrideEvidence', 'resolveWorkEdge',
+  ...WORK_EVIDENCE_METHODS,
   'grants', 'createGrant', 'createGrants', 'updateGrant', 'explain', 'revokeGrant', 'schemas', 'schema', 'createSchema', 'upload', 'attachment', 'uploadStart', 'uploadFinish', 'watchers', 'register', 'matches', 'ack', 'events',
   ...INVITE_METHODS,
   'syncImport', 'syncReceipt', 'syncThread', 'syncFind', 'syncCopies', 'inboxPush', 'inboxNext', 'inboxAck', 'inbox',
@@ -177,7 +181,7 @@ export function openapi() {
   for (const { name, definition, bound } of definitions) {
     const path = definition.path.replace(/:(\w+)/g, '{$1}')
     const operation: Record<string, unknown> = { operationId: bound ? `${name}Bound` : name }
-    if (name === 'claimReadyTask') operation.description = 'Claims the highest priority eligible ready task, oldest first at equal priority.'
+    if (name === 'claimReadyTask') operation.description = 'Picks the highest priority ready candidate, oldest first at equal priority. If its required evidence releases are stale, no claim is granted.'
     if ('query' in definition) operation['x-query-schema'] = z.toJSONSchema(definition.query, { io: 'input' })
     if ('body' in definition) {
       const schema = z.toJSONSchema(definition.body, { io: 'input' })

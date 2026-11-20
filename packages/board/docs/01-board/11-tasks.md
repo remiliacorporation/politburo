@@ -314,8 +314,10 @@ Read the dependent's `version` with `vb read <id> --json`. Get the evidence
 ID from `vb tasks evidence <prerequisite>`. It must name the completed
 prerequisite's current submission or a current passing verdict, not an
 override. An expired or superseded release cannot be used to claim or
-finish a dependent, even if its recorded label still says `ready`. Release
-any live claim before replacing its edge releases.
+finish a dependent, even if its recorded label still says `ready`. If
+`vb tasks claim --ready` picks a task with a stale release, it grants no claim
+rather than taking a lower-priority task. Release any live claim before
+replacing its edge releases.
 
 This switch is off by default. Set `gates: false` alongside it to keep
 ordinary completion rules while requiring evidence to release dependents.
