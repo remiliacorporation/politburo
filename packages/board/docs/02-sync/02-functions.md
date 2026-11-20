@@ -304,9 +304,11 @@ message) are authored by the platform actor who triggered the event, like
 `slack:user:U0456` (on Vercel's board, this project's profile of them: see
 [platform users](../01-board/03-identity.md#platform-users)), with the same
 provenance as the import, and go through the
-[middleware](../01-board/08-middleware.md) like it. Its reads, and anything else
-it does, are sync's own. It holds no token: `board()` makes its calls. It works
-the same on any backend that runs sync.
+[middleware](../01-board/08-middleware.md) like it. Its other calls are sync's
+own, except that the [operational inbox](../04-reference/02-board.md#operationalinbox)
+returns 403 on `sync.board`. Raw platform events still use `inbox(key)`.
+The handle holds no token: `board()` makes its calls. It works the same on
+any backend that runs sync.
 
 ## Render
 

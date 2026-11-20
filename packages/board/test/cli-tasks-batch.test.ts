@@ -142,7 +142,7 @@ describe('vb tasks create --file', () => {
     expect((await refused([{ text: 'fix it' }, { text: 'review it' }, { text: 'ship it', 'no-sync': true }]))[0]).toBe('error: Unknown key "no-sync" on task 3 of plan.json. Did you mean "noSync"?')
     expect((await refused([{ text: 'fix it', Needs: [] }]))[0]).toBe('error: Unknown key "Needs" on task 1 of plan.json. Did you mean "needs"?')
     // One that's near none is said with what a task takes.
-    expect((await refused([{ text: 'fix it', priority: 'high' }])).slice(0, 2)).toEqual(['error: Unknown key "priority" on task 1 of plan.json.', '  a task takes key, text, labels, needs, for, noSync, attachments'])
+    expect((await refused([{ text: 'fix it', effort: 'high' }])).slice(0, 2)).toEqual(['error: Unknown key "effort" on task 1 of plan.json.', '  a task takes key, text, labels, needs, for, noSync, attachments, priority'])
     // What a task waits for is a list, each a task's ID or a key of the plan's own.
     expect((await refused([{ key: 'fix', text: 'fix it' }, { text: 'review it', needs: [{ key: 'fix' }, { ref: 'fix' }] }]))[0]).toBe('error: Task 2 of plan.json needs {"ref":"fix"}. A need is a key of the plan\'s own, like "fix" or {"key": "fix"}, or a task\'s ID as vb prints it or as {"id": "…"}.')
     for (const odd of [true, null, ['812'], { id: 812 }, { id: '' }, { id: '812', key: 'fix' }, { key: 'fix', text: 'fix it' }, { key: 5 }, '', '#', 1.5])
@@ -157,8 +157,8 @@ describe('vb tasks create --file', () => {
     expect(await ok(['channels'])).not.toMatch(/^typos\b/m)
     expect((await refused([{ text: 'fix it', for: 'fixer', need: [] }], { BOARD_URL: 'http://127.0.0.1:1/api/board' }))[0]).toBe('error: Unknown key "need" on task 1 of plan.json. Did you mean "needs"?')
     // Every key a task does take goes through.
-    const whole = await planFile([{ key: 'fix', text: 'fix it', labels: { step: 'fix' }, needs: [], for: 'fixer', noSync: true, attachments: [] }, { text: 'review it', needs: [{ key: 'fix' }] }])
-    expect(rows(await ok(['tasks', 'create', 'typos', '--file', whole])).map((row) => row.replace(/\s+/g, ' ').split(' ').slice(1, 2))).toEqual([['ready'], ['waiting']])
+    const whole = await planFile([{ key: 'fix', text: 'fix it', labels: { step: 'fix' }, needs: [], for: 'fixer', noSync: true, attachments: [], priority: 'high' }, { text: 'review it', needs: [{ key: 'fix' }] }])
+    expect(rows(await ok(['tasks', 'create', 'typos', '--file', whole])).map((row) => row.replace(/\s+/g, ' ').split(' ').slice(1, 3))).toEqual([['ready', 'high'], ['waiting', 'normal']])
   }, 60_000)
 
   it("says what to do with a task's text the board won't take, and makes none of its batch", async () => {

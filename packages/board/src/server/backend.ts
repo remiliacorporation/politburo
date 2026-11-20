@@ -9,6 +9,7 @@ import type { Access } from './access.ts'
 import type { Granted, Known, StoredGrant } from './auth.ts'
 import type { Board } from './board.ts'
 import type { Decided } from './policy.ts'
+import type { AgentOpsMethod, OperationalInboxMethod } from './routing.ts'
 import type { WatcherContext } from './watcher.ts'
 import type { WriteOrigin } from './origin.ts'
 
@@ -94,6 +95,8 @@ export type BoardBinding = {
   team: string | null
   /** Whether to make the board `name` names when the team has none by that name: `board({ ensure })`, true unless it says false. */
   ensure: boolean
+  /** Start a new board paused. A backend that uses another board leaves this unread. */
+  initiallyPaused: boolean
   /** What runs on this board's events, by ID: this project's watchers, and sync's outbound at `SYNC` when it syncs. */
   subscriptions: Record<string, Subscription>
   /**
@@ -139,6 +142,8 @@ export type BoardBinding = {
    * snapshot, so what it checks is what it appends to.
    */
   accessNow(principal: Known, grants?: readonly StoredGrant[]): Promise<Access | null>
+  /** The inbox roles board() explicitly configured for a verified principal. */
+  inboxRolesFor?(principal: string): readonly string[]
   /** Which grants, or which rule, decide `channel` for a principal under board()'s `access`, and what they give: what `explain` answers. */
   explain(principal: Known, channel: string): Promise<Decided>
   /** The board's own Vercel project and team, as board() knows them: what discovery names, for clients to mint tokens with. */
@@ -169,9 +174,14 @@ export type Trust = {
 /**
  * Where a board lives. board() serves the protocol over HTTP: it routes, validates, verifies each
  * caller, applies `access`, runs the middleware, watchers, and sync, and calls these with the caller
- * it verified. A backend stores and answers, honoring what each caller may do.
+ * it verified. A backend stores and answers, honoring what each caller may do. Backends without
+ * the agent registry or operational inbox can omit their methods; board() answers 501 for them.
  */
-export interface Backend extends ProtocolMethods {
+export interface Backend extends Omit<ProtocolMethods, AgentOpsMethod | OperationalInboxMethod | 'status' | 'pause' | 'resume'>, Partial<Pick<ProtocolMethods, AgentOpsMethod | OperationalInboxMethod>> {
+  /** Optional work admission control. Unimplemented methods answer 501 `no_network_pause`. */
+  status?: ProtocolMethods['status']
+  pause?: ProtocolMethods['pause']
+  resume?: ProtocolMethods['resume']
   /** Routes of its own, beside the protocol: one at a protocol route's path takes its place. */
   readonly routes: readonly BackendRoute[]
   /**

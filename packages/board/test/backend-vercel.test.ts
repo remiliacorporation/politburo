@@ -139,7 +139,9 @@ describe('vercel()', () => {
       'tasks: lets a profile change only the tasks it made, and its principal all of them': 'passed',
       'tasks: takes label in its channel to claim a task: a caller narrowed to reading and posting claims none': 'passed',
       "tasks: takes read in a prerequisite's channel to wait for it: a caller narrowed out of it makes no task that needs it": 'passed',
-      'tasks: claims the oldest ready task in a channel or its subtree that has the labels asked for, and waits for one': 'passed',
+      'tasks: claims the oldest ready task at equal priority in a channel or its subtree, and waits for one': 'passed',
+      'tasks: keeps task priority and claims highest priority first, then oldest': 'passed',
+      'tasks: lets task writers set priority and live claims only lower it': 'passed',
       'tasks: shows a feed that filters on board.task=ready a task becoming ready and being claimed, and never a token': 'passed',
       'tasks: keeps labels under board. its own: a label write or a post that sets one is refused': 'passed',
       // Its other author is a platform's, imported by a sync, which only a deployment runs.
@@ -177,10 +179,22 @@ describe('vercel()', () => {
       "sync: takes an edit of a long message in its sync's inbox, under the longest event ID the protocol allows, and refuses a longer one": 'skipped',
       'sync: hands a sync each message change as a match of its @sync watcher': 'skipped',
       'sync: keeps noSync on a post and a reply, so sync sends neither': 'passed',
+      // The agent registry and operational inbox are not part of Vercel's API.
+      'agents: registers, lists, heartbeats, and retires an agent under its verified binding': 'skipped',
+      'operational-inbox: keeps operational messages private, supersedes by topic, and keeps receipts once': 'skipped',
     })
     // It leaves the grants as it found them.
     expect([...api.grants.keys()]).toEqual(['g1', 'g2', 'g3'])
   }, 30_000)
+
+  it('answers no_operational_inbox for every operational inbox call on Vercel', async () => {
+    const inbox = handleOn(fakeMessageboard()).operationalInbox
+    const unsupported = { status: 501, code: 'no_operational_inbox' }
+    await expect(inbox.send({ to: { role: 'reviewer' }, topic: 'review', text: 'review this' })).rejects.toMatchObject(unsupported)
+    await expect(inbox.read()).rejects.toMatchObject(unsupported)
+    await expect(inbox.ack('1', 'seen')).rejects.toMatchObject(unsupported)
+    await expect(inbox.archive('1')).rejects.toMatchObject(unsupported)
+  })
 
   it("refuses a label under board. before it reaches Vercel's API, as on any backend", async () => {
     const api = fakeMessageboard()

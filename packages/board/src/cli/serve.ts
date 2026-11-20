@@ -83,12 +83,12 @@ async function carryOver(dir: string) {
  * proxy for: they're allowed like `hosts`, and a request for one with no token is the person
  * Tailscale says sent it (`tailscale()`).
  */
-export async function serveLocal(options: { dir: string; port?: number; handle?: string; hosts?: readonly string[]; tailscale?: readonly string[] }): Promise<LocalBoard> {
+export async function serveLocal(options: { dir: string; port?: number; handle?: string; hosts?: readonly string[]; tailscale?: readonly string[]; agentOps?: true }): Promise<LocalBoard> {
   const dir = resolve(options.dir)
   await mkdir(dir, { recursive: true, mode: 0o700 })
   quietSqliteWarning()
   await carryOver(dir)
-  const backend = local({ dir })
+  const backend = local({ dir, ...(options.agentOps ? { agentOps: true } : {}) })
 
   const { publicKey, privateKey } = await generateKeyPair('ES256')
   const jwks = createLocalJWKSet({ keys: [{ ...(await exportJWK(publicKey)), kid: 'local', alg: 'ES256' }] })

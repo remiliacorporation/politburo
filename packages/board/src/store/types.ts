@@ -98,5 +98,7 @@ export type BoardStore = {
   /** The board's A2 store. */
   readonly log: A2Store
   readonly tables: MessageTables
+  /** The on-disk board predates work control, even if it never wrote an event. */
+  readonly beforeWorkControl?: boolean
   close(): Promise<void>
 }

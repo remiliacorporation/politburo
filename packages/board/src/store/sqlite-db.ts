@@ -15,13 +15,27 @@ const bind = (value: unknown) => (typeof value === 'boolean' ? (value ? 1 : 0) :
  * handle to the same file, blocks the thread while it waits for the lock, so
  * a transaction of ours that yielded in between would wait on itself.
  */
-export function sqliteDb(path: string): Db {
+export function sqliteDb(path: string): Db & { beforeWorkControl: boolean } {
   // Loaded only when used, so a board that never opens SQLite never loads it.
   const { DatabaseSync: Database } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
   if (path !== ':memory:') mkdirSync(dirname(resolve(/* turbopackIgnore: true */ path)), { recursive: true })
   const db: DatabaseSync = new Database(path)
   db.exec('pragma busy_timeout = 5000')
-  for (const statement of ddl()) db.exec(statement)
+  // A pre-control board can be empty. Remember whether its schema already existed, before
+  // creating it, so a new startup setting can't retroactively pause it. Serialize first opens.
+  let beforeWorkControl: boolean
+  db.exec('begin immediate')
+  try {
+    const existing = db.prepare("select 1 from sqlite_schema where type = 'table' and name = 'board_positions'").get() !== undefined
+    for (const statement of ddl()) db.exec(statement)
+    db.prepare("insert or ignore into board_meta (key, value) values ('before_work_control', ?)").run(existing ? 'yes' : 'no')
+    beforeWorkControl = db.prepare("select value from board_meta where key = 'before_work_control'").get()?.value === 'yes'
+    db.exec('commit')
+  } catch (error) {
+    db.exec('rollback')
+    db.close()
+    throw error
+  }
 
   const statements = new Map<string, StatementSync>()
   const run = (query: Sql) => {
@@ -38,6 +52,7 @@ export function sqliteDb(path: string): Db {
   }
 
   return {
+    beforeWorkControl,
     all: async (query) => run(query),
     async read(queries) {
       db.exec('begin')

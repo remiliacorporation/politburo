@@ -135,6 +135,28 @@ describe('work evidence through the HTTP backend', () => {
     await denied(second.complete(undefined, { commit }), 409, 'evidence_required')
   })
 
+  it('does not accept evidence for a claim invalidated by a pause', async () => {
+    const { worker, ci, reviewer, operator } = setup()
+    const root = await create(worker)
+    const claim = await worker.tasks.claim(root.id)
+    const completed = await create(worker)
+    const finished = await worker.tasks.claim(completed.id)
+    await finished.submit(commit, artifactRef)
+    await ci.tasks.recordEvidence(completed.id, attest(finished.epoch, 'tests'))
+    await reviewer.tasks.recordEvidence(completed.id, attest(finished.epoch, 'review'))
+    await finished.complete(undefined, { commit })
+    await claim.submit(commit, artifactRef)
+    await operator.pause('stop work')
+    expect((await worker.tasks.evidence(root.id)).submission).toBeNull()
+    expect((await worker.tasks.evidence(completed.id)).submission?.commit).toBe(commit)
+    await operator.resume('resume work')
+    await denied(ci.tasks.recordEvidence(root.id, attest(claim.epoch, 'tests')), 409, 'stale_candidate')
+    await denied(claim.submit(commit, artifactRef), 409, 'claim_lost')
+    const fresh = await worker.tasks.claim(root.id)
+    await fresh.submit(other, artifactRef)
+    expect((await worker.tasks.evidence(root.id)).submission?.commit).toBe(other)
+  })
+
   it('requires a release per edge and rechecks expired, superseded, and deleted evidence at every claim', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     const { host, worker, ci, operator } = setup({ ...policy, gates: false, releaseDependencies: true })
@@ -173,6 +195,11 @@ describe('work evidence through the HTTP backend', () => {
     await held.release()
     await denied(worker.tasks.claim(dependent.id), 409, 'task_waiting')
     expect(await worker.tasks.claim({ channel: 'work' })).toBeNull()
+    await worker.tasks.priority(dependent.id, 'urgent')
+    const fallback = (await worker.tasks.create('work', { text: 'Still eligible', priority: 'low' })).task
+    const fallbackClaim = await worker.tasks.claim({ channel: 'work' })
+    expect(fallbackClaim?.task.id).toBe(fallback.id)
+    await fallbackClaim!.release()
     const reattest = async (verdict: 'pass' | 'fail') => {
       await ci.tasks.recordEvidence(a.id, attest(ap.epoch, 'tests', verdict))
       return (await worker.tasks.evidence(a.id)).evidence[0]!.id

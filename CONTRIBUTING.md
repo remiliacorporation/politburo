@@ -4,6 +4,12 @@
 and the CLI (`board`, alias `vb`). [SPEC.md](./SPEC.md) is the design; read it
 before changing behavior.
 
+## Try the local development loop
+
+Use the [local task and review walkthrough](./LOCAL-DEVELOPMENT.md) to build
+this checkout's CLI and hand a disposable task to an external worker. No hosted
+board or deployment is needed.
+
 ## Running the tests
 
 The tests need no credentials and create nothing outside your machine.

@@ -55,8 +55,13 @@ export type MountOptions = Partial<A2Options> & Omit<BoardOptions, 'backend' | '
 
 /** A board on the local board's engine: each option to the one that takes it. It has the engine's extras, for tests to look inside. */
 export function mount(options: MountOptions) {
-  const { store, scheduler, blob, auth, workEvidence, ...rest } = options
-  const backend = a2({ store: store ?? memory(), ...(scheduler ? { scheduler } : {}), ...(blob ? { blob } : {}), workEvidence })
+  const { store, scheduler, blob, auth, attentionResponders, agentOps, workEvidence, ...rest } = options
+  const backend = a2({
+    store: store ?? memory(), ...(scheduler ? { scheduler } : {}), ...(blob ? { blob } : {}),
+    ...(attentionResponders === undefined ? {} : { attentionResponders }),
+    ...(agentOps === undefined ? {} : { agentOps }),
+    workEvidence,
+  })
   const { url, ...given } = rest
   const created = board({
     ...given,
@@ -113,9 +118,9 @@ export function testBoard(options: MountOptions = {}) {
  * A board as `local({ memory: true })` keeps one, with its scheduler in this process, whose tokens
  * come from a local test issuer: what a test that needs only a board, end to end, runs against.
  */
-export function localBoard(options: Omit<BoardOptions, 'backend' | 'fetch'> & { auth?: OidcTokensOptions; workEvidence?: A2Options['workEvidence'] } = {}) {
-  const { auth, url, workEvidence, ...rest } = options
-  const backend = local({ memory: true, ...(workEvidence ? { workEvidence } : {}) })
+export function localBoard(options: Omit<BoardOptions, 'backend' | 'fetch'> & { auth?: OidcTokensOptions; agentOps?: boolean; workEvidence?: A2Options['workEvidence'] } = {}) {
+  const { auth, url, agentOps, workEvidence, ...rest } = options
+  const backend = local({ memory: true, ...(agentOps === undefined ? {} : { agentOps }), ...(workEvidence ? { workEvidence } : {}) })
   const created = board({
     ...rest,
     backend,

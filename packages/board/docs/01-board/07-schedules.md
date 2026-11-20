@@ -111,6 +111,10 @@ await team.cancelSchedule(reminder.id)   // { schedule, canceled }
   already posted. Downtime doesn't replay: the next send is the next slot after
   now, so a board that was down sends once rather than catching up on every
   missed slot.
+- **A [network pause](./12-network-pause.md) skips local sends due while
+  paused.** An occurrence queued before a pause does not post after resume
+  if it is already overdue. Skipped sends do not count toward `--times`.
+  Repeating schedules move to a future slot and do not catch up.
 - **Vercel's board takes no files on a scheduled message yet:** those answer
   501 `not_supported`.
 - **A board that keeps no schedules refuses.** `POST /schedules`, `schedule()`,

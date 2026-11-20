@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { ArtifactRef, AttestationGate, Commit, EvidenceExpiry, EvidenceReason, Round, Verdict, type Gate } from '../contract/evidence.ts'
 import {
   ActorId,
+  AgentGeneration,
+  AgentHarness,
+  AgentRole,
   AttachmentId,
   ATTACHMENTS_PER_MESSAGE_MAX,
   CHANNEL_PATTERN_MAX,
@@ -14,6 +17,7 @@ import {
   NewLabels,
   MESSAGE_TEXT_MAX,
   MessageText,
+  Ref,
   SentText,
   platformAvatar,
   storable,
@@ -21,21 +25,38 @@ import {
   EDITED_HOLD,
   SentTaskHoldKind,
   SentTaskNote,
+  TaskNote,
   TaskState,
+  TaskPriority,
+  type Author,
 } from '../contract/schemas.ts'
+import { AttentionAnswerBody, RequestAttentionBody } from '../contract/attention.ts'
 import { ExternalAuthor, ExternalEvent, ExternalTarget, Link as LinkSchema, LINKS_PER_MESSAGE_MAX, MENTIONED_PER_MESSAGE_MAX, Origin } from '../contract/external.ts'
-import type { BoardEvent } from '../contract/events.ts'
+import type { BoardEvent, PublicBoardEvent } from '../contract/events.ts'
+import { OperationalRecipient, OperationalStatus, OperationalTopic } from '../contract/operational-inbox.ts'
 import type { Link } from '../contract/external.ts'
 import type { Actor, Channel, ExternalCopy, Message, Task } from '../contract/folds.ts'
 import type { Via } from '../contract/profiles.ts'
 import type { AccessSummary, Permission, WrittenCan } from '../server/access.ts'
 
-/**
- * A message's, schedule's, or cursor's ID: a string clients pass back as they got it, and never
- * parse, compare, or count with. Each backend picks its own; a board on `local()` writes decimals,
- * and `s12` for a schedule.
- */
-export const Ref = z.string().min(1).max(128)
+export { Ref }
+export { AttentionAnswerBody, AttentionDraft, AttentionReceipt, AttentionView, RequestAttentionBody } from '../contract/attention.ts'
+export type { AgentRole } from '../contract/schemas.ts'
+
+export const ListOpsAgentsQuery = z.strictObject({ channel: ChannelPath })
+export const RegisterOpsAgentBody = z.strictObject({
+  channel: ChannelPath,
+  role: AgentRole,
+  parent: Ref.nullable().optional(),
+  harness: AgentHarness,
+  ifGeneration: AgentGeneration.optional(),
+})
+export const OpsAgentGenerationBody = z.strictObject({ generation: AgentGeneration })
+
+export type RegisterOpsAgentInput = z.input<typeof RegisterOpsAgentBody>
+export type OpsAgentGenerationInput = z.input<typeof OpsAgentGenerationBody>
+export type Agent = BoardEvent<'ops.agent_changed'>['payload']['agent']
+export type AgentView = Agent
 
 /** The message's `revision` as it was read: if it's been edited or deleted since, 409 `revision_conflict`. */
 const Revision = z.number().int().positive()
@@ -187,6 +208,31 @@ export const PostBody = z
 const Duration = z.string().regex(/^\d+(\.\d+)?(s|m|h|d)$/, 'durations look like 30s, 30m, 12h, or 1d')
 const Instant = z.string().datetime({ offset: true })
 
+export const SendOperationalMessageBody = z.strictObject({
+  to: OperationalRecipient,
+  topic: OperationalTopic,
+  text: MessageText,
+  expiresAt: Instant.optional(),
+})
+export const AckOperationalMessageBody = z.strictObject({ status: OperationalStatus })
+
+export type SendOperationalMessageInput = z.input<typeof SendOperationalMessageBody>
+export type { OperationalRecipient, OperationalStatus }
+
+/** A private message and the calling principal's receipts for it. */
+export type OperationalMessage = {
+  id: string
+  to: OperationalRecipient
+  topic: string
+  text: string
+  by: Author
+  sentAt: string
+  expiresAt: string | null
+  seenAt: string | null
+  actedAt: string | null
+  archivedAt: string | null
+}
+
 /**
  * A message to post later, as the caller: once (`in` or `at`), or repeating
  * (`every`, starting `at` or `in` from now, or one `every` from now), until
@@ -278,6 +324,7 @@ export const CreateTaskBody = z
     /** How many tasks one may wait for is the backend's to say. */
     needs: z.array(Ref).optional(),
     for: ActorId.nullable().optional(),
+    priority: TaskPriority.optional().describe('Defaults to normal.'),
     claim: z.boolean().optional(),
     lease: Lease.optional(),
     ...ClaimToken,
@@ -323,6 +370,7 @@ export const CreateTasksBody = z.object({
           /** How many tasks one may wait for is the backend's to say. */
           needs: z.array(z.union([Ref, z.object({ key: TaskKey }).strict()])).optional(),
           for: ActorId.nullable().optional(),
+          priority: TaskPriority.optional().describe('Defaults to normal.'),
         })
         .refine((task) => task.text.trim().length > 0 || (task.attachments?.length ?? 0) > 0, { message: 'message text is empty', path: ['text'] })
         .refine((task) => storable(task.text), { message: 'message text has a NUL character or a lone surrogate', path: ['text'] }),
@@ -372,8 +420,9 @@ export const TasksQuery = z.object({
 export const ClaimTaskBody = z.object({ lease: Lease.optional(), ...ClaimToken }).optional()
 
 /**
- * Claims the oldest ready task in `channel` that has every label in `label`: one assigned to the
- * caller first, then an unassigned one it owns, or whose owner `from` names by ID. `wait`
+ * Claims the highest priority eligible ready task in `channel`, oldest first at equal priority.
+ * It must have every label in `label` and be assigned to the caller, or unassigned and owned by
+ * the caller or an owner `from` names by ID. `wait`
  * holds the request up to that many seconds for one.
  */
 export const ClaimReadyTaskBody = z.object({
@@ -407,7 +456,20 @@ export const BlockTaskBody = z
 export const AssignTaskBody = z.object({ for: ActorId.nullable() })
 /** The tasks it waits for now, in place of what it waited for: none, for a task that waits for nothing. How many it may wait for is the backend's to say. */
 export const TaskNeedsBody = z.object({ needs: z.array(Ref) })
+/** The owner or manage sets priority; a live claim can only lower it. */
+export const TaskPriorityBody = z.object({
+  priority: TaskPriority,
+  epoch: Claimed.epoch.optional(),
+  token: Claimed.token.optional(),
+}).refine((body) => (body.epoch === undefined) === (body.token === undefined), { message: 'a claim is its `epoch` and its `token`: pass both, or neither' })
 export const CancelTaskBody = z.object({ reason: SentTaskNote })
+
+/** Why a person is pausing or resuming the board. The authority supplies the audit author. */
+export const ControlBody = z.strictObject({ reason: TaskNote })
+
+/** A board's work admission and its pause fence. The epoch advances on each transition to paused. */
+export const BoardStatus = z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative() })
+export type BoardStatus = z.infer<typeof BoardStatus>
 
 const CanGrant = z.union([z.literal('all'), z.array(z.string().min(1).max(16)).max(8)])
 const ClaimValue = z.string().min(1).max(1000)
@@ -911,7 +973,10 @@ export type SchemaView = {
  * owner's actors made it one (`by`, who changes it as its owner), what it waits for, and who holds
  * it until when. A claim's token shows nowhere but in the answer that made it.
  */
-export type TaskView = Omit<Task, 'needs' | 'claim' | 'evidence' | 'releases'> & {
+export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention' | 'evidence' | 'releases'> & {
+  priority: TaskPriority
+  /** The current attention request, when the task has one. */
+  attentionId?: string
   /** The tasks it waits for, by their IDs. */
   needs: string[]
   /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
@@ -983,7 +1048,7 @@ type PayloadView<P> = {
 }
 
 /** A board event as subscribers get it. Checking `type` narrows `payload` to that event's. */
-export type BoardEventView = BoardEvent extends infer E
+export type BoardEventView = PublicBoardEvent extends infer E
   ? E extends { type: infer T; payload: infer P }
     ? {
         /** Where this event is in the board's order: pass it as `after` to read on from here. */
@@ -1018,6 +1083,10 @@ export type Discovery = {
    */
   wake_by_path?: boolean
   workEvidence?: { version: 1; gates: Gate[]; releaseDependencies: boolean }
+  /** Whether this board is configured to keep structured task attention requests. */
+  task_attention?: true
+  /** This board opts into the fork's agent registry. */
+  agent_ops?: true
 }
 
 /**
@@ -1207,6 +1276,12 @@ export const routes = {
   /** Where the board is, its project, and its sync entries. No token. */
   discovery: { method: 'GET', path: '/' },
   me: { method: 'GET', path: '/me' },
+  /** The board's current work admission and pause epoch. */
+  status: { method: 'GET', path: '/control' },
+  /** Pauses work admission; requires a person with global manage. */
+  pause: { method: 'POST', path: '/control/pause', body: ControlBody },
+  /** Resumes work admission; requires a person with global manage. */
+  resume: { method: 'POST', path: '/control/resume', body: ControlBody },
   channels: { method: 'GET', path: '/channels', query: ChannelsQuery },
   /** Makes a channel before anything posts to it: needs `read` and `post` there. One that's there already is left as it is. */
   createChannel: { method: 'POST', path: '/channels', body: CreateChannelBody },
@@ -1234,6 +1309,10 @@ export const routes = {
   schedules: { method: 'GET', path: '/schedules', query: SchedulesQuery },
   /** Its creator, or manage in its channel, may cancel a schedule. Canceling one that's done is a no-op. */
   cancelSchedule: { method: 'POST', path: '/schedules/:id/cancel' },
+  listOpsAgents: { method: 'GET', path: '/ops/agents', query: ListOpsAgentsQuery },
+  registerOpsAgent: { method: 'POST', path: '/ops/agents', body: RegisterOpsAgentBody },
+  heartbeatOpsAgent: { method: 'POST', path: '/ops/agents/:agent/heartbeat', body: OpsAgentGenerationBody },
+  retireOpsAgent: { method: 'POST', path: '/ops/agents/:agent/retire', body: OpsAgentGenerationBody },
   /** Tasks, oldest first: open ones unless `state` says otherwise. */
   tasks: { method: 'GET', path: '/tasks', query: TasksQuery },
   /** Starts a thread as a task (`post` there, and `label` for its labels), or makes the thread `re` roots one (`label` there). */
@@ -1242,7 +1321,7 @@ export const routes = {
   createTasks: { method: 'POST', path: '/tasks/batch', body: CreateTasksBody },
   /** The caller's own batch made under the `id` it gave, its tasks as they are now: for telling a retry before making anything. */
   createdTasks: { method: 'GET', path: '/tasks/batch/:id', query: CreatedTasksQuery },
-  /** Claims the oldest ready task in a channel or subtree: `label` where it is. Answers `{ task: null }` when none is. */
+  /** Claims the next eligible task in a channel or subtree by priority, then age. Answers `{ task: null }` when none is ready. */
   claimReadyTask: { method: 'POST', path: '/tasks/claim', body: ClaimReadyTaskBody },
   /** Claims a task: `label` in its channel. Its answer's `claim` goes on what the claim does next. */
   claimTask: { method: 'POST', path: '/tasks/:id/claim', body: ClaimTaskBody },
@@ -1253,12 +1332,16 @@ export const routes = {
   failTask: { method: 'POST', path: '/tasks/:id/fail', body: FailTaskBody },
   /** Holds a task for a person: its claim while it's claimed, its owner or `manage` in its channel otherwise. */
   blockTask: { method: 'POST', path: '/tasks/:id/block', body: BlockTaskBody },
+  requestTaskAttention: { method: 'POST', path: '/tasks/:id/attention', body: RequestAttentionBody },
+  taskAttention: { method: 'GET', path: '/tasks/:id/attention' },
+  answerTaskAttention: { method: 'POST', path: '/tasks/:id/attention/:requestId/answer', body: AttentionAnswerBody },
   /** What a task's owner does, or `manage` in its channel. */
   unblockTask: { method: 'POST', path: '/tasks/:id/unblock' },
   reopenTask: { method: 'POST', path: '/tasks/:id/reopen' },
   assignTask: { method: 'POST', path: '/tasks/:id/assign', body: AssignTaskBody },
   /** Replaces what a task waits for, while no one holds it and it isn't finished. */
   setTaskNeeds: { method: 'POST', path: '/tasks/:id/needs', body: TaskNeedsBody },
+  setTaskPriority: { method: 'POST', path: '/tasks/:id/priority', body: TaskPriorityBody },
   cancelTask: { method: 'POST', path: '/tasks/:id/cancel', body: CancelTaskBody },
   workEvidence: { method: 'GET', path: '/work/v1/tasks/:id/evidence' },
   submitWork: { method: 'POST', path: '/work/v1/tasks/:id/submit', body: SubmitWorkBody },
@@ -1282,6 +1365,12 @@ export const routes = {
   createSchema: { method: 'POST', path: '/schemas', body: SchemaBody },
   /** The caller's own post with the client ID it gave: what `POST /messages` answered, for telling a retry before posting. */
   posted: { method: 'GET', path: '/posts/:id' },
+  /** Sends a private operational message. Requires board-wide post. */
+  sendOperationalMessage: { method: 'POST', path: '/operational-inbox', body: SendOperationalMessageBody },
+  /** The caller's latest active operational messages, newest first. Requires board-wide read. */
+  readOperationalInbox: { method: 'GET', path: '/operational-inbox' },
+  ackOperationalMessage: { method: 'POST', path: '/operational-inbox/:id/ack', body: AckOperationalMessageBody },
+  archiveOperationalMessage: { method: 'POST', path: '/operational-inbox/:id/archive' },
   /** Raw platform events in a sync key's inbox, newest first: the caller's own, and the board's with `sync` everywhere. */
   inbox: { method: 'GET', path: '/inbox/:key', query: InboxQuery },
   /** Pushes platform events into the caller's inbox for a sync key, deduplicated by their platform IDs. */

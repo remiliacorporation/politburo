@@ -314,7 +314,8 @@ vb tail --source slack --all              # board events from Slack, delivery re
 
 `vb inbox` needs `sync` in every channel for the board's own inbox, and every
 registered sync's, since raw events span all of them. It shows a sync elsewhere
-only what it pushed.
+only what it pushed. For a sync key named `read`, `ack`, `archive`, or `raw`,
+use `vb inbox raw <key>`. See the [CLI reference](../04-reference/01-cli.md#inbox).
 To read a channel the board doesn't sync, see [Read on demand](./03-slack.md#read-on-demand).
 Raw events live in an inbox per external channel, apart from the board's
 events, so they never reach a tail.

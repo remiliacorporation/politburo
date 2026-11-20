@@ -1,5 +1,5 @@
 import { everyChannel } from '../client/channels.ts'
-import { INBOX_EVENT_ID_MAX, type Explanation, type GrantView, type Me, type MessageView, type RegistrationView } from '../api/routes.ts'
+import { INBOX_EVENT_ID_MAX, type AttentionDraft, type Discovery, type Explanation, type GrantView, type Me, type MessageView, type RegistrationView } from '../api/routes.ts'
 import { BoardError, type ExplainPrincipal, type TaskInBatch, type TaskOptions } from '../client/client.ts'
 import { block } from '../contract/blocks.ts'
 import { canonical } from '../contract/data-schemas.ts'
@@ -10,14 +10,18 @@ import type { Board } from '../server/board.ts'
  * Checks that a board speaks the protocol, through a handle on it (`conformance(board())`), as
  * `vb` and agents use it: every board answers all of it. A board may keep no schedules, tasks, or
  * files, or no index to find threads by what their messages say or who wrote them, and says so with a
- * 501, which the kit reports as not kept here. It writes to one channel
+ * 501, which the kit reports as not kept here. A board may also answer 501 `no_operational_inbox`
+ * to the inbox read. Where supported, the kit sends short-lived operational messages to the run's
+ * own principal and archives the latest. It writes ordinary messages to one channel
  * (`conformance` by default), and for the tasks checks that need two, to `tasks` under it, keeps
  * every post on the board, and deletes what it posted. The one
  * schema it registers, `conformance@1`, stays: a schema version is never removed.
+ * On boards that opt into agent operations, the kit retires its test agent;
+ * the disabled entry stays in the roster.
  */
 
 /** What a check is about, for the report's headings. */
-export type CheckGroup = 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-evidence' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'
+export type CheckGroup = 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'network-pause' | 'work-evidence' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
 
 export type CheckResult = {
   group: CheckGroup
@@ -37,6 +41,8 @@ export type ConformanceReport = {
 export type ConformanceOptions = {
   /** Where it posts. Default `conformance`. */
   channel?: string
+  /** Also check network pause. Use an isolated, running board: a pause fences all existing claims. */
+  networkPause?: boolean
   /**
    * The same board, with this run's credential and an `x-board-can` header that narrows it to
    * `can` (`conformance=read`), as a proxy holding the credential sends it: the checks of a
@@ -161,12 +167,15 @@ type Context = {
   principals: Principals
   /** The board's own Vercel team, as its discovery names it. */
   team: string | null
-  workEvidence?: Awaited<ReturnType<Board['discovery']>>['workEvidence']
+  workEvidence?: Discovery['workEvidence']
+  agentOps: boolean
 }
 
 type Check = {
   group: CheckGroup
   name: string
+  /** Omit the check unless advertised. Once advertised, a 501 is a failure. */
+  requires?: 'task_attention'
   run: (ctx: Context) => Promise<void | string>
   /** This check needs to complete a task with only the run's own principal. */
   needsUngatedCompletion?: true
@@ -418,7 +427,7 @@ async function task(ctx: Context, text: string, options: TaskOptions & { labels?
 
 /** Several tasks of this run's, made in one write: the run deletes their roots at the end, as it does a task's. */
 async function taskBatch(ctx: Context, tasks: TaskInBatch[], opts: { id?: string } = {}) {
-  const made = await ctx.board.tasks.createMany(ctx.channel, tasks.map((one) => ({ ...one, labels: ctx.labels, noSync: true })), opts)
+  const made = await ctx.board.tasks.createMany(ctx.channel, tasks.map((one) => ({ ...one, labels: { ...one.labels, ...ctx.labels }, noSync: true })), opts)
   ctx.posted.push(...made.map((root) => root.id))
   return made
 }
@@ -460,6 +469,48 @@ function lostRace(racing: PromiseSettledResult<unknown>[]) {
     const error = result.reason as unknown
     check(error instanceof BoardError && error.status === 409 && error.code === 'task_claimed', `a claim that lost the race should be 409 task_claimed, got ${error instanceof BoardError ? `${error.status} ${error.code}` : String(error)}`)
   }
+}
+
+const NETWORK_PAUSE: Check = {
+  group: 'network-pause',
+  name: 'pauses claims without stopping collaboration, and resumes without reviving old claims',
+  async run(ctx) {
+    const board = ctx.board
+    const start = await board.status().catch((error: unknown) => {
+      if (error instanceof BoardError && error.status === 501 && error.code === 'no_network_pause') return null
+      throw error
+    })
+    if (start === null) return 'not kept here: this board does not support network pause'
+    check(start.paused === false && Number.isSafeInteger(start.pauseEpoch) && start.pauseEpoch >= 0, 'network pause checks need a running board with a valid pause epoch')
+    const { task: held } = await task(ctx, 'conformance: claimed before the pause')
+    const old = await board.tasks.claim(held.id)
+    const labels = { ...ctx.labels, queue: 'network-pause' }
+    try {
+      const paused = await board.pause('conformance: check the network pause')
+      same(paused.paused, true, 'status returned by pause')
+      same(paused.pauseEpoch, start.pauseEpoch + 1, 'pause epoch after pause')
+      const read = await board.status()
+      same(read.paused, true, 'status read while paused')
+      same(read.pauseEpoch, paused.pauseEpoch, 'pause epoch read while paused')
+      const { task: queued } = await task(ctx, 'conformance: queued during the pause', { labels })
+      const note = await reply(ctx, queued.id, 'conformance: human replies still land')
+      const thread = await board.thread(queued.id)
+      same(thread.message.id, queued.id, 'task read while paused')
+      check(thread.replies.some((message) => message.id === note.id), 'a human reply should be visible while paused')
+      await rejects(board.tasks.claim(queued.id), 409, 'board_paused', 'claiming by ID while paused')
+      await rejects(board.tasks.claim({ channel: ctx.channel, label: labels }), 409, 'board_paused', 'claiming the next task while paused')
+      await rejects(task(ctx, 'conformance: cannot create and claim during the pause', { claim: true }), 409, 'board_paused', 'creating and claiming while paused')
+      const resumed = await board.resume('conformance: check resuming')
+      same(resumed.paused, false, 'status returned by resume')
+      same(resumed.pauseEpoch, paused.pauseEpoch, 'pause epoch after resume')
+      await rejects(old.complete(), 409, 'claim_lost', 'settling with the pre-pause claim after resume')
+      const fresh = await board.tasks.claim({ channel: ctx.channel, label: labels })
+      same(fresh?.task.id, queued.id, 'a fresh claim after resume')
+      await fresh?.release()
+    } finally {
+      if ((await board.status()).paused) await board.resume('conformance: restore the running board')
+    }
+  },
 }
 
 const CHECKS: Check[] = [
@@ -1529,6 +1580,38 @@ const CHECKS: Check[] = [
   },
   {
     group: 'tasks',
+    name: 'opens structured attention through a claim, and the hold cannot be unblocked or settled through the old claim',
+    requires: 'task_attention',
+    async run(ctx) {
+      const { task: root } = await task(ctx, 'conformance: a task to hold for structured attention')
+      const supporting = await ctx.board.reply(root.id, 'conformance: the evidence for the request')
+      ctx.posted.push(supporting.id)
+      same((await ctx.board.tasks.attention(root.id)).attention, null, 'attention on a new task')
+      const claim = await ctx.board.tasks.claim(root.id, { lease: 60 })
+      const draft: AttentionDraft = {
+        kind: 'needs_input', question: 'conformance: proceed?', context: 'conformance: request review',
+        options: [
+          { id: 'go', label: 'Proceed', consequence: 'Resume work', next: 'resume' },
+          { id: 'stop', label: 'Stop', consequence: 'Do not continue', next: 'fail' },
+        ],
+        evidence: [{ message: supporting.id, revision: supporting.revision }],
+        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), revision: root.revision, commit: 'a'.repeat(40),
+      }
+      const opened = await ctx.board.tasks.ask(root.id, { ...draft, claim: { epoch: claim.epoch, token: claim.token } })
+      isRef(opened.attention.id, 'the request ID')
+      same(opened.attention.status, 'pending', 'the new request')
+      same(opened.attention.by.actor, ctx.me.actor, 'the requester')
+      same(opened.task.task?.state, 'blocked', 'the task with an attention request')
+      same(opened.task.task?.attentionId, opened.attention.id, "the task's current request ID")
+      same(opened.task.task?.claim, null, 'the claim after it requested attention')
+      check(!show(opened).includes(claim.token), 'opening attention should not show the claim token')
+      alike((await ctx.board.tasks.attention(root.id)).attention, opened.attention, 'the current request, read back')
+      await rejects(claim.complete(), 409, 'claim_lost', 'completing through the claim that requested attention')
+      await rejects(ctx.board.tasks.unblock(root.id), 409, 'attention_required', 'unblocking a structured hold')
+    },
+  },
+  {
+    group: 'tasks',
     name: 'keeps a task assigned to a profile for that actor alone',
     run: async (ctx) => {
       // The same credential, as a profile of its own: its actor, under the run's principal.
@@ -1639,7 +1722,7 @@ const CHECKS: Check[] = [
   },
   {
     group: 'tasks',
-    name: 'claims the oldest ready task in a channel or its subtree that has the labels asked for, and waits for one',
+    name: 'claims the oldest ready task at equal priority in a channel or its subtree, and waits for one',
     run: async (ctx) => {
       const queue = { ...ctx.labels, queue: `q${ctx.labels.conformance}` }
       const { task: older } = await task(ctx, 'conformance: the older of two', { labels: queue })
@@ -1659,6 +1742,54 @@ const CHECKS: Check[] = [
       same(got?.task.id, older.id, 'the task a waiting claim got')
       await got!.release()
       await second!.release()
+    },
+  },
+  {
+    group: 'tasks',
+    name: 'keeps task priority and claims highest priority first, then oldest',
+    run: async (ctx) => {
+      const labels = { ...ctx.labels, queue: 'priority' }
+      const { task: normal } = await task(ctx, 'conformance: default priority', { labels })
+      await taskBatch(ctx, [
+        { text: 'conformance: low priority', priority: 'low', labels },
+        { text: 'conformance: high priority', priority: 'high', labels },
+        { text: 'conformance: lowest priority', priority: 'lowest', labels },
+        { text: 'conformance: urgent priority', priority: 'urgent', labels },
+        { text: 'conformance: urgent priority again', priority: 'urgent', labels },
+      ])
+      same((await ctx.board.thread(normal.id)).message.task?.priority, 'normal', 'the default priority on a task read')
+      const listed = await ctx.board.tasks.list({ channel: ctx.channel, label: Object.entries(labels).map(([key, value]) => `${key}=${value}`) })
+      alike(listed.tasks.map(({ message }) => message.task?.priority), ['normal', 'low', 'high', 'lowest', 'urgent', 'urgent'], 'priorities in creation order on the list')
+      // Take the IDs from the list, not from the order the batch answered in.
+      const [first, low, high, lowest, urgent, laterUrgent] = listed.tasks
+      for (const { message } of [urgent!, laterUrgent!, high!, first!, low!, lowest!]) {
+        const claim = await ctx.board.tasks.claim({ channel: ctx.channel, label: labels })
+        same(claim?.task.id, message.id, 'the next task by priority and age')
+        // Take it out of the queue without requiring an independent attester on a gated board.
+        if (ctx.workEvidence?.gates.length) await claim!.fail('conformance: priority checked')
+        else await claim!.complete()
+      }
+    },
+  },
+  {
+    group: 'tasks',
+    name: 'lets task writers set priority and live claims only lower it',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: change priority', { priority: 'low' })
+      same(root.task?.priority, 'low', 'the priority set on create')
+      same((await ctx.board.tasks.priority(root.id, 'high')).task?.priority, 'high', 'the priority raised by the owner')
+      const { cursor } = await ctx.board.poll({ channel: ctx.channel })
+      const claim = await ctx.board.tasks.claim(root.id)
+      await rejects(claim.priority('urgent'), 403, 'priority_raise_forbidden', 'a claim raising priority')
+      await rejects(ctx.board.tasks.priority(root.id, 'urgent'), 409, 'task_claimed', 'a claim holder raising priority without proof')
+      const lowered = await claim.priority('low')
+      same(lowered.task?.priority, 'low', 'the priority lowered by the claim')
+      same(lowered.task?.state, 'claimed', 'the task state after lowering priority')
+      await claim.release()
+      await rejects(claim.priority('lowest'), 409, 'claim_lost', 'a released claim lowering priority')
+      same((await ctx.board.thread(root.id)).message.task?.priority, 'low', 'the stored priority after rejected writes')
+      const { events } = await ctx.board.poll({ channel: ctx.channel, after: cursor })
+      alike(events.flatMap((event) => event.type === 'task.priority_changed' && event.message?.id === root.id ? [[event.payload.priority, event.message.task?.priority]] : []), [['low', 'low']], 'priority changes in the feed')
     },
   },
   {
@@ -2497,6 +2628,106 @@ const CHECKS: Check[] = [
       }
     },
   },
+  {
+    group: 'agents',
+    name: 'registers, lists, heartbeats, and retires an agent under its verified binding',
+    run: async ({ board, channel, labels, agentOps }) => {
+      if (!agentOps) {
+        await rejects(board.agents.list(channel), 501, 'no_agent_ops', 'listing agents without advertised support')
+        return 'not kept here: agent operations are not advertised'
+      }
+      const writer = board.as(`conformance-${labels.conformance}`)
+      const { principal, profile } = await writer.me()
+      const input = { channel, role: 'reviewer', harness: 'conformance' } as const
+      const enrolled = await writer.agents.register(input)
+      let current = enrolled
+      try {
+        isRef(enrolled.id, 'agent ID')
+        same(enrolled.channel, channel, 'registered channel')
+        same(enrolled.role, input.role, 'registered role')
+        same(enrolled.harness, input.harness, 'registered harness')
+        same(enrolled.parent, null, 'new agent parent')
+        same(enrolled.binding?.principal, principal, 'agent principal')
+        same(enrolled.binding?.profile, profile, 'agent profile')
+        same(enrolled.status, 'enabled', 'new agent status')
+        same(enrolled.generation, 1, 'new agent generation')
+        same(enrolled.heartbeatAt, null, 'new agent heartbeat')
+        current = await writer.agents.register(input)
+        same(current.id, enrolled.id, 'repeated registration ID')
+        same(current.generation, enrolled.generation, 'repeated registration generation')
+        current = await writer.agents.heartbeat(enrolled.id, enrolled.generation)
+        check(current.heartbeatAt !== null && Number.isFinite(Date.parse(current.heartbeatAt)), 'heartbeat should record a timestamp')
+        same(current.generation, enrolled.generation, 'generation after heartbeat')
+        current = await writer.agents.retire(enrolled.id, enrolled.generation)
+        same(current.id, enrolled.id, 'retired agent ID')
+        same(current.status, 'disabled', 'retired agent status')
+        same(current.generation, enrolled.generation + 1, 'retired agent generation')
+        same(current.heartbeatAt, null, 'retired agent heartbeat')
+        await refused(writer.agents.heartbeat(enrolled.id, current.generation), 409, 'heartbeat to a retired agent')
+        const { agents } = await board.agents.list(channel)
+        const listed = agents.find(({ id }) => id === enrolled.id)
+        same(listed?.status, 'disabled', 'retired agent status when listed')
+        same(listed?.generation, current.generation, 'retired agent generation when listed')
+      } finally {
+        if (current.status !== 'disabled') await writer.agents.retire(enrolled.id, current.generation).catch(() => {})
+      }
+    },
+  },
+  {
+    group: 'operational-inbox',
+    name: 'keeps operational messages private, supersedes by topic, and keeps receipts once',
+    run: async (ctx) => {
+      const inbox = ctx.board.operationalInbox
+      try {
+        await inbox.read()
+      } catch (error) {
+        if (error instanceof BoardError && error.status === 501 && error.code === 'no_operational_inbox') return `not kept here: ${error.message}`
+        throw error
+      }
+      const { cursor } = await ctx.board.poll({ all: true })
+      const topic = `conformance inbox ${ctx.labels.conformance}`
+      const input = { to: { agent: ctx.me.principal }, topic, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+      const forTopic = async () => (await inbox.read()).messages.filter((message) => message.topic === topic)
+      const { message: older } = await inbox.send({ ...input, text: 'older' })
+      let latest = older
+      try {
+        ;({ message: latest } = await inbox.send({ ...input, text: 'latest' }))
+        const read = await forTopic()
+        same(show(read.map((m) => m.id)), show([latest.id]), 'which message with the same recipient and topic remains')
+        same(read[0]!.text, 'latest', 'the new message, read back')
+        same(read[0]!.by.principal, ctx.me.principal, 'who authored it')
+        same(read[0]!.seenAt, null, 'reading does not acknowledge it')
+        same(read[0]!.actedAt, null, 'an unread receipt has no acted time')
+        same(read[0]!.archivedAt, null, 'the message has not been archived')
+        await refused(inbox.ack(older.id, 'seen'), 404, 'acknowledging the superseded message')
+
+        const narrow = ctx.withCan?.(`${ctx.channel}=all`) ?? ctx.board.as(ctx.me.profile, { can: { [ctx.channel]: 'all' } })
+        await refused(narrow.operationalInbox.read(), 403, 'reading with only channel access')
+        await refused(narrow.operationalInbox.ack(latest.id, 'seen'), 403, 'acknowledging with only channel access')
+        await refused(narrow.operationalInbox.archive(latest.id), 403, 'archiving with only channel access')
+        await refused(narrow.operationalInbox.send({ ...input, text: 'narrowed' }).then(({ message }) => { latest = message }), 403, 'sending with only channel access')
+
+        const { message: seen } = await inbox.ack(latest.id, 'seen')
+        check(seen.seenAt && Number.isFinite(Date.parse(seen.seenAt)), 'seen should record a timestamp')
+        const { message: acted } = await inbox.ack(latest.id, 'acted')
+        check(acted.actedAt && Date.parse(acted.actedAt) >= Date.parse(seen.seenAt), 'acted should record a timestamp at or after seen')
+        same(acted.seenAt, seen.seenAt, 'acted preserves seen')
+        const { message: repeated } = await inbox.ack(latest.id, 'seen')
+        same(repeated.seenAt, seen.seenAt, 'repeating seen preserves its timestamp')
+        same(repeated.actedAt, acted.actedAt, 'repeating seen cannot undo acted')
+
+        const { message: archived } = await inbox.archive(latest.id)
+        check(archived.archivedAt && Date.parse(archived.archivedAt) >= Date.parse(acted.actedAt), 'archive should record a timestamp at or after acted')
+        same((await inbox.archive(latest.id)).message.archivedAt, archived.archivedAt, 'repeating archive preserves its timestamp')
+        same((await forTopic()).length, 0, 'archiving hides the message without reviving its predecessor')
+        await refused(inbox.ack(latest.id, 'acted'), 404, 'acknowledging the archived message')
+        const { events } = await ctx.board.poll({ all: true, after: cursor })
+        check(!show(events).includes(topic), 'the generic event feed should not expose the operational topic')
+      } finally {
+        await inbox.archive(latest.id).catch(() => {})
+      }
+    },
+  },
 ]
 
 /**
@@ -2560,7 +2791,8 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
     return { url: board.url, checks, ok: false }
   }
   // The board it checks, as it names itself: a handle on one elsewhere has no URL of its own.
-  const url = (discovery as { url: string }).url
+  const info = discovery as Discovery
+  const { url } = info
   checks.push({ group: 'core', name: 'says in its discovery where it is', status: 'passed' })
   const me = await board.me()
   const own = namesCaller(me, options.principals)
@@ -2584,12 +2816,14 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
       viewer: options.principals?.viewer ?? null,
       app: options.principals?.app ?? null,
     },
-    team: (discovery as { team_id?: string | null }).team_id ?? null,
-    workEvidence: discovery instanceof Error ? undefined : discovery.workEvidence,
+    team: info.team_id ?? null,
+    agentOps: info.agent_ops === true,
+    workEvidence: info.workEvidence,
   }
   try {
-    for (const { group, name, run, needsUngatedCompletion, needsAutomaticRelease } of CHECKS) {
-      // Extensions join the report only when advertised; the base protocol always runs.
+    const selected = options.networkPause ? [NETWORK_PAUSE, ...CHECKS] : CHECKS
+    for (const { group, name, requires, run, needsUngatedCompletion, needsAutomaticRelease } of selected) {
+      if (requires && info[requires] !== true) continue
       if (group === 'work-evidence' && !ctx.workEvidence) continue
       try {
         const skipped = needsUngatedCompletion && ctx.workEvidence?.gates.length
@@ -2599,7 +2833,7 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
             : await run(ctx)
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {
-        if (OPTIONAL.has(group) && error instanceof BoardError && error.status === 501) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
+        if (!requires && OPTIONAL.has(group) && error instanceof BoardError && error.status === 501) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
         // Vercel's API takes watchers only from a deployment: a run as anyone else can't check them.
         else if (group === 'watchers' && error instanceof BoardError && error.code === 'watchers_need_project') checks.push({ group, name, status: 'skipped', detail: 'only a deployment registers watchers here' })
         // Vercel's API takes no GitHub or OIDC principal in a grant.

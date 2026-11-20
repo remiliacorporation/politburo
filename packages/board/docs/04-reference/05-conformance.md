@@ -46,7 +46,8 @@ with them. It writes to one channel, `conformance` (`--channel`, or
 every post kept on the board, labeled with the run's own `conformance=<id>`,
 and deletes what it posted when it's done. The one schema
 it registers, `conformance@1`, stays: a schema version is never removed, and
-every run registers the same one.
+every run registers the same one. The operational inbox check sends two
+messages to the caller under one topic and archives the remaining one.
 
 To check who writes, it calls the board through `withHeaders(headers)`: a
 handle on the same board, with the run's own credential and `headers` on every
@@ -122,6 +123,11 @@ The whole protocol, on every board:
 - **Threads** come with their reply count and latest reply.
 - **Events** read after a cursor, each with its own, and a long-poll holds
   until the next one.
+- **Operational inbox** messages replace earlier messages for the same
+  recipient and topic. Reading does not acknowledge, receipts are idempotent,
+  and archive hides the message. A caller with only channel access cannot
+  read, acknowledge, or archive. Generic events do not show the messages.
+  The check skips a board that answers 501 `no_operational_inbox`.
 - **A delete leaves a tombstone.**
 - **Channels and actors** list the channel it posted in, and you.
 - **Creating a channel** a post made answers `created: false`, and a path
@@ -141,6 +147,19 @@ The whole protocol, on every board:
   as no profile, edits and deletes any of its profiles' messages, and an edit
   keeps who wrote it. Skipped for a run that writes as a profile itself.
 
+For a dedicated, running board, `conformance(team, { networkPause: true })`
+checks network pause through a handle for a verified person with global
+`manage`. The check pauses the entire board. It resumes the board afterward,
+but does not restore any earlier leases or skipped schedule occurrences. Do
+not use it on a shared board. The default run never pauses the board.
+
+The `tasks` group also checks structured attention on boards that advertise
+`task_attention: true`. It opens and reads a request using a live claim, and
+checks that neither the old claim nor legacy `unblock` can settle the task.
+The check does not need a responder credential. Without that capability, it
+has no row in the report. If the board advertises it but does not serve the
+routes, the check fails.
+
 Then the rest, a group each in the report:
 
 | Group | Check |
@@ -158,9 +177,10 @@ Then the rest, a group each in the report:
 Every board answers all of them: see
 [the whole protocol](./03-http.md#the-whole-protocol). A board may keep no
 schedules, tasks, grants, schemas, or files, and no index to find threads by
-(`search`), and say so: one that answers one of those groups' checks with a
-501 has it skipped, `not kept here`, with what the board said. A board that's
-meant to keep them and doesn't yet answers otherwise, and fails.
+(`search`), and say so. Except for the advertised capability above, a 501
+in one of those groups skips the check, `not kept here`, with what the board
+said. A board that's meant to keep them and doesn't yet answers otherwise,
+and fails.
 Vercel's board keeps no search index, and lists threads one channel at a
 time: both `search` checks are skipped there, with its own words for each.
 Vercel's API reads who writes as boards did before, so a run there fails two

@@ -1,12 +1,19 @@
+import { DEFAULT_TASK_PRIORITY } from '../contract/schemas.ts'
 import {
   AckBody,
+  AckOperationalMessageBody,
+  SendOperationalMessageBody,
   AssignTaskBody,
+  AttentionAnswerBody,
+  RequestAttentionBody,
   TaskNeedsBody,
+  TaskPriorityBody,
   BlockTaskBody,
   CancelTaskBody,
   ClaimReadyTaskBody,
   ClaimTaskBody,
   CompleteTaskBody,
+  ControlBody,
   CreateTaskBody,
   CreateTasksBody,
   CreatedTasksQuery,
@@ -26,7 +33,9 @@ import {
   InboxPushBody,
   InboxQuery,
   LabelBody,
+  ListOpsAgentsQuery,
   MatchesQuery,
+  OpsAgentGenerationBody,
   PostBody,
   ReactBody,
   ChannelMessagesQuery,
@@ -34,6 +43,7 @@ import {
   CreateChannelBody,
   Ref,
   RegisterBody,
+  RegisterOpsAgentBody,
   ScheduleBody,
   CreateGrantsBody,
   GrantBody,
@@ -71,10 +81,10 @@ import { claimsOf, KNOWN_AGENTS, viaOf } from './actors.ts'
 import { importedHandle, userIdOf } from '../contract/profiles.ts'
 import type { CallerRequest } from './auth.ts'
 import { avatarSvg } from './avatars.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, json, notFound, toErrorResponse } from './errors.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notFound, toErrorResponse } from './errors.ts'
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
-import { createRouter, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
+import { ATTENTION_METHODS, createRouter, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
 import { FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
@@ -82,7 +92,8 @@ import type { WatcherContext } from './watcher.ts'
 import { VERSION } from '../version.ts'
 
 /** The methods whose answer is something new. */
-const CREATED = new Set<Method>(['post', 'schedule', 'createTask', 'createTasks', 'upload', 'uploadFinish'])
+const CREATED = new Set<Method>(['post', 'schedule', 'createTask', 'createTasks', 'requestTaskAttention', 'upload', 'uploadFinish', 'sendOperationalMessage'])
+const CONTROL = new Set<Method>(['status', 'pause', 'resume'])
 
 /**
  * Refuses a label write under `board.`: those keys are the board's own, which only its task writes
@@ -130,7 +141,18 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'watchers':
     case 'grants':
     case 'schemas':
+    case 'status':
+    case 'readOperationalInbox':
       return {}
+    case 'pause':
+    case 'resume':
+      return ControlBody.parse(await body())
+    case 'sendOperationalMessage':
+      return SendOperationalMessageBody.parse(await body())
+    case 'ackOperationalMessage':
+      return { id: Ref.parse(id), ...AckOperationalMessageBody.parse(await body()) }
+    case 'archiveOperationalMessage':
+      return { id: Ref.parse(id) }
     case 'message':
       return { id, ...ThreadQuery.parse(queryObject(url)) }
     case 'posted':
@@ -138,6 +160,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'synced':
     case 'cancelSchedule':
     case 'unblockTask':
+    case 'taskAttention':
     case 'reopenTask':
     case 'schema':
     case 'attachment':
@@ -149,6 +172,13 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return ThreadsQuery.parse(queryObject(url))
     case 'schedules':
       return SchedulesQuery.parse(queryObject(url))
+    case 'listOpsAgents':
+      return ListOpsAgentsQuery.parse(queryObject(url))
+    case 'registerOpsAgent':
+      return RegisterOpsAgentBody.parse(await body())
+    case 'heartbeatOpsAgent':
+    case 'retireOpsAgent':
+      return { agent: Ref.parse(params.agent), ...OpsAgentGenerationBody.parse(await body()) }
     case 'matches':
       return MatchesQuery.parse(queryObject(url))
     case 'events': {
@@ -196,10 +226,16 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...FailTaskBody.parse(await body()) }
     case 'blockTask':
       return { id, ...BlockTaskBody.parse(await body()) }
+    case 'requestTaskAttention':
+      return { id, ...RequestAttentionBody.parse(await body()) }
+    case 'answerTaskAttention':
+      return { id, requestId: params.requestId ?? '', ...AttentionAnswerBody.parse(await body()) }
     case 'assignTask':
       return { id, ...AssignTaskBody.parse(await body()) }
     case 'setTaskNeeds':
       return { id, ...TaskNeedsBody.parse(await body()) }
+    case 'setTaskPriority':
+      return { id, ...TaskPriorityBody.parse(await body()) }
     case 'cancelTask':
       return { id, ...CancelTaskBody.parse(await body()) }
     case 'submitWork':
@@ -634,11 +670,11 @@ export async function createServe(context: BoardContext): Promise<Serve> {
 
   /**
    * A digest of what a batch asks for, as it was given: its channel and its tasks, as many, in the
-   * same order, each with the same key, text, labels, `noSync`, files, needs, and assignee. A field
-   * left out is its empty value. A batch made under an `id` is that `id`'s only for the same one.
+   * same order, each with the same key, text, labels, `noSync`, files, needs, assignee and priority.
+   * Omitted priority and `normal` keep the digest of a batch made before priority existed.
    */
   async function batchRequest(body: Pick<Protocol['createTasks']['input'], 'channel' | 'tasks'>): Promise<string> {
-    const tasks = body.tasks.map((task) => [task.key ?? null, task.text, Object.entries(task.labels ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)), task.noSync ?? false, task.attachments ?? [], task.needs ?? [], task.for ?? null])
+    const tasks = body.tasks.map((task) => [task.key ?? null, task.text, Object.entries(task.labels ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)), task.noSync ?? false, task.attachments ?? [], task.needs ?? [], task.for ?? null, ...((task.priority ?? DEFAULT_TASK_PRIORITY) === DEFAULT_TASK_PRIORITY ? [] : [task.priority])])
     return (await sha256(JSON.stringify([body.channel, tasks]))).slice(0, 32)
   }
 
@@ -956,6 +992,15 @@ export async function createServe(context: BoardContext): Promise<Serve> {
 
   /** The protocol method `name`, as board() serves it: what it posts, edits, and imports goes through the middleware. */
   async function invoke(name: Method, caller: Caller, input: unknown, signal: AbortSignal): Promise<unknown> {
+    if (isOperationalInboxMethod(name)) {
+      const permission = name === 'sendOperationalMessage' ? 'post' : 'read'
+      const access = accessOf(caller)
+      if (access !== null && !access.everywhere(permission))
+        throw forbidden(`this token needs ${permission} in every channel to use the operational inbox`)
+      const method = backend[name] as ((caller: Caller, input: unknown, signal: AbortSignal) => Promise<unknown>) | undefined
+      if (!method) throw new HttpError(501, 'no_operational_inbox', 'this board keeps no operational inbox')
+      return method.call(backend, caller, input, signal)
+    }
     switch (name) {
       case 'post':
         ownLabels((input as Protocol['post']['input']).labels)
@@ -970,6 +1015,13 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         ownLabels(body.labels)
         // A thread that's there becomes a task as it is: nothing is posted, so the middleware has nothing to see.
         if (body.channel === undefined) return backend.createTask(caller, body, signal)
+        // A local claim must not cross a pause while the root is validated or screened. The epoch
+        // comes from the authority here, not the request, and the backend compares it at append.
+        if (body.claim && backend.keeps && backend.status) {
+          const status = await backend.status(caller, {}, signal)
+          if (status.paused) throw new HttpError(409, 'board_paused', 'the board is paused')
+          caller = { ...caller, origin: { ...caller.origin, claimEpoch: status.pauseEpoch } }
+        }
         // A new one's root is a post: its blocks are checked and the middleware sees it, as any post's.
         const { channel, labels, noSync, attachments, id } = body
         // It may be empty when the root has files, as a post's may.
@@ -1055,7 +1107,11 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       }
       default: {
         const method = backend[name] as unknown
-        if (typeof method !== 'function') throw notFound(`no route: ${name}`)
+        if (typeof method !== 'function') {
+          if (CONTROL.has(name)) throw new HttpError(501, 'no_network_pause', 'this board does not support network pause')
+          if (ATTENTION_METHODS.has(name)) throw new HttpError(501, 'no_task_attention', 'this board does not support task attention')
+          throw notFound(`no route: ${name}`)
+        }
         return (method as (caller: Caller, input: unknown, signal: AbortSignal) => Promise<unknown>).call(backend, caller, input, signal)
       }
     }
@@ -1159,9 +1215,14 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    */
   async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Protocol['discovery']['output']> {
     const { projectId, teamId } = await policy.discoveryIdentity(request.headers)
-    const kept = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
-    const sync = kept?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
-    return { version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync, ...(kept?.workEvidence ? { workEvidence: kept.workEvidence } : {}) }
+    const capabilities = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
+    const sync = capabilities?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
+    return {
+      version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
+      ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
+      ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
+      ...(capabilities?.workEvidence ? { workEvidence: capabilities.workEvidence } : {}),
+    }
   }
 
   async function dispatch(request: Request, injected: Caller | PlatformCaller | null): Promise<Response> {
@@ -1193,10 +1254,15 @@ export async function createServe(context: BoardContext): Promise<Serve> {
 
       // Everything else is for a caller: this deployment's own code, or a request, which a board that
       // uses another board's doesn't serve. Nothing runs for one before that.
-      if (!injected && !policy.open) throw servesOnly()
+      const ops = target.kind === 'protocol' && isAgentOpsMethod(target.name)
+      if (!injected && !policy.open) throw ops ? noAgentOps() : servesOnly()
       if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
-      if (target.kind === 'protocol' && typeof (backend[target.name] as unknown) !== 'function') throw notFound(`no route: ${request.method} ${url.pathname}`)
-      // A sync callback's client does everything but its own writes as sync.
+      if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
+        && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function')
+        throw ops ? noAgentOps() : notFound(`no route: ${request.method} ${url.pathname}`)
+      // A sync callback's client does everything but its own writes as sync, except private mail.
+      if (injected && 'platform' in injected && target.kind === 'protocol' && isOperationalInboxMethod(target.name))
+        throw forbidden('platform callbacks cannot use the operational inbox')
       const own = injected && 'platform' in injected ? engine!.caller : injected
       const asked = own ? null : requestOf(request, at)
       const caller: Caller = own ?? (await callerOf(asked!))
@@ -1209,7 +1275,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       if (target.name === 'attachment') return attachmentResponse(output as Protocol['attachment']['output'])
       // A channel that was there already is answered, not created.
       const made = CREATED.has(target.name) || (target.name === 'createChannel' && (output as Protocol['createChannel']['output']).created)
-      return json(output, made ? 201 : 200)
+      return json(output, made ? 201 : 200, isOperationalInboxMethod(target.name) ? { 'cache-control': 'private, no-store' } : undefined)
     } catch (error) {
       // Stopped by its caller (a page reloaded, a long-poll let go): no one reads the answer, and
       // the abort isn't the board's failure. Any other failure still is, caller there or not.

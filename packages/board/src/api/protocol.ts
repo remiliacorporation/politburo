@@ -5,10 +5,23 @@ import type { Mentioned } from '../contract/mentions.ts'
 import type { Attachment } from '../contract/schemas.ts'
 import type {
   AckBody,
+  AckOperationalMessageBody,
+  OperationalMessage,
+  SendOperationalMessageBody,
   ActorView,
+  AgentView,
+  ListOpsAgentsQuery,
+  OpsAgentGenerationBody,
+  RegisterOpsAgentBody,
   AssignTaskBody,
+  AttentionAnswerBody,
+  AttentionView,
+  RequestAttentionBody,
   TaskNeedsBody,
+  TaskPriorityBody,
   BlockTaskBody,
+  BoardStatus,
+  ControlBody,
   CancelTaskBody,
   ChannelMessagesQuery,
   ChannelsPage,
@@ -88,6 +101,7 @@ import type {
 
 type Input<S extends z.ZodType> = NonNullable<z.output<S>>
 type Id = { id: string }
+type OpsAgentId = { agent: string }
 type Key = { key: string }
 type Nothing = Record<string, never>
 
@@ -99,6 +113,12 @@ export type Protocol = {
   /** Where the board is and what it syncs, for a client to mint a token from: it needs none itself. */
   discovery: { input: Nothing; output: Discovery }
   me: { input: Nothing; output: Me }
+  /** Work admission and its pause epoch, for any admitted caller. 501 `no_network_pause` when unsupported. */
+  status: { input: Nothing; output: BoardStatus }
+  /** Stops new work admission; a transition into pause advances the epoch. */
+  pause: { input: Input<typeof ControlBody>; output: BoardStatus }
+  /** Reopens work admission without restoring claims from an earlier epoch. */
+  resume: { input: Input<typeof ControlBody>; output: BoardStatus }
   channels: { input: Input<typeof ChannelsQuery>; output: ChannelsPage }
   /** `created` is false for a channel that was there already, made by a post or another create. */
   createChannel: { input: Input<typeof CreateChannelBody>; output: { channel: ChannelView; created: boolean } }
@@ -118,7 +138,12 @@ export type Protocol = {
   schedule: { input: Input<typeof ScheduleBody>; output: { schedule: ScheduleView; mentions?: Mentioned[] } }
   schedules: { input: Input<typeof SchedulesQuery>; output: { schedules: ScheduleView[] } }
   cancelSchedule: { input: Id; output: { schedule: ScheduleView; canceled: boolean } }
-  /** Tasks, oldest first, each as its thread's summary. 501 `no_tasks` where the board keeps none, as every task method answers there. */
+  /** Fork-only agent registry. 501 `no_agent_ops` on a board without it. */
+  listOpsAgents: { input: Input<typeof ListOpsAgentsQuery>; output: { agents: AgentView[] } }
+  registerOpsAgent: { input: Input<typeof RegisterOpsAgentBody>; output: AgentView }
+  heartbeatOpsAgent: { input: OpsAgentId & Input<typeof OpsAgentGenerationBody>; output: AgentView }
+  retireOpsAgent: { input: OpsAgentId & Input<typeof OpsAgentGenerationBody>; output: AgentView }
+  /** Tasks, oldest first, each as its thread's summary. 501 `no_tasks` where the board keeps none. */
   tasks: { input: Input<typeof TasksQuery>; output: TasksPage }
   /** `task` is the task's root. `claim` comes with a task made with `claim`; a retry of one that landed gets the task without it. */
   createTask: { input: Input<typeof CreateTaskBody>; output: { task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] } }
@@ -133,7 +158,7 @@ export type Protocol = {
    * there's none. With `request`, 409 `duplicate_id` when the batch was made for another one.
    */
   createdTasks: { input: Id & Input<typeof CreatedTasksQuery>; output: { tasks: MessageView[] } }
-  /** The oldest ready task there, claimed, or `{ task: null }` when there's none, after waiting up to `wait` seconds. */
+  /** The highest priority eligible ready task (oldest first on ties), claimed, or `{ task: null }` when there's none, after waiting up to `wait` seconds. */
   claimReadyTask: { input: Input<typeof ClaimReadyTaskBody>; output: { task: MessageView; claim: TaskClaim } | { task: null } }
   /** 409 `task_claimed` while someone holds it, and of claims that race, for all but one. */
   claimTask: { input: Id & Input<typeof ClaimTaskBody>; output: { task: MessageView; claim: TaskClaim } }
@@ -143,6 +168,12 @@ export type Protocol = {
   completeTask: { input: Id & Input<typeof CompleteTaskBody>; output: { task: MessageView } }
   failTask: { input: Id & Input<typeof FailTaskBody>; output: { task: MessageView } }
   blockTask: { input: Id & Input<typeof BlockTaskBody>; output: { task: MessageView } }
+  /** Hold a task for a decision on a specific snapshot. 501 `no_task_attention` where unsupported. */
+  requestTaskAttention: { input: Id & RequestAttentionBody; output: { task: MessageView; attention: AttentionView } }
+  /** The current request, if any. */
+  taskAttention: { input: Id; output: { attention: AttentionView | null } }
+  /** Answer the current pending request and route the task in the same write. */
+  answerTaskAttention: { input: Id & { requestId: string } & AttentionAnswerBody; output: { task: MessageView; attention: AttentionView } }
   /** A task that isn't blocked is left as it is. */
   unblockTask: { input: Id; output: { task: MessageView } }
   /** A failed task is ready again; one that's open is left as it is. */
@@ -150,6 +181,7 @@ export type Protocol = {
   assignTask: { input: Id & Input<typeof AssignTaskBody>; output: { task: MessageView } }
   /** 400 `invalid_needs` for a prerequisite that isn't one, or that would make the task wait for itself. The same set is left as it is. */
   setTaskNeeds: { input: Id & Input<typeof TaskNeedsBody>; output: { task: MessageView } }
+  setTaskPriority: { input: Id & Input<typeof TaskPriorityBody>; output: { task: MessageView } }
   cancelTask: { input: Id & Input<typeof CancelTaskBody>; output: { task: MessageView } }
   workEvidence: { input: Id; output: EvidenceStatus }
   submitWork: { input: Id & Input<typeof SubmitWorkBody>; output: { task: MessageView } }
@@ -220,6 +252,11 @@ export type Protocol = {
   syncFind: { input: Input<typeof SyncFindQuery>; output: SyncFindView }
   /** Messages' copies on platforms that the caller's sync recorded, by target: another sync's never show. */
   syncCopies: { input: Input<typeof SyncCopiesQuery>; output: SyncCopiesView }
+  /** Private mail to a verified principal or a configured role. A board that keeps none answers 501 `no_operational_inbox`. */
+  sendOperationalMessage: { input: Input<typeof SendOperationalMessageBody>; output: { message: OperationalMessage } }
+  readOperationalInbox: { input: Nothing; output: { messages: OperationalMessage[] } }
+  ackOperationalMessage: { input: Id & Input<typeof AckOperationalMessageBody>; output: { message: OperationalMessage } }
+  archiveOperationalMessage: { input: Id; output: { message: OperationalMessage } }
   /** Platform events into the caller's inbox, deduplicated by their platform IDs. */
   inboxPush: { input: Key & Input<typeof InboxPushBody>; output: { ok: true } }
   /** The caller's next inbox events, leased, one platform thread at a time and in order. */

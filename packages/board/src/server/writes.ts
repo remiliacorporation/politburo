@@ -19,6 +19,7 @@ import { view, type Reader } from './feed.ts'
 import type { MessageView } from '../api/routes.ts'
 import type { WriteSource } from './middleware.ts'
 import type { Via, WriteOrigin } from './origin.ts'
+import { workOpen, type createControl } from './control.ts'
 
 export { syncTarget, type SyncTarget }
 
@@ -38,6 +39,7 @@ export type WriteContext = {
   session: BoardSession
   /** The board's tables, where writes check what they write to. */
   reads: BoardReads
+  work: ReturnType<typeof createControl>
 }
 
 
@@ -224,6 +226,10 @@ export type PostInput = WriteOrigin & {
   after?: number | undefined
   /** More to write with a new thread's root, in the same append: what makes it a task. */
   with?: Along | undefined
+  /** A scheduled send or a create-and-claim must still be in the epoch that admitted it. */
+  workEpoch?: number | undefined
+  /** Called only for a new append, never on an idempotent replay. */
+  onCommit?: (() => void) | undefined
 }
 
 /** A batch of board events, as an append takes it. */
@@ -268,7 +274,10 @@ export async function writePost(ctx: WriteContext, input: PostInput): Promise<Me
   // A retry of a write that landed (only a caller's own ID can be one): what's on the board
   // stands, whatever its `after` says now.
   const replayed = await replayOf(ctx, input, { channel: channel!, re, replyTo }, sent)
-  if (replayed) return replayed
+  if (replayed) {
+    if (input.workEpoch !== undefined) workOpen((await ctx.work.at()).status, input.workEpoch)
+    return replayed
+  }
   if (input.after !== undefined) {
     const named = await ctx.reads.message(input.after)
     // The same words for a message elsewhere and none: which one it is is a read's to tell.
@@ -382,6 +391,7 @@ async function commitPost(
       const before = events.findIndex((event) => event.type === 'message.posted')
       rows = await appendFrom(ctx, async () => {
         const { position, events: more } = await along()
+        if (input.workEpoch !== undefined) workOpen((await ctx.work.at(position)).status, input.workEpoch)
         // As of the same index the batch is conditioned on: see `unclaimedAt`.
         for (const target of targets) await unclaimed(ctx, target, thread, identity.principal.access)
         const came = more({ id: position + 1 + before, thread })
@@ -389,6 +399,12 @@ async function commitPost(
         const batch = events.map((event) => (event.type === 'message.posted' ? { ...event, payload: { ...event.payload, along: came.length } } : event)) as Events
         return { position, events: [...batch, ...came] }
       })
+    } else if (input.workEpoch !== undefined) {
+      rows = await appendWhile(ctx, async () => {
+        const { status, index } = await ctx.work.at()
+        workOpen(status, input.workEpoch)
+        return index
+      }, events)
     } else if (targets.some((target) => target.kind === 'thread'))
       // A thread it claims must still be unclaimed as the append lands: two posts can't both take one.
       rows = await appendWhile(ctx, unclaimedAt(ctx, targets, thread, identity.principal.access), events)
@@ -397,9 +413,13 @@ async function commitPost(
     // The same request sent twice at once: what came after `after`, or took its ID, may be the other one.
     const twice = (error instanceof HttpError && error.code === 'newer_message') || (input.with !== undefined && duplicateEvent(error))
     const replayed = twice ? await replayOf(ctx, input, { channel, re, replyTo }, sent) : null
-    if (replayed) return replayed
+    if (replayed) {
+      if (input.workEpoch !== undefined) workOpen((await ctx.work.at()).status, input.workEpoch)
+      return replayed
+    }
     throw error
   }
+  input.onCommit?.()
   const posted = rows.find((row) => row.type === 'message.posted') as BoardEvent
   await untilApplied(ctx, rows)
   // Every event of the batch that's about the message: its post, and what came along with it.

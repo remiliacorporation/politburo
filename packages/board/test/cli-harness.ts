@@ -38,9 +38,9 @@ export function useBoard(make = () => localBoard({ url: undefined })) {
     url = `${server.origin}/api/board`
     // Nothing of the board's or Vercel's from the shell running the suite, nor a coding agent's around it.
     const clean = Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key]) => !/^(CLAUDE|CODEX|GROK|PI_|AI_AGENT|BOARD|VERCEL|ACTIONS_ID_TOKEN)/.test(key),
-      ),
+      Object.keys(process.env)
+        .filter((key) => !/^(CLAUDE|CODEX|GROK|PI_|AI_AGENT|BOARD|VERCEL|ACTIONS_ID_TOKEN)/.test(key))
+        .map((key) => [key, process.env[key]]),
     )
     env = {
       ...clean,

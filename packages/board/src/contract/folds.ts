@@ -1,8 +1,9 @@
 // The board's views as plain folds and the types they keep, on no engine: `reducers.ts` hands
 // them to A2, and anything else (a store's tables, a handle) folds with them directly.
+import type { AttentionDraft, AttentionReceipt } from './attention.ts'
 import { canonicalEmoji } from './emoji.ts'
 import { own, setOwn } from './own.ts'
-import { actorKind, TASK_LABEL, type ActorKind, type Attachment, type Author, type Labels, type TaskState } from './schemas.ts'
+import { actorKind, DEFAULT_TASK_PRIORITY, priorityRank, TASK_LABEL, type ActorKind, type Attachment, type Author, type Labels, type TaskPriority, type TaskState } from './schemas.ts'
 import type { BoardEvent } from './events.ts'
 import { externalMessageKey, isThreadTarget, type Link, type Origin } from './external.ts'
 import type { Via } from './profiles.ts'
@@ -15,10 +16,13 @@ import { foldEvidence, type TaskEvidence } from './evidence.ts'
 
 /**
  * A task as the board keeps it on its root: the state the root's `board.task` label wears, and what
- * goes with it. Views show all of it but a claim's `token`.
+ * goes with it. Ordinary message views show only the ID of its attention request, and never a
+ * claim's token.
  */
 export type Task = {
   state: TaskState
+  /** Absent in tables built before priority was kept. */
+  priority?: TaskPriority
   /** The principal that made the thread a task. */
   owner: string
   /** The actor it did that as: itself, or one of its profiles, which is held to the tasks it made. */
@@ -30,7 +34,7 @@ export type Task = {
   /** How many times it's been claimed: a claim's writes carry the epoch it was made at. */
   epoch: number
   /** Who holds it, until when. `token` is the SHA-256 of the claim's secret, hex. */
-  claim: { actor: string; principal?: string; until: string; token: string } | null
+  claim: { actor: string; principal?: string; until: string; token: string; pauseEpoch?: number } | null
   evidence?: TaskEvidence
   releases?: Record<number, string>
   blocked: { kind: string | null; reason: string } | null
@@ -38,7 +42,14 @@ export type Task = {
   result: string | null
   /** Why it failed or was canceled. */
   reason: string | null
+  /** The latest request only. Staleness is checked against the live snapshot and clock. */
+  attention?: TaskAttention
 }
+
+export type TaskAttention = AttentionDraft & { id: string; by: Author; epoch: number } & (
+  | { status: 'pending' | 'canceled' }
+  | { status: 'answered'; receipt: AttentionReceipt }
+)
 
 export type Message = {
   id: number
@@ -149,6 +160,7 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       const message = state.byId[event.payload.id]
       if (!message || message.deleted) return undefined
       message.deleted = true
+      if (message.task?.attention?.status === 'pending') message.task.attention.status = 'canceled'
       message.text = ''
       message.reactions = {}
       // Labels are state a filter finds: a tombstone in a label's view would still look open.
@@ -211,7 +223,7 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       // A thread becomes a task once, at its root, while the root is there.
       if (!message || message.deleted || message.re !== null || message.task) return undefined
       const { needs, by } = event.payload
-      message.task = { state: needs.length > 0 ? 'waiting' : 'ready', owner: by.principal, by: by.actor, for: event.payload.for, needs: [...needs], epoch: 0, claim: null, blocked: null, result: null, reason: null }
+      message.task = { state: needs.length > 0 ? 'waiting' : 'ready', owner: by.principal, by: by.actor, for: event.payload.for, priority: event.payload.priority ?? DEFAULT_TASK_PRIORITY, needs: [...needs], epoch: 0, claim: null, blocked: null, result: null, reason: null }
       return labeled(message)
     }
     case 'task.work_submitted':
@@ -222,6 +234,7 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       return message && foldEvidence(message, event) ? message : undefined
     }
     case 'task.assigned':
+    case 'task.priority_changed':
     case 'task.needs_changed':
     case 'task.ready':
     case 'task.claimed':
@@ -233,10 +246,16 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
     case 'task.blocked':
     case 'task.unblocked':
     case 'task.canceled':
-    case 'task.reopened': {
+    case 'task.reopened':
+    case 'task.attention_requested':
+    case 'task.attention_answered': {
       const message = state.byId[event.payload.id]
-      if (!message?.task || !foldTask(message.task, event)) return undefined
-      return labeled(message)
+      if (!message?.task) return undefined
+      if (event.type === 'task.attention_requested' || event.type === 'task.attention_answered') {
+        const expected = event.type === 'task.attention_requested' ? event.payload.draft.revision : message.task.attention?.revision
+        if (message.deleted || expected !== (message.revision ?? message.id)) return undefined
+      }
+      return foldTask(message.task, event) ? labeled(message) : undefined
     }
     default:
       return undefined
@@ -265,6 +284,14 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       if (task.for === event.payload.for) return false
       task.for = event.payload.for
       return true
+    case 'task.priority_changed': {
+      const { priority, epoch } = event.payload
+      if (task.state === 'completed' || task.state === 'failed' || task.state === 'canceled') return false
+      if (epoch !== undefined && (!holds(task, epoch) || priorityRank(priority) > priorityRank(task.priority))) return false
+      if (priority === (task.priority ?? DEFAULT_TASK_PRIORITY)) return false
+      task.priority = priority
+      return true
+    }
     case 'task.needs_changed':
       // What it waits for changes while no one holds it and it isn't finished. It waits again when it waits for
       // any task: `task.ready` follows at once when they've all completed. One held for a person stays held.
@@ -278,11 +305,11 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       task.state = 'ready'
       return true
     case 'task.claimed': {
-      const { epoch, until, token, by } = event.payload
+      const { epoch, until, token, by, pauseEpoch } = event.payload
       if (task.state !== 'ready' || epoch !== task.epoch + 1) return false
       task.state = 'claimed'
       task.epoch = epoch
-      task.claim = { actor: by.actor, principal: by.principal, until, token }
+      task.claim = { actor: by.actor, principal: by.principal, until, token, ...(pauseEpoch === undefined ? {} : { pauseEpoch }) }
       return true
     }
     case 'task.renewed':
@@ -313,8 +340,34 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       task.claim = null
       task.blocked = { kind: event.payload.kind, reason: event.payload.reason }
       return true
+    case 'task.attention_requested': {
+      const { requestId, epoch, draft, by, replaces } = event.payload
+      if (task.epoch !== epoch || task.attention?.id === requestId) return false
+      if (task.state === 'blocked') {
+        if (task.attention?.status === 'pending') {
+          if (task.attention.id !== replaces) return false
+        } else if (replaces !== undefined || (task.blocked?.kind !== 'needs_input' && task.blocked?.kind !== 'awaiting_approval')) return false
+      } else if (replaces !== undefined || (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'claimed')) return false
+      task.attention = { ...draft, id: requestId, epoch, by, status: 'pending' }
+      task.state = 'blocked'
+      task.claim = null
+      task.blocked = { kind: draft.kind, reason: draft.question }
+      return true
+    }
+    case 'task.attention_answered': {
+      const { requestId, epoch, receipt } = event.payload
+      const attention = task.attention
+      if (task.state !== 'blocked' || attention?.status !== 'pending' || attention.id !== requestId || attention.epoch !== epoch || task.epoch !== epoch) return false
+      const option = attention.options.find(({ id }) => id === receipt.option)
+      if (!option || (option.next === 'fail') !== (receipt.routedTo === 'failed')) return false
+      task.attention = { ...attention, status: 'answered', receipt }
+      task.state = receipt.routedTo
+      task.blocked = null
+      task.reason = receipt.routedTo === 'failed' ? option.consequence : null
+      return true
+    }
     case 'task.unblocked':
-      if (task.state !== 'blocked') return false
+      if (task.state !== 'blocked' || task.attention?.status === 'pending') return false
       // Back to waiting when it waits for any task: `task.ready` follows at once when they've all completed.
       task.state = task.needs.length > 0 ? 'waiting' : 'ready'
       task.blocked = null
@@ -324,12 +377,13 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       task.state = 'canceled'
       task.claim = null
       task.blocked = null
+      if (task.attention?.status === 'pending') task.attention.status = 'canceled'
       task.reason = event.payload.reason
       return true
     case 'task.reopened':
-      // A failed task was claimed, so every task it needs had completed: it's ready.
+      // A claim can fail only after its prerequisites completed; a held task can fail earlier.
       if (task.state !== 'failed') return false
-      task.state = 'ready'
+      task.state = event.payload.waiting ? 'waiting' : 'ready'
       task.reason = null
       return true
   }

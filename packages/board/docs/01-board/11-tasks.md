@@ -26,13 +26,26 @@ on it as on any other.
 - **`vb tasks create <id>`** makes a task of a thread that's there, as it is:
   an issue someone filed, a question from Slack. Its text stays its author's.
 - **You own the tasks you make.** A task's owner, or anyone with `manage` in
-  its channel, assigns, holds, reopens, and cancels it.
+  its channel, assigns, holds, reopens, reprioritizes, and cancels it.
 - **Labels route work.** `--label step=fix` here is what `claim --ready
   --label step=fix` asks for there.
-- **`vb tasks [channel]`** lists open tasks, oldest first, the order a queue
-  works them in. `--state` narrows it to one state, or widens it to `all`.
+- **`vb tasks [channel]`** lists open tasks, oldest first. `--state` narrows it to one state, or widens it to `all`.
   `--label`, `--by`, and `--for` narrow it further. A page is 50 tasks, and a
   full one prints the command that reads the next.
+
+## Set priority
+
+Use `vb tasks create work "restore checkout" --priority urgent` to give a
+new task priority. From lowest to highest, the levels are `lowest`, `low`,
+`normal`, `high`, and `urgent`. Tasks without a priority read as `normal`.
+
+Use `vb tasks show <id>` to see the level. A list adds a priority column
+when any task on that page is not `normal`. JSON always includes it.
+
+Use `vb tasks priority <id> low` to set it later. The owner or a channel
+manager can set an open task's priority either way. If you hold the task,
+the command uses your claim and can only lower the priority. The lease and
+state do not change. Priority is not a label.
 
 ## Work a task
 
@@ -53,9 +66,9 @@ $ vb tasks work/ --state all
   as it: **claude via julian**. Without one, you claim as yourself. See
   [Identity](./03-identity.md).
 - **`vb tasks claim <id>`** holds a task. **`claim --ready <channel>`** holds
-  the oldest ready one there (`work`, or `work/` for everything under it) that
-  has every `--label`: one assigned to you first, then an unassigned one you
-  own.
+  the highest priority ready task there (`work`, or `work/` for everything
+  under it), oldest first at equal priority. It needs every `--label` and
+  must be assigned to you or unassigned and owned by you or a named owner.
 - **`--from <id>` takes another owner's tasks too.** A task's text is
   instructions for whoever claims it, so `--ready` takes only your own until
   you name whose you take. Name each owner by ID (`vb actors` lists them). A
@@ -120,6 +133,9 @@ $ vb read 812
   #828  work  task claimed by claude via julian
   #828  work  task canceled by julian · superseded by the nightly rotation
   ```
+
+A [network pause](./12-network-pause.md) stops new claims and invalidates
+existing leases. It does not stop reads, posts, or ordinary task creation.
 
 ## The claim stays with who took it
 
@@ -338,6 +354,44 @@ $ vb tasks unblock 814
 - **`vb tasks unblock <id>`** returns it to `ready`, or to `waiting` while a
   task it needs hasn't completed. Its owner lifts the hold.
 
+## Ask for a structured answer
+
+Use structured attention when the answer must name an option and a commit,
+not just say something in the thread.
+
+```bash
+vb tasks ask 814 --file request.json --json
+vb tasks attention 814 --json
+vb tasks answer 814 "$REQUEST_ID" proceed --commit "$COMMIT" --json
+```
+
+- **`ask`** takes a [draft](../04-reference/03-http.md#structured-attention)
+  and optional `replaces` from a JSON file. The board ends any claim used to
+  open the hold. If no proof is cached or the board rejects it with
+  `claim_lost`, `ask` tries without proof. Only the task's owner or a channel
+  manager can open a hold without proof. To replace an unanswered request, use
+  its current ID in `replaces`.
+- **`attention`** shows the current request ID, options, commit, and status.
+  **`answer`** needs that ID, the selected option ID, and the matching commit.
+  Use simple ASCII option IDs like `proceed` or `stop-2`. The server records
+  who answered, when, and where work went. `resume` returns work to `ready`
+  or `waiting` depending on its prerequisites. `fail` marks the task `failed`
+  and leaves its dependents waiting.
+- **The snapshot must still match.** Supply the task root's `revision` and
+  evidence message IDs and revisions from that thread. If anything in the
+  snapshot changes or the request expires, it can't be answered. Reread and
+  replace it; a reply or `unblock` can't lift a structured hold.
+- **The commit comes from the requester.** It must be a full lowercase SHA-1
+  or SHA-256 object ID. The board doesn't check Git or bind the receipt to a
+  lifecycle-recorded commit or generation yet.
+
+[Configure a local authority](./10-local.md#enable-structured-task-attention)
+with responder principal IDs per exact channel. Only a listed, verified
+person acting as themselves, with `read` and `post`, can answer. No profile,
+board self caller, deployment, watcher, or synced reply can answer.
+Unconfigured or unsupported deployments return 501 `no_task_attention`;
+the CLI never falls back to a plain hold.
+
 ## Whose task it is
 
 ```text
@@ -365,8 +419,8 @@ unassigned 832
   --ready` takes another owner's only with `--from`.
 - **`--for <profile>` keeps a task for one of its owner's profiles:** on
   `create`, or later with `vb tasks assign <id> <profile>`. Only that profile
-  claims it, even after a lease runs out, and its `claim --ready` takes what's
-  assigned to it first. `vb tasks assign <id> --pool` returns it to anyone who
+  claims it, even after a lease runs out. `vb tasks assign <id> --pool`
+  returns it to anyone who
   may claim it.
 - **`vb tasks cancel <id> "<reason>"`** calls a task off, and ends any claim.
 - **Deleting a task's root cancels it,** unless it completed. **An edit of the

@@ -87,6 +87,7 @@ export const options = {
   // What a command takes from a file: a message's text, a plan of tasks, several grants, a schema. Each says which.
   file: { type: 'string', value: 'path', description: 'from a file: - reads stdin' },
   data: { type: 'string', value: 'json', description: 'as JSON, written inline' },
+  reason: { type: 'string', value: 'reason', description: 'why, recorded in the board log (required)' },
   unset: { type: 'string', multiple: true, value: 'k', description: 'remove a label' },
   if: { type: 'string', multiple: true, value: 'k=v', description: 'only while the message has this label now' },
   'if-unset': { type: 'string', multiple: true, value: 'k', description: "only while the message doesn't have this label" },
@@ -145,10 +146,17 @@ export const options = {
   port: { type: 'string', value: 'N', description: 'the port to listen on' },
   dir: { type: 'string', value: 'dir', description: 'where the board keeps its log (default: .board/)' },
   'no-inspect': { type: 'boolean', description: "don't start the inspector" },
+  // Agent registry.
+  'agent-ops': { type: 'boolean', description: 'enable the fork-only agent registry' },
+  role: { type: 'string', value: 'role', description: 'required: coordinator, issues, controller, implementation-worker, reviewer, qa-owner, qa-runner, or user-watcher' },
+  harness: { type: 'string', value: 'harness', description: 'required: the harness running this agent' },
+  parent: { type: 'string', value: 'id', description: 'the ID of a registered parent in the same channel (default: no parent)' },
+  generation: { type: 'string', value: 'N', description: 'required: the current generation, as agents list shows it' },
   // Tasks.
   state: { type: 'string', value: 'state', description: 'in a state: waiting, ready, claimed, blocked, completed, failed, canceled, open, or all (default: open)' },
   needs: { type: 'string', multiple: true, value: 'id', description: 'wait for a task to complete first' },
-  ready: { type: 'boolean', description: 'the oldest ready task in a channel, or under a prefix (work/)' },
+  ready: { type: 'boolean', description: 'the highest priority ready task in a channel or under a prefix' },
+  priority: { type: 'string', value: 'level', description: 'lowest, low, normal (default), high, or urgent' },
   from: { type: 'string', multiple: true, value: 'id', description: "with --ready: take this owner's tasks too, by their ID" },
   wait: { type: 'string', value: 'duration', description: 'with --ready: how long to wait for one, e.g. 10m' },
   lease: { type: 'string', value: 'duration', description: 'how long to hold it: 30s to 1h (default: 15m, or what the board gives)' },
@@ -156,7 +164,7 @@ export const options = {
   kind: { type: 'string', value: 'kind', description: 'what the hold is for: needs_input, awaiting_approval' },
   pool: { type: 'boolean', description: 'back to anyone who may claim it' },
   none: { type: 'boolean', description: 'wait for nothing' },
-  commit: { type: 'string', value: 'sha', description: 'the full Git commit ID' },
+  commit: { type: 'string', value: 'sha', description: 'the full lowercase Git commit ID' },
   round: { type: 'string', value: 'N', description: 'the round shown by tasks evidence' },
   artifact: { type: 'string', value: 'ref', description: 'a reference to the submitted or attested artifact' },
   'expires-at': { type: 'string', value: 'utc', description: 'expiry as an ISO UTC timestamp' },
@@ -190,6 +198,10 @@ const text = (description = 'what it says: - reads it from stdin, and it may be 
   description,
 })
 
+/** An agent registry's channel or agent ID. */
+const agentChannel: CliArgument = { name: 'channel', required: true, description: 'the exact channel, such as work/review' }
+const agentId = () => id('the agent ID, as agents list shows it')
+
 /** A task's ID: its thread's root's. */
 const task = (description = "a task's ID, as tasks shows it (#812)"): CliArgument => ({ name: 'id', required: true, description })
 
@@ -211,6 +223,32 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
     arguments: [],
     options: [],
     examples: [{ name: 'see who you are on the board', value: 'whoami' }],
+  },
+  {
+    group: 'the board',
+    name: 'status',
+    description: 'see if the board is admitting work',
+    arguments: [],
+    options: [],
+    examples: [{ name: 'check the board', value: 'status' }],
+  },
+  {
+    group: 'the board',
+    name: 'pause',
+    description: 'stop task claims and scheduled sends on the board',
+    brief: '--reason <reason>',
+    arguments: [],
+    options: [option('reason')],
+    examples: [{ name: 'pause work during maintenance', value: 'pause --reason "queue maintenance"' }],
+  },
+  {
+    group: 'the board',
+    name: 'resume',
+    description: 'allow new task claims and future scheduled sends',
+    brief: '--reason <reason>',
+    arguments: [],
+    options: [option('reason')],
+    examples: [{ name: 'resume work after maintenance', value: 'resume --reason "maintenance complete"' }],
   },
   {
     group: 'the board',
@@ -504,11 +542,48 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
     name: 'inbox',
     description: 'raw platform events, for debugging sync',
     arguments: [
-      { name: 'key', required: true, description: 'the sync entry, e.g. slack' },
+      { name: 'key', required: true, description: 'the sync entry, e.g. slack; use raw for read, ack, archive, or raw' },
       { name: 'channel', required: false, description: 'the board channel its events went to' },
     ],
     options: [option('limit', 'events to list')],
+    runsWithoutSubcommand: true,
     examples: [{ name: "list Slack's latest events", value: 'inbox slack' }],
+    subcommands: [
+      {
+        name: 'read',
+        description: 'read your 15 latest active operational messages',
+        arguments: [],
+        options: [],
+        examples: [{ name: 'read your operational inbox', value: 'inbox read' }],
+      },
+      {
+        name: 'ack',
+        description: 'mark an operational message seen or acted',
+        arguments: [
+          { name: 'id', required: true, description: 'the ID inbox read shows' },
+          { name: 'seen|acted', required: true },
+        ],
+        options: [],
+        examples: [{ name: 'mark a message seen', value: 'inbox ack 812 seen' }],
+      },
+      {
+        name: 'archive',
+        description: 'hide an operational message from your inbox',
+        arguments: [{ name: 'id', required: true, description: 'the ID inbox read shows' }],
+        options: [],
+        examples: [{ name: 'archive a message', value: 'inbox archive 812' }],
+      },
+      {
+        name: 'raw',
+        description: 'read raw platform events, including for reserved sync keys',
+        arguments: [
+          { name: 'key', required: true, description: 'the sync entry' },
+          { name: 'channel', required: false, description: 'the board channel its events went to' },
+        ],
+        options: [option('limit', 'events to list')],
+        examples: [{ name: 'list events for a sync entry named read', value: 'inbox raw read' }],
+      },
+    ],
   },
   {
     group: 'messages',
@@ -584,10 +659,11 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         options: [
           option('label', 'label it, to route it', 'k=v'),
           option('needs'),
+          option('priority'),
           option('for', 'only this profile of yours claims it', 'profile'),
           claimNow,
           option('lease', 'with --claim: how long to hold it'),
-          option('file', 'a plan, from a JSON file (- reads stdin): an array of tasks, each { key?, text, labels?, needs?, for?, noSync?, attachments? }, all made, in as many writes as it takes'),
+          option('file', 'a plan, from a JSON file (- reads stdin): an array of tasks, each { key?, text, labels?, needs?, for?, priority?, noSync?, attachments? }, all made, in as many writes as it takes'),
           option('no-sync'),
           option('idempotency-key', 'sending the same one again makes it once'),
         ],
@@ -599,8 +675,22 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         ],
       },
       {
+        name: 'show',
+        description: 'show one task, including its priority',
+        arguments: [task()],
+        options: [],
+        examples: [{ name: 'show a task', value: 'tasks show 812' }],
+      },
+      {
+        name: 'priority',
+        description: 'set a task’s priority; with your claim, only lower it',
+        arguments: [task(), { name: 'level', required: true, description: options.priority.description }],
+        options: [],
+        examples: [{ name: 'set a task’s priority', value: 'tasks priority 812 high' }],
+      },
+      {
         name: 'claim',
-        description: 'hold a task for a lease, by its ID, or with --ready the oldest ready one in a channel',
+        description: 'hold a task by ID, or claim the highest priority ready task with --ready',
         arguments: [{ name: 'id|channel', required: true, description: "a task's ID, or with --ready a channel or a path prefix (work/)" }],
         options: [option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease')],
         examples: [
@@ -692,8 +782,29 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         examples: [{ name: 'ask for approval', value: 'tasks block 813 "approve the prod deploy?" --kind awaiting_approval' }],
       },
       {
+        name: 'ask',
+        description: 'hold a task for a decision on a specific commit',
+        arguments: [task()],
+        options: [option('file', 'a JSON draft with kind, question, context, options, evidence, expiresAt, commit, revision, and optional replaces: - reads stdin')],
+        examples: [{ name: 'ask for a decision', value: 'tasks ask 813 --file attention.json' }],
+      },
+      {
+        name: 'attention',
+        description: 'read the current attention request on a task',
+        arguments: [task()],
+        options: [],
+        examples: [{ name: 'read the request and its options', value: 'tasks attention 813' }],
+      },
+      {
+        name: 'answer',
+        description: 'choose an option on a task attention request, as a configured responder',
+        arguments: [task(), { name: 'request-id', required: true, description: 'the current attention request ID' }, { name: 'option', required: true, description: 'the option ID to choose, such as approve or retry-2' }],
+        options: [option('commit')],
+        examples: [{ name: 'answer an attention request', value: 'tasks answer 813 7c9a5f1e-2d84-4b6a-9e3c-5f8a1d2b6740 approve --commit 8f3a2c7e9b1d4f6a0c5e8b2d7f1a3c9e4b6d0f2a' }],
+      },
+      {
         name: 'unblock',
-        description: 'lift a hold, as its owner: ready again, or waiting while a task it needs has not completed',
+        description: 'lift a plain hold, as its owner: ready again, or waiting while a task it needs has not completed',
         arguments: [task()],
         options: [],
         examples: [{ name: 'lift a hold', value: 'tasks unblock 813' }],
@@ -731,6 +842,44 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         arguments: [task(), { name: 'reason', required: true, description: 'why, in a line' }],
         options: [],
         examples: [{ name: 'cancel a task', value: 'tasks cancel 812 "superseded by #820"' }],
+      },
+    ],
+  },
+  {
+    group: 'agents',
+    name: 'agents',
+    description: 'the channel roster on a board that opts into the agent registry',
+    arguments: [],
+    options: [],
+    examples: [],
+    subcommands: [
+      {
+        name: 'list',
+        description: 'list enabled and retired agents in one channel',
+        arguments: [agentChannel],
+        options: [],
+        examples: [{ name: 'see who is registered', value: 'agents list work/review' }],
+      },
+      {
+        name: 'register',
+        description: 'register yourself or your profile, or update its registration',
+        arguments: [agentChannel],
+        options: [option('role'), option('harness'), option('parent'), option('generation', 'the current generation, required to change or re-enable an entry')],
+        examples: [{ name: 'register a reviewer', value: 'agents register work --role reviewer --harness codex --as qa' }],
+      },
+      {
+        name: 'heartbeat',
+        description: 'record a heartbeat for your enabled agent',
+        arguments: [agentId()],
+        options: [option('generation')],
+        examples: [],
+      },
+      {
+        name: 'retire',
+        description: 'disable your registered agent',
+        arguments: [agentId()],
+        options: [option('generation')],
+        examples: [],
       },
     ],
   },

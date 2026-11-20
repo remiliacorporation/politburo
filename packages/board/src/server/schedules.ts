@@ -40,6 +40,7 @@ export type Schedule = {
   noSync: boolean
   attachments: Attachment[]
   first: number
+  openEpoch?: number
   every: number | null
   until: number | null
   times: number | null
@@ -50,6 +51,8 @@ export type Schedule = {
   blind: boolean
   /** Sends posted so far. */
   sent: number
+  /** The next occurrence number; for old snapshots with no skipped sends this is `sent`. */
+  occurrence?: number
   /** When the next send is due, or null when it's done or canceled. */
   next: number | null
   /** The last message it posted. */
@@ -87,6 +90,7 @@ export function foldSchedules(state: SchedulesState, event: ScheduleEvent): Sche
         noSync: payload.noSync,
         attachments: payload.attachments ?? [],
         first: payload.first,
+        ...(payload.openEpoch === undefined ? {} : { openEpoch: payload.openEpoch }),
         every: payload.every,
         until: payload.until,
         times: payload.times,
@@ -107,11 +111,15 @@ export function foldSchedules(state: SchedulesState, event: ScheduleEvent): Sche
       schedule.canceled = { by: event.payload.by, reason: event.payload.reason }
       return state
     }
+    case 'schedule.skipped':
     case 'schedule.fired': {
       const schedule = state.byId[event.payload.id]
-      if (!schedule || schedule.next === null || schedule.sent !== event.payload.n) return state
-      schedule.sent++
-      schedule.last = event.payload.message
+      if (!schedule || schedule.next === null || occurrence(schedule) !== event.payload.n) return state
+      if (event.type === 'schedule.fired') {
+        schedule.sent++
+        schedule.last = event.payload.message
+      }
+      schedule.occurrence = event.payload.n + 1
       schedule.next = event.payload.next
       return state
     }
@@ -122,6 +130,8 @@ export function foldSchedules(state: SchedulesState, event: ScheduleEvent): Sche
       return state
   }
 }
+
+const occurrence = (schedule: Schedule) => schedule.occurrence ?? schedule.sent
 
 export const schedulesReducer = reducer({
   contract: schedulesContract,
@@ -179,7 +189,8 @@ export const scheduleView = (schedule: Schedule, actors: ActorsState): ScheduleV
 }
 
 /** What a send records in the schedules. */
-type ScheduleAppend = { [K in 'schedule.canceled' | 'schedule.fired']: { type: K; payload: Extract<ScheduleEvent, { type: K }>['payload'] } }['schedule.canceled' | 'schedule.fired']
+type Recorded = 'schedule.canceled' | 'schedule.fired' | 'schedule.skipped'
+type ScheduleAppend = { [K in Recorded]: Pick<Extract<ScheduleEvent, { type: K }>, 'type' | 'payload'> }[Recorded]
 
 const SYSTEM = deploymentIdentity('board:schedule', 'schedule')
 
@@ -243,10 +254,26 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
     // The one that sends runs any timer that reaches it, whoever armed it: a scheduler that delivers to one URL brings them all here.
     if (deployment !== null && state.takeover !== null && state.takeover.deployment !== deployment) return
     // This send went out, and an attempt before this one stopped short of arming the next: arm it now.
-    if (schedule && ctx.attempt > 1 && schedule.sent === n + 1 && schedule.next !== null) return arm('next', id, n + 1, schedule.next)
-    // Canceled, done, or a stale timer for a send already made.
-    if (!schedule || schedule.next !== at || schedule.sent !== n) return
+    if (schedule && ctx.attempt > 1 && occurrence(schedule) === n + 1 && schedule.next !== null) return arm('next', id, n + 1, schedule.next)
+    // Canceled, done, or a stale timer for an occurrence already decided.
+    if (!schedule || schedule.next !== at || occurrence(schedule) !== n) return
     if (Date.now() < at - EARLY_MS) return arm('hop', id, n, at)
+
+    const { status } = await writes.work.at()
+    const eventId = await idempotentId('board-schedule', String(id), String(n))
+    const finish = async (message: number | null) => {
+      // Skipped occurrences don't count toward `times`, and repeats pick their next future slot.
+      const next = nextSend(schedule, schedule.sent - (message === null ? 1 : 0), at, Date.now())
+      if (message === null) await record({ type: 'schedule.skipped', payload: { id, n, next } }, 'occurrence', String(id), String(n))
+      else await record({ type: 'schedule.fired', payload: { id, n, message, next } }, 'fired', String(id), String(n))
+      if (next !== null) await arm('next', id, n + 1, next)
+    }
+    // A due time tied with resume is stale too, unless the schedule was admitted while open in this epoch.
+    if (status.paused || (status.resumedAt !== null && at <= status.resumedAt && schedule.openEpoch !== status.pauseEpoch)) {
+      // Recover a committed send even if the consumer lost its reply before pause. This never posts.
+      const landed = await writes.reads.byEventId(eventId)
+      return finish(landed?.id ?? null)
+    }
 
     if (schedule.re !== null) {
       const root = await writes.reads.message(schedule.re, ctx.signal)
@@ -268,7 +295,7 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
     // The send is marked as the schedule's, and a handle that's ambiguous since it was checked stays plain text.
     const input = {
       ...(schedule.re === null ? { channel: schedule.channel } : { re: ref(schedule.re) }),
-      id: await idempotentId('board-schedule', String(id), String(n)),
+      id: eventId,
       text: schedule.text,
       labels: schedule.labels,
       noSync: schedule.noSync,
@@ -276,18 +303,22 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
     }
     let posted: number
     try {
-      const sent = await send({ ...schedule.as, principal: { ...schedule.as.principal, access } }, { via: { kind: 'schedule', id }, schedule: { id, n } }, input)
+      const sent = await send({ ...schedule.as, principal: { ...schedule.as.principal, access } }, { via: { kind: 'schedule', id }, schedule: { id, n }, scheduleEpoch: status.pauseEpoch }, input)
       posted = indexOf(sent.id)!
     } catch (error) {
+      if (error instanceof HttpError && error.code === 'board_paused') {
+        const landed = await writes.reads.byEventId(eventId)
+        return finish(landed?.id ?? null)
+      }
       if (!(error instanceof DroppedError)) throw error
+      const current = (await writes.work.at()).status
+      if (current.paused || current.pauseEpoch !== status.pauseEpoch) return finish(null)
       // Its text never changes, so the middleware would drop every send after this one too.
       console.info(`[board] the middleware dropped schedule s${id}: ${error.message}`)
       await record({ type: 'schedule.canceled', payload: { id, by: SYSTEM.author, reason: 'dropped' } }, 'ended', String(id))
       return
     }
-    const next = nextSend(schedule, n, at, Date.now())
-    await record({ type: 'schedule.fired', payload: { id, n, message: posted, next } }, 'fired', String(id), String(n))
-    if (next !== null) await arm('next', id, n + 1, next)
+    await finish(posted)
   }
 
   /**
@@ -306,7 +337,7 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
     const { state } = await ctx.session.state(schedulesReducer, { through: 'latest' })
     const schedule = state.byId[ctx.event.index]
     if (!schedule || schedule.next === null) return
-    await arm('first', schedule.id, schedule.sent, schedule.next)
+    await arm('first', schedule.id, occurrence(schedule), schedule.next)
   })
 
   /** Makes each due send, one schedule at a time. */
@@ -347,7 +378,7 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
     }
     const since = state.takeover!.index
     for (const schedule of Object.values(state.byId))
-      if (schedule.next !== null) await arm(`takeover-${since}`, schedule.id, schedule.sent, schedule.next)
+      if (schedule.next !== null) await arm(`takeover-${since}`, schedule.id, occurrence(schedule), schedule.next)
   }
 
   /**
@@ -433,6 +464,7 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
         re = target.re ?? target.id
         channel = target.channel
       }
+      const { status } = await writes.work.at()
       const [row] = await session.append({
         type: 'schedule.created',
         payload: {
@@ -443,6 +475,7 @@ export function createSchedules(options: { store?: A2Store | undefined; schedule
           noSync: body.noSync ?? false,
           ...(attachments.length ? { attachments } : {}),
           first,
+          ...(status.paused || status.resumedAt === null ? {} : { openEpoch: status.pauseEpoch }),
           every,
           until,
           times: body.times ?? null,

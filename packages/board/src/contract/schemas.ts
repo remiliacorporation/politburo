@@ -25,6 +25,11 @@ export const TASK_KEY_MAX = 64
 /** The longest result or reason a task keeps: a line or two, with the detail in its thread. */
 export const TASK_NOTE_MAX = 1000
 
+export const AgentRole = z.enum(['coordinator', 'issues', 'controller', 'implementation-worker', 'reviewer', 'qa-owner', 'qa-runner', 'user-watcher'])
+export type AgentRole = z.infer<typeof AgentRole>
+export const AgentGeneration = z.number().int().positive()
+export const AgentHarness = z.string().min(1).max(128).refine((name) => name.trim().length > 0 && storable(name), 'invalid harness name')
+
 const segment = '[a-z0-9][a-z0-9_-]*'
 
 /** `errors-www`, `www/production`: lowercase segments joined by `/`. */
@@ -54,6 +59,9 @@ export const MessageText = z
   .max(MESSAGE_TEXT_MAX)
   .refine((text) => text.trim().length > 0, 'message text is empty')
   .refine(storable, 'message text has a NUL character or a lone surrogate')
+
+/** An opaque wire reference, interpreted by the board that issued it. */
+export const Ref = z.string().min(1).max(128)
 
 /** A message is named by the log index of its `message.posted` event. */
 export const MessageId = z.number().int().positive()
@@ -150,6 +158,12 @@ export const Attachment = z.object({
 /** What a task is doing: its root's `board.task` label. */
 export const TaskState = z.enum(['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled'])
 export type TaskState = z.infer<typeof TaskState>
+
+/** From lowest to highest. Ordering is part of the task contract. */
+export const TaskPriority = z.enum(['lowest', 'low', 'normal', 'high', 'urgent'])
+export type TaskPriority = z.infer<typeof TaskPriority>
+export const DEFAULT_TASK_PRIORITY = 'normal' satisfies TaskPriority
+export const priorityRank = (priority: TaskPriority = DEFAULT_TASK_PRIORITY) => TaskPriority.options.indexOf(priority)
 /** The states a task can still leave by being worked: `GET /tasks` lists these by default. */
 export const OPEN_TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked'] as const satisfies readonly TaskState[]
 

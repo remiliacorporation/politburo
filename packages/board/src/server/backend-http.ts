@@ -1,11 +1,11 @@
-import { routes, type Discovery, type EventsPage } from '../api/routes.ts'
+import { BoardStatus, routes, type Discovery, type EventsPage } from '../api/routes.ts'
 import type { Method, Protocol } from '../api/protocol.ts'
 import { BoardError, createBoardClient, type BoardClient, type ProfileOption } from '../client/client.ts'
 import { DERIVED_ID, keyId } from '../client/ids.ts'
 import { ATTACHMENT_BYTES_MAX, type Attachment } from '../contract/schemas.ts'
 import { type Backend, type BoardBinding, type Caller, type ProtocolMethods, type SelfCaller } from './backend.ts'
-import { HttpError } from './errors.ts'
-import { METHODS } from './routing.ts'
+import { HttpError, noAgentOps } from './errors.ts'
+import { isAgentOpsMethod, METHODS } from './routing.ts'
 import { compileWatcher } from './watch-spec.ts'
 import { deployedOnVercel } from './registrant.ts'
 import { tailWatchers } from './tails.ts'
@@ -211,6 +211,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
         })
         .catch(rethrow)
     } else if (route.method === 'GET') response = await client.request(`${path}${queryString(fields)}`, { signal }).catch(rethrow)
+    else if (method === 'archiveOperationalMessage') response = await client.request(path, { method: 'POST', signal }).catch(rethrow)
     else
       response = await client
         .request(path, { method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal })
@@ -228,16 +229,24 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
 
   /** A protocol method, called on the board it uses, as `caller`. */
   async function remoteCall(method: Method, caller: Caller, input: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
-    start()
     // board() serves no requests for a board that uses another's: only its own code calls here.
     if ('identity' in caller) throw new HttpError(404, 'not_found', `this board uses ${remote}, and answers nothing itself`)
+    if (isAgentOpsMethod(method) && (await discovery()).agent_ops !== true) throw noAgentOps()
+    start()
     const client = clientOf(caller)
     // A post board() gave an ID derived from a trigger, a task's new thread included: the remote
     // takes it as this deployment's key, and a retry's lookup asks for the same.
     if ((method === 'post' || method === 'posted' || method === 'createTask' || method === 'createTasks' || method === 'createdTasks') && 'self' in caller && typeof input.id === 'string' && DERIVED_ID.test(input.id))
       input = { ...input, id: await ownKey(input.id).catch(rethrow) }
     const response = await call(client, method, input, signal)
-    return method === 'attachment' ? attachmentOf(String(input.id), response) : response.json()
+    if (method === 'attachment') return attachmentOf(String(input.id), response)
+    if (method === 'status' || method === 'pause' || method === 'resume') {
+      // An older mount can answer an unknown GET with discovery, not a control state.
+      const status = BoardStatus.safeParse(await response.json().catch(() => null))
+      if (!status.success) throw new HttpError(502, 'remote_error', 'the remote board did not answer with a control status')
+      return status.data
+    }
+    return response.json()
   }
 
   const methods: ProtocolMethods = {

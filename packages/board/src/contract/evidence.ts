@@ -59,11 +59,13 @@ export type TaskEvidence = {
 
 export const unexpired = (record: { expiresAt: string | null }, now: number) => record.expiresAt === null || Date.parse(record.expiresAt) > now
 
-export function currentEvidence(root: Message, now: number) {
+/** Without a current pause epoch, only evidence from completed tasks is eligible. */
+export function currentEvidence(root: Message, now: number, pauseEpoch?: number) {
   const task = root.task
   const evidence = task?.evidence
   if (!task || !evidence || root.deleted || evidence.revision !== (root.revision ?? root.id) || evidence.submission.round !== task.epoch) return null
-  return task.state === 'completed' || (task.state === 'claimed' && Date.parse(task.claim!.until) > now) ? evidence : null
+  const live = task.state === 'claimed' && (task.claim!.pauseEpoch ?? 0) === pauseEpoch && Date.parse(task.claim!.until) > now
+  return task.state === 'completed' || live ? evidence : null
 }
 
 type EvidenceEvent = Extract<BoardEvent, { type: keyof typeof evidenceEvents }>

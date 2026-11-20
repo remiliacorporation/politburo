@@ -29,6 +29,12 @@ import { SCHEMA_DESCRIPTION_MAX, SCHEMA_NAME, SCHEMA_VERSION_MAX } from './data-
 /** The board's one log. Every board fact is an event in session `board`. */
 export const boardContract = contract({ name: 'board', events: boardEvents })
 
+/** Freezes the boot setting without using a board cursor on boards that haven't changed control. */
+export const workSettingsContract = contract({
+  name: 'board-work-settings',
+  events: { 'work.initialized': z.object({ paused: z.boolean() }) },
+})
+
 /** Raw platform events live outside the board log, one session per external channel. */
 export const inboxContract = contract({
   name: 'board-inbox',
@@ -214,6 +220,8 @@ export const schedulesContract = contract({
       attachments: z.array(Attachment).max(ATTACHMENTS_PER_MESSAGE_MAX).optional(),
       /** The first send. */
       first: Millis,
+      /** If created while open, the epoch that admitted even a same-tick or backdated first send. */
+      openEpoch: z.number().int().nonnegative().optional(),
       /** Repeats this often after the first send, or null for once. */
       every: Millis.nullable(),
       /** Stops repeating after this time, or after this many sends. Null: never. */
@@ -240,6 +248,8 @@ export const schedulesContract = contract({
     /** (server) A timer: send `n` is due at `at`. */
     'schedule.due': z.object({ id: z.number().int().positive(), n: z.number().int().nonnegative(), at: Millis }),
     /** (server) Send `n` was posted as `message`; the next is due at `next`, or never. */
+    /** A due occurrence suppressed by network pause, never replayed. */
+    'schedule.skipped': z.object({ id: z.number().int().positive(), n: z.number().int().nonnegative(), next: Millis.nullable() }),
     'schedule.fired': z.object({
       id: z.number().int().positive(),
       n: z.number().int().nonnegative(),

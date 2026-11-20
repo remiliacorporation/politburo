@@ -32,8 +32,8 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
     if (!allowed?.has(identity.principal.id)) throw forbidden('this principal is not configured for this work operation')
   }
 
-  function candidate(root: Root, input: { commit: string; round: number }, now: number) {
-    const state = currentEvidence(root, now)
+  function candidate(root: Root, input: { commit: string; round: number }, now: number, pauseEpoch: number) {
+    const state = currentEvidence(root, now, pauseEpoch)
     if (state?.submission.commit !== input.commit || state.submission.round !== input.round) throw stale()
     return state
   }
@@ -59,8 +59,8 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
     capability,
     releaseDependencies,
     checkEnabled,
-    status(root: Root, needs: ReadonlyMap<number, Message>, access: Access): Protocol['workEvidence']['output'] {
-      const state = currentEvidence(root, Date.now())
+    status(root: Root, needs: ReadonlyMap<number, Message>, access: Access, pauseEpoch: number): Protocol['workEvidence']['output'] {
+      const state = currentEvidence(root, Date.now(), pauseEpoch)
       const releases = root.task.needs.flatMap((id) => {
         const evidenceId = root.task.releases?.[id]
         const need = needs.get(id)
@@ -73,27 +73,27 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
       if (root.task.evidence?.submission.round === root.task.epoch) throw conflict('already_submitted', 'this claim already submitted work; a new claim starts a new round')
       return [{ type: 'task.work_submitted', payload: { id: root.id, thread: root.thread, by: identity.author, round: root.task.epoch, revision: root.revision ?? root.id, commit, artifactRef } }]
     },
-    record(root: Root, identity: Identity, { commit, round, gate, verdict, artifactRef, expiresAt }: Protocol['recordEvidence']['input']): Events {
+    record(root: Root, identity: Identity, { commit, round, gate, verdict, artifactRef, expiresAt }: Protocol['recordEvidence']['input'], pauseEpoch: number): Events {
       role(identity, root.channel, 'post', attesters.get(gate))
       const now = Date.now()
-      const state = candidate(root, { commit, round }, now)
+      const state = candidate(root, { commit, round }, now, pauseEpoch)
       if (gate === 'review' && state.submission.by.principal === identity.principal.id) throw forbidden('the reviewer must be a different principal from the submitter')
       future(expiresAt, now)
       return [{ type: 'task.work_evidence', payload: { id: root.id, thread: root.thread, by: identity.author, commit, round, gate, verdict, artifactRef, expiresAt: expiresAt ?? null } }]
     },
-    override(root: Root, identity: Identity, { commit, round, gate, reason, expiresAt }: Protocol['overrideEvidence']['input']): Events {
+    override(root: Root, identity: Identity, { commit, round, gate, reason, expiresAt }: Protocol['overrideEvidence']['input'], pauseEpoch: number): Events {
       role(identity, root.channel, 'manage', operators)
       const now = Date.now()
-      candidate(root, { commit, round }, now)
+      candidate(root, { commit, round }, now, pauseEpoch)
       future(expiresAt, now)
       return [{ type: 'task.work_override', payload: { id: root.id, thread: root.thread, by: identity.author, commit, round, gate, reason, expiresAt } }]
     },
-    complete(root: Root, identity: Identity, commit: string | undefined) {
+    complete(root: Root, identity: Identity, commit: string | undefined, pauseEpoch: number) {
       if (!enabled && commit !== undefined) throw noWorkEvidence()
       if (!required.length && commit === undefined) return
       heldBy(root, identity)
       const now = Date.now()
-      const state = currentEvidence(root, now)
+      const state = currentEvidence(root, now, pauseEpoch)
       if (!state || commit === undefined) throw conflict('evidence_required', 'completion requires a current submission and its full commit ID')
       if (state.submission.commit !== commit) throw stale()
       for (const gate of required) {

@@ -112,7 +112,8 @@ export function canHeader(can: Can | string | undefined): string {
  * platform or the board's own deployments call (webhooks, wake-ups), where the credential could speak
  * for them.
  */
-const WITHHELD = ['grants', 'watchers', 'wake', 'webhooks', 'sync', 'inbox', 'sources']
+// A sandbox shares its deployment's principal, so a profile can't isolate an operational inbox.
+const WITHHELD = ['grants', 'watchers', 'wake', 'webhooks', 'sync', 'inbox', 'operational-inbox', 'sources']
 
 const escaped = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -123,12 +124,12 @@ const caseless = (value: string) => [...value].map((char) => (/[a-z]/i.test(char
 const SEGMENT = "(?:[A-Za-z0-9_.@~:+=,!$&'*-]|%[0-9A-Fa-f]{2})+"
 
 /**
- * The protocol's routes a sandbox reaches: every route but those under a withheld segment. Each is
+ * The protocol's routes a sandbox reaches: no control writes or routes under a withheld segment. Each is
  * named whole, because a board mounted without a `basePath` matches a route as the end of a path, and
  * `/api/board/x/grants` would be its `/grants` under `/api/board/x`.
  */
 export const PROTOCOL_ROUTES: readonly SandboxRoute[] = (Object.values(routes) as SandboxRoute[])
-  .filter(({ path }) => !WITHHELD.includes(path.split('/').filter(Boolean)[0] ?? ''))
+  .filter(({ path }) => !path.startsWith('/control/') && !WITHHELD.includes(path.split('/').filter(Boolean)[0] ?? ''))
   .map(({ method, path }) => ({ method, path: path === '/' ? '' : path }))
 
 /** `routes`' rules: one a method, its paths' shapes in one expression after `prefix`. */

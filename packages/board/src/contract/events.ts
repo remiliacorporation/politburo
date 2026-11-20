@@ -7,6 +7,9 @@ import {
   ATTACHMENTS_PER_MESSAGE_MAX,
   SeenActorKind,
   Author,
+  AgentGeneration,
+  AgentHarness,
+  AgentRole,
   ChannelPath,
   Emoji,
   Handle,
@@ -15,15 +18,19 @@ import {
   MessageId,
   MessageText,
   MESSAGE_TEXT_MAX,
+  Ref,
   RemoteWatcherId,
   CAN_MAX,
   storable,
   TASK_NEEDS_MAX,
   TaskHoldKind,
   TaskNote,
+  TaskPriority,
 } from './schemas.ts'
 import { ExternalEvent, ExternalTarget, Link, LINKS_PER_MESSAGE_MAX, Origin } from './external.ts'
+import { AttentionDraft, AttentionReceipt } from './attention.ts'
 import { evidenceEvents } from './evidence.ts'
+import { operationalEvents } from './operational-inbox.ts'
 
 /** The sync key a write came from, or null when it was written on the board. */
 const From = z.string().nullable()
@@ -38,11 +45,14 @@ export const ALONG_MAX = 3
 
 /** Which claim of a task this is: 1 for its first, one more for each after. A write that names an older one changes nothing. */
 const Epoch = z.number().int().positive()
+/** Attention can be requested before the task has ever been claimed. */
+const AttentionEpoch = z.number().int().nonnegative()
 /** When a claim's lease runs out, as an ISO time. */
 const Until = z.string().datetime()
 
 /** The board's one log. Every board fact is an event in session `board`. */
 export const boardEvents = {
+    ...operationalEvents,
     'message.posted': z.object({
       channel: ChannelPath,
       /** Empty only when the message has attachments. */
@@ -152,9 +162,11 @@ export const boardEvents = {
      * The thread rooted at `id` is a task, and `by.principal` owns it. It waits while it has `needs`,
      * until `task.ready` says they've all completed; with none, it's ready.
      */
-    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), by: Author }),
+    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author }),
     /** Only actor `for` claims it now, or with null, anyone who may. */
     'task.assigned': z.object({ ...Task, for: ActorId.nullable(), by: Author }),
+    /** An epoch identifies a change made through a claim. */
+    'task.priority_changed': z.object({ ...Task, priority: TaskPriority, epoch: Epoch.optional(), by: Author }),
     /**
      * It waits for `needs` now, in place of what it waited for. As from `task.created`, it waits
      * while it has any, until `task.ready` says they've all completed, and with none it's ready. One
@@ -163,8 +175,10 @@ export const boardEvents = {
     'task.needs_changed': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), by: Author }),
     /** (server) Every task it needs has completed. */
     'task.ready': z.object(Task),
-    /** (server) `by` holds it until `until`. `token` is the SHA-256 of the claim's secret, hex: no view shows it. */
-    'task.claimed': z.object({ ...Task, epoch: Epoch, until: Until, token: z.string().regex(/^[0-9a-f]{64}$/), by: Author }),
+    /** (server) `by` holds it until `until` in this pause epoch. Old claims were granted in epoch zero. */
+    'task.claimed': z.object({ ...Task, epoch: Epoch, pauseEpoch: z.number().int().nonnegative().optional(), until: Until, token: z.string().regex(/^[0-9a-f]{64}$/), by: Author }),
+    /** A board-wide authority change, never a message or a dispatch ticket. */
+    'work.control': z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative(), reason: TaskNote, by: Author }),
     'task.renewed': z.object({ ...Task, epoch: Epoch, until: Until, by: Author }),
     'task.released': z.object({ ...Task, epoch: Epoch, by: Author }),
     /** (server) Its lease ran out. */
@@ -176,9 +190,26 @@ export const boardEvents = {
     'task.unblocked': z.object({ ...Task, by: Author }),
     /** Reason `deleted` when its root was. */
     'task.canceled': z.object({ ...Task, reason: TaskNote, by: Author }),
-    /** A failed task is ready again. */
-    'task.reopened': z.object({ ...Task, by: Author }),
     ...evidenceEvents,
+    /** A failed task reopens, waiting only if it failed on an attention hold before its needs completed. */
+    'task.reopened': z.object({ ...Task, by: Author, waiting: z.literal(true).optional() }),
+    // Request and answer each change the task state in the same event as their attention fact.
+    'task.attention_requested': z.object({ ...Task, requestId: Ref, epoch: AttentionEpoch, draft: AttentionDraft, by: Author, replaces: Ref.optional() }),
+    'task.attention_answered': z.object({ ...Task, requestId: Ref, epoch: AttentionEpoch, by: Author, receipt: AttentionReceipt }),
+    /** The private registry's current record after a register, heartbeat, or retire. */
+    'ops.agent_changed': z.object({
+      agent: z.object({
+        id: Ref,
+        channel: ChannelPath,
+        role: AgentRole,
+        parent: Ref.nullable(),
+        harness: AgentHarness,
+        binding: Author.pick({ principal: true, profile: true }),
+        generation: AgentGeneration,
+        status: z.enum(['enabled', 'disabled']),
+        heartbeatAt: Until.nullable(),
+      }),
+    }),
     'actor.seen': z.object({
       actor: ActorId,
       kind: SeenActorKind,
@@ -220,3 +251,8 @@ export type BoardEvent<K extends keyof BoardEvents & string = keyof BoardEvents 
     createdAt: Date
   }
 }[K]
+
+/** Registry and operational inbox records stay out of the generic feed, even with `all`. */
+export type PublicBoardEvent = Exclude<BoardEvent, { type: `ops.${string}` | keyof typeof operationalEvents }>
+export const isPublicBoardEvent = (event: BoardEvent): event is PublicBoardEvent =>
+  !event.type.startsWith('ops.') && !Object.hasOwn(operationalEvents, event.type)
