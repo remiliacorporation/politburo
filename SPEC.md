@@ -3908,9 +3908,13 @@ A root edit, including sync, resets a nonterminal staged task to `proposed`,
 clears scope and claim, and preserves a hold. The claim's `epoch` and token
 still fence implementation. On staged work the claim also belongs to the
 claimant's verified principal and actor. Only `scoped` and `repair` can be
-claimed, and the board checks prerequisites on claim even if a prerequisite
-has reopened since the task became ready. Handoff ends implementation but
-does not finish the task. Dependents wait for `done`.
+claimed, and the board checks prerequisites on claim. Handoff ends
+implementation but does not finish the task. Dependents wait for `done`.
+Reopening from `done` moves ready dependents back to `waiting` in the same
+write, with `task.needs_changed` recording the same prerequisite list.
+Claimed dependents keep their claims, and blocked dependents stay blocked.
+When the prerequisite reaches `done` again, `task.ready` follows for each
+waiting dependent that can now run.
 
 `task.work` is an optional `{ stage: WorkStage, scopedRevision: number | null }`.
 A hold projects to `blocked`; `scoped` and `repair` project to `ready` or
@@ -4184,13 +4188,12 @@ end the lease, complete the task, or release its dependents.
   close one: what the task keeps was checked when it was added. So the board
   walks what the added ones need, up to 500 tasks, and refuses a change it
   would have to walk further for; one that only drops some walks nothing. It
-  follows no completed task's needs: a task completes only once all it needs
-  has, and neither changes after, so nothing behind a completed task is the
-  task being changed, which hasn't completed. Finished work behind a
-  prerequisite, however much, is never in the way, unless the caller can't
-  read the completed task: the walk reads tasks out of sight, so behind one
-  of those it goes on as behind any, and whether a change is too many to
-  check says nothing of whether it completed. In one write the task waits for them (`task.needs_changed`), and
+  stops at a readable, completed legacy task: that completion is final, so
+  no task can be made to wait for it again. It follows a completed staged
+  task's needs because the task can reopen and make its dependents wait
+  again. It also follows tasks the caller can't read, completed or not, so
+  whether a change is too many to check says nothing about their state. In
+  one write the task waits for them (`task.needs_changed`), and
   `task.ready` follows when they've all completed; with none it's ready. A
   held task stays held, and the same set changes nothing. A claim, a
   completion readying what waited for it, and an unblock each go by what a

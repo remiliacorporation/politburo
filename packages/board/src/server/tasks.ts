@@ -508,13 +508,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
    * `NEEDS_WALK_MAX` tasks: a change it can't check is refused too. One that only drops some walks
    * nothing.
    *
-   * Where staged work is not enabled, the walk can stop at a readable, completed legacy task.
-   * Legacy completion is final. Staged tasks can reopen, so follow completed work on a staged
-   * board too: even a completed legacy task may have been waiting for staged work. An unreadable
-   * task is followed
-   * all the same, completed or not: the walk reads tasks out of the caller's sight, as it must to
-   * find a cycle, so where it stops, and whether it gets past `NEEDS_WALK_MAX`, must depend on
-   * nothing the caller can't see. A canceled task is followed: it may have waited for anything.
+   * The walk stops at a readable, completed legacy task. Its completion is final, so no task
+   * can be made to wait on it again. Completed staged tasks can reopen and make their dependents
+   * wait again, so the walk follows their needs. It also follows unreadable tasks, completed or
+   * not: where it stops, and whether it gets past `NEEDS_WALK_MAX`, must depend on nothing the
+   * caller can't see. A canceled task is followed: it may have waited for anything.
    */
   async function acyclic(access: Access, id: number, added: readonly number[], position: number) {
     const invalid = (need: number, why: string) => badRequest(`needs: #${need} ${why}`, 'invalid_needs')
@@ -526,7 +524,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       for (const at of level) {
         const message = found.get(at)
         const task = message?.task
-        if (!task || (!scopers && !task.work && task.state === 'completed' && access.readable(message.channel))) continue
+        if (!task || (!task.work && task.state === 'completed' && access.readable(message.channel))) continue
         for (const need of task.needs) {
           if (need === id) throw invalid(from.get(at)!, `waits for #${id} already: they would wait for each other`)
           if (from.has(need)) continue
@@ -1155,7 +1153,15 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           if (reason === undefined || ifVersion === undefined) throw badRequest('reason and ifVersion are required to reopen staged work')
           taskLimits.note('reason', reason)
           atVersion(found, ifVersion)
-          return [stageChanged(found, identity, 'proposed', reason)]
+          const events: Events = [stageChanged(found, identity, 'proposed', reason)]
+          if (from === 'done') {
+            // Only ready dependents wait again here. A dependent that was claimed keeps its claim.
+            for await (const root of rootsAt({}, ['ready'], position)) {
+              if (root.task.needs.includes(id))
+                events.push({ type: 'task.needs_changed', payload: { id: root.id, thread: root.thread, needs: root.task.needs, by: identity.author } })
+            }
+          }
+          return events
         }
 
         const { task } = found
