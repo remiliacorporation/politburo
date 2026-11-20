@@ -13,6 +13,7 @@ import {
   ClaimReadyTaskBody,
   ClaimTaskBody,
   CompleteTaskBody,
+  CompleteWithEvidenceBody,
   ControlBody,
   CreateTaskBody,
   CreateTasksBody,
@@ -22,6 +23,10 @@ import {
   ParkTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
+  SubmitWorkBody,
+  RecordEvidenceBody,
+  OverrideEvidenceBody,
+  ResolveWorkEdgeBody,
   TasksQuery,
   DeleteBody,
   EditBody,
@@ -87,10 +92,10 @@ import { importedHandle, userIdOf } from '../contract/profiles.ts'
 import type { CallerRequest } from './auth.ts'
 import { isJoinedCredential } from './policy.ts'
 import { avatarSvg } from './avatars.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notFound, toErrorResponse, unauthorized } from './errors.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, noWorkEvidence, notFound, toErrorResponse, unauthorized } from './errors.ts'
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
-import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
+import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, isOperationalInboxMethod, isWorkEvidenceMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
 import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
@@ -136,7 +141,7 @@ function attachmentResponse({ attachment, data }: Protocol['attachment']['output
 }
 
 /** A method's input, from the request: its path's `:id` or `:key`, its query, or its body, validated. */
-async function inputOf(name: Method, request: Request, url: URL, params: Record<string, string>): Promise<unknown> {
+async function inputOf(name: Method, request: Request, url: URL, params: Record<string, string>, requiresWorkCommit?: true): Promise<unknown> {
   const id = params.id ?? ''
   const key = params.key ?? ''
   const body = () => readJson(request)
@@ -165,6 +170,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'message':
       return { id, ...ThreadQuery.parse(queryObject(url)) }
     case 'posted':
+    case 'workEvidence':
     case 'synced':
     case 'cancelSchedule':
     case 'unblockTask':
@@ -242,7 +248,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'releaseTask':
       return { id, ...ReleaseTaskBody.parse(await body()) }
     case 'completeTask':
-      return { id, ...CompleteTaskBody.parse(await body()) }
+      return { id, ...(requiresWorkCommit ? CompleteWithEvidenceBody : CompleteTaskBody).parse(await body()) }
     case 'failTask':
       return { id, ...FailTaskBody.parse(await body()) }
     case 'blockTask':
@@ -264,6 +270,14 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...TaskPriorityBody.parse(await body()) }
     case 'cancelTask':
       return { id, ...CancelTaskBody.parse(await body()) }
+    case 'submitWork':
+      return { id, ...SubmitWorkBody.parse(await body()) }
+    case 'recordEvidence':
+      return { id, ...RecordEvidenceBody.parse(await body()) }
+    case 'overrideEvidence':
+      return { id, ...OverrideEvidenceBody.parse(await body()) }
+    case 'resolveWorkEdge':
+      return { id, ...ResolveWorkEdgeBody.parse(await body()) }
     case 'createGrant':
       return GrantBody.parse(await body())
     case 'createGrants':
@@ -1141,11 +1155,18 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         }
         return backend.inbox(caller, query, signal)
       }
+      case 'completeTask': {
+        const body = input as Protocol['completeTask']['input']
+        // Discovery advertises policy, not implementation: local boards without a policy still refuse commits themselves.
+        if (body.commit !== undefined && typeof backend.workEvidence !== 'function') throw noWorkEvidence()
+        return backend.completeTask(caller, body, signal)
+      }
       default: {
         const method = backend[name] as unknown
         if (typeof method !== 'function') {
           if (CONTROL.has(name)) throw new HttpError(501, 'no_network_pause', 'this board does not support network pause')
           if (ATTENTION_METHODS.has(name)) throw new HttpError(501, 'no_task_attention', 'this board does not support task attention')
+          if (isWorkEvidenceMethod(name)) throw noWorkEvidence()
           throw notFound(`no route: ${name}`)
         }
         return (method as (caller: Caller, input: unknown, signal: AbortSignal) => Promise<unknown>).call(backend, caller, input, signal)
@@ -1286,6 +1307,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
+      ...(capabilities?.workEvidence ? { workEvidence: capabilities.workEvidence } : {}),
       ...(capabilities?.agent_intents === true ? { agent_intents: true } : {}),
     }
   }
@@ -1326,7 +1348,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
       if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
-        && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {
+        && !isOperationalInboxMethod(target.name) && !isWorkEvidenceMethod(target.name) && typeof backend[target.name] !== 'function') {
         if (INVITE_METHODS.has(target.name)) throw noInvites()
         throw ops ? noAgentOps(ops) : notFound(`no route: ${request.method} ${url.pathname}`)
       }
@@ -1339,7 +1361,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       if (target.kind === 'board') return await serve(target.name, caller, request, url, match.params)
 
       if (INVITE_METHODS.has(target.name) && narrowed(caller)) throw forbidden("this caller is narrowed and can't manage invites")
-      const input = await inputOf(target.name, request, url, match.params)
+      const input = await inputOf(target.name, request, url, match.params, match.requiresWorkCommit)
       if (match.requiresTaskBinding && !(input as { binding?: unknown }).binding) throw badRequest('a bound task request needs binding')
       if (target.name === 'events' && (request.headers.get('accept') ?? '').includes('text/event-stream'))
         return await sse(caller, input as Protocol['events']['input'], request, asked ? () => callerOf(asked) : null)

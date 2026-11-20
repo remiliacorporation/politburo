@@ -28,7 +28,7 @@ describe('list reads', () => {
     // The deploy that adds them. Nothing appends or reads by ID, so only the list read can start them.
     const tables = sqlTables(sqliteDb(':memory:'))
     const deployed = board({
-      store: { log, tables, close: () => tables.close() },
+      store: { log, tables, guardAppend: (_check, append) => append(), close: () => tables.close() },
       url: BOARD_URL,
       auth: testAuth,
     })
@@ -65,7 +65,7 @@ describe('list reads', () => {
     const log = a2Memory()
     const tables = sqlTables(sqliteDb(':memory:'))
     const deployed = board({
-      store: { log, tables, close: () => tables.close() },
+      store: { log, tables, guardAppend: (_check, append) => append(), close: () => tables.close() },
       url: BOARD_URL,
       auth: testAuth,
     })
@@ -108,7 +108,7 @@ describe('reads by ID', () => {
 
     const tables = sqlTables(sqliteDb(':memory:'))
     const deployed = board({
-      store: { log, tables, close: () => tables.close() },
+      store: { log, tables, guardAppend: (_check, append) => append(), close: () => tables.close() },
       url: BOARD_URL,
       auth: testAuth,
     })

@@ -497,6 +497,10 @@ export function formatEvent(event: BoardEventView): string {
     case 'task.handoff':
     case 'task.canceled':
     case 'task.reopened':
+    case 'task.work_submitted':
+    case 'task.work_evidence':
+    case 'task.work_override':
+    case 'task.work_resolved':
       return `#${message.id}  ${where}  task ${taskEvent(event)}`
     default:
       return `#${event.cursor}  ${event.type}`
@@ -538,6 +542,14 @@ function taskEvent(event: Extract<BoardEventView, { type: `task.${string}` }>): 
       return `attention answered${by}${more(event.payload.receipt.routedTo)}`
     case 'task.canceled':
       return `canceled${by}${more(noteLine(event.payload.reason))}`
+    case 'task.work_submitted':
+      return `submitted${by}${more(event.payload.commit)}`
+    case 'task.work_evidence':
+      return `${event.payload.gate} ${event.payload.verdict}${by}`
+    case 'task.work_override':
+      return `${event.payload.gate} overridden${by}${more(noteLine(event.payload.reason))}`
+    case 'task.work_resolved':
+      return `dependency resolved${by}`
     default:
       // Claimed, renewed, released, unblocked, reopened: what happened, and who did it.
       return `${event.type.slice('task.'.length)}${by}`

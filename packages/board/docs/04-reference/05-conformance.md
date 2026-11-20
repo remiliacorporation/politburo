@@ -154,6 +154,21 @@ checks network pause through a handle for a verified person with global
 but does not restore any earlier leases or skipped schedule occurrences. Do
 not use it on a shared board. The default run never pauses the board.
 
+When discovery advertises [work evidence](../01-board/11-tasks.md#commit-evidence),
+the `work-evidence` group checks that completion rejects missing evidence.
+On a release-only board (`releaseDependencies: true`, `gates: false`), it
+checks that the dependent waits after completion and becomes ready after an
+explicit resolution. Run as a configured resolver with `manage` on the test
+channel. On a board that advertises both gates and evidence releases, pass
+`{ workEvidence: { second } }`. The run's principal submits and completes.
+`second` is a handle for a different principal on the same board, authorized
+by its policy to attest `tests` and `review` and to resolve edges. The check
+skips without `second` or if other attestation gates are required. A 501 from
+an advertised evidence operation fails the check.
+
+The report skips legacy checks that require ungated completion or automatic
+dependency release when that behavior is disabled.
+
 The `tasks` group also checks structured attention on boards that advertise
 `task_attention: true`. It opens and reads a request using a live claim, and
 checks that neither the old claim nor legacy `unblock` can settle the task.

@@ -90,6 +90,9 @@ export interface MessageTables {
   close(): Promise<void>
 }
 
+/** Runs a synchronous check at insertion, inside a conditional append's serialized section. */
+export type AppendGuard = <T>(check: () => void, append: () => Promise<T>) => Promise<T>
+
 /**
  * Where a local board keeps everything: its log, and the tables it reads from. `sqlite()` and
  * `memory()` (`store/sqlite.ts`, `store/memory.ts`) make one.
@@ -97,6 +100,7 @@ export interface MessageTables {
 export type BoardStore = {
   /** The board's A2 store. */
   readonly log: A2Store
+  readonly guardAppend: AppendGuard
   readonly tables: MessageTables
   close(): Promise<void>
 }

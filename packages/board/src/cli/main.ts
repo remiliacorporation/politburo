@@ -17,6 +17,7 @@ import { isBoardName } from '../server/board.ts'
 import { isApiMessageId } from '../server/backend-vercel.ts'
 import { AttentionAnswerBody, AttentionAskFile } from '../contract/attention.ts'
 import { normalizeEmoji } from '../contract/emoji.ts'
+import { AttestationGate, Commit, Verdict } from '../contract/evidence.ts'
 import { AgentRole, ATTACHMENTS_PER_MESSAGE_MAX, DIRECT_UPLOAD_BYTES_MAX, IntentOutcome, IntentVerb, MESSAGE_TEXT_MAX, type AgentIntent, type Attachment, AttachmentId, TaskPriority } from '../contract/schemas.ts'
 import { TaskBinding, TaskPacket } from '../contract/task-authority.ts'
 import { VERSION } from '../version.ts'
@@ -842,7 +843,7 @@ function doing(): string {
       if (a === 'health') return `check run health for task ${ref(b)}`
       return 'work with agents'
     case 'tasks': {
-      if (a === undefined || !TASK_VERBS.has(a)) return a === undefined ? 'list tasks' : `list tasks in ${a}`
+      if (a === undefined || !isTaskVerb(a, b)) return a === undefined ? 'list tasks' : `list tasks in ${a}`
       const one = b === undefined ? 'a task' : `task ${ref(b)}`
       // `run` fails as its claim does, before its command starts, or as what it settles with after.
       if (a === 'claim' || a === 'run') return flags.ready ? `claim a task in ${b ?? 'a channel'}` : `claim ${one}`
@@ -853,6 +854,7 @@ function doing(): string {
       if (a === 'needs') return `change what ${one} needs`
       if (a === 'ask') return `request attention on ${one}`
       if (a === 'attention') return `read the attention request on ${one}`
+      if (a === 'evidence') return `read work evidence for ${one}`
       if (a === 'answer') return `answer the attention request on ${one}`
       return `${a} ${one}`
     }
@@ -1131,7 +1133,10 @@ function report(failure: Failure, json: boolean): number {
     const safe = redactCredentials(encoded)
     app.onError(safe === encoded ? failure : JSON.parse(safe) as Failure, { json })
   } else if (json) io.error(`${redactCredentials(JSON.stringify(failureDocument(failure)))}\n`)
-  else io.error(`${redactCredentials(terminalText(formatFailure(failure)))}\n`)
+  else {
+    const escapeLine = isEvidenceCommand() || failure.reason === 'evidence_required' ? lineText : undefined
+    io.error(`${redactCredentials(terminalText(formatFailure(failure, escapeLine)))}\n`)
+  }
   return exitCode(failure)
 }
 
@@ -2381,7 +2386,19 @@ async function agents(args: string[]): Promise<number> {
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel'])
+const TASK_EVIDENCE_VERBS = new Set(['submit', 'evidence', 'attest', 'override', 'resolve'])
+const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel', ...TASK_EVIDENCE_VERBS])
+const TASK_READS = new Set(['show', 'attention', 'evidence'])
+// Evidence verbs take a task ID. A bare word still names the channel to list.
+const isTaskVerb = (word: string, target: string | undefined) =>
+  TASK_VERBS.has(word) && (target !== undefined || !TASK_EVIDENCE_VERBS.has(word))
+
+function isEvidenceCommand(): boolean {
+  const { command, args: [verb, target] } = current
+  return command === 'tasks' && verb !== undefined && target !== undefined
+    && (TASK_EVIDENCE_VERBS.has(verb) || (verb === 'complete' && flags.commit !== undefined))
+}
+
 const TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled']
 
 /** A task's ID as you'd write it: `#812` or `812`. */
@@ -2616,7 +2633,7 @@ const profileActor = (principal: string, profile: string) => `${principal}+${pro
 /** A write to a task that answers its root: with `--json`, the task and what happened to it. */
 function printTask(task: MessageView, outcome: string, more: object = {}) {
   if (flags.json) result({ task, outcome, ...more })
-  else out(`${outcome} ${messageRef(task.id)}`)
+  else out(`${outcome} ${lineText(messageRef(task.id))}`)
 }
 
 /** A claim: the task, how long it's yours, and what it is. With `--json`, the task and the claim, without its token, which the CLI keeps. */
@@ -2636,7 +2653,7 @@ async function heldBy(board: Board, claims: Claims, id: string) {
       class: 'conflict',
       reason: 'claim_not_held',
       message: `You hold no claim on task ${ref(id)} as ${writesAs() ?? 'yourself'}.`,
-      next: [{ instruction: 'Claim it', argv: [...cli(), 'tasks', 'claim', id, ...asTyped()] }],
+      next: [{ instruction: 'Claim it', argv: [...cli(), 'tasks', 'claim', id, ...onSameBoard(), ...asTyped()] }],
     })
   return board.tasks.held(id, stored)
 }
@@ -2720,7 +2737,7 @@ async function tasks(args: string[]): Promise<number> {
   if (flags.binding !== undefined && verb !== 'claim' && verb !== 'run' && verb !== 'create')
     throw usage('--binding goes with tasks claim, tasks run, or tasks create --claim.')
   if (flags.supersedes !== undefined && verb !== 'handoff') throw usage('--supersedes goes with tasks handoff.')
-  if (verb === undefined || !TASK_VERBS.has(verb)) {
+  if (verb === undefined || !isTaskVerb(verb, rest[0])) {
     if (rest.length > 0) {
       // Two words, the first no verb: the list takes one channel, so it's a command this one doesn't have.
       const guess = closest(verb!, TASK_VERBS)
@@ -2929,8 +2946,76 @@ async function tasks(args: string[]): Promise<number> {
     return 0
   }
   const { board, claims } = tasksOn()
+  const required = (flag: 'commit' | 'round' | 'artifact' | 'expires-at' | 'if-version') => {
+    const value = flags[flag]
+    if (!value?.trim()) throw usage(`Pass --${flag}.`, { reason: 'missing_arguments' })
+    return value
+  }
+  const number = (flag: 'round' | 'if-version') => {
+    const value = required(flag)
+    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) throw usage(`--${flag} takes a positive integer.`)
+    return Number(value)
+  }
+  const commit = () => {
+    const parsed = Commit.safeParse(required('commit'))
+    if (!parsed.success) throw usage('--commit takes a full lowercase Git commit ID.')
+    return parsed.data
+  }
 
   switch (verb) {
+    case 'submit': {
+      one(rest[1], 'one task')
+      const sha = commit()
+      const artifact = required('artifact')
+      const held = await heldBy(board, claims, id)
+      printTask(await withClaim(claims, id, () => held.submit(sha, artifact)), 'submitted')
+      return 0
+    }
+    case 'evidence': {
+      one(rest[1], 'one task')
+      const work = await board.tasks.evidence(id)
+      if (flags.json) result({ work })
+      else {
+        if (work.submission) {
+          out(lineText(`commit  ${work.submission.commit}`))
+          out(lineText(`round   ${work.submission.round}`))
+        } else out('no current submission')
+        if (work.required.length) out(lineText(`gates   ${work.required.join(', ')}`))
+        for (const record of [...(work.submission ? [work.submission] : []), ...work.evidence]) {
+          out(lineText(`#${record.id}  ${record.gate} ${record.verdict}${record.expiresAt ? ` until ${record.expiresAt}` : ''}`))
+          out(lineText(`  ${record.artifactRef}`))
+        }
+        for (const record of work.overrides) {
+          out(lineText(`#${record.id}  ${record.gate} overridden until ${record.expiresAt}`))
+          out(lineText(`  ${record.by.principal}: ${record.reason}`))
+        }
+        for (const edge of work.releases) out(lineText(`#${edge.needId}  released with #${edge.evidenceId}`))
+      }
+      return 0
+    }
+    case 'attest':
+    case 'override': {
+      one(rest[3], 'a task, gate, and verdict or reason')
+      const gate = AttestationGate.safeParse(rest[1])
+      if (!gate.success) throw usage('Name a gate: tests, review, browserQA, acceptance, or publication.')
+      const target = { commit: commit(), round: number('round'), gate: gate.data }
+      if (verb === 'override') {
+        if (!rest[2]?.trim()) throw usage('Give a reason for the override.', { reason: 'missing_arguments' })
+        printTask(await board.tasks.overrideEvidence(id, { ...target, reason: rest[2], expiresAt: required('expires-at') }), 'overridden')
+      } else {
+        const verdict = Verdict.safeParse(rest[2])
+        if (!verdict.success) throw usage('Give a verdict: pass or fail.')
+        printTask(await board.tasks.recordEvidence(id, { ...target, verdict: verdict.data, artifactRef: required('artifact'), ...(flags['expires-at'] !== undefined ? { expiresAt: required('expires-at') } : {}) }), 'attested')
+      }
+      return 0
+    }
+    case 'resolve': {
+      one(rest[3], 'a task, prerequisite, and evidence ID')
+      const needId = taskId(rest[1])
+      const evidenceId = messageId(rest[2], 'evidence ID')
+      printTask(await board.tasks.resolve(id, { needId, evidenceId, ifVersion: number('if-version') }), 'resolved')
+      return 0
+    }
     case 'show': {
       one(rest[1], 'one task')
       const { message, replies } = await board.thread(id)
@@ -2972,7 +3057,8 @@ async function tasks(args: string[]): Promise<number> {
     case 'complete': {
       one(rest[2], 'a task and its result, quoted')
       const held = await heldBy(board, claims, id)
-      const task = await withClaim(claims, id, () => held.complete(rest[1]))
+      const options = flags.commit === undefined ? undefined : { commit: commit() }
+      const task = await withClaim(claims, id, () => held.complete(rest[1], options))
       await claims.drop(id)
       printTask(task, 'completed')
       return 0
@@ -3105,22 +3191,38 @@ async function taskHold(): Promise<TaskHold> {
 function taskFailure(code: string, status: number, hold: TaskHold): { class: Failure['class']; message: string; next: Recovery[]; whole?: true } | null {
   const { command, args } = current
   const named = namedTask()
-  const read = (instruction: string, ...options: string[]): Recovery[] => (named === undefined ? [] : [{ instruction, argv: [...cli(), 'read', named, ...options] }])
-  const also = (instruction: string, ...words: string[]): Recovery[] => (named === undefined ? [] : [{ instruction, argv: [...cli(), 'tasks', words[0]!, named, ...words.slice(1)] }])
+  const evidenceWrite = command === 'tasks' && (args[0] === 'submit' || (args[0] === 'complete' && flags.commit !== undefined))
+  const board = onSameBoard()
+  const profile = asTyped()
+  const recovery = (instruction: string, words: string[], asProfile = evidenceWrite): Recovery =>
+    ({ instruction, argv: [...cli(), ...words, ...board, ...(asProfile ? profile : [])] })
+  const read = (instruction: string, asProfile = evidenceWrite): Recovery[] =>
+    named === undefined ? [] : [recovery(instruction, ['read', named], asProfile)]
+  const also = (instruction: string, verb: string, words: string[] = [], asProfile = true): Recovery[] =>
+    named === undefined ? [] : [recovery(instruction, ['tasks', verb, named, ...words], asProfile)]
   switch (code) {
+    case 'evidence_required':
+    case 'stale_candidate':
+    case 'already_submitted':
+      return { class: 'conflict', message: `Can't ${doing()}. Check the current submission and its gates.`, next: also('See the evidence', 'evidence') }
+    case 'invalid_evidence':
+      return { class: 'conflict', message: `Can't ${doing()}. Use current passing evidence from the completed prerequisite.`, next: [] }
+    case 'stale_task':
+      return { class: 'conflict', message: `Can't ${doing()}. The task changed.`, next: read('See the current task', true) }
+    case 'no_work_evidence':
+      return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board does not support that work evidence operation.`, next: [] } : null
     case 'task_claimed':
       return { class: 'conflict', message: `Can't ${doing()}. Someone holds it.`, next: read('See who holds it, and until when') }
     case 'task_assigned':
-      return { class: 'conflict', message: `Can't ${doing()}. It's assigned to another profile.`, next: [...read("See whom it's for"), ...also('Or, as its owner, return it to the pool', 'assign', '--pool')] }
+      return { class: 'conflict', message: `Can't ${doing()}. It's assigned to another profile.`, next: [...read("See whom it's for"), ...also('Or, as its owner, return it to the pool', 'assign', ['--pool'], false)] }
     case 'task_waiting':
       return { class: 'conflict', message: `Can't ${doing()}. It waits for other tasks.`, next: read('See what it waits for') }
     case 'task_blocked': {
-      const board = onSameBoard()
-      const see = read("See what it's held for", ...board, ...asTyped())
+      const see = read("See what it's held for", true)
       if (hold === 'unknown') return { class: 'conflict', message: `Can't ${doing()}. It's held, but the CLI couldn't read the task to see why.`, next: see }
       // An operator acts without a profile, even if the failed command named one.
-      if (hold === 'parked') return { class: 'conflict', message: `Can't ${doing()}. It's parked.`, next: [...see, ...also('Or, as an operator, lift the park', 'unpark', 'resume work', ...board)] }
-      const lift = args[0] === 'unblock' ? [] : also('Or, as its owner, lift the hold', 'unblock', ...board, ...asTyped())
+      if (hold === 'parked') return { class: 'conflict', message: `Can't ${doing()}. It's parked.`, next: [...see, ...also('Or, as an operator, lift the park', 'unpark', ['resume work'], false)] }
+      const lift = args[0] === 'unblock' ? [] : also('Or, as its owner, lift the hold', 'unblock')
       return { class: 'conflict', message: `Can't ${doing()}. It's held for a person.`, next: [...see, ...lift] }
     }
     case 'task_finished':
@@ -3132,7 +3234,7 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
     case 'no_task_authority':
       return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board does not support parking, assignment bindings, or handoffs.`, next: [] } : null
     case 'claim_lost':
-      return { class: 'conflict', message: `Lost the claim on ${named === undefined ? 'the task' : `task ${ref(named)}`}. Its lease ran out, or the task moved on.`, next: [...read('See where it stands'), ...also('Or claim it again', 'claim', ...asTyped())] }
+      return { class: 'conflict', message: `Lost the claim on ${named === undefined ? 'the task' : `task ${ref(named)}`}. Its lease ran out, or the task moved on.`, next: [...read('See where it stands'), ...also('Or claim it again', 'claim')] }
     case 'priority_raise_forbidden':
       return { class: 'permission', message: `Can't ${doing()}. A claim can lower priority, not raise it.`, next: [...read('See the current priority'), { instruction: 'Ask a task owner or channel manager to raise it' }] }
     case 'task_not_owned':
@@ -3142,13 +3244,13 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
     case 'already_a_task':
       return { class: 'conflict', message: `${named === undefined ? 'That' : ref(named)} is a task already.`, next: read('See it'), whole: true }
     case 'invalid_from':
-      return { class: 'usage', message: `Can't ${doing()}. --from takes an owner's ID: several can share a handle.`, next: [{ instruction: "See everyone's IDs", argv: [...cli(), 'actors'] }] }
+      return { class: 'usage', message: `Can't ${doing()}. --from takes an owner's ID: several can share a handle.`, next: [recovery("See everyone's IDs", ['actors'])] }
     case 'invalid_needs':
       // A plan's tasks name each other by key too: what's wrong is in the board's words, under this.
-      if (flags.file !== undefined) return { class: 'usage', message: `Can't ${doing()}. A task's needs are tasks you can read, or keys of the plan's own.`, next: [{ instruction: 'See the tasks there are', argv: [...cli(), 'tasks', '--state', 'all'] }] }
+      if (flags.file !== undefined) return { class: 'usage', message: `Can't ${doing()}. A task's needs are tasks you can read, or keys of the plan's own.`, next: [recovery('See the tasks there are', ['tasks', '--state', 'all'])] }
       // A change of what a task waits for takes what a new task takes, and none that waits for it: the board's words say which.
-      if (command === 'tasks' && args[0] === 'needs') return { class: 'usage', message: `Can't ${doing()}. It waits for tasks you can read, and none that waits for it.`, next: [...read('See what it waits for now'), { instruction: 'Or see the tasks there are', argv: [...cli(), 'tasks', '--state', 'all'] }] }
-      return { class: 'usage', message: `Can't ${doing()}. --needs takes tasks you can read.`, next: [{ instruction: 'See the tasks there are', argv: [...cli(), 'tasks', '--state', 'all'] }] }
+      if (command === 'tasks' && args[0] === 'needs') return { class: 'usage', message: `Can't ${doing()}. It waits for tasks you can read, and none that waits for it.`, next: [...read('See what it waits for now'), recovery('Or see the tasks there are', ['tasks', '--state', 'all'])] }
+      return { class: 'usage', message: `Can't ${doing()}. --needs takes tasks you can read.`, next: [recovery('See the tasks there are', ['tasks', '--state', 'all'])] }
     // A board's own bounds on how much one request looks through, as Vercel's has: less of the tree fits.
     case 'claim_too_wide':
       return { class: 'limit', message: `Can't ${doing()}. That's too many channels and owners.`, next: [{ instruction: 'Name fewer owners with --from, or a smaller subtree' }] }
@@ -3156,7 +3258,7 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
       return { class: 'limit', message: `Can't ${doing()}. That's too many channels.`, next: [{ instruction: 'Name a channel, or a smaller subtree' }] }
     case 'attention_stale':
     case 'attention_required':
-      return status === 409 ? { class: 'conflict', message: `Can't ${doing()}. ${code === 'attention_required' ? 'It needs a structured answer.' : 'The request or its snapshot is no longer current.'}`, next: also('See the current request', 'attention', ...asTyped()) } : null
+      return status === 409 ? { class: 'conflict', message: `Can't ${doing()}. ${code === 'attention_required' ? 'It needs a structured answer.' : 'The request or its snapshot is no longer current.'}`, next: also('See the current request', 'attention') } : null
     case 'no_task_attention':
       return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board does not support task attention.`, next: [] } : null
     case 'no_tasks':
@@ -3351,9 +3453,8 @@ function stopped(reason: unknown): Failed {
   const timedOut = reason instanceof Error && reason.name === 'TimeoutError'
   // A subcommand that writes is `channels create`'s first word, `sources <key> join`'s second.
   const sub = current.command === 'sources' ? current.args[1] : current.args[0]
-  // Only show and attention are read-only task verbs.
   const writes = WRITES.has(current.command ?? '') || ['create', 'update', 'revoke', 'cancel', 'join'].includes(sub ?? '')
-    || (current.command === 'tasks' && sub !== 'show' && sub !== 'attention' && TASK_VERBS.has(sub ?? ''))
+    || (current.command === 'tasks' && sub !== undefined && isTaskVerb(sub, current.args[1]) && !TASK_READS.has(sub))
     || (current.command === 'agents' && AGENT_WRITES.has(sub ?? ''))
     || (current.command === 'inbox' && (sub === 'ack' || sub === 'archive'))
   return new Failed({

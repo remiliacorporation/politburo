@@ -32,6 +32,7 @@ import {
 } from './schemas.ts'
 import { ExternalEvent, ExternalTarget, Link, LINKS_PER_MESSAGE_MAX, Origin } from './external.ts'
 import { AttentionDraft, AttentionReceipt } from './attention.ts'
+import { evidenceEvents } from './evidence.ts'
 import { operationalEvents } from './operational-inbox.ts'
 import { TaskBinding, TaskHandoff, TaskPark } from './task-authority.ts'
 
@@ -196,6 +197,7 @@ export const boardEvents = {
     'task.handoff': z.object({ ...Task, handoff: TaskHandoff }),
     /** Reason `deleted` when its root was. */
     'task.canceled': z.object({ ...Task, reason: TaskNote, by: Author }),
+    ...evidenceEvents,
     /** A failed task reopens, waiting only if it failed on an attention hold before its needs completed. */
     'task.reopened': z.object({ ...Task, by: Author, waiting: z.literal(true).optional() }),
     // Request and answer each change the task state in the same event as their attention fact.

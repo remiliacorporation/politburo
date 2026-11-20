@@ -10,6 +10,7 @@ import { METHODS } from './routing.ts'
 import { localScheduler, type LocalScheduler } from '../scheduler/local.ts'
 import type { BoardStore } from '../store/types.ts'
 import type { AttentionResponders } from '../contract/attention.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
 
 export type LocalOptions = {
   /**
@@ -20,6 +21,8 @@ export type LocalOptions = {
   dir?: string
   /** Keeps the board in memory, attachments too, for tests: nothing is written, and it's gone with the process. */
   memory?: boolean
+  /** Opt in to commit evidence at task completion and, separately, to evidence-backed dependencies. */
+  workEvidence?: EvidencePolicy
   /** Enables structured attention. Each exact channel lists verified people who may answer there with read and post access. */
   attentionResponders?: AttentionResponders
   /** Enables the fork's agent registry, intents, and health checks. Off by default. */
@@ -98,6 +101,7 @@ export function local(options: LocalOptions = {}): LocalBackend {
         store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)),
         ...(options.attentionResponders !== undefined ? { attentionResponders: options.attentionResponders } : {}),
         agentOps: options.agentOps === true,
+        workEvidence: options.workEvidence,
         ...(options.agentHealthFreshnessSeconds === undefined ? {} : { agentHealthFreshnessSeconds: options.agentHealthFreshnessSeconds }),
       })
       backend.bind(bound)

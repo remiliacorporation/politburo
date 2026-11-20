@@ -30,6 +30,7 @@ import { createReads, tablesConsumer } from './reads.ts'
 import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
 import { createTasks, taskLimits } from './tasks.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
 import { createOperationalInbox } from './operational-inbox.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
@@ -61,6 +62,7 @@ export type A2Options = {
    * platform's files where they are. `local()` always passes one.
    */
   blob?: BlobStore
+  workEvidence?: EvidencePolicy | undefined
   /** Enables structured attention; only these verified people may answer in each exact channel. */
   attentionResponders?: AttentionResponders
   agentOps?: boolean
@@ -259,7 +261,7 @@ function build(options: A2Options, binding: BoardBinding) {
   })
   const schedules = createSchedules({ store: log, scheduler: options.scheduler })
   const attentionEnabled = options.attentionResponders !== undefined
-  const tasks = createTasks({ store: log, scheduler: options.scheduler, attentionResponders: options.attentionResponders })
+  const tasks = createTasks({ store: log, scheduler: options.scheduler, attentionResponders: options.attentionResponders, workEvidence: options.workEvidence })
   const attentionAt = (id: string) => {
     if (!attentionEnabled) throw new HttpError(501, 'no_task_attention', 'this board does not keep task attention requests')
     return messageAt(id)
@@ -306,7 +308,7 @@ function build(options: A2Options, binding: BoardBinding) {
   const operationalInbox = createOperationalInbox(session, binding.inboxRolesFor ?? (() => []))
   const reads = createReads(store.tables, session, projection)
   const work = createControl(log, session, binding.initiallyPaused)
-  const writes: WriteContext = { session, reads, work }
+  const writes: WriteContext = { session, reads, work, guardAppend: store.guardAppend }
 
   async function setPaused(caller: Caller, paused: boolean, reason: string) {
     if (!fromRequest(caller) || !('identity' in caller)) throw forbidden('only a person with board-wide manage can change work control')
@@ -521,6 +523,7 @@ function build(options: A2Options, binding: BoardBinding) {
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
         task_authority: true,
+        ...(tasks.workCapability ? { workEvidence: tasks.workCapability } : {}),
         ...(agents ? { agent_ops: true } : {}),
         ...(intents ? { agent_intents: true } : {}),
       }
@@ -798,9 +801,9 @@ function build(options: A2Options, binding: BoardBinding) {
       return tasks.renew(await identityOf(caller), messageAt(id), { epoch, token }, lease)
     },
     releaseTask: async (caller, { id, epoch, token }) => tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.released' }),
-    async completeTask(caller, { id, epoch, token, result }) {
+    async completeTask(caller, { id, epoch, token, result, commit }) {
       taskLimits.note('result', result)
-      return tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.completed', result: result ?? null })
+      return tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.completed', result: result ?? null, commit })
     },
     async failTask(caller, { id, epoch, token, reason }) {
       taskLimits.note('reason', reason)
@@ -836,6 +839,11 @@ function build(options: A2Options, binding: BoardBinding) {
       taskLimits.note('reason', reason)
       return tasks.cancel(await identityOf(caller), messageAt(id), reason)
     },
+    workEvidence: async (caller, { id }) => tasks.workEvidence(await identityOf(caller), messageAt(id)),
+    submitWork: async (caller, input) => tasks.submitWork(await identityOf(caller), messageAt(input.id), input),
+    recordEvidence: async (caller, input) => tasks.recordEvidence(await identityOf(caller), messageAt(input.id), input),
+    overrideEvidence: async (caller, input) => tasks.overrideEvidence(await identityOf(caller), messageAt(input.id), input),
+    resolveWorkEdge: async (caller, input) => tasks.resolveWorkEdge(await identityOf(caller), messageAt(input.id), input),
     grants: async (caller) => access.grants(await identityOf(caller)),
     createGrant: async (caller, body) => access.createGrant(await identityOf(caller), body),
     createGrants: async (caller, body) => access.createGrants(await identityOf(caller), body),
