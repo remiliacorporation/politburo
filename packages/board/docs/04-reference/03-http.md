@@ -663,13 +663,19 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 An authority configured for [commit evidence](../01-board/11-tasks.md#commit-evidence)
 advertises `workEvidence: { version: 1, gates, releaseDependencies }` in
 its discovery. Unavailable evidence methods answer 501 `no_work_evidence`.
-On a gated board `POST /tasks/:id/complete` requires `commit` with the usual
-claim proof.
+The evidence completion route also answers 501 when the backend has no
+`workEvidence` method. On a gated board `POST /tasks/:id/complete` requires
+`commit` with the usual claim proof.
+
+An HTTP handle sends a completion with a commit only to `complete-with-evidence`.
+It does not follow redirects or retry on the legacy completion route. A redirect
+fails with 502 `remote_error`; point the handle's `url` at the board's final URL.
 
 | Method | Path | Body or result |
 | --- | --- | --- |
 | GET | `/work/v1/tasks/:id/evidence` | `{ required, submission, evidence, overrides, releases }` |
 | POST | `/work/v1/tasks/:id/submit` | `{ epoch, token, commit, artifactRef }` |
+| POST | `/work/v1/tasks/:id/complete-with-evidence` | `{ epoch, token, commit, result? }` |
 | POST | `/work/v1/tasks/:id/evidence` | `{ commit, round, gate, verdict, artifactRef, expiresAt? }` |
 | POST | `/work/v1/tasks/:id/override` | `{ commit, round, gate, reason, expiresAt }` |
 | POST | `/work/v1/tasks/:id/resolve` | `{ needId, evidenceId, ifVersion }` |

@@ -192,13 +192,14 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
   const ownKey = async (derived: string) => keyId(await self(), derived)
 
   /** One protocol call on the remote, as `client`, with the input back on the wire. */
-  async function call(client: BoardClient, method: Method, input: Record<string, unknown>, signal: AbortSignal, boundPath?: string): Promise<Response> {
+  async function call(client: BoardClient, method: Method, input: Record<string, unknown>, signal: AbortSignal, pathOverride?: string): Promise<Response> {
     const route = routes[method]
+    const withEvidence = pathOverride === completeWithEvidencePath
     // Each `:name` in the path is the input's field of that name; the rest are the query or the body.
     const fields = { ...input }
     // The remote derives the audience from its own mount, not from an HTTP client's input.
     if (method === 'redeemInvite') return Response.json(await client.join((input as Protocol['redeemInvite']['input']).secret).catch(rethrow))
-    const path = (boundPath ?? route.path).replace(/:(\w+)/g, (_, name: string) => {
+    const path = (pathOverride ?? route.path).replace(/:(\w+)/g, (_, name: string) => {
       const value = fields[name]
       delete fields[name]
       return encodeURIComponent(String(value))
@@ -224,8 +225,16 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     else if (method === 'archiveOperationalMessage') response = await client.request(path, { method: 'POST', signal }).catch(rethrow)
     else
       response = await client
-        .request(path, { method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal })
+        .request(path, {
+          method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal,
+          ...(withEvidence ? { redirect: 'manual' } : {}),
+        })
         .catch(rethrow)
+    if (withEvidence && (response.type === 'opaqueredirect' || response.status === 0 || (response.status >= 300 && response.status < 400))) {
+      throw new HttpError(502, 'remote_error', 'The board redirected a completion with work evidence. This handle never follows those redirects.', {
+        origin: 'handle', hint: "Point `url` at the board's final URL.",
+      })
+    }
     if (response.ok) return response
     try {
       const body = (await response.json()) as { error?: { code?: string; message?: string; hint?: unknown } }

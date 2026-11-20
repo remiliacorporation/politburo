@@ -1155,6 +1155,12 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         }
         return backend.inbox(caller, query, signal)
       }
+      case 'completeTask': {
+        const body = input as Protocol['completeTask']['input']
+        // Discovery advertises policy, not implementation: local boards without a policy still refuse commits themselves.
+        if (body.commit !== undefined && typeof backend.workEvidence !== 'function') throw noWorkEvidence()
+        return backend.completeTask(caller, body, signal)
+      }
       default: {
         const method = backend[name] as unknown
         if (typeof method !== 'function') {

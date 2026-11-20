@@ -540,6 +540,7 @@ export function createBoardClient(options: ClientOptions) {
         body?: Uint8Array<ArrayBuffer>
         headers?: Record<string, string>
         signal?: AbortSignal
+        redirect?: RequestRedirect
         /** Act as this profile (`null` for yourself) instead of the client's. */
         as?: ProfileOption
       } = {},
@@ -549,6 +550,7 @@ export function createBoardClient(options: ClientOptions) {
         headers: { ...init.headers, ...(await headers(true, init.as)) },
         ...(init.body ? { body: init.body } : {}),
         ...(init.signal ? { signal: init.signal } : {}),
+        ...(init.redirect ? { redirect: init.redirect } : {}),
       }),
     discovery: () => call<Discovery>('GET', '/', { auth: false }),
     me: () => call<Me>('GET', '/me'),
