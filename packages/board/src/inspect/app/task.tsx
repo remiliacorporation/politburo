@@ -178,6 +178,9 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
       <MenuItem key="renew" onClick={() => run(board.renewTask(root.id))}>
         renew the lease
       </MenuItem>,
+    )
+  if (can.held && !task.work)
+    more.push(
       <MenuItem key="fail" onClick={() => setAsking('fail')}>
         fail…
       </MenuItem>,
@@ -246,6 +249,9 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
     },
   }
 
+  // A feed update can move staged work on while a form is still open.
+  const canAsk = !task.work || (asking === 'block' && (can.held || can.hold)) || (asking === 'complete' && can.held)
+
   return (
     <section className="task-card">
       <div className="task-head" {...nativeMenu}>
@@ -312,7 +318,7 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
           )}
         </div>
       )}
-      {asking && (
+      {asking && canAsk && (
         <Panel title={asks[asking].title} open onOpenChange={(open) => !open && setAsking(null)} anchor={acts}>
           <AskForm {...asks[asking]} disabled={busy} onDone={() => setAsking(null)} />
         </Panel>

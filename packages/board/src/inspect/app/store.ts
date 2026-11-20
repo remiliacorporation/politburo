@@ -2,6 +2,7 @@ import type { ActorView, BlockView, BoardEventView, ChannelView, Discovery, Gran
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
+import { workCanClaim } from '../../contract/folds.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { shownName } from './words.ts'
 
@@ -578,7 +579,7 @@ export function holding(state: State, root: TaskRoot, now: number): Claim | unde
  */
 export type Moves = {
   claim: boolean
-  /** This tab holds its claim: it can renew, release, complete, fail, and block it. */
+  /** This tab can use its live claim. Only legacy work can fail through a claim. */
   held: boolean
   /** The viewer holds it, but not from this tab: the claim was made elsewhere, or a reload lost it. */
   elsewhere: boolean
@@ -598,16 +599,24 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
   // it a task (`by`). The owner comes first: another principal's own ID can read the same as `by`.
   const mine = task.owner === viewer.principal && (viewer.profile === null || task.by === viewer.actor)
   const owns = viewer.may('manage', channel) || (mine && (viewer.may('post', channel) || viewer.may('label', channel)))
-  const held = holding(state, root, now) !== undefined
+  const stage = task.work?.stage
+  const staged = stage !== undefined
+  const claimable = !staged || workCanClaim(stage)
+  const label = viewer.may('label', channel)
+  const holdingHere = holding(state, root, now) !== undefined
+  const held = holdingHere && (!staged || (!root.deleted && claimable && label && task.claim?.actor === viewer.actor))
+  // Discovery says whether the board uses stages, not who its scopers are. Even with manage,
+  // don't offer assign, cancel, or reopen. Owners and managers can still place and lift plain holds.
   return {
-    claim: current === 'ready' && !root.deleted && viewer.may('label', channel) && (task.for === null || (task.for === viewer.actor && task.owner === viewer.principal)),
+    claim: claimable && current === 'ready' && !root.deleted && label && (task.for === null || (task.for === viewer.actor && task.owner === viewer.principal)),
     held,
-    elsewhere: !held && current === 'claimed' && task.claim?.actor === viewer.actor,
-    hold: owns && (current === 'waiting' || current === 'ready'),
-    unblock: owns && current === 'blocked' && !task.parked,
-    reopen: owns && current === 'failed',
-    assign: owns && !finished,
-    cancel: owns && current !== 'completed' && current !== 'canceled',
+    elsewhere: !holdingHere && current === 'claimed' && task.claim?.actor === viewer.actor,
+    hold: owns && (!staged || (!root.deleted && (stage === 'proposed' || claimable))) && (current === 'waiting' || current === 'ready'),
+    // The root shows an attention request's ID but not whether it has been answered.
+    unblock: owns && current === 'blocked' && !task.parked && (!staged || (!root.deleted && task.attentionId === undefined)),
+    reopen: !staged && owns && current === 'failed',
+    assign: !staged && owns && !finished,
+    cancel: !staged && owns && current !== 'completed' && current !== 'canceled',
   }
 }
 
