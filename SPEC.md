@@ -396,7 +396,9 @@ The backend picks them; the protocol only says their shape:
   advertises `agent_ops: true`, command intents and run health advertise
   `agent_intents: true`, configured [task attention](#structured-task-attention)
   advertises `task_attention: true`, and a backend that enforces bound claims,
-  parking, and handoffs advertises `task_authority: true`.
+  parking, and handoffs advertises `task_authority: true`. Staged work
+  advertises `workLifecycle: 1`. A board that fences its staged writes
+  against grant changes also advertises `accessFence: 1`.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
@@ -582,7 +584,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, agent_ops?, agent_intents?, task_attention?, task_authority? }`,
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, agent_ops?, agent_intents?, task_attention?, task_authority? }`,
   so the client knows which project to mint for. `wake_by_path` is for a board
   that wakes registered projects, as Vercel's board does. A self-hosted
   `local()` board does not send it. The CLI can run from any directory.
@@ -1941,7 +1943,7 @@ status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `workLifecycle: 1` for [staged work](#staged-work), and the other capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
+| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `workLifecycle: 1` for [staged work](#staged-work), `accessFence: 1` for staged writes atomic with grant changes, and the other capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
 | GET | `/me` | The resolved actor for this token and profile, and what it `can` do: each channel pattern and its permissions |
 | GET | `/control` | `{ paused, pauseEpoch }` for any admitted caller. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop work admission. Answers `{ paused, pauseEpoch }` |
@@ -3904,6 +3906,21 @@ with no live claim. The author's ordinary right to delete their root is
 unchanged; deleting it cancels open work. Deleting a `done` root does not
 undo completion for its existing dependents.
 
+The access fence checks the scoper's grants at the append. The board reads
+the `access` session's position before it reads those grants. A staged
+write lands only if both that position and the `board` session's head are
+unchanged. If either moves, the board reads both again and decides again.
+Grant and invite appends share the lock with this check and append. A
+revocation that lands first can refuse a move. It does not undo a move
+that has already landed.
+
+`local()` advertises `accessFence: 1` when staged work is enabled. The fence
+covers writers sharing one store object in one process, for memory and
+SQLite alike. A separate store or process writing the same SQLite file is
+outside the fence. Without a fence, the board refuses staged-scoper writes
+with 501 `no_access_fence` before deciding the move. Legacy tasks and
+`board:` principals with fixed access do not need this fence.
+
 | From | To | Write |
 | --- | --- | --- |
 | `proposed` | `scoped` | `tasks.scope(id, reason)` pins the current root revision |
@@ -3925,8 +3942,9 @@ implementation but does not finish the task. Dependents wait for `done`.
 Reopening from `done` moves ready dependents back to `waiting` in the same
 write, with `task.needs_changed` recording the same prerequisite list.
 Claimed dependents keep their claims, and blocked dependents stay blocked.
-When the prerequisite reaches `done` again, `task.ready` follows for each
-waiting dependent that can now run.
+Releasing or expiring a claim while a prerequisite is still open returns
+its task to `waiting`. When the prerequisite reaches `done` again,
+`task.ready` follows for each waiting dependent that can now run.
 
 `task.work` is an optional `{ stage: WorkStage, scopedRevision: number | null }`.
 A hold projects to `blocked`; `scoped` and `repair` project to `ready` or
@@ -4058,20 +4076,19 @@ legacy tasks are separate work.
 | --- | --- | --- |
 | `waiting` | a prerequisite hasn't completed | `ready` once every one has; `blocked`, `canceled` |
 | `ready` | anyone with `label` in its channel may claim it, or only the actor it's assigned to | `claimed`, `blocked`, `canceled` |
-| `claimed` | an agent holds it until its lease ends | `completed`, `failed`, `blocked`, or `canceled`; or `ready` (released, or the lease ran out) |
+| `claimed` | an agent holds it until its lease ends | `completed`, `failed`, `blocked`, or `canceled`; on release or expiry, `ready` if its prerequisites are done, otherwise `waiting` |
 | `blocked` | held for a person, with a `kind` and a `reason`, or parked by an operator | `ready` or `waiting` when the applicable hold is lifted or an answer resumes work; `failed` by an answer; `canceled` |
 | `completed` | done, with an optional `result` | none; its dependents become `ready` |
 | `failed` | tried and couldn't, with a `reason`; its dependents keep waiting | `ready`, when reopened; `canceled` |
 | `canceled` | no longer wanted, with a `reason`; its dependents keep waiting | none |
 
-A claim whose lease has run out is claimable at once, and `vb tasks --state
-ready` lists it. Nothing has to run when a lease ends. The board writes
-`task.expired`, which sets the label and wakes whoever waits on it, no later
-than the next task request that sees the lapsed claim: a claim of it, a
-`claim --ready`, or a list. `local()` writes it when the lease ends, on a timer
-in its own process, as it does for a schedule's send. Vercel's board keeps no
-timers, so until something asks, a lapsed claim's label still says `claimed`:
-a worker that only wakes on events also asks on a schedule. A task whose last
+A claim whose lease has run out can be taken over at once if its prerequisites
+are done. A takeover writes `task.expired` before the new claim. `local()`
+also writes expiry when the lease ends, on a timer in its own process, as it
+does for a schedule's send. The event updates the `board.task` label and wakes
+whoever waits on the new state. Vercel's board keeps no timers, so until a
+request records expiry, a lapsed claim's label still says `claimed`: a worker
+that only wakes on events also asks on a schedule. A task whose last
 prerequisite completes is readied in the completion's own request. Where that
 takes more than one write and the request ends before the last, the same rule
 finishes it: the next task request that sees a waiting task whose
@@ -4507,8 +4524,8 @@ Task changes are board facts, in the board log:
 'task.ready':     z.object({ id, thread }),                                          // (server) every prerequisite has completed
 'task.claimed':   z.object({ id, thread, epoch, pauseEpoch: z.number().int().nonnegative().optional(), until, token, by, binding: TaskBinding.optional() }), // token hash stays private; absent pauseEpoch means zero
 'task.renewed':   z.object({ id, thread, epoch, until, by }),
-'task.released':  z.object({ id, thread, epoch, by }),
-'task.expired':   z.object({ id, thread, epoch }),                                   // (server) its lease ran out
+'task.released':  z.object({ id, thread, epoch, by, waiting: z.boolean().optional() }),
+'task.expired':   z.object({ id, thread, epoch, waiting: z.boolean().optional() }),  // (server) its lease ran out
 'task.completed': z.object({ id, thread, epoch, result: TaskNote.nullable(), by }),  // a result or reason is up to 1000 characters
 'task.failed':    z.object({ id, thread, epoch, reason: TaskNote, by }),
 'task.blocked':   z.object({ id, thread, kind: TaskHoldKind.nullable(), reason: TaskNote, by }), // kind `edited`: the board's, `by` whoever edited the root
@@ -4537,6 +4554,9 @@ tokens are never included in these events.
   backend's to say, as every length and count of a task is. A request's
   schema checks its shape, and a backend refuses what's over its own limits,
   so on `vercel()` the refusal is Vercel's API's.
+- **An ended claim can return to `waiting`.** The board sets `waiting: true`
+  on `task.released` or `task.expired` when a prerequisite isn't done at
+  the append. Without the flag, eligible work returns to `ready`.
 - **A write a task has moved on from changes nothing in the fold:** an older
   epoch, a finished task, a second `task.created`. The writes refuse first;
   the fold is what holds for whoever folds the log themselves.
@@ -4593,7 +4613,8 @@ and `priority_raise_forbidden`; 409 `task_claimed`, `task_assigned`,
 400 `invalid_needs`, `invalid_from`, `invalid_request` (including malformed
 assignment or packet metadata), and `reserved_label`; 501 `no_tasks` on a
 board that keeps none, `no_work_lifecycle` when stages aren't available,
-`no_task_attention` without structured attention, and `no_task_authority` on
+`no_access_fence` when staged-scoper writes cannot be made atomic with grant
+changes, `no_task_attention` without structured attention, and `no_task_authority` on
 Vercel's board for parking, bound claims, and handoffs.
 
 ### Tasks and sync
@@ -4669,10 +4690,16 @@ Vercel's board for parking, bound claims, and handoffs.
 ### Conformance (`tasks` and `work-lifecycle`)
 
 On a board that advertises `workLifecycle: 1`, the `work-lifecycle` group
-replaces the legacy queue checks. It also runs the priority, parking,
-bound claim, and handoff checks on staged tasks. The structured attention
-check still runs when advertised. Use an allowlisted scoper with `manage`
-to check the authorized moves.
+replaces the legacy queue checks. With `accessFence: 1`, it also runs the
+priority, parking, bound claim, and handoff checks on staged tasks. Use an
+allowlisted scoper with `manage` to check the authorized moves. Pass a
+separate scoper handle in `principals.scoper` and its project ID in
+`principals.project` to check that a revoked grant prevents scope and stage,
+including when scope races the revoke.
+
+Without `accessFence: 1`, the kit checks for 501 `no_access_fence` and
+skips checks that need a staged move. That includes the staged forms of the
+structured attention, run health, and network pause checks.
 
 - A new task is its thread: `read` shows its root with `task`, a reply
   lands in that thread, and `board.task=ready` finds it.
@@ -5023,7 +5050,7 @@ report attests to what the harness observes, not to the runtime itself.
 | Who may work a task? | **Anyone with `label` in its channel.** A task's state is its root's `board.task` label, so working it changes a thread's state, which `label` grants; `post` only says things, and broad `post` grants are common. Its owner, or `manage`, keeps the rest: assigning, holding, reopening, canceling. Agents take others' tasks only with `--from`, so a teammate's text steers no one by accident. |
 | Who decides how tasks behave? | **board.** It specs them and the conformance kit's `tasks` group checks them; Vercel's API conforms check by check, as it did for label `if`, reply `after`, and `revision`. |
 | How do tasks live in Vercel's API? | **On its threads.** A thread carries the task's state, and its changes are thread events, as on `local()`. Tying a thread to the task records that API already had would keep the same facts in two places (text, state, existence, channel, events), each needing a rule to stay equal. Those tasks stay as they are for the tools that call them, and aren't board tasks. |
-| What happens when a lease runs out? | **The next task request writes it.** Nothing is armed for a claim: a lapsed claim is claimable at once, and `task.expired` lands with the next claim, `claim --ready`, or list that sees it. `local()` also times it in its own process. A worker that only wakes on events asks on a schedule too. |
+| What happens when a lease runs out? | **A lapsed lease holds nothing.** A task with completed prerequisites can be taken over at once, with `task.expired` before the new claim. `local()` also times expiry in its own process. A worker that only wakes on events asks on a schedule too. |
 | Can watchers be added at runtime? | **No: the dynamic part is data.** A registration carries no code: a deployment registers the tails of the watchers it deployed, and its own `https` URL or path, which the board wakes with no event and no credential (see [Watchers woken by their board](#watchers-woken-by-their-board)). A watcher reads labels and mentions instead (see [Watchers](#watchers)). |
 
 ## Benchmarks before release

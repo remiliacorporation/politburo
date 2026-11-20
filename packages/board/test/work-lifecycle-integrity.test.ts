@@ -58,6 +58,37 @@ it('keeps a deleted done prerequisite satisfied for approved and scoped dependen
     .rejects.toMatchObject({ status: 400, code: 'invalid_needs' })
 })
 
+it('keeps a deleted done prerequisite when a scoper replaces other needs', async () => {
+  const ctx = await setup()
+  const { worker, scoper } = ctx
+  const { task: prerequisite } = await worker.tasks.create('work', 'Write the guide')
+  const { task: dropped } = await worker.tasks.create('work', 'Draft the release notes')
+  const { task: added } = await worker.tasks.create('work', 'Review the guide')
+  const { task: dependent } = await worker.tasks.create('work', { text: 'Publish the guide', needs: [prerequisite.id, dropped.id] })
+  await scoper.tasks.scope(dependent.id, 'Scope publication')
+  await scoper.tasks.scope(prerequisite.id, 'Scope the guide')
+  await approve(ctx, prerequisite.id)
+  await scoper.tasks.stage(prerequisite.id, 'done', 'Guide written')
+  await worker.delete(prerequisite.id)
+
+  const needs = [prerequisite.id, added.id]
+  const changed = await scoper.tasks.needs(dependent.id, needs)
+  expect(changed.task).toMatchObject({ state: 'waiting', needs })
+  expect((await scoper.tasks.needs(dependent.id, needs)).version).toBe(changed.version)
+
+  await scoper.tasks.scope(added.id, 'Scope the review')
+  await approve(ctx, added.id)
+  await scoper.tasks.stage(added.id, 'done', 'Guide reviewed')
+  expect((await worker.thread(dependent.id)).message.task?.state).toBe('ready')
+
+  const { task: other } = await worker.tasks.create('work', { text: 'Publish the release notes', needs: [dropped.id] })
+  await expect(scoper.tasks.needs(other.id, [prerequisite.id, dropped.id])).rejects.toMatchObject({ status: 400, code: 'invalid_needs' })
+  // A rejected prerequisite stays failed on deletion, so the deletion rule alone must refuse it.
+  await scoper.tasks.stage(dropped.id, 'rejected', 'Release notes are out of scope')
+  await worker.delete(dropped.id)
+  await expect(scoper.tasks.needs(other.id, [dropped.id])).rejects.toMatchObject({ status: 400, code: 'invalid_needs' })
+})
+
 it('denies read-only staged assignment without naming the owner', async () => {
   const { worker, fetchAs, scoperToken } = await setup()
   const { task: { id } } = await worker.tasks.create('work', 'Assign the work')

@@ -346,7 +346,7 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' |
     case 'task.released':
     case 'task.expired':
       if (!holds(task, event.payload.epoch)) return false
-      task.state = 'ready'
+      task.state = event.payload.waiting || !mayReady(task) ? 'waiting' : 'ready'
       task.claim = null
       return true
     case 'task.completed':

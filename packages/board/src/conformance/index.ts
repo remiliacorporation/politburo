@@ -71,9 +71,11 @@ export type ConformanceOptions = {
    * client ID), which a local board has none of. Checks that grant to someone besides the project
    * name the app when there's one, and the repository otherwise: Vercel's board takes no GitHub
    * principal in a grant, so give it an app. None may be the run's own: it throws before it
-   * writes.
+   * writes. To check staged grant revocation, pass `scoper`, a handle on the same board as an
+   * allowlisted deployment of `project` (use its project ID). It must be able to sign in but not
+   * manage the check's channel without a test grant.
    */
-  principals?: { project?: string; repository?: string; viewer?: string; app?: string }
+  principals?: { project?: string; repository?: string; viewer?: string; app?: string; scoper?: Board }
 }
 
 class Mismatch extends Error {}
@@ -175,6 +177,7 @@ type Context = {
   /** The board's own Vercel team, as its discovery names it. */
   team: string | null
   workLifecycle: boolean
+  accessFence: boolean
   agentOps: boolean
   agentIntents: boolean
 }
@@ -185,6 +188,8 @@ type Check = {
   taskAuthority?: true
   /** A queue check that also runs on staged tasks, under work-lifecycle. */
   staged?: true
+  /** A check outside work-lifecycle that scopes a task on a staged board. */
+  needsScope?: true
   /** Omit the check unless advertised. Once advertised, a 501 is a failure. */
   requires?: 'task_attention'
   run: (ctx: Context) => Promise<void | string>
@@ -209,7 +214,7 @@ const needRoot = (ctx: Context) => {
  * Who the grants checks name: `principals`' own, or made-up IDs, which a board that verifies tokens
  * itself takes. A grant naming them lets nobody in.
  */
-type Principals = { project: string; repository: string; viewer: string | null; app: string | null }
+type Principals = { project: string; repository: string; viewer: string | null; app: string | null; scoper?: Board }
 
 /** A check's project, in its environments. */
 const projectFor = (ctx: Context, environments = ['preview']) => ({ kind: 'project' as const, project: ctx.principals.project, environments })
@@ -350,6 +355,8 @@ type GrantInput = Parameters<Board['createGrant']>[0]
 type Grants = {
   /** Makes a grant, as this run or as `by`. The first this run makes tells whether it may change grants here at all: a 403 skips the check. */
   make(input: GrantInput, by?: Board, options?: Parameters<Board['createGrant']>[1]): Promise<GrantView>
+  /** Revokes a grant before cleanup, which won't try to revoke it again. */
+  revoke(id: string): Promise<boolean>
   /** Makes several in one write, as this run, once it has made one alone. An `everyone` grant among them is revoked before the others, which may be keeping this run in. */
   makeAll(inputs: readonly GrantInput[]): Promise<GrantView[]>
   /** The principal a grant names this run by: its user, its project in its environment, or its app. Null for the board's own code, which no grant narrows; a skip for a run no grant could name. */
@@ -382,6 +389,12 @@ async function withGrants(ctx: Context, check: (grants: Grants) => Promise<void 
         if (!by && made.length === 0 && error instanceof BoardError && error.status === 403) throw new Skip("this token can't change the board's grants")
         throw unnamed(error) ?? error
       }
+    },
+    async revoke(id) {
+      const { revoked } = await ctx.board.revokeGrant(id)
+      const at = made.indexOf(id)
+      if (revoked && at !== -1) made.splice(at, 1)
+      return revoked
     },
     async makeAll(inputs) {
       try {
@@ -580,6 +593,8 @@ function lostRace(racing: PromiseSettledResult<unknown>[]) {
   }
 }
 
+const NEEDS_ACCESS_FENCE = 'needs the access fence'
+
 /** Discovery advertises support, not the credential's authority to scope work. */
 async function scopeWork(ctx: Context, id: string, reason: string) {
   try {
@@ -602,6 +617,101 @@ async function taskAuthority<T>(attempt: Promise<T>): Promise<T> {
 
 const taskFeed = (ctx: Context, after?: string) => ctx.board.poll({ channel: ctx.channel, label: [`conformance=${ctx.labels.conformance}`], ...(after === undefined ? {} : { after }) })
 const handoffPacket = { commit: 'a'.repeat(40), packetPath: 'handoffs/conformance.md', sha256: 'b'.repeat(64) }
+
+const NO_ACCESS_FENCE: Check = {
+  group: 'work-lifecycle',
+  name: 'refuses staged writes when the access fence is not advertised',
+  async run(ctx) {
+    if (ctx.me.principal.startsWith('board:')) throw new Skip('needs a scoper whose access comes from grants')
+    const { task: root } = await task(ctx, 'conformance: work on a board without an access fence')
+    const version = { ifVersion: root.version }
+    await rejects(ctx.board.tasks.scope(root.id, 'scope agreed', version), 501, 'no_access_fence', 'scoping without the access fence')
+    await rejects(ctx.board.tasks.stage(root.id, 'rejected', 'change deferred', version), 501, 'no_access_fence', 'rejecting without the access fence')
+    await unchangedWork(ctx, root)
+  },
+}
+
+async function unchangedWork(ctx: Context, root: MessageView) {
+  const { message } = await ctx.board.thread(root.id)
+  same(message.version, root.version, 'the version of the task after a refused move')
+  alike(message.task?.work, root.task?.work, 'the stage and scope after a refused move')
+}
+
+/** Only a separate credential can lose its authority while this run keeps manage to clean up. */
+async function withRevocableScoper(ctx: Context, run: (scoper: Board, revoke: () => Promise<void>) => Promise<void>) {
+  const { project, scoper } = ctx.principals
+  if (!scoper) throw new Skip('pass an allowlisted deployment in principals.scoper to check grant revocation')
+  const me = await scoper.me()
+  const [, id, environment] = /^vercel:project:([^:]+):([^:]+)$/.exec(me.principal) ?? []
+  check(me.principal !== ctx.me.principal && id === project && environment, 'principals.scoper must use a separate deployment credential for principals.project')
+  if (compileAccess(me.can).can('manage', ctx.channel)) throw new Skip('the test scoper already has manage in the test channel')
+  return withGrants(ctx, async ({ make, revoke }) => {
+    const grant = await make({ principals: [projectFor(ctx, [environment])], can: { [ctx.channel]: ['read', 'manage'] } })
+    await run(scoper, async () => {
+      same(await revoke(grant.id), true, "revoking the test scoper's grant")
+    })
+  })
+}
+
+function revokedScoper(error: unknown, what: string) {
+  check(error instanceof BoardError && (error.status === 403 || error.status === 404),
+    `${what}: expected 403 or 404, got ${error instanceof BoardError ? `${error.status} ${error.code}` : messageOf(error)}`)
+}
+
+async function refusesRevokedScoper(attempt: Promise<unknown>, what: string) {
+  try {
+    await attempt
+  } catch (error) {
+    revokedScoper(error, what)
+    return
+  }
+  throw new Mismatch(`${what}: expected 403 or 404, and it succeeded`)
+}
+
+const ACCESS_FENCE_CHECKS: Check[] = [
+  {
+    group: 'work-lifecycle',
+    name: "refuses scope and stage after revoking the scoper's grant",
+    run: (ctx) => withRevocableScoper(ctx, async (scoper, revoke) => {
+      const { task: proposed } = await task(ctx, 'conformance: work to scope after revocation')
+      const { task: before } = await task(ctx, 'conformance: work to move after revocation')
+      const scoped = await scoper.tasks.scope(before.id, 'scope agreed', { ifVersion: before.version })
+      same(scoped.task?.work?.stage, 'scoped', 'scope with the test grant in place')
+      await revoke()
+      await refusesRevokedScoper(scoper.tasks.scope(proposed.id, 'scope agreed', { ifVersion: proposed.version }), 'scoping after revocation')
+      await refusesRevokedScoper(scoper.tasks.stage(scoped.id, 'rejected', 'change deferred', { ifVersion: scoped.version }), 'rejecting after revocation')
+      await unchangedWork(ctx, proposed)
+      await unchangedWork(ctx, scoped)
+    }),
+  },
+  {
+    group: 'work-lifecycle',
+    name: 'does not land scope after a concurrent grant revocation answers',
+    async run(ctx) {
+      for (let round = 0; round < 3; round++) {
+        const skipped = await withRevocableScoper(ctx, async (scoper, revoke) => {
+          const { task: root } = await task(ctx, 'conformance: scope racing revocation')
+          const [scope, revoked] = await Promise.allSettled([
+            scoper.tasks.scope(root.id, 'scope agreed', { ifVersion: root.version }),
+            revoke().then(() => ctx.board.poll({ last: 1 })),
+          ])
+          if (revoked.status === 'rejected') throw revoked.reason
+          // Read the log's position when the revoke answers. A scope response can arrive late
+          // even if its write landed first; response order alone can't tell which write won.
+          const { events } = await ctx.board.poll({ re: root.id, after: revoked.value.cursor })
+          check(!events.some((event) => event.type === 'task.stage_changed' && event.payload.id === root.id && event.payload.to === 'scoped'), 'scope landed after its grant was revoked')
+          if (scope.status === 'rejected') {
+            revokedScoper(scope.reason, 'scoping while its grant is revoked')
+            await unchangedWork(ctx, root)
+          } else {
+            same((await ctx.board.thread(root.id)).message.task?.work?.stage, 'scoped', 'the task after scope won the race')
+          }
+        })
+        if (skipped) return skipped
+      }
+    },
+  },
+]
 
 const LIFECYCLE_CHECKS: Check[] = [
   {
@@ -672,6 +782,7 @@ const LIFECYCLE_CHECKS: Check[] = [
 const NETWORK_PAUSE: Check = {
   group: 'network-pause',
   name: 'pauses claims without stopping collaboration, and resumes without reviving old claims',
+  needsScope: true,
   async run(ctx) {
     const board = ctx.board
     const start = await board.status().catch((error: unknown) => {
@@ -1860,6 +1971,7 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'opens structured attention through a claim, and the hold cannot be unblocked or settled through the old claim',
+    needsScope: true,
     requires: 'task_attention',
     async run(ctx) {
       const { task: root } = await task(ctx, 'conformance: a task to hold for structured attention')
@@ -3030,6 +3142,7 @@ const CHECKS: Check[] = [
   {
     group: 'agents',
     name: 'confirms a claimed run only through a taken and reported status probe',
+    needsScope: true,
     run: async (ctx) => {
       const { board, channel, labels, agentOps, agentIntents, me } = ctx
       if (!agentIntents) {
@@ -3225,19 +3338,27 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
       repository: options.principals?.repository ?? `acme/conformance-${label}`,
       viewer: options.principals?.viewer ?? null,
       app: options.principals?.app ?? null,
+      scoper: options.principals?.scoper,
     },
     team: info.team_id ?? null,
     agentOps: info.agent_ops === true,
     workLifecycle: info.workLifecycle === 1,
+    accessFence: info.accessFence === 1,
     agentIntents: info.agent_intents === true,
   }
   try {
-    const compatible = ctx.workLifecycle ? [...CHECKS.filter(({ group, requires, taskAuthority, staged }) => group !== 'tasks' || requires === 'task_attention' || taskAuthority || staged), ...LIFECYCLE_CHECKS] : CHECKS
+    const compatible = ctx.workLifecycle ? [
+      ...CHECKS.filter(({ group, requires, taskAuthority, staged }) => group !== 'tasks' || requires === 'task_attention' || taskAuthority || staged),
+      ...LIFECYCLE_CHECKS,
+      ...(ctx.accessFence ? ACCESS_FENCE_CHECKS : [NO_ACCESS_FENCE]),
+    ] : CHECKS
     const selected = options.networkPause ? [NETWORK_PAUSE, ...compatible] : compatible
-    for (const { group: original, name, requires, taskAuthority, staged, run } of selected) {
+    for (const probe of selected) {
+      const { group: original, name, requires, taskAuthority, staged, needsScope, run } = probe
       const group = ctx.workLifecycle && (taskAuthority || staged) ? 'work-lifecycle' : original
       if (requires && info[requires] !== true) continue
       try {
+        if (ctx.workLifecycle && !ctx.accessFence && (needsScope || (group === 'work-lifecycle' && probe !== NO_ACCESS_FENCE))) throw new Skip(NEEDS_ACCESS_FENCE)
         const skipped = await run(ctx)
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {

@@ -1149,6 +1149,8 @@ export type Discovery = {
   wake_by_path?: boolean
   /** New tasks use the opt-in work lifecycle. */
   workLifecycle?: 1
+  /** Staged-scoper writes are atomic with access changes. */
+  accessFence?: 1
   /** True when the board enforces bound claims, parking, and handoffs. */
   task_authority?: boolean
   /** Whether this board is configured to keep structured task attention requests. */

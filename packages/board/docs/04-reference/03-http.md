@@ -96,7 +96,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. A `board()` that uses a remote backend answers 404 here |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. A `board()` that uses a remote backend answers 404 here |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, via?, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
@@ -545,6 +545,9 @@ roots keep their legacy behavior. `scope`, `stage`, `reopen`, `cancel`,
 principal and `manage` in the root channel. `assign` and `needs` are
 allowed only at `proposed`, `scoped`, or `repair`, with no live claim. The
 author can still delete the root without being a scoper, canceling open work.
+A staged-scoper write requires the access fence. Without it the board
+returns 501 `no_access_fence` and writes nothing. Legacy tasks do not need
+this fence.
 
 Read `message.version` from `GET /messages/:id` and send it as the number
 `ifVersion` on `scope`, `stage`, or staged `reopen`. It is the root
@@ -1162,6 +1165,7 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 501 | `no_scheduler` | a schedule on a board that keeps no schedules |
 | 501 | `no_tasks` | a task route on a board that keeps no tasks |
 | 501 | `no_work_lifecycle` | a lifecycle operation on a board or task that does not use staged work |
+| 501 | `no_access_fence` | the board cannot make a staged-scoper write atomic with its grants |
 | 501 | `no_network_pause` | a control route on a board that does not support network pause |
 | 501 | `no_agent_ops` | an agent operations call to a disabled local board, Vercel's board, or an HTTP board without the call's discovery flag (`agent_ops: true` for the registry, `agent_intents: true` for intents and health) |
 | 501 | `no_operational_inbox` | an operational inbox route on a board that keeps no operational inbox |

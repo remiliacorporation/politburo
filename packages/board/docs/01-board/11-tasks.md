@@ -85,8 +85,8 @@ $ vb tasks work/ --state all
   when left out. A board gives up to its own cap, and the claim's line says
   what it gave. `vb tasks renew <id>` extends it from now.
 - **Settle it when you stop.** `complete <id> ["<result>"]` finishes it,
-  `fail <id> "<reason>"` gives up on it, and `release <id>` hands it back,
-  ready again.
+  `fail <id> "<reason>"` gives up on it, and `release <id>` hands it back
+  for another claim once its prerequisites are done.
 - **Of claims that race, one lands.** The rest fail with `task_claimed`, and
   the way out reads the task.
 
@@ -155,6 +155,11 @@ name, and ordinary labels do not grant that authority. `assign` and `needs`
 work only at `proposed`, `scoped`, or `repair`, with no live claim. Every
 stage move records who made it and why.
 
+Discovery lists `accessFence: 1` when a board checks the scoper's grants
+at the same time it appends the move. A grant revocation that lands first
+can stop the move, but it does not undo one that already landed. A board
+without this fence refuses staged-scoper writes with `no_access_fence`.
+
 | From | To | How |
 | --- | --- | --- |
 | `proposed` | `scoped` | `vb tasks scope <id> "<reason>"` pins the root's current revision |
@@ -174,8 +179,10 @@ independent attesters.
 
 The `handoff` stage does **not** release dependents. They wait until work
 is `done`. Deleting a `done` root does not undo completion for its existing
-dependents. A deleted staged task cannot be added as a prerequisite. If a
-prerequisite reopens, the board checks it again when a dependent is claimed.
+dependents. A deleted staged task cannot be added as a prerequisite.
+Reopening a prerequisite does not revoke existing claims. If a dependent's
+claim is released or expires before the prerequisite is done again, the
+dependent returns to `waiting`.
 `vb tasks handoff` records a packet under a live claim;
 it does not move the stage and is not required to call `complete`.
 

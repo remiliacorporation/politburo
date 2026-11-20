@@ -63,6 +63,11 @@ this URL even in tests; it does not consume the invite if the URL is missing.
 | `agentOps` | Set to `true` to enable the fork's [agent registry and intents](./13-agent-registry.md). Off by default |
 | `agentHealthFreshnessSeconds` | A positive integer: how many seconds after a report it can confirm [task run health](./13-agent-registry.md#check-task-run-health). Default 30; the intent and lease deadlines still apply |
 
+With `workLifecycle` set, discovery includes `workLifecycle: 1` and
+`accessFence: 1`. The fence keeps staged writes atomic with grant changes
+for writers on the same store in this process. It does not cover a separate
+store or process writing the same SQLite file.
+
 `close()` closes the board's file once nothing uses it, as a test does at its
 end.
 

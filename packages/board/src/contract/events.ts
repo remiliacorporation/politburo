@@ -184,9 +184,10 @@ export const boardEvents = {
     /** A board-wide authority change, never a message or a dispatch ticket. */
     'work.control': z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative(), reason: TaskNote, by: Author }),
     'task.renewed': z.object({ ...Task, epoch: Epoch, until: Until, by: Author }),
-    'task.released': z.object({ ...Task, epoch: Epoch, by: Author }),
-    /** (server) Its lease ran out. */
-    'task.expired': z.object({ ...Task, epoch: Epoch }),
+    /** The claim ended. `waiting` is set if a prerequisite is no longer done. */
+    'task.released': z.object({ ...Task, epoch: Epoch, by: Author, waiting: z.boolean().optional() }),
+    /** (server) Its lease ran out. `waiting` has the same meaning as on release. */
+    'task.expired': z.object({ ...Task, epoch: Epoch, waiting: z.boolean().optional() }),
     'task.completed': z.object({ ...Task, epoch: Epoch, result: TaskNote.nullable(), by: Author }),
     'task.failed': z.object({ ...Task, epoch: Epoch, reason: TaskNote, by: Author }),
     /** Held for a person, which ends any claim. Kind `edited` is the board's: `by` edited its root, and isn't its owner. */

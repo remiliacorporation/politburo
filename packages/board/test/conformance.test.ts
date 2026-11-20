@@ -3,7 +3,10 @@ import { board } from '../src/server/index.ts'
 import { http } from '../src/backend-http/index.ts'
 import { conformance } from '../src/conformance/index.ts'
 import type { GrantInput } from '../src/api/routes.ts'
-import { bearer, BOARD_URL, caller, deploymentToken, localBoard, personToken, testBoard, workflowToken } from './harness.ts'
+import { oidcTokens } from '../src/access/index.ts'
+import { a2 } from '../src/server/a2.ts'
+import { memory } from '../src/store/memory.ts'
+import { bearer, board as testMount, BOARD_URL, caller, deploymentToken, localBoard, personToken, testAuth, testBoard, workflowToken } from './harness.ts'
 import { fakeQueue } from './queue.ts'
 
 type Fetch = (request: Request) => Promise<Response>
@@ -218,6 +221,32 @@ describe('the conformance kit', () => {
     // Every task it made went with its root: none is left open, and none still wears a state.
     expect((await client.tasks.list({ channel: 'conformance', state: 'all' })).tasks).toEqual([])
     expect((await client.threads({ channel: 'conformance', label: ['board.task'], limit: 500 })).threads).toEqual([])
+  })
+
+  it('checks staged writes fail closed and skips checks that need the missing access fence', async ({ onTestFinished }) => {
+    const store = { ...memory(), fence: undefined }
+    onTestFinished(() => store.close())
+    const scopers = ['vercel:user:u_julian']
+    const backend = a2({ store, workLifecycle: { scopers }, agentOps: true, attentionResponders: { conformance: scopers } })
+    const team = testMount({ url: BOARD_URL, backend, authenticate: oidcTokens(testAuth) })
+    const client = await clientOf(team.fetch)
+    const info = await client.discovery()
+    expect(info.workLifecycle).toBe(1)
+    expect(info).not.toHaveProperty('accessFence')
+
+    const report = await conformance(client, { networkPause: true })
+    expect(report.checks.filter((check) => check.status === 'failed')).toEqual([])
+    const lifecycle = report.checks.filter((check) => check.group === 'work-lifecycle')
+    expect(lifecycle.filter((check) => check.status === 'passed')).toMatchObject([
+      { name: 'refuses staged writes when the access fence is not advertised' },
+    ])
+    expect(lifecycle.filter((check) => check.status === 'skipped')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'pins the scoped revision, hands off a live claim, and audits authorized moves', detail: 'needs the access fence' }),
+    ]))
+    for (const group of ['tasks', 'agents', 'network-pause']) {
+      expect(report.checks.filter((check) => check.group === group)).toContainEqual(expect.objectContaining({ status: 'skipped', detail: 'needs the access fence' }))
+    }
+    expect(report.ok).toBe(true)
   })
 
   it("passes through an opted-in local board's own handle, in-process", async ({ onTestFinished }) => {

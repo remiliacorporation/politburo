@@ -307,7 +307,16 @@ function build(options: A2Options, binding: BoardBinding) {
   const operationalInbox = createOperationalInbox(session, binding.inboxRolesFor ?? (() => []))
   const reads = createReads(store.tables, session, projection)
   const work = createControl(log, session, binding.initiallyPaused)
-  const writes: WriteContext = { session, reads, work }
+  // Who the board trusts beside its defaults: its grants.
+  const access = createTrust({
+    store: log,
+    fence: store.fence,
+    accessNow: (principal, grants) => binding.accessNow(principal, grants),
+    explain: (principal, channel) => binding.explain(principal, channel),
+    team: async () => (await binding.project()).teamId,
+    logins: () => binding.logins,
+  })
+  const writes: WriteContext = { session, reads, work, fence: store.fence, accessPosition: access.position }
 
   async function setPaused(caller: Caller, paused: boolean, reason: string) {
     if (!fromRequest(caller) || !('identity' in caller)) throw forbidden('only a person with board-wide manage can change work control')
@@ -354,14 +363,6 @@ function build(options: A2Options, binding: BoardBinding) {
     store: log,
     ...(options.scheduler ? { scheduler: options.scheduler } : {}),
     consumers: [inbound],
-  })
-  // Who the board trusts beside its defaults: its grants.
-  const access = createTrust({
-    store: log,
-    accessNow: (principal, grants) => binding.accessNow(principal, grants),
-    explain: (principal, channel) => binding.explain(principal, channel),
-    team: async () => (await binding.project()).teamId,
-    logins: () => binding.logins,
   })
   // The schema registry, in a session of its own beside the board's.
   const schemaRegistry = createSchemas({ store: log })
@@ -521,7 +522,7 @@ function build(options: A2Options, binding: BoardBinding) {
         ...(attentionEnabled ? { task_attention: true } : {}),
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
-        ...(options.workLifecycle ? { workLifecycle: 1 } : {}),
+        ...(options.workLifecycle ? { workLifecycle: 1, ...(store.fence ? { accessFence: 1 } : {}) } : {}),
         task_authority: true,
         ...(agents ? { agent_ops: true } : {}),
         ...(intents ? { agent_intents: true } : {}),

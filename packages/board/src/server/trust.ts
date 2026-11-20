@@ -5,6 +5,7 @@ import type { Protocol } from '../api/protocol.ts'
 import type { GrantView, InviteView, PrincipalView } from '../api/routes.ts'
 import { sha256 } from '../client/ids.ts'
 import { ACCESS_SESSION, accessContract, type AccessEvent } from '../contract/contract.ts'
+import type { AccessFence } from '../store/fence.ts'
 import { checkGrantChange, compileAccess, parseCan, type Access, type GrantShape, type WrittenCan } from './access.ts'
 import {
   checkCan,
@@ -392,6 +393,7 @@ async function updated(identity: Identity, state: AccessState, { id, add, remove
  */
 export function createTrust(options: {
   store: Parameters<typeof createServer>[0]['store']
+  fence?: AccessFence
   /** What a principal may do now, or under `grants`, the snapshot a grant write appends to. */
   accessNow: (principal: Known, grants?: readonly StoredGrant[]) => Promise<Access | null>
   /** What decides a channel for a principal, under board()'s grants. */
@@ -407,6 +409,11 @@ export function createTrust(options: {
   const read = async () => (await session.state(accessReducer)).state
   /** The grants as they are now, and the index a conditional write holds them at. */
   const latest = () => session.state(accessReducer, { through: 'latest' })
+  // Every access append shares the lock with staged writes. Reads stay outside it.
+  const append = (index: number, ...events: Parameters<typeof session.append>) => {
+    const write = () => session.append.ifLastIndex(index, ...events)
+    return options.fence ? options.fence.access(write) : write()
+  }
 
   const trust = {
     async grants(): Promise<StoredGrant[]> {
@@ -446,7 +453,7 @@ export function createTrust(options: {
         // No lockout to judge here: the grant it stands for isn't one the write makes.
         if (namesIssuer(grant.principals)) judge(identity, standing && { caller: standing.caller, own: standing.own }, { changed: { can: { '*': 'all' } } }, after, ISSUER)
       })
-      return session.append.ifLastIndex(index, ...made.map((grant) => ({ type: 'grant.created' as const, payload: { principals: grant.principals as never, can: grant.can as never, by: identity.actor.id } })))
+      return append(index, ...made.map((grant) => ({ type: 'grant.created' as const, payload: { principals: grant.principals as never, can: grant.can as never, by: identity.actor.id } })))
     })
     const { grants } = await read()
     return rows.map((row) => {
@@ -477,7 +484,7 @@ export function createTrust(options: {
         judge(identity, standing, { changed: { can } }, before, { what: 'this invite', doing: 'this invite' })
         const now = Date.now()
         const payload = { id, name: input.name, can, digest, expiresAt: now + (input.expiresIn ?? 86400) * 1000, by: identity.actor.id }
-        await session.append.ifLastIndex(index, { type: 'invite.created', payload })
+        await append(index, { type: 'invite.created', payload })
         return inviteView({ ...payload, state: 'pending' }, now)
       })
       return { invite, secret }
@@ -489,7 +496,7 @@ export function createTrust(options: {
         await inviteAdmin(identity, 'revoke invites', Object.values(state.grants).map(storedGrant))
         const row = Object.hasOwn(state.invites, id) ? state.invites[id] : undefined
         if (!row || inviteState(row, Date.now()) !== 'pending') return { revoked: false }
-        await session.append.ifLastIndex(index, { type: 'invite.revoked', payload: { id, by: identity.actor.id } })
+        await append(index, { type: 'invite.revoked', payload: { id, by: identity.actor.id } })
         return { revoked: true }
       })
     },
@@ -504,7 +511,7 @@ export function createTrust(options: {
         const row = id === undefined ? undefined : state.invites[id]
         if (!row || inviteState(row, Date.now()) !== 'pending') throw invalidInvite()
         // A loser of a concurrent redemption or revocation must look again, not issue a second credential.
-        await session.append.ifLastIndex(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
+        await append(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
       })
       return { principal, token }
     },
@@ -525,7 +532,7 @@ export function createTrust(options: {
       const id = await whileHeadMoves(async () => {
         const { state, index } = await latest()
         const event = await updated(identity, state, input, [], accessIn, team, logins())
-        await session.append.ifLastIndex(index, event)
+        await append(index, event)
         return event.payload.id
       })
       return { grant: grantView((await read()).grants[id]!) }
@@ -569,7 +576,7 @@ export function createTrust(options: {
         const before = Object.values(state.grants).map(storedGrant)
         const after = before.filter((other) => other.id !== storedGrant(row).id)
         await mayGrant(identity, { revoked: row }, before, after, accessIn, { what: `revoke ${id}`, doing: `revoking ${id}` }, lockMeOut ? undefined : after)
-        await session.append.ifLastIndex(index, { type: 'grant.deleted', payload: { id: row.id, by: identity.actor.id } })
+        await append(index, { type: 'grant.deleted', payload: { id: row.id, by: identity.actor.id } })
         return { revoked: true }
       })
     },

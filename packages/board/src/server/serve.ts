@@ -1292,6 +1292,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     return {
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
       ...(capabilities?.workLifecycle === 1 ? { workLifecycle: 1 } : {}),
+      ...(capabilities?.accessFence === 1 ? { accessFence: 1 } : {}),
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),

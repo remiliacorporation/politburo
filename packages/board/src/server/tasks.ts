@@ -12,7 +12,7 @@ import { DEFAULT_TASK_PRIORITY, OPEN_TASK_STATES, priorityRank, TASK_BATCH_MAX, 
 import { batchPlan, type BatchNeed } from '../contract/task-batch.ts'
 import { authorize, type Access, type Permission } from './access.ts'
 import type { BoardBinding } from './backend.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, notFound } from './errors.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, noAccessFence, notFound } from './errors.ts'
 import { indexOf, ref, toMessageFilter, view, whoIs } from './feed.ts'
 import type { MessageFilter, ThreadSummary } from '../store/types.ts'
 import { appendFrom, authorizeMessage, movedOn, ownedBy, seenFor, untilApplied, type Along, type AlongEach, type Events, type Identity, type WriteContext } from './writes.ts'
@@ -63,6 +63,7 @@ const PAGE = 500
 
 /** A task's root: the message that carries it. */
 type Root = Message & { task: Task }
+type Change = Events | { events: Events; access?: number }
 
 type AttentionChange = { task: MessageView; attention: AttentionView }
 
@@ -127,7 +128,7 @@ const stale = (task: Task, pauseEpoch: number) => task.claim !== null && (task.c
 /** A pause fences outstanding claims, and resume does not revive them. */
 export const claimFenced = (task: Task, status: WorkState) => status.paused || stale(task, status.pauseEpoch)
 
-/** Whether a task's claim has run out its lease or was fenced: it's claimable at once, whatever its label still says. */
+/** Whether a task's claim has run out its lease or was fenced, whatever its label still says. */
 const lapsed = (task: Task, at: number, pauseEpoch: number) => task.state === 'claimed' && (stale(task, pauseEpoch) || Date.parse(task.claim!.until) <= at)
 
 /** A claim whose lease ran out or was fenced by pause no longer holds the task. */
@@ -209,7 +210,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (until === at) read.early = task.claim!.until
         return { position, events: [] }
       }
-      return { position, events: [{ type: 'task.expired', payload: { id, thread: root.thread, epoch } }] }
+      const waits = !(await satisfied(task, position))
+      return { position, events: [expired(root, epoch, waits)] }
     })
     await untilApplied(ctx, rows)
     if (read.early !== null) await arm(id, epoch, read.early, `again-${context.event.index}`)
@@ -232,8 +234,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
 
   /**
    * Arms the timer for a claim's lease. Without a scheduler there's none: a claim still checks the
-   * clock, so a lease that ran out is claimable, and its label says so once someone claims it. One
-   * that can't be armed is the same, so the claim that landed still answers.
+   * clock and can take over an eligible task when its lease runs out. One whose timer can't be
+   * armed is the same, so the claim that landed still answers.
    */
   async function arm(id: number, epoch: number, until: string, again?: string) {
     if (!options.scheduler) return
@@ -294,7 +296,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
    * throws what refuses the write, and returns what to append. Answers the message as the write left
    * it: as it was, when there was nothing to append.
    */
-  async function change(identity: Identity, id: number, decide: (found: Message, position: number) => Events | Promise<Events>): Promise<Message> {
+  async function change(identity: Identity, id: number, decide: (found: Message, position: number) => Change | Promise<Change>): Promise<Message> {
     const ctx = writes()
     const seen = seenFor(identity, (await ctx.session.state(actorsReducer)).state)
     const read: { before?: Message } = {}
@@ -303,8 +305,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const found = (await ctx.reads.tables.messagesAt([id], position)).get(id)
       if (!found) throw notFound(`message not found: #${id}`, 'message_not_found')
       read.before = found
-      const events = await decide(found, position)
-      return { position, events: events.length > 0 && seen ? [seen, ...events] : events }
+      const decision = await decide(found, position)
+      const { events, access } = Array.isArray(decision) ? { events: decision } : decision
+      return { position, access, events: events.length > 0 && seen ? [seen, ...events] : events }
     })
     await untilApplied(ctx, rows)
     return after(read.before!, rows)
@@ -318,7 +321,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   }
 
   /** `change`, for a write to a task: `decide` gets its root. */
-  const changeTask = (identity: Identity, id: number, decide: (root: Root, position: number) => Events | Promise<Events>) =>
+  const changeTask = (identity: Identity, id: number, decide: (root: Root, position: number) => Change | Promise<Change>) =>
     change(identity, id, (found, position) => {
       if (!found.task) throw notATask(id)
       if (found.task.work && found.deleted) throw notFound(`message not found: #${id}`, 'message_not_found')
@@ -343,23 +346,21 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   /** Recheck effective grants on an append retry or after a claim-next poll wakes. */
   const accessFor = async (identity: Identity) => identity.principal.id.startsWith('board:') ? identity.principal.access : accessNow(identity.principal)
 
-  async function scoper(identity: Identity, root: Root, decide: (access: Access) => Events | Promise<Events>): Promise<Events> {
+  async function scoper(identity: Identity, root: Root, decide: (access: Access) => Events | Promise<Events>) {
     if (!scopers) throw noLifecycle()
     const hidden = () => notFound(`message not found: #${root.id}`, 'message_not_found')
-    const head = async () => {
-      const index = await accessPosition().catch(() => null)
-      if (index === null) throw hidden()
-      return index
+    let epoch: number | undefined
+    if (!identity.principal.id.startsWith('board:')) {
+      if (!writes().fence) throw noAccessFence()
+      // Read the access head first: a grant change since then must move the append's guard.
+      epoch = await accessPosition().catch(() => undefined)
+      if (epoch === undefined) throw hidden()
     }
-    // Grant writes don't move the board's head. If access moved while we decided, look again.
-    const before = identity.principal.id.startsWith('board:') ? null : await head()
     const access = await accessFor(identity).catch(() => null)
     if (!access?.readable(root.channel)) throw hidden()
     if (!scopers.has(identity.principal.id) || !access.can('manage', root.channel))
       throw forbidden(`only a work scoper with manage in ${root.channel} can move #${root.id}`)
-    const events = await decide(access)
-    if (before !== null && await head() !== before) throw movedOn()
-    return events
+    return { events: await decide(access), access: epoch }
   }
 
   /** Scoper writes recheck access inside each append look. Legacy writes keep their own checks. */
@@ -442,36 +443,39 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
 
   const waiting = (root: Root) => conflict('task_waiting', `#${root.id} waits for ${root.task.needs.map((need) => `#${need}`).join(', ')}`)
 
+  function expired(root: { id: number; thread: string }, epoch: number, waits: boolean): Events[number] {
+    return { type: 'task.expired', payload: { id: root.id, thread: root.thread, epoch, ...(waits ? { waiting: true } : {}) } }
+  }
+
   /**
-   * A claim of a task as it stands, by `identity`: the events, and what the claim answers. A claim
-   * whose lease ran out expires in the same append, so the log says what happened to it.
+   * A claim of an eligible task: the events and what the claim answers. A lapsed claim expires in
+   * the same append, using the prerequisite check the caller made at that position.
    */
-  function claiming(root: { id: number; thread: string }, task: Pick<Task, 'state' | 'epoch'> | null, identity: Identity, lease: number | undefined, token: string, pauseEpoch: number, binding: TaskBinding | undefined): { events: Events; claim: TaskClaim } {
+  function claiming(root: { id: number; thread: string }, task: Pick<Task, 'state' | 'epoch'> | null, identity: Identity, lease: number | undefined, token: string, pauseEpoch: number, binding: TaskBinding | undefined, waits = false): { events: Events; claim: TaskClaim } {
     const about = { id: root.id, thread: root.thread }
     const epoch = (task?.epoch ?? 0) + 1
     const until = new Date(Date.now() + leaseOf(lease)).toISOString()
     const metadata = binding === undefined ? {} : { binding }
     return {
       events: [
-        ...(task?.state === 'claimed' ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
+        ...(task?.state === 'claimed' ? [expired(root, task.epoch, waits)] : []),
         { type: 'task.claimed', payload: { ...about, epoch, ...(pauseEpoch === 0 ? {} : { pauseEpoch }), until, token: hashOf(token), by: identity.author, ...metadata } },
       ],
       claim: { epoch, token, until, pauseEpoch, ...metadata },
     }
   }
 
-  /**
-   * The tasks `refs` name, as of `position`, and whether they've all completed. One that isn't a
-   * task, or that the caller can't read, is refused alike, so `needs` says nothing of what's out of
-   * sight. Needs never change, and nothing can need a thread before it's a task, so the only cycle
-   * there could be is a task that waits for itself: `self` isn't a task yet, so it's refused as any
-   * thread that isn't one, and named here only so the refusal says why. One that was canceled is
-   * refused too: it can never complete, so a task that waited for it would wait for good, and its
-   * maker hears now. A failed one may yet be reopened, so it's still something to wait for.
-   */
-  async function needsAt(access: Access, refs: readonly string[] | undefined, position: number, self: number | null): Promise<{ ids: number[]; completed: boolean }> {
+  /** The tasks `refs` name, as of `position`, and whether they've all completed. A task can't name `self` as a prerequisite. */
+  async function needsAt(
+    access: Access,
+    refs: readonly string[] | undefined,
+    position: number,
+    self: number | null,
+    kept?: readonly number[],
+  ): Promise<{ ids: number[]; completed: boolean }> {
     const named = namedNeeds(refs, self)
-    return needsAmong(access, named, named.size === 0 ? new Map<number, Message>() : await writes().reads.tables.messagesAt([...named.keys()], position))
+    const found = named.size === 0 ? new Map<number, Message>() : await writes().reads.tables.messagesAt([...named.keys()], position)
+    return needsAmong(access, named, found, kept)
   }
 
   const invalidNeed = (value: string, why: string) => badRequest(`needs: #${value} ${why}`, 'invalid_needs')
@@ -488,12 +492,22 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     return named
   }
 
-  /** The tasks `named` names among `found`, the messages read for them, and whether they've all completed. */
-  function needsAmong(access: Access, named: ReadonlyMap<number, string>, found: ReadonlyMap<number, Message>): { ids: number[]; completed: boolean } {
+  /**
+   * Checks the named prerequisites and says whether they've all completed. Refuses unreadable
+   * tasks as if they weren't tasks. A canceled task can never complete, but a failed one may
+   * reopen. A deleted staged root can only be kept, and only if it already completed.
+   */
+  function needsAmong(
+    access: Access,
+    named: ReadonlyMap<number, string>,
+    found: ReadonlyMap<number, Message>,
+    kept?: readonly number[],
+  ): { ids: number[]; completed: boolean } {
     for (const [id, value] of named) {
       const need = found.get(id)
       if (!need?.task || !access.readable(need.channel)) throw invalidNeed(value, "isn't a task")
-      if (need.task.state === 'canceled' || (need.task.work && need.deleted)) throw invalidNeed(value, 'was canceled or deleted: it can never complete')
+      if (need.task.state === 'canceled' || (need.task.work && need.deleted && !(kept?.includes(id) && completedNeed(need))))
+        throw invalidNeed(value, 'was canceled or deleted: it can never complete')
     }
     const ids = [...named.keys()]
     return { ids, completed: ids.every((id) => completedNeed(found.get(id))) }
@@ -636,7 +650,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const assigned = assignedTo(task, identity)
         if (!assigned && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
-        if (rank < best || (rank === best && (bestAssigned || !assigned)) || (scopers && !(await satisfied(task, position)))) continue
+        if (rank < best || (rank === best && (bestAssigned || !assigned)) || !(await satisfied(task, position))) continue
         root = candidate
         best = rank
         bestAssigned = assigned
@@ -644,7 +658,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       }
       // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }
-      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding)
+      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding, false)
       read.taken = { root, claim }
       return { position, events: seen ? [seen, ...events] : events }
     })
@@ -897,8 +911,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           }
         }
         claimable(found, identity, pauseEpoch)
-        if (scopers && !(await satisfied(task, position))) throw waiting(found)
-        const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding)
+        const waits = !(await satisfied(task, position))
+        if (waits) throw waiting(found)
+        const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding, waits)
         made.claim = claimed.claim
         return claimed.events
       })
@@ -948,7 +963,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const root = await changeTask(identity, id, async (found, position) => {
         await fenced(found, identity, proof, position)
         const about = { id, thread: found.thread, epoch: proof.epoch, by: identity.author }
-        if (how.type === 'task.released') return [{ type: 'task.released', payload: about }]
+        if (how.type === 'task.released') {
+          const waits = !(await satisfied(found.task, position))
+          if (Date.parse(found.task.claim!.until) <= Date.now()) throw claimLost(id)
+          return [{ type: 'task.released', payload: { ...about, ...(waits ? { waiting: true } : {}) } }]
+        }
         if (found.task.work) {
           if (!scopers) throw noLifecycle()
           if (how.type === 'task.failed') throw conflict('work_lifecycle_required', 'release the claim for another attempt, or ask a scoper to reject the task')
@@ -1193,9 +1212,9 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
 
     /**
      * Replaces what a task waits for, for its owner or `manage`, while no one holds it and it isn't
-     * finished. They're checked as a new task's are, and must leave it waiting for no task that
-     * waits for it. It waits for them from this write, and `task.ready` follows in it when they've
-     * all completed; with none it's ready. A held task stays held, and the same set changes nothing.
+     * finished. Added prerequisites are checked as a new task's are and must not close a cycle.
+     * It waits for its new list from this write, and `task.ready` follows in it when they've all
+     * completed; with none it's ready. A held task stays held, and the same set changes nothing.
      */
     async needs(identity: Identity, id: number, refs: readonly string[]): Promise<{ task: MessageView }> {
       const { principal } = identity
@@ -1208,12 +1227,13 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         // A claim whose lease ran out is over: its expiry goes first, in the same append.
         const over = lapsed(task, Date.now(), await epochAt(position))
         if (task.state === 'claimed' && !over) throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: what it needs changes once no one holds it`)
-        const needs = await needsAt(access, refs, position, id)
+        const needs = await needsAt(access, refs, position, id, task.needs)
         if (needs.ids.length === task.needs.length && needs.ids.every((need) => task.needs.includes(need))) return []
         await acyclic(access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
         const about = { id, thread: found.thread }
+        const waits = over && !(await satisfied(task, position))
         return [
-          ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
+          ...(over ? [expired(found, task.epoch, waits)] : []),
           { type: 'task.needs_changed', payload: { ...about, needs: needs.ids, by: identity.author } },
           ...(needs.ids.length > 0 && needs.completed && task.state !== 'blocked' && canReady(task) ? [{ type: 'task.ready' as const, payload: about }] : []),
         ]

@@ -10,11 +10,12 @@ import { platformProfile } from '../contract/profiles.ts'
 import { wroteAs, type Granted } from './auth.ts'
 import { authorize, FULL_ACCESS, type Access, type Permission, type Proof } from './access.ts'
 import { actorSeen, ownedActor } from './actors.ts'
+import type { AccessFence } from '../store/fence.ts'
 import { replaceMentions } from '../contract/mentions.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import type { BoardSession } from './a2.ts'
 import type { BoardReads } from './reads.ts'
-import { badRequest, duplicateId, forbidden, HttpError, notFound } from './errors.ts'
+import { badRequest, duplicateId, forbidden, HttpError, noAccessFence, notFound } from './errors.ts'
 import { view, type Reader } from './feed.ts'
 import type { MessageView } from '../api/routes.ts'
 import type { WriteSource } from './middleware.ts'
@@ -40,6 +41,8 @@ export type WriteContext = {
   /** The board's tables, where writes check what they write to. */
   reads: BoardReads
   work: ReturnType<typeof createControl>
+  fence?: AccessFence
+  accessPosition: () => Promise<number>
 }
 
 
@@ -634,14 +637,18 @@ async function appendWhile(ctx: WriteContext, holds: () => Promise<number>, even
 /**
  * As `appendWhile`, for a write whose events depend on what it finds: `look` reads the tables,
  * throws what refuses the write, and returns what to append with the index its reads reflect. It
- * looks again, and decides again, each time the board moves on first. Nothing to append appends
- * nothing.
+ * looks again, and decides again, each time the board moves on first. If `look` also names an
+ * access position, that session must not have moved either. Nothing to append appends nothing.
  */
-export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events; access?: number }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
   return whileHeadMoves(async () => {
     await ctx.reads.ensure()
-    const { position, events } = await look()
-    return events.length === 0 ? [] : appendIfLast(ctx.session, position, events)
+    const { position, events, access } = await look()
+    if (events.length === 0) return []
+    const append = () => appendIfLast(ctx.session, position, events)
+    if (access === undefined) return append()
+    if (!ctx.fence) throw noAccessFence()
+    return ctx.fence.guarded(ctx.accessPosition, access, append)
   })
 }
 

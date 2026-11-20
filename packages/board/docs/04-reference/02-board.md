@@ -526,10 +526,12 @@ on an otherwise allowed move throws a `BoardError` with `status: 409` and
 `code: 'task_version_conflict'`, without writing. Read the root again and
 reconsider the decision before retrying.
 
-Discovery advertises `workLifecycle: 1` on an opted-in board. `scope` and
-`stage` fail with 501 `no_work_lifecycle` if unsupported; disallowed moves
-fail with 409 `invalid_task_stage`. See the [allowed moves and CLI
-commands](../01-board/11-tasks.md#staged-work).
+Discovery advertises `workLifecycle: 1` on an opted-in board and
+`accessFence: 1` when staged writes are atomic with grant changes. Without
+that fence, staged-scoper writes fail with 501 `no_access_fence`. `scope`
+and `stage` fail with 501 `no_work_lifecycle` if there are no stages.
+Disallowed moves fail with 409 `invalid_task_stage`. See the
+[allowed moves and CLI commands](../01-board/11-tasks.md#staged-work).
 
 #### Several tasks at once
 
