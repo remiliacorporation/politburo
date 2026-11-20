@@ -9,11 +9,17 @@ import { configDir } from '../client/node.ts'
 /** A claim as the CLI keeps it: what its writes carry, and when its lease ends. */
 export type HeldClaim = { epoch: number; token: string; until: string }
 
+type ClaimProof = Pick<HeldClaim, 'epoch' | 'token'>
+
+const matchesClaim = (claim: HeldClaim | null | undefined, only: ClaimProof) =>
+  claim?.epoch === only.epoch && claim.token === only.token
+
 /** The claims one run holds on one board, as whoever it writes as, by task. */
 export type Claims = {
   get(task: string): Promise<HeldClaim | null>
   put(task: string, claim: HeldClaim): Promise<void>
-  drop(task: string): Promise<void>
+  /** With `only`, forget the claim only if its epoch and token still match. */
+  drop(task: string, only?: ClaimProof): Promise<void>
 }
 
 type Stored = HeldClaim & { board: string; task: string; profile: string | null }
@@ -87,8 +93,10 @@ export function fileClaims(board: () => Promise<string>, profile: string | null)
       })
       await prune(Date.now()).catch(() => {})
     },
-    async drop(task) {
-      await unlink(await at(task)).catch(() => {})
+    async drop(task, only) {
+      const file = await at(task)
+      if (only && !matchesClaim(await read(file), only)) return
+      await unlink(file).catch(() => {})
     },
   }
 }
@@ -103,7 +111,10 @@ export function memoryClaims(board: object, profile: string | null): Claims {
   return {
     get: async (task) => claims.get(at(task)) ?? null,
     put: async (task, claim) => void claims.set(at(task), claim),
-    drop: async (task) => void claims.delete(at(task)),
+    async drop(task, only) {
+      const key = at(task)
+      if (!only || matchesClaim(claims.get(key), only)) claims.delete(key)
+    },
   }
 }
 
@@ -120,6 +131,7 @@ export function tokenClaims(board: { thread(id: string, range: { limit: number }
       return { epoch: held.epoch, token, until: held.claim.until }
     },
     put: async () => {},
+    // There is no saved claim to compare or drop.
     drop: async () => {},
   }
 }

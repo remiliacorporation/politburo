@@ -3014,8 +3014,11 @@ async function tasks(args: string[]): Promise<number> {
         reason: rest[1] === undefined ? 'missing_arguments' : 'invalid_arguments',
         next: [{ instruction: 'See how to move staged work', argv: [...cli(), 'tasks', 'stage', '--help'] }],
       })
-      const task = await board.tasks.stage(id, stage.data, reason('why it is moving', 2))
-      if (stage.data === 'rejected') await claims.drop(id)
+      const why = reason('why it is moving', 2)
+      const stored = stage.data === 'rejected' ? await claims.get(id) : null
+      const task = await board.tasks.stage(id, stage.data, why)
+      // Another process could have reopened and claimed the task before the rejection response arrived.
+      if (stored) await claims.drop(id, stored)
       printTask(task, stage.data)
       return 0
     }
