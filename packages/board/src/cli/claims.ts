@@ -2,14 +2,14 @@
 // `token` once, and every write the claim makes needs both, so `vb tasks complete 812` is one
 // process and `vb tasks claim 812` was another.
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { configDir } from '../client/node.ts'
 
 /** A claim as the CLI keeps it: what its writes carry, and when its lease ends. */
 export type HeldClaim = { epoch: number; token: string; until: string }
 
-type ClaimProof = Pick<HeldClaim, 'epoch' | 'token'>
+export type ClaimProof = Pick<HeldClaim, 'epoch' | 'token'>
 
 const matchesClaim = (claim: HeldClaim | null | undefined, only: ClaimProof) =>
   claim?.epoch === only.epoch && claim.token === only.token
@@ -18,8 +18,8 @@ const matchesClaim = (claim: HeldClaim | null | undefined, only: ClaimProof) =>
 export type Claims = {
   get(task: string): Promise<HeldClaim | null>
   put(task: string, claim: HeldClaim): Promise<void>
-  /** With `only`, forget the claim only if its epoch and token still match. */
-  drop(task: string, only?: ClaimProof): Promise<void>
+  /** Forget the claim only if its epoch and token still match. */
+  drop(task: string, only: ClaimProof): Promise<void>
 }
 
 type Stored = HeldClaim & { board: string; task: string; profile: string | null }
@@ -51,10 +51,10 @@ async function read(file: string): Promise<Stored | null> {
 async function prune(now: number) {
   for (const name of await readdir(claimsDir()).catch(() => [])) {
     if (!name.endsWith('.json')) {
-      // A write that never finished: its temporary file, once it's old enough that nothing is still writing it.
+      // An abandoned write or drop. Renaming to a tombstone keeps the old mtime.
       const file = join(claimsDir(), name)
       const info = await stat(file).catch(() => null)
-      if (info && now - info.mtimeMs > DEAD_MS) await unlink(file).catch(() => {})
+      if (info && now - Math.max(info.mtimeMs, info.ctimeMs) > DEAD_MS) await unlink(file).catch(() => {})
       continue
     }
     const file = join(claimsDir(), name)
@@ -93,10 +93,22 @@ export function fileClaims(board: () => Promise<string>, profile: string | null)
       })
       await prune(Date.now()).catch(() => {})
     },
-    async drop(task, only) {
+    async drop(task, { epoch, token }) {
       const file = await at(task)
-      if (only && !matchesClaim(await read(file), only)) return
-      await unlink(file).catch(() => {})
+      const tombstone = `${file}.${process.pid}.${randomUUID()}.drop`
+      // A put before the rename is checked; a put after it writes to `file`.
+      // Link a mismatch back only if that name is still free.
+      try {
+        await rename(file, tombstone)
+      } catch {
+        return
+      }
+      if (!matchesClaim(await read(tombstone), { epoch, token })) {
+        await link(tombstone, file).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        })
+      }
+      await unlink(tombstone).catch(() => {})
     },
   }
 }
@@ -113,7 +125,7 @@ export function memoryClaims(board: object, profile: string | null): Claims {
     put: async (task, claim) => void claims.set(at(task), claim),
     async drop(task, only) {
       const key = at(task)
-      if (!only || matchesClaim(claims.get(key), only)) claims.delete(key)
+      if (matchesClaim(claims.get(key), only)) claims.delete(key)
     },
   }
 }
@@ -132,6 +144,6 @@ export function tokenClaims(board: { thread(id: string, range: { limit: number }
     },
     put: async () => {},
     // There is no saved claim to compare or drop.
-    drop: async () => {},
+    drop: async (_task, _only) => {},
   }
 }

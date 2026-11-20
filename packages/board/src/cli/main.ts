@@ -26,7 +26,7 @@ import { formatSchema, formatSchemas } from './schemas.ts'
 import { parseSchemaId } from '../contract/data-schemas.ts'
 import { block } from '../contract/blocks.ts'
 import { actorName, claimLine, formatAccess, formatAttention, formatConformance, formatEvent, formatGrants, grantRow, formatOperationalInbox, formatSchedule, formatTasks, grantCan, lineText, mentionedIn, reactionNames, formatSourceRead, formatSynced, formatThreadSummaries, formatThreads, terminalText, who } from './format.ts'
-import { fileClaims, memoryClaims, tokenClaims, type Claims } from './claims.ts'
+import { fileClaims, memoryClaims, tokenClaims, type ClaimProof, type Claims } from './claims.ts'
 import { runCommand } from './run.ts'
 import { AGENTS, allowRules, cliOf, disallow, installedHook, tilde, uninstallHook, type HookAgent } from './hooks.ts'
 import { commands, filters as filterOptions, globalOptions, options, type CliCommand } from './commands.ts'
@@ -2640,15 +2640,15 @@ async function heldBy(board: Board, claims: Claims, id: string) {
       message: `You hold no claim on task ${ref(id)} as ${writesAs() ?? 'yourself'}.`,
       next: [{ instruction: 'Claim it', argv: [...cli(), 'tasks', 'claim', id, ...asTyped()] }],
     })
-  return board.tasks.held(id, stored)
+  return { ...stored, ...board.tasks.held(id, stored) }
 }
 
-/** A write a claim makes. One the board answers `claim_lost` is over: the CLI forgets it, and the failure says how to claim again. */
-async function withClaim<T>(claims: Claims, id: string, write: () => Promise<T>): Promise<T> {
+/** A write a claim makes. On `claim_lost`, forget only the proof used for the write. */
+async function withClaim<T>(claims: Claims, id: string, proof: ClaimProof, write: () => Promise<T>): Promise<T> {
   try {
     return await write()
   } catch (error) {
-    if (error instanceof BoardError && error.code === 'claim_lost') await claims.drop(id)
+    if (error instanceof BoardError && error.code === 'claim_lost') await claims.drop(id, proof)
     throw error
   }
 }
@@ -2852,6 +2852,8 @@ async function tasks(args: string[]): Promise<number> {
     if (typeof claim === 'number') return claim
     const id = claim.task.id
     const lease = seconds('lease')
+    // Settle and drop with the latest proof this run saved, not a reread of the file.
+    let held = claim
     const ran = await runCommand(command, {
       env: { ...process.env, BOARD_TASK: id },
       // With --json this run's stdout is one document: what the command prints goes to stderr.
@@ -2860,8 +2862,9 @@ async function tasks(args: string[]): Promise<number> {
       every: (Date.parse(claim.until) - Date.now()) / 3,
       async renew() {
         try {
-          const renewed = await claim.renew(lease)
+          const renewed = await held.renew(lease)
           await claims.put(id, { epoch: renewed.epoch, token: renewed.token, until: renewed.until })
+          held = renewed
           return true
         } catch (error) {
           // Lost, the command works a task that's someone else's now: it stops. Anything else is tried again at the next turn.
@@ -2870,7 +2873,7 @@ async function tasks(args: string[]): Promise<number> {
       },
     })
     if (ran.how === 'lost') {
-      await claims.drop(id)
+      await claims.drop(id, held)
       throw new Failed({
         class: 'conflict',
         reason: 'claim_lost',
@@ -2880,22 +2883,22 @@ async function tasks(args: string[]): Promise<number> {
     }
     if (ran.how === 'unstarted') {
       // Nothing ran, so the task goes back as it was.
-      await claim.release().catch(() => {})
-      await claims.drop(id)
+      await held.release().catch(() => {})
+      await claims.drop(id, held)
       throw new Failed({ class: 'not_found', reason: 'command_not_found', message: `Couldn't run ${command[0]}. ${sentence(ran.why)}`, details: [`Task ${ref(id)} was released.`] })
     }
     if (ran.how === 'interrupted') {
-      await withClaim(claims, id, () => claim.release())
-      await claims.drop(id)
+      await withClaim(claims, id, held, () => held.release())
+      await claims.drop(id, held)
       // 130 for Ctrl-C, 143 for a supervisor's SIGTERM: what the signal would have said had it ended this process.
       return ran.code
     }
     // A command's failure can settle a legacy task, but cannot reject staged work.
-    const staged = claim.task.task?.work !== undefined
-    const settled = await withClaim(claims, id, () => ran.code === 0
-      ? claim.complete(flags.result)
-      : staged ? claim.release() : claim.fail(ran.signal ? `killed by ${ran.signal}` : `exited ${ran.code}`))
-    await claims.drop(id)
+    const staged = held.task.task?.work !== undefined
+    const settled = await withClaim(claims, id, held, () => ran.code === 0
+      ? held.complete(flags.result)
+      : staged ? held.release() : held.fail(ran.signal ? `killed by ${ran.signal}` : `exited ${ran.code}`))
+    await claims.drop(id, held)
     const outcome = ran.code === 0 ? completionOutcome(settled) : staged ? 'released' : 'failed'
     printTask(settled, outcome, ran.code === 0 ? {} : { code: ran.code })
     return ran.code
@@ -2927,7 +2930,7 @@ async function tasks(args: string[]): Promise<number> {
     if (!packet.success) throw usage('Use a full commit ID, a repo-relative packet path, and a lowercase SHA-256 digest.')
     const { board, claims } = tasksOn()
     const held = await heldBy(board, claims, id)
-    const task = await withClaim(claims, id, () => held.handoff(packet.data))
+    const task = await withClaim(claims, id, held, () => held.handoff(packet.data))
     const handoff = task.task?.handoff
     if (flags.json) result({ task, outcome: 'handed_off' })
     else out(`handed off ${messageRef(task.id)}${handoff ? `  ${handoff.id}` : ''}`)
@@ -2951,7 +2954,7 @@ async function tasks(args: string[]): Promise<number> {
       const priority = priorityOf(rest[1], 'Priority')
       const stored = await claims.get(id)
       const task = stored
-        ? await withClaim(claims, id, () => board.tasks.held(id, stored).priority(priority))
+        ? await withClaim(claims, id, stored, () => board.tasks.held(id, stored).priority(priority))
         : await board.tasks.priority(id, priority)
       if (flags.json) result({ task, outcome: 'set' })
       else out(`${messageRef(id)}  priority ${task.task?.priority ?? priority}`)
@@ -2961,7 +2964,7 @@ async function tasks(args: string[]): Promise<number> {
       one(rest[1], 'one task')
       const lease = seconds('lease')
       const held = await heldBy(board, claims, id)
-      const claim = await withClaim(claims, id, () => held.renew(lease))
+      const claim = await withClaim(claims, id, held, () => held.renew(lease))
       await claims.put(id, { epoch: claim.epoch, token: claim.token, until: claim.until })
       printClaim(claim.task, claim)
       return 0
@@ -2969,16 +2972,16 @@ async function tasks(args: string[]): Promise<number> {
     case 'release': {
       one(rest[1], 'one task')
       const held = await heldBy(board, claims, id)
-      const task = await withClaim(claims, id, () => held.release())
-      await claims.drop(id)
+      const task = await withClaim(claims, id, held, () => held.release())
+      await claims.drop(id, held)
       printTask(task, 'released')
       return 0
     }
     case 'complete': {
       one(rest[2], 'a task and its result, quoted')
       const held = await heldBy(board, claims, id)
-      const task = await withClaim(claims, id, () => held.complete(rest[1]))
-      await claims.drop(id)
+      const task = await withClaim(claims, id, held, () => held.complete(rest[1]))
+      await claims.drop(id, held)
       printTask(task, completionOutcome(task))
       return 0
     }
@@ -2986,8 +2989,8 @@ async function tasks(args: string[]): Promise<number> {
       one(rest[2], 'a task and a reason, quoted')
       const why = reason('why it failed')
       const held = await heldBy(board, claims, id)
-      const task = await withClaim(claims, id, () => held.fail(why))
-      await claims.drop(id)
+      const task = await withClaim(claims, id, held, () => held.fail(why))
+      await claims.drop(id, held)
       printTask(task, 'failed')
       return 0
     }
@@ -2997,8 +3000,10 @@ async function tasks(args: string[]): Promise<number> {
       const hold = flags.kind !== undefined ? { kind: flags.kind } : {}
       // With the claim this run holds, which the hold ends; without one, as the task's owner.
       const stored = await claims.get(id)
-      const task = stored ? await withClaim(claims, id, () => board.tasks.held(id, stored).block(why, hold)) : await board.tasks.block(id, why, hold)
-      await claims.drop(id)
+      const task = stored
+        ? await withClaim(claims, id, stored, () => board.tasks.held(id, stored).block(why, hold))
+        : await board.tasks.block(id, why, hold)
+      if (stored) await claims.drop(id, stored)
       printTask(task, 'blocked')
       return 0
     }
@@ -3099,9 +3104,11 @@ async function tasks(args: string[]): Promise<number> {
     default: {
       // cancel
       one(rest[2], 'a task and a reason, quoted')
-      const task = await board.tasks.cancel(id, reason('why'))
+      const why = reason('why')
+      const stored = await claims.get(id)
+      const task = await board.tasks.cancel(id, why)
       // A claim this run held on it ended with it.
-      await claims.drop(id)
+      if (stored) await claims.drop(id, stored)
       printTask(task, 'canceled')
       return 0
     }
@@ -3198,6 +3205,8 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
     }
     case 'no_work_lifecycle':
       return status === 501 ? { class: 'platform', message: `Can't ${doing()}. Staged work isn't available for this task.`, next: [] } : null
+    case 'no_access_fence':
+      return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board can't guard against grant changes.`, next: [] } : null
     case 'attention_stale':
     case 'attention_required':
       return status === 409 ? { class: 'conflict', message: `Can't ${doing()}. ${code === 'attention_required' ? 'It needs a structured answer.' : 'The request or its snapshot is no longer current.'}`, next: also('See the current request', 'attention', ...asTyped()) } : null

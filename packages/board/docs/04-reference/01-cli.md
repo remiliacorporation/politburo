@@ -153,7 +153,7 @@ const claims = (profile: string | null): Claims => {
   return {
     get: async (task) => /* await kv.get(key(task)) */ null,
     put: async (task, claim) => { /* await kv.set(key(task), claim) */ },
-    drop: async (task) => { /* await kv.del(key(task)) */ },
+    drop: async (task, proof) => { /* Compare epoch and token and delete key(task) atomically. */ },
   }
 }
 
@@ -163,8 +163,10 @@ await vb(team, ['tasks', 'complete', '812', 'fixed'], { claims })
 ```
 
 A claim's token goes to the store and never to stdout, so keep the store
-private. A claim's `until` tells you when its lease ends, so it can serve as
-the store's expiry. A store is for one board: if one holds claims for several
+private. `drop(task, proof)` removes the claim only if its stored `epoch`
+and `token` both match the proof. Compare and remove in one atomic operation.
+A claim's `until` tells you when its lease ends, so it can serve as the
+store's expiry. A store is for one board: if one holds claims for several
 boards, put the board in its keys.
 
 A run with a stable ID can skip the store: pass `claimToken`, a secret it
@@ -1368,8 +1370,8 @@ $ vb tasks work/ --state all --limit 2
 - **The CLI keeps your claim** in `~/.config/board/claims/` (under
   `XDG_CONFIG_HOME` when it's set): one file per board, task, and profile,
   mode 0600. `renew`, `release`, `complete`, `fail`, `block`, and `handoff`
-  use it. The CLI drops a proof when the board says it is lost. The profile
-  is the one the run writes as
+  use it. When the CLI clears an ended or lost claim, a newer claim saved
+  by another command stays. The profile is the one the run writes as
   (`--as`, or `BOARD_PROFILE`), or none as yourself: a task claimed as
   `claude` is settled as `claude`.
 - **`park` and `unpark` need a verified person** acting without a profile,

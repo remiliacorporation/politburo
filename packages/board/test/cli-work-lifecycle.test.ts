@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { local } from '../src/backend-local/index.ts'
 import { oidcTokens } from '../src/access/index.ts'
+import { a2 } from '../src/server/a2.ts'
+import { memory } from '../src/store/memory.ts'
 import { tmp, vb } from './cli-harness.ts'
 import { failure, start, until } from './cli-tasks-harness.ts'
 import { board, personToken, testAuth } from './harness.ts'
@@ -129,4 +131,19 @@ it('reports that staging is unsupported on a legacy board', async () => {
   const id = await ok(['tasks', 'create', 'work', 'legacy task'], old)
   await refused(['tasks', 'scope', id, 'ready to start'], 501, 'no_work_lifecycle', old)
   expect(await ok(['tasks', 'work'], old)).toMatch(/ready\s+legacy task$/)
+})
+
+it('explains why the board refuses a staged move without an access fence', async ({ onTestFinished }) => {
+  const store = { ...memory(), fence: undefined }
+  onTestFinished(() => store.close())
+  const backend = a2({ store, workLifecycle: { scopers: ['vercel:user:u_julian'] } })
+  const team = board({ backend, authenticate: oidcTokens(testAuth) })
+  const server = await serve(team.fetch)
+  onTestFinished(() => server.close())
+  const url = `${server.origin}/api/board`
+  const who = { ...scoper, BOARD_URL: url, BOARD_TOKEN: await personToken('u_julian', url) }
+  const id = await ok(['tasks', 'create', 'work', 'prepare a release'], who)
+  const refused = await vb(['tasks', 'scope', id, 'ready to start'], who)
+  expect(refused).toMatchObject({ code: 1, stdout: '' })
+  expect(refused.stderr.split('\n')[0]).toBe(`error: Can't scope task #${id}. This board can't guard against grant changes.`)
 })
