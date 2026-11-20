@@ -13,6 +13,7 @@ import {
   ClaimReadyTaskBody,
   ClaimTaskBody,
   CompleteTaskBody,
+  CompleteWithEvidenceBody,
   ControlBody,
   CreateTaskBody,
   CreateTasksBody,
@@ -140,7 +141,7 @@ function attachmentResponse({ attachment, data }: Protocol['attachment']['output
 }
 
 /** A method's input, from the request: its path's `:id` or `:key`, its query, or its body, validated. */
-async function inputOf(name: Method, request: Request, url: URL, params: Record<string, string>): Promise<unknown> {
+async function inputOf(name: Method, request: Request, url: URL, params: Record<string, string>, requiresWorkCommit?: true): Promise<unknown> {
   const id = params.id ?? ''
   const key = params.key ?? ''
   const body = () => readJson(request)
@@ -247,7 +248,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'releaseTask':
       return { id, ...ReleaseTaskBody.parse(await body()) }
     case 'completeTask':
-      return { id, ...CompleteTaskBody.parse(await body()) }
+      return { id, ...(requiresWorkCommit ? CompleteWithEvidenceBody : CompleteTaskBody).parse(await body()) }
     case 'failTask':
       return { id, ...FailTaskBody.parse(await body()) }
     case 'blockTask':
@@ -1354,7 +1355,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       if (target.kind === 'board') return await serve(target.name, caller, request, url, match.params)
 
       if (INVITE_METHODS.has(target.name) && narrowed(caller)) throw forbidden("this caller is narrowed and can't manage invites")
-      const input = await inputOf(target.name, request, url, match.params)
+      const input = await inputOf(target.name, request, url, match.params, match.requiresWorkCommit)
       if (match.requiresTaskBinding && !(input as { binding?: unknown }).binding) throw badRequest('a bound task request needs binding')
       if (target.name === 'events' && (request.headers.get('accept') ?? '').includes('text/event-stream'))
         return await sse(caller, input as Protocol['events']['input'], request, asked ? () => callerOf(asked) : null)

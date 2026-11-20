@@ -94,9 +94,13 @@ export function createEvidence(policy: EvidencePolicy | undefined) {
           throw conflict('evidence_required', `completion requires current passing ${gate} evidence or an override`)
       }
     },
-    satisfied(task: Task, needs: ReadonlyMap<number, Message>): boolean {
+    satisfied(task: Task, needs: ReadonlyMap<number, Message>, access?: Access): boolean {
       const now = Date.now()
-      return task.needs.every((id) => passing(needs.get(id), task.releases?.[id], now))
+      return task.needs.every((id) => {
+        const need = needs.get(id)
+        // For a claim, an unreadable prerequisite is missing: don't check its evidence.
+        return passing(need && (!access || access.readable(need.channel)) ? need : undefined, task.releases?.[id], now)
+      })
     },
     resolve(root: Root, identity: Identity, { needId, evidenceId, ifVersion }: Protocol['resolveWorkEdge']['input'], needs: ReadonlyMap<number, Message>): Events {
       role(identity, root.channel, 'manage', resolvers)

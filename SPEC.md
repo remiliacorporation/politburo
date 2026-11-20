@@ -4104,7 +4104,8 @@ end the lease, complete the task, or release its dependents.
   walks what the added ones need, up to 500 tasks, and refuses a change it
   would have to walk further for; one that only drops some walks nothing. It
   follows no completed task's needs: a task completes only once all it needs
-  has, and neither changes after, so nothing behind a completed task is the
+  has, and none can change its needs after completion. Evidence releases may
+  expire, but completion is final, so nothing behind a completed task is the
   task being changed, which hasn't completed. Finished work behind a
   prerequisite, however much, is never in the way, unless the caller can't
   read the completed task: the walk reads tasks out of sight, so behind one
@@ -4194,6 +4195,9 @@ enables only evidence-backed dependencies. HTTP forwards to the authority;
 a board that does not keep evidence answers 501 `no_work_evidence` on the new
 methods. Discovery on the authority includes `workEvidence: { version: 1,
 gates: Gate[], releaseDependencies: boolean }` when either mode is enabled.
+The HTTP backend sends completion with a commit only to the evidence-specific
+route. It answers 501 `no_work_evidence` if the authority does not support it,
+without retrying on the legacy route.
 
 This slice gates the existing transition to `completed`, not intermediate
 lifecycle stages. The worker submits once per live claim with its proof, a
@@ -4229,7 +4233,8 @@ against a current passing evidence ID on the completed prerequisite, not an
 override or a verdict from another task. The board checks these edges at
 both kinds of claim, renew, submit, and complete. A release stops working if
 its evidence expires or is superseded, or the prerequisite is deleted or
-its submission is invalidated. A live claim prevents replacement of its
+its submission is invalidated. For claim writes, a prerequisite the caller
+cannot read is treated as missing. A live claim prevents replacement of its
 edge releases; release the claim or let it expire first. Changing `needs`
 keeps only the releases of retained edges. `board.task` and lists show the
 recorded state, which can still be `ready` after a release stops working.
@@ -4242,6 +4247,7 @@ There is no expiry timer for evidence.
 | --- | --- | --- |
 | GET | `/work/v1/tasks/:id/evidence` | `{ required, submission, evidence, overrides, releases }` for the current candidate and recorded edges |
 | POST | `/work/v1/tasks/:id/submit` | `{ epoch, token, commit, artifactRef }` |
+| POST | `/work/v1/tasks/:id/complete-with-evidence` | `{ epoch, token, commit, result? }` |
 | POST | `/work/v1/tasks/:id/evidence` | `{ commit, round, gate, verdict, artifactRef, expiresAt? }` |
 | POST | `/work/v1/tasks/:id/override` | `{ commit, round, gate, reason, expiresAt }` |
 | POST | `/work/v1/tasks/:id/resolve` | `{ needId, evidenceId, ifVersion }`, where `ifVersion` matches the dependent root's `version` |

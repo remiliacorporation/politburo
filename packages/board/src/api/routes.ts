@@ -469,6 +469,9 @@ export const ClaimReadyTaskBody = z.object({
 export const RenewTaskBody = z.object({ ...Claimed, lease: Lease.optional() })
 export const ReleaseTaskBody = z.object(Claimed)
 export const CompleteTaskBody = z.object({ ...Claimed, result: SentTaskNote.optional(), commit: Commit.optional() })
+// Must not end in a legacy route: older routers match path suffixes.
+export const completeWithEvidencePath = '/work/v1/tasks/:id/complete-with-evidence'
+export const CompleteWithEvidenceBody = CompleteTaskBody.required({ commit: true })
 export const SubmitWorkBody = z.strictObject({ ...Claimed, commit: Commit, artifactRef: ArtifactRef })
 export const RecordEvidenceBody = z.strictObject({ commit: Commit, round: Round, gate: AttestationGate, verdict: Verdict, artifactRef: ArtifactRef, expiresAt: EvidenceExpiry.optional() })
 export const OverrideEvidenceBody = z.strictObject({ commit: Commit, round: Round, gate: AttestationGate, reason: EvidenceReason, expiresAt: EvidenceExpiry })

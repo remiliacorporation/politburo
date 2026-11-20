@@ -1,4 +1,4 @@
-import { BoardStatus, routes, type Discovery, type EventsPage } from '../api/routes.ts'
+import { BoardStatus, completeWithEvidencePath, routes, type Discovery, type EventsPage } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Method, Protocol } from '../api/protocol.ts'
 import { BoardError, createBoardClient, type BoardClient, type ProfileOption } from '../client/client.ts'
@@ -43,6 +43,10 @@ const PROFILE = /^[A-Za-z][A-Za-z0-9-]{0,31}$/
 const PROFILE_RULE = 'ids start with a letter and use up to 32 letters, numbers, and hyphens'
 
 const describe = (error: unknown) => ((error instanceof Error ? error.message : String(error)) || 'unknown error').slice(0, 500)
+
+const noEvidenceCompletion = () => new HttpError(501, 'no_work_evidence', 'the HTTP board does not support completion with work evidence', {
+  origin: 'handle', hint: 'Upgrade the board before completing with a commit.',
+})
 
 /** The SDK's error, as the board answers it: the remote's own status and code, or 502 when it never answered. */
 const rethrow = (error: unknown): never => {
@@ -251,6 +255,14 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
         })
       }
     }
+    const withEvidence = method === 'completeTask' && input.commit !== undefined
+    if (withEvidence) {
+      signal.throwIfAborted()
+      const response = await doFetch(remote, { signal, cache: 'no-store' }).catch(rethrow)
+      const found = response.ok ? (await response.json().catch(() => null)) as Discovery | null : null
+      signal.throwIfAborted()
+      if (found?.workEvidence?.version !== 1) throw noEvidenceCompletion()
+    }
     if (isAgentOpsMethod(method)) {
       // The mount can change. A registry-only mount can return discovery with 200 on an unknown intent or health GET.
       const intents = isAgentIntentMethod(method)
@@ -270,7 +282,11 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     // takes it as this deployment's key, and a retry's lookup asks for the same.
     if ((method === 'post' || method === 'posted' || method === 'createTask' || method === 'createTasks' || method === 'createdTasks') && 'self' in caller && typeof input.id === 'string' && DERIVED_ID.test(input.id))
       input = { ...input, id: await ownKey(input.id).catch(rethrow) }
-    const response = await call(client, method, input, signal, boundPath)
+    // Discovery and the write can reach different versions. Never fall back to the legacy path.
+    const response = await call(client, method, input, signal, withEvidence ? completeWithEvidencePath : boundPath).catch((error: unknown) => {
+      if (withEvidence && error instanceof HttpError && error.status === 404 && error.code === 'not_found') throw noEvidenceCompletion()
+      throw error
+    })
     if (method === 'attachment') return attachmentOf(String(input.id), response)
     if (method === 'status' || method === 'pause' || method === 'resume') {
       // An older mount can answer an unknown GET with discovery, not a control state.

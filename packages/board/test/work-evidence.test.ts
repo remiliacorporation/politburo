@@ -7,6 +7,8 @@ import { local } from '../src/backend-local/index.ts'
 import { oidcTokens } from '../src/access/index.ts'
 import type { AttestationGate, EvidencePolicy } from '../src/contract/evidence.ts'
 import { conformance } from '../src/conformance/index.ts'
+import { memory } from '../src/store/memory.ts'
+import { sqlite } from '../src/store/sqlite.ts'
 import { board, BOARD_URL, caller, personToken, testAuth, testBoard } from './harness.ts'
 
 const principal = (name: string) => `vercel:user:u_${name}`
@@ -72,6 +74,31 @@ describe('work evidence through the HTTP backend', () => {
     await expect(worker.tasks.evidence('1')).rejects.toMatchObject({
       status: 501, code: 'no_work_evidence', message: expect.stringMatching(/work evidence/),
     })
+  })
+
+  it.each([false, true])('does not complete with a commit on a legacy HTTP board (stale discovery: %s)', async (staleDiscovery) => {
+    const legacy = testBoard()
+    const advertised = testBoard({ workEvidence: policy })
+    const worker = client({
+      async fetch(request) {
+        const path = new URL(request.url).pathname.slice(new URL(BOARD_URL).pathname.length)
+        if (path === '' && staleDiscovery) return advertised.fetch(request)
+        if (path.startsWith('/work/')) return Response.json({ error: { code: 'not_found', message: 'no route' } }, { status: 404 })
+        if (request.method === 'POST' && /^\/tasks\/[^/]+\/complete$/.test(path)) {
+          // The pre-evidence schema strips fields it does not know.
+          const { commit: _ignored, ...body } = await request.json()
+          request = new Request(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(body) })
+        }
+        return legacy.fetch(request)
+      },
+    }, 'worker')
+    const root = await create(worker)
+    const claim = await worker.tasks.claim(root.id)
+    await expect(claim.complete(undefined, { commit })).rejects.toMatchObject({
+      status: 501, code: 'no_work_evidence', origin: 'handle', hint: expect.stringMatching(/upgrade the board/i),
+    })
+    expect((await read(worker, root.id)).task?.state).toBe('claimed')
+    expect((await claim.complete()).task?.state).toBe('completed')
   })
 
   it('returns 501 for all five work evidence methods on a custom backend that omits them', async () => {
@@ -167,6 +194,39 @@ describe('work evidence through the HTTP backend', () => {
       { payload: { reason: 'CI still offline' } },
     ])
     expect((await worker.tasks.evidence(root.id)).overrides).toMatchObject([{ id: audited[1]!.cursor, at: audited[1]!.createdAt }])
+  })
+
+  it.each(['memory', 'SQLite'])('rejects evidence that expires while completion waits to append (%s)', async (adapter) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const dir = await mkdtemp(join(tmpdir(), 'board-evidence-expiry-'))
+    const store = adapter === 'memory' ? memory() : sqlite({ path: join(dir, 'board.db') })
+    const host = testBoard({ workEvidence: policy, store })
+    const worker = client(host, 'worker')
+    const ci = client(host, 'ci')
+    const reviewer = client(host, 'reviewer')
+    const append = store.log.append.bind(store.log)
+    try {
+      const root = await create(worker)
+      const dependent = await create(worker, [root.id])
+      const claim = await worker.tasks.claim(root.id)
+      await claim.submit(commit, artifactRef)
+      const expiresAt = expiry(1_000)
+      await ci.tasks.recordEvidence(root.id, { ...attest(claim.epoch, 'tests'), expiresAt })
+      await reviewer.tasks.recordEvidence(root.id, attest(claim.epoch, 'review'))
+      // Time passes at the storage boundary, without any other write moving the log head.
+      store.log.append = (session, events, options) => {
+        if (events.some((event) => event.type === 'task.completed')) vi.setSystemTime(Date.parse(expiresAt))
+        return append(session, events, options)
+      }
+      await denied(claim.complete(undefined, { commit }), 409, 'evidence_required')
+      expect((await read(worker, root.id)).task?.state).toBe('claimed')
+      expect((await read(worker, dependent.id)).task?.state).toBe('waiting')
+      await ci.tasks.recordEvidence(root.id, attest(claim.epoch, 'tests'))
+      expect((await claim.complete(undefined, { commit })).task?.state).toBe('completed')
+    } finally {
+      await store.close()
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('does not reuse an earlier round or a submission for an edited root', async () => {
@@ -289,6 +349,59 @@ describe('work evidence through the HTTP backend', () => {
     await denied(worker.tasks.claim(dependent.id), 409, 'task_waiting')
     await denied(operator.tasks.resolve(dependent.id, await resolve(b.id, bId)), 404, 'need_not_found')
   })
+
+  it.each(['claim', 'renew', 'claim-next'])('treats an unreadable release prerequisite as missing on %s', async (operation) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const { host, worker, ci, operator } = setup({ ...policy, gates: false, releaseDependencies: true })
+    const prerequisite = await create(worker, undefined, 'proofs')
+    const dependent = await create(worker, [prerequisite.id])
+    const source = await worker.tasks.claim(prerequisite.id)
+    await source.submit(commit, artifactRef)
+    const expiresAt = expiry(5_000)
+    await ci.tasks.recordEvidence(prerequisite.id, { ...attest(source.epoch, 'tests'), expiresAt })
+    await source.complete()
+    const [record] = (await worker.tasks.evidence(prerequisite.id)).evidence
+    await operator.tasks.resolve(dependent.id, { needId: prerequisite.id, evidenceId: record!.id, ifVersion: dependent.version })
+    const held = await worker.tasks.claim(dependent.id)
+    if (operation !== 'renew') await held.release()
+
+    const narrowed = caller(host.fetch, await personToken('u_worker'), { 'x-board-can': 'work=read,label' })
+    const attempt = async () => {
+      const { status, body } = operation === 'claim-next' ? await narrowed('POST', '/tasks/claim', { channel: 'work' }) :
+        await narrowed('POST', `/tasks/${dependent.id}/${operation}`, operation === 'renew' ? { epoch: held.epoch, token: held.token } : {})
+      return { status, body }
+    }
+    const current = await attempt()
+    vi.setSystemTime(Date.parse(expiresAt))
+    const expired = await attempt()
+    await worker.delete(prerequisite.id)
+    const missing = await attempt()
+    expect(missing).toMatchObject(operation === 'claim-next' ? { status: 200, body: { task: null } } : { status: 409, body: { error: { code: 'task_waiting' } } })
+    expect(current).toEqual(missing)
+    expect(expired).toEqual(missing)
+  })
+
+  it('does not walk a readable completed chain when adding a prerequisite with evidence releases enabled', async () => {
+    const worker = testBoard({ workEvidence: { gates: false, releaseDependencies: true, resolvers: ['board:client'] } })
+    let last: { id: string; evidenceId: string } | undefined
+    // The documented cycle-walk limit is 500 tasks.
+    for (let step = 0; step <= 500; step++) {
+      const task = await create(worker, last ? [last.id] : undefined, 'proofs')
+      if (last) await worker.tasks.resolve(task.id, { needId: last.id, evidenceId: last.evidenceId, ifVersion: task.version })
+      const claim = await worker.tasks.claim(task.id)
+      await claim.submit(commit, artifactRef)
+      await claim.complete()
+      last = { id: task.id, evidenceId: (await worker.tasks.evidence(task.id)).submission!.id }
+    }
+    const recent = await create(worker, [last!.id])
+    const root = await create(worker)
+    expect((await worker.tasks.needs(root.id, [recent.id])).task).toMatchObject({ state: 'waiting', needs: [recent.id] })
+
+    // Without access to the chain, the cycle walk still follows it, completed or not.
+    const narrowed = client(worker, 'worker', { 'x-board-can': 'work=manage' })
+    const another = await create(narrowed)
+    await denied(narrowed.tasks.needs(another.id, [recent.id]), 400, 'invalid_needs')
+  }, 60_000)
 
   it('returns a failed task to waiting when its evidence release has expired', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })

@@ -274,6 +274,8 @@ be a different principal from the submitter; another profile does not count.
 - The claimant runs `vb tasks complete <id> --commit <sha>` while the gates
   pass. Use `claim`, `submit`, and `complete` instead of `tasks run` on a gated
   board. To submit again after an edit or a new commit, take a new claim.
+  If the HTTP board does not support completion with evidence, upgrade it.
+  The command does not fall back to completion without evidence.
 
 Artifact references are attestations from the named callers. The board does
 not run tests, inspect artifacts, or check Git history.
@@ -315,7 +317,8 @@ Read the dependent's `version` with `vb read <id> --json`. Get the evidence
 ID from `vb tasks evidence <prerequisite>`. It must name the completed
 prerequisite's current submission or a current passing verdict, not an
 override. An expired or superseded release cannot be used to claim or
-finish a dependent, even if its recorded label still says `ready`. If
+finish a dependent, even if its recorded label still says `ready`. A worker
+also needs `read` on each prerequisite to use its release. If
 `vb tasks claim --ready` picks a task with a stale release, it grants no claim
 rather than taking a lower-priority task. Release any live claim before
 replacing its edge releases.

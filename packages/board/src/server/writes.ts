@@ -14,6 +14,7 @@ import { replaceMentions } from '../contract/mentions.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import type { BoardSession } from './a2.ts'
 import type { BoardReads } from './reads.ts'
+import type { AppendGuard } from '../store/types.ts'
 import { badRequest, duplicateId, forbidden, HttpError, notFound } from './errors.ts'
 import { view, type Reader } from './feed.ts'
 import type { MessageView } from '../api/routes.ts'
@@ -40,6 +41,7 @@ export type WriteContext = {
   /** The board's tables, where writes check what they write to. */
   reads: BoardReads
   work: ReturnType<typeof createControl>
+  guardAppend?: AppendGuard | undefined
 }
 
 
@@ -637,11 +639,15 @@ async function appendWhile(ctx: WriteContext, holds: () => Promise<number>, even
  * looks again, and decides again, each time the board moves on first. Nothing to append appends
  * nothing.
  */
-export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events; check?: () => void }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
   return whileHeadMoves(async () => {
     await ctx.reads.ensure()
-    const { position, events } = await look()
-    return events.length === 0 ? [] : appendIfLast(ctx.session, position, events)
+    const { position, events, check } = await look()
+    if (events.length === 0) return []
+    const append = () => appendIfLast(ctx.session, position, events)
+    if (!check) return append()
+    if (!ctx.guardAppend) throw new Error('the board store cannot guard an append')
+    return ctx.guardAppend(check, append)
   })
 }
 

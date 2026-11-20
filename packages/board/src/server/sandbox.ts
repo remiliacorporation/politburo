@@ -3,7 +3,7 @@
 // enters the sandbox. The types are the parts of `@vercel/sandbox`'s `NetworkPolicy` it uses, so board
 // doesn't depend on the SDK: what it returns is one, and `Sandbox.create({ networkPolicy })` takes it.
 
-import { routes } from '../api/routes.ts'
+import { completeWithEvidencePath, routes } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import { canText, compileAccess, parseCan, type Can } from './access.ts'
 import { DEFAULT_CAN } from './auth.ts'
@@ -132,6 +132,7 @@ const SEGMENT = "(?:[A-Za-z0-9_.@~:+=,!$&'*-]|%[0-9A-Fa-f]{2})+"
 export const PROTOCOL_ROUTES: readonly SandboxRoute[] = [
   ...Object.values(routes),
   ...Object.values(boundTaskPaths).map((path) => ({ method: 'POST' as const, path })),
+  { method: 'POST' as const, path: completeWithEvidencePath },
 ]
   .filter(({ path }) => !path.startsWith('/control/') && !WITHHELD.includes(path.split('/').filter(Boolean)[0] ?? ''))
   .map(({ method, path }) => ({ method, path: path === '/' ? '' : path }))

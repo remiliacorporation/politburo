@@ -308,7 +308,7 @@ function build(options: A2Options, binding: BoardBinding) {
   const operationalInbox = createOperationalInbox(session, binding.inboxRolesFor ?? (() => []))
   const reads = createReads(store.tables, session, projection)
   const work = createControl(log, session, binding.initiallyPaused)
-  const writes: WriteContext = { session, reads, work }
+  const writes: WriteContext = { session, reads, work, guardAppend: store.guardAppend }
 
   async function setPaused(caller: Caller, paused: boolean, reason: string) {
     if (!fromRequest(caller) || !('identity' in caller)) throw forbidden('only a person with board-wide manage can change work control')

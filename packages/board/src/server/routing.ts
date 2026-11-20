@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { routes } from '../api/routes.ts'
+import { CompleteWithEvidenceBody, completeWithEvidencePath, routes } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Method } from '../api/protocol.ts'
 import { ATTACHMENT_BYTES_MAX } from '../contract/schemas.ts'
@@ -22,11 +22,12 @@ export type Match = {
   params: Record<string, string>
   /** The client chose a bound-only route. */
   requiresTaskBinding?: true
+  requiresWorkCommit?: true
   /** At the mount itself: discovery. Any unknown GET lands here too, so it teaches no mount. */
   root?: true
 }
 
-type Pattern = { method: string; pattern: RegExp; names: string[]; target: Target; segments: number; literals: number; own: boolean; requiresTaskBinding?: true }
+type Pattern = { method: string; pattern: RegExp; names: string[]; target: Target; segments: number; literals: number; own: boolean; requiresTaskBinding?: true; requiresWorkCommit?: true }
 
 export const INVITE_METHODS: ReadonlySet<Method> = new Set<InviteMethod>(['invites', 'createInvite', 'revokeInvite', 'redeemInvite'])
 
@@ -99,6 +100,7 @@ export function createRouter(backendRoutes: readonly BackendRoute[], basePath?: 
     ...BOARD_ROUTES.map((name) => compile(routes[name].method, routes[name].path, { kind: 'board', name }, false)),
     ...METHODS.filter((name) => name !== 'discovery').map((name) => compile(routes[name].method, routes[name].path, { kind: 'protocol', name }, false)),
     ...boundTaskRoutes.map(({ name, definition }) => ({ ...compile(definition.method, definition.path, { kind: 'protocol', name }, false), requiresTaskBinding: true as const })),
+    { ...compile('POST', completeWithEvidencePath, { kind: 'protocol', name: 'completeTask' }, false), requiresWorkCommit: true as const },
     ...backendRoutes.map((route) => compile(route.method, route.path, { kind: 'backend', route }, true)),
   ].sort((a, b) => b.segments - a.segments || b.literals - a.literals || Number(b.own) - Number(a.own))
 
@@ -111,7 +113,11 @@ export function createRouter(backendRoutes: readonly BackendRoute[], basePath?: 
       return null
     }
     const first = candidate.names[0]
-    return { target: candidate.target, base, param: first === undefined ? null : params[first]!, params, ...(candidate.requiresTaskBinding && { requiresTaskBinding: true }) }
+    return {
+      target: candidate.target, base, param: first === undefined ? null : params[first]!, params,
+      ...(candidate.requiresTaskBinding && { requiresTaskBinding: true }),
+      ...(candidate.requiresWorkCommit && { requiresWorkCommit: true }),
+    }
   }
   const discovery = (base: string): Match => ({ target: { kind: 'protocol', name: 'discovery' }, base, param: null, params: {}, root: true })
 
@@ -182,6 +188,7 @@ export function openapi() {
   const definitions = [
     ...Object.entries(routes).map(([name, definition]) => ({ name, definition, bound: false })),
     ...boundTaskRoutes.map(({ name, definition }) => ({ name, definition, bound: true })),
+    { name: 'completeTaskWithEvidence', definition: { method: 'POST', path: completeWithEvidencePath, body: CompleteWithEvidenceBody }, bound: false },
   ]
   for (const { name, definition, bound } of definitions) {
     const path = definition.path.replace(/:(\w+)/g, '{$1}')
@@ -191,7 +198,7 @@ export function openapi() {
     if ('body' in definition) {
       const schema = z.toJSONSchema(definition.body, { io: 'input' })
       if (bound) schema.required = [...(schema.required ?? []), 'binding', ...(name === 'createTask' ? ['claim'] : [])]
-      operation.requestBody = { ...(bound && { required: true }), content: { 'application/json': { schema } } }
+      operation.requestBody = { ...((bound || name === 'completeTaskWithEvidence') && { required: true }), content: { 'application/json': { schema } } }
     }
     ;(paths[path] ??= {})[definition.method.toLowerCase()] = operation
   }
