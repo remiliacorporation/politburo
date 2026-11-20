@@ -240,6 +240,17 @@ const listed = listing(
 
 export const loadChannel = (channel: string) => once(`channel:${channel}`, () => listed.load(channel))
 
+/** The newest roots in a report channel, then kept current by the same feed as other threads. */
+export async function loadOperatorReports(channel: string): Promise<{ loaded: true } | { refused: string }> {
+  try {
+    const { threads } = await team.threads({ channel, limit: 25 })
+    set((s) => store.merge(s, threads.map(({ message }) => message)))
+    return { loaded: true }
+  } catch (error) {
+    return { refused: said(error) }
+  }
+}
+
 export async function loadOlder(channel: string): Promise<boolean> {
   try {
     return await listed.older(channel)

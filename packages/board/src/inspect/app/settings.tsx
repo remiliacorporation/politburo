@@ -7,6 +7,7 @@ import * as board from './board.ts'
 import { buttonSoundsEnabled, setButtonSounds } from './button-feedback.ts'
 import { Access } from './grants.tsx'
 import { Ago, channelPath, here, Link, SECTIONS, type Section, type Where } from './nav.tsx'
+import { Appearance, type useAppearance } from './pages/Appearance.tsx'
 import { Schemas } from './schemas.tsx'
 import { nameOf, type State, type Viewer } from './store.ts'
 import { Header, nativeMenu, Unlisted } from './ui.tsx'
@@ -23,7 +24,7 @@ export function Actions({ children }: { children: ReactNode }) {
   return slot ? createPortal(children, slot) : null
 }
 
-export function Settings(props: { state: State; viewer: Viewer; now: number; lead: ReactNode; where: Where; section: Section; open: string | null }) {
+export function Settings(props: { state: State; viewer: Viewer; now: number; lead: ReactNode; where: Where; section: Section; open: string | null; appearance: ReturnType<typeof useAppearance> }) {
   const { state, viewer, section } = props
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   const [sounds, setSounds] = useState(buttonSoundsEnabled)
@@ -51,6 +52,7 @@ export function Settings(props: { state: State; viewer: Viewer; now: number; lea
       </nav>
       <ActionsSlot.Provider value={slot}>
         <div className="page">
+          {section === 'appearance' && <Appearance {...props.appearance} />}
           {section === 'access' && <Access state={state} viewer={viewer} where={props.where} />}
           {section === 'schemas' && <Schemas state={state} viewer={viewer} selected={props.open} />}
           {section === 'schedules' && <Schedules state={state} viewer={viewer} now={props.now} all={props.where.params.get('show') === 'all'} />}

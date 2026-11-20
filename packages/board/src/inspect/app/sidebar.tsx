@@ -1,4 +1,4 @@
-import { Activity, Check, ChevronsUpDown, ClipboardList, House, LayoutGrid, Lock, MessageSquare, PanelLeftClose, Plus, Settings } from 'lucide-react'
+import { Activity, Check, ChevronsUpDown, ClipboardList, House, LayoutGrid, Lock, MessageSquare, PanelLeftClose, Plus, Settings, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView, Me } from '../../api/routes.ts'
 import { compileAccess, type Access } from '../../server/access.ts'
@@ -90,6 +90,10 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           <ClipboardList size={14} aria-hidden="true" />
           <span className="name">tasks</span>
           {open !== null && open > 0 && <span className="count">{open}</span>}
+        </Link>
+        <Link to="/operations/review" className="item" current={current.view === 'operations'}>
+          <SlidersHorizontal size={14} aria-hidden="true" />
+          <span>Operations</span>
         </Link>
         <h2>
           channels

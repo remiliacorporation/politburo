@@ -8,7 +8,9 @@ import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { GLOBAL_CHAT, GLOBAL_CHAT_PATH, channelPath, here, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { GLOBAL_CHAT, GLOBAL_CHAT_PATH, OPERATIONS, channelPath, here, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { useAppearance } from './pages/Appearance.tsx'
+import { Operations } from './pages/Operations.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
@@ -141,6 +143,7 @@ export function App() {
   const [failed, setFailed] = useState<string | null>(null)
   const sidebar = useSidebar()
   const pane = usePane()
+  const appearance = useAppearance()
   // On a narrow page the sidebar is out of the way until it's asked for, and goes again once you've picked.
   const [nav, setNav] = useState(false)
   const [narrow, setNarrow] = useState(() => !matchMedia('(min-width: 64rem)').matches)
@@ -211,7 +214,7 @@ export function App() {
   // The tab says which board too, so two inspectors side by side tell apart.
   const named = boardWords(state.discovery).name
   useEffect(() => {
-    document.title = `${current.view === 'channel' ? `#${current.channel}` : current.view === 'settings' ? `${current.section} · settings` : current.view === 'missing' ? 'nothing here' : current.view === 'presidium' ? 'Presidium' : current.view} · ${named}`
+    document.title = `${current.view === 'channel' ? `#${current.channel}` : current.view === 'settings' ? `${current.section} · settings` : current.view === 'missing' ? 'nothing here' : current.view === 'presidium' ? 'Presidium' : current.view === 'operations' ? OPERATIONS[current.section] : current.view} · ${named}`
   }, [where.path, named])
 
   const known = useMemo(() => knownLabels(state), [state.messages])
@@ -301,7 +304,8 @@ export function App() {
           <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
         )}
         {current.view === 'tasks' && <Tasks state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
-        {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
+        {current.view === 'operations' && <Operations section={current.section} state={state} lead={expand} thread={where.thread} />}
+        {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} appearance={appearance} />}
         {current.view === 'missing' && (
           <>
             <Header title="nothing here" lead={expand} />

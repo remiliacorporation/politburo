@@ -2281,6 +2281,17 @@ it, and nothing is hosted.
   cursor: every event carries its message as it is afterwards, so the page
   updates in place and navigates without fetching. Your writes show at once and
   are confirmed by the stream.
+- **Operations.** The review queue pages through blocked tasks and shows
+  those the board marked `awaiting_approval`, not an inferred review phase.
+  Agent health is unavailable without a registry and health API. Provider
+  access incidents and model scoreboard snapshots are ordinary report roots
+  in `ops/provider-access` and `ops/model-scoreboard`, published by a router
+  outside board. The inspector reads recently active threads in each channel
+  through its handle, shows the board-authored actor and report as written,
+  and never calculates scores, probes providers, or makes routing decisions.
+  Channel grants control who can publish and read reports. Refused reads
+  show the board's answer. Theme and density are browser-local preferences
+  under Settings, not board facts.
 - **Local only.** It listens on 127.0.0.1 (port 4747, or any free port when
   that's taken; `serve` answers it on the board's port), and answers only
   requests whose `Host` is its own, or one `--allow-host` names, so a web page

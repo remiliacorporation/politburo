@@ -160,7 +160,14 @@ export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
 }
 
 /** The sections of the board's settings, each a tab at `/settings/<section>`. */
-export const SECTIONS = ['access', 'schemas', 'schedules', 'watchers', 'sync'] as const
+export const SECTIONS = ['access', 'schemas', 'schedules', 'watchers', 'sync', 'appearance'] as const
+export const OPERATIONS = {
+  review: 'Review queue',
+  agents: 'Agent health',
+  providers: 'Provider access incidents',
+  models: 'Model scoreboard',
+} as const
+export type Operation = keyof typeof OPERATIONS
 export type Section = (typeof SECTIONS)[number]
 
 /** The view a path names. Settings is one view: its section, and what's open in it (a schema, a sync entry). */
@@ -175,6 +182,7 @@ export type Route =
   | { view: 'global-chat' }
   | { view: 'activity' }
   | { view: 'tasks' }
+  | { view: 'operations'; section: Operation }
   | { view: 'channel'; channel: string }
   | { view: 'settings'; section: Section; open: string | null }
   | { view: 'missing' }
@@ -191,6 +199,9 @@ export function route(path: string): Route {
   if (decoded === GLOBAL_CHAT_PATH || decoded === `/c/${GLOBAL_CHAT}`) return { view: 'global-chat' }
   if (decoded === '/activity') return { view: 'activity' }
   if (decoded === '/tasks') return { view: 'tasks' }
+  if (decoded === '/operations') return { view: 'operations', section: 'review' }
+  const operation = /^\/operations\/([^/]+)$/.exec(decoded)?.[1]
+  if (operation && Object.hasOwn(OPERATIONS, operation)) return { view: 'operations', section: operation as Operation }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
   const [, settings, section, ...rest] = decoded.split('/')
   if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))

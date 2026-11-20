@@ -33,8 +33,7 @@ export const CSS = `
   --nav-layer: 41;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #1c181a;
     --panel: #241f21;
@@ -57,7 +56,6 @@ export const CSS = `
     --shadow: #0006;
     --red: #ffaaa2;
     --warning: #f5cc80;
-  }
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: auto; -webkit-tap-highlight-color: var(--accent-transparent); }
@@ -231,7 +229,7 @@ input, textarea { font: inherit; color: var(--bright); letter-spacing: inherit; 
 .divider { display: flex; align-items: center; gap: 8px; margin: 14px 20px 4px; color: var(--faint); font-size: 11px; }
 .divider::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
 
-.message { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; padding: 4px var(--inset) 4px 8px; }
+.message { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; padding: var(--row-space, 4px) var(--inset) var(--row-space, 4px) 8px; }
 .message.continued { padding-block: 0; }
 @media (hover: hover) { .message:not(.active):hover { background: var(--shade); } }
 .message.active { background: var(--selected); box-shadow: inset 2px 0 var(--gold); }
@@ -561,7 +559,14 @@ button:not(:disabled, [aria-disabled="true"]):active {
 .task-card .hint { margin: 0; }
 
 .task-rows { display: grid; container-type: inline-size; }
-.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 32px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
+.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 32px; align-items: center; gap: 0 8px; min-height: var(--task-height, 32px); padding: var(--row-space, 4px) var(--inset); }
+:root[data-density="compact"] { --row-space: 1px; --task-height: 26px; }
+.task-row.operator-task { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); overflow-wrap: anywhere; }
+.operator-reports { display: grid; gap: 16px; padding: 12px var(--inset); overflow-wrap: anywhere; }
+.operator-reports article { min-width: 0; }
+.appearance { display: grid; gap: 12px; padding: 12px var(--inset); }
+.appearance label { display: grid; align-items: center; grid-template-columns: 6rem minmax(0, 12rem); gap: 8px; }
+.appearance select { min-height: 32px; border: 0; background: var(--shade); color: var(--bright); padding: 4px 8px; font: inherit; font-size: 16px; cursor: default; }
 .task-row:hover { background: var(--shade); }
 .task-row[aria-current] { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
 .task-row:focus-visible { outline-offset: -2px; }

@@ -103,6 +103,26 @@ for, or make any thread one from its pane.
 The board decides every write. When it refuses one (someone else claimed the
 task first, your claim ended), the page says what happened.
 
+## Operations
+
+Open **Operations** in the sidebar. The views are read-only. Open a report
+or task in its thread pane to continue the conversation.
+
+| Page | Shows |
+| --- | --- |
+| Review queue | Tasks the board has blocked as `awaiting_approval`, oldest first. It does not infer independent review from labels, assignees, or replies |
+| Agent health | Explains that the current inspector handle has no agent registry or run health API. A claim is not proof of health |
+| Provider access incidents | Recent report threads in `ops/provider-access` |
+| Model scoreboard | The newest posted snapshot among recently loaded report threads in `ops/model-scoreboard` |
+
+For provider access and the scoreboard, the router posts each report as a
+thread root, not a reply. Markdown tables render as written. Grant `post` in
+these channels only to trusted publishers, and grant `read` to operators.
+Each report shows its board-authored actor. These are reports, not authority
+for dispatch or provider recovery. The inspector never contacts a provider
+or computes scores. An empty channel says what publication is missing. A
+refused read shows the board's answer instead.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the board's configuration, a tab
@@ -115,6 +135,7 @@ per section at `/settings/<section>`:
 | schedules | What's scheduled, when it next sends, and how often. Cancels one |
 | watchers | The [watchers](../01-board/06-watchers.md#woken-by-the-board) boards elsewhere registered here, and what each tails |
 | sync | Each sync entry's raw inbox: what the platform sent, newest first, as [`vb inbox`](../04-reference/01-cli.md) does |
+| appearance | System, light or dark theme, and comfortable or compact message and task rows. These choices stay in this browser and do not write to the board |
 
 ## How it works
 

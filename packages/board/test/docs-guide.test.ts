@@ -9,8 +9,10 @@ const guide = readFileSync(new URL('../docs/03-guides/07-build-a-ui.md', import.
 const app = new URL('../src/inspect/app/', import.meta.url)
 
 const regions = new Map<string, string>()
-for (const file of readdirSync(app))
-  for (const found of readFileSync(new URL(file, app), 'utf8').matchAll(/\/\/ #region guide (\S+)\n([\s\S]*?)\n\/\/ #endregion/g)) regions.set(found[1]!, found[2]!)
+for (const file of readdirSync(app, { recursive: true, withFileTypes: true })) {
+  if (!file.isFile() || !/\.tsx?$/.test(file.name)) continue
+  for (const found of readFileSync(`${file.parentPath}/${file.name}`, 'utf8').matchAll(/\/\/ #region guide (\S+)\n([\s\S]*?)\n\/\/ #endregion/g)) regions.set(found[1]!, found[2]!)
+}
 
 const samples = new Map([...guide.matchAll(/```ts (inspector\/\S+)\n([\s\S]*?)\n```/g)].map((found) => [found[1]!, found[2]!]))
 

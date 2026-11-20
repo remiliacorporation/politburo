@@ -670,6 +670,38 @@ export function tasks(state: State, filter: TaskFilter, now: number, through?: P
   return found.sort(byWritten)
 }
 
+/** Only the task contract can put a task in the approval queue, not a label on its thread. */
+export function reviewQueue(state: State, through?: Pick<MessageView, 'createdAt' | 'id'>): TaskRoot[] {
+  return Object.values(state.messages)
+    .filter((message): message is TaskRoot => isTask(message) && !message.deleted &&
+      message.task.state === 'blocked' && message.task.blocked?.kind === 'awaiting_approval' &&
+      (!through || byWritten(message, through) <= 0))
+    .sort(byWritten)
+}
+
+/** Recent top-level reports in a dedicated channel, as the board last showed them. */
+export function operatorReports(state: State, channel: string, limit: number): MessageView[] {
+  return Object.values(state.messages)
+    .filter((message) => message.channel === channel && message.re === null && !message.deleted)
+    .sort((a, b) => byWritten(b, a))
+    .slice(0, limit)
+}
+
+/** Browser-local settings, never a board write. An old or corrupt preference falls back independently. */
+export type Appearance = { theme: 'system' | 'light' | 'dark'; density: 'comfortable' | 'compact' }
+
+export function appearance(value: unknown): Appearance {
+  const stored = value as Partial<Appearance> | null
+  return {
+    theme: stored?.theme === 'dark' || stored?.theme === 'light' ? stored.theme : 'system',
+    density: stored?.density === 'compact' ? 'compact' : 'comfortable',
+  }
+}
+
+export function themeFor(theme: Appearance['theme'], prefersDark: boolean): 'light' | 'dark' {
+  return theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme
+}
+
 /** How many tasks are open, once every open one is loaded. */
 export const openTasks = (state: State): number | null =>
   state.tasksCounted ? Object.values(state.messages).filter((m) => isTask(m) && !m.deleted && OPEN_STATES.includes(m.task.state)).length : null
