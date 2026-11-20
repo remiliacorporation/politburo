@@ -3,7 +3,7 @@ import { oidcTokens } from '../src/access/index.ts'
 import type { MessageView } from '../src/api/routes.ts'
 import { http } from '../src/backend-http/index.ts'
 import { local } from '../src/backend-local/index.ts'
-import { claimed, initialState, isTask, moves, type Viewer } from '../src/inspect/app/store.ts'
+import { claimed, initialState, isTask, merge, moves, type Viewer } from '../src/inspect/app/store.ts'
 import { compileAccess } from '../src/server/access.ts'
 import { bearer, board, BOARD_URL, personToken, testAuth, testLocal } from './harness.ts'
 
@@ -55,7 +55,7 @@ it('offers only stage-appropriate moves and keeps legacy controls', async () => 
   const scoped = await scoper.tasks.scope(id, 'Scope is ready')
   const claim = await worker.tasks.claim(id)
   const tab = claimed(initialState, claim.task, { epoch: claim.epoch })
-  expect.soft(controls(claim.task, who, tab)).toEqual(['held'])
+  expect.soft(controls(claim.task, who, tab)).toEqual(['held', 'settle'])
   expect.soft(controls(claim.task, await viewer(worker.as('different-profile')), tab)).toEqual([])
   const handoff = await claim.complete()
   const review = await scoper.tasks.stage(id, 'review', 'Review started')
@@ -74,6 +74,37 @@ it('offers only stage-appropriate moves and keeps legacy controls', async () => 
     proposed: ['hold'], scoped: ['claim', 'hold'], handoff: [], review: [], qa: [],
     repair: ['claim', 'hold'], approved: [], done: [], rejected: [], canceled: [],
   })
+})
+
+it('offers completion on a held staged task only with known completed prerequisites', async () => {
+  const { scoper, worker } = await setup()
+  const who = await viewer(worker)
+  const { task: prerequisite } = await worker.tasks.create('work', 'Write the guide')
+  const { task: dependent } = await worker.tasks.create('work', { text: 'Publish the guide', needs: [prerequisite.id] })
+  await scoper.tasks.scope(prerequisite.id, 'Scope the guide')
+  await (await worker.tasks.claim(prerequisite.id)).complete()
+  await scoper.tasks.stage(prerequisite.id, 'review', 'Start review')
+  await scoper.tasks.stage(prerequisite.id, 'approved', 'Review passed')
+  const done = await scoper.tasks.stage(prerequisite.id, 'done', 'Guide written')
+  await scoper.tasks.scope(dependent.id, 'Scope publication')
+  const claim = await worker.tasks.claim(dependent.id)
+  const tab = claimed(initialState, claim.task, { epoch: claim.epoch })
+  expect.soft(controls(claim.task, who, tab), 'unloaded prerequisite').not.toContain('settle')
+
+  const loaded = merge(tab, [done])
+  expect.soft(controls(claim.task, who, loaded), 'completed prerequisite').toContain('settle')
+  const reopened = await scoper.tasks.reopen(prerequisite.id, 'The guide needs updates')
+  const afterReopen = controls(claim.task, who, merge(loaded, [reopened]))
+  expect.soft(afterReopen, 'reopened prerequisite').not.toContain('settle')
+  expect(afterReopen).toContain('held') // Release and renew remain available.
+
+  const { worker: legacy } = await setup(false)
+  const { task: legacyNeed } = await legacy.tasks.create('work', 'Write the announcement')
+  await (await legacy.tasks.claim(legacyNeed.id)).complete()
+  const { task: legacyDependent } = await legacy.tasks.create('work', { text: 'Post the announcement', needs: [legacyNeed.id] })
+  const legacyClaim = await legacy.tasks.claim(legacyDependent.id)
+  const legacyTab = claimed(initialState, legacyClaim.task, { epoch: legacyClaim.epoch })
+  expect(controls(legacyClaim.task, who, legacyTab), 'legacy work with an unloaded prerequisite').toContain('settle')
 })
 
 it('offers unblock for a staged plain hold but not for parked or structured holds', async () => {

@@ -313,7 +313,7 @@ describe('the inspector store', () => {
 
     // Claimed from this tab: the claim's own moves. Claimed as the viewer from elsewhere: none of them.
     const mine = task(1, claimedBy(ME, at(10)))
-    expect(can(mine, owner, store.claimed(start, mine, { epoch: 1 }))).toEqual(['held', 'assign', 'cancel'])
+    expect(can(mine, owner, store.claimed(start, mine, { epoch: 1 }))).toEqual(['held', 'settle', 'assign', 'cancel'])
     expect(can(mine, owner)).toEqual(['elsewhere', 'assign', 'cancel'])
 
     expect(can(task(1, { state: 'waiting', needs: ['9'] }), owner)).toEqual(['hold', 'assign', 'cancel'])

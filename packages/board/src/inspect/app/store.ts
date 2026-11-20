@@ -579,8 +579,10 @@ export function holding(state: State, root: TaskRoot, now: number): Claim | unde
  */
 export type Moves = {
   claim: boolean
-  /** This tab can use its live claim. Only legacy work can fail through a claim. */
+  /** This tab can use its live claim. */
   held: boolean
+  /** This tab can complete its claim, or fail it on legacy work. */
+  settle: boolean
   /** The viewer holds it, but not from this tab: the claim was made elsewhere, or a reload lost it. */
   elsewhere: boolean
   /** As its owner, or with `manage` in its channel. `hold` blocks one no one has claimed. */
@@ -610,6 +612,7 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
   return {
     claim: claimable && current === 'ready' && !root.deleted && label && (task.for === null || (task.for === viewer.actor && task.owner === viewer.principal)),
     held,
+    settle: held && (!staged || task.needs.every((id) => state.messages[id]?.task?.state === 'completed')),
     elsewhere: !holdingHere && current === 'claimed' && task.claim?.actor === viewer.actor,
     hold: owns && (!staged || (!root.deleted && (stage === 'proposed' || claimable))) && (current === 'waiting' || current === 'ready'),
     // The root shows an attention request's ID but not whether it has been answered.

@@ -151,11 +151,14 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         claim
       </button>,
     )
-  if (can.held)
+  if (can.settle)
     next.push(
       <button key="complete" className="act primary" disabled={busy} onClick={() => setAsking('complete')}>
         complete…
       </button>,
+    )
+  if (can.held)
+    next.push(
       <button key="release" className="act" disabled={busy} title="give it back: it's ready again" onClick={() => run(board.releaseTask(root.id))}>
         release
       </button>,
@@ -179,7 +182,7 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         renew the lease
       </MenuItem>,
     )
-  if (can.held && !task.work)
+  if (can.settle && !task.work)
     more.push(
       <MenuItem key="fail" onClick={() => setAsking('fail')}>
         fail…
@@ -250,7 +253,7 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
   }
 
   // A feed update can move staged work on while a form is still open.
-  const canAsk = !task.work || (asking === 'block' && (can.held || can.hold)) || (asking === 'complete' && can.held)
+  const canAsk = !task.work || (asking === 'block' && (can.held || can.hold)) || (asking === 'complete' && can.settle)
 
   return (
     <section className="task-card">
