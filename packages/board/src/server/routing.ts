@@ -30,9 +30,14 @@ type Pattern = { method: string; pattern: RegExp; names: string[]; target: Targe
 
 export const INVITE_METHODS: ReadonlySet<Method> = new Set<InviteMethod>(['invites', 'createInvite', 'revokeInvite', 'redeemInvite'])
 
+const AGENT_INTENT_METHODS = [
+  'issueOpsIntent', 'issueOpsRoleIntent', 'listOpsIntents', 'takeOpsIntent', 'reportOpsIntent', 'getOpsHealth',
+] as const satisfies readonly Method[]
+export const isAgentIntentMethod = (name: Method) => (AGENT_INTENT_METHODS as readonly Method[]).includes(name)
+
 const AGENT_OPS_METHODS = [
   'listOpsAgents', 'registerOpsAgent', 'heartbeatOpsAgent', 'retireOpsAgent',
-  'issueOpsIntent', 'issueOpsRoleIntent', 'listOpsIntents', 'takeOpsIntent', 'reportOpsIntent', 'getOpsHealth',
+  ...AGENT_INTENT_METHODS,
 ] as const satisfies readonly Method[]
 export type AgentOpsMethod = (typeof AGENT_OPS_METHODS)[number]
 export const isAgentOpsMethod = (name: string): name is AgentOpsMethod => (AGENT_OPS_METHODS as readonly string[]).includes(name)

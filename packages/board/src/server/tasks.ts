@@ -549,7 +549,10 @@ export function createTasks(options: {
     throw badRequest(`from: ${value} is a handle, which several can share: name the owner by ID`, 'invalid_from')
   }
 
-  /** Claims the highest priority ready task the caller can take, oldest first at equal priority. */
+  /**
+   * Claims the highest priority ready task the caller can take. At equal priority, prefer tasks
+   * assigned to the caller, then take the oldest within the same assignment group.
+   */
   async function claimNext(identity: Identity, input: Protocol['claimReadyTask']['input'], signal: AbortSignal, pauseEpoch: number, binding: TaskBinding | undefined): Promise<{ root: Message; claim: TaskClaim } | null> {
     const ctx = writes()
     const { principal } = identity
@@ -574,15 +577,18 @@ export function createTasks(options: {
       const now = Date.now()
       let root: Root | null = null
       let best = -1
+      let bestAssigned = false
       for await (const candidate of rootsAt(filter, ['ready', 'claimed'], position)) {
         const { task } = candidate
         if (task.parked || stateNow(task, now, pauseEpoch) !== 'ready') continue
-        if (!assignedTo(task, identity) && !(task.for === null && owners.has(task.owner))) continue
+        const assigned = assignedTo(task, identity)
+        if (!assigned && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
-        if (rank <= best) continue
+        if (rank < best || (rank === best && (bestAssigned || !assigned))) continue
         root = candidate
         best = rank
-        if (best === TaskPriority.options.length - 1) break
+        bestAssigned = assigned
+        if (bestAssigned && best === TaskPriority.options.length - 1) break
       }
       if (!root || signal.aborted) return { position, events: [] }
       // A stale release blocks the winner; it doesn't let lower-priority work jump the queue.

@@ -328,11 +328,11 @@ function build(options: A2Options, binding: BoardBinding) {
   const agents = options.agentOps === true ? createAgents(writes) : null
   const intents = agents ? createAgentIntents(writes, binding, options.agentHealthFreshnessSeconds) : null
   const agentIntents = () => {
-    if (!intents) throw noAgentOps()
+    if (!intents) throw noAgentOps('intents')
     return intents
   }
   const agentRegistry = () => {
-    if (!agents) throw noAgentOps()
+    if (!agents) throw noAgentOps('registry')
     return agents
   }
   // In-process profiles are separate deployment identities. Match their names case-insensitively
@@ -525,6 +525,7 @@ function build(options: A2Options, binding: BoardBinding) {
         task_authority: true,
         ...(tasks.workCapability ? { workEvidence: tasks.workCapability } : {}),
         ...(agents ? { agent_ops: true } : {}),
+        ...(intents ? { agent_intents: true } : {}),
       }
       return body
     },

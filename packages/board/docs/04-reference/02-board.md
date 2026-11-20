@@ -424,10 +424,11 @@ if (claim) {
 - **`claim`** by ID throws a 409 when the task can't be claimed:
   `task_claimed`, `task_waiting`, `task_blocked`, `task_finished`, or
   `task_assigned`. With `{ channel }` it claims the highest priority eligible
-  ready task, oldest first at equal priority. The task must match the channel
-  (`work`) or subtree (`work/`) and every label in `label`. It must be assigned
-  to you, or unassigned and owned by you or an owner `from` names by ID. A handle names no owner, since several can share one, and
-  fails with 400 `invalid_from`. It answers `null`
+  ready task. At equal priority, it prefers tasks assigned to you, then takes
+  the oldest. The task must match the channel (`work`) or subtree (`work/`)
+  and every label in `label`. It must be assigned to you, or unassigned and
+  owned by you or an owner `from` names by ID. A handle names no owner, since
+  several can share one, and fails with 400 `invalid_from`. It answers `null`
   when nothing is ready, after waiting up to
   `wait` seconds. `lease` is seconds. `token` is the claim's token, your own
   in place of one the board makes: 32 bytes in base64url (43 characters).

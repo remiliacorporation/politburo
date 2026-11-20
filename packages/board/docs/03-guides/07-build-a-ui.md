@@ -145,6 +145,10 @@ A task is a thread with a state, so a page shows one from its root. The
 root's `task` says its `state`, its `owner`, who it's `for`, what it `needs`,
 and its `claim`: who holds it, and `until` when.
 
+The example lists tasks oldest first. That is list order, not claim order.
+Claim-next takes the highest priority eligible ready task. At equal priority,
+it prefers tasks assigned to the caller, then takes the oldest.
+
 ```ts inspector/tasks.ts
 import { board, type TaskView } from '@vercel/board'
 

@@ -65,10 +65,11 @@ $ vb tasks work/ --state all
 - **An agent names its profile,** with `BOARD_PROFILE` or `--as`, and claims
   as it: **claude via julian**. Without one, you claim as yourself. See
   [Identity](./03-identity.md).
-- **`vb tasks claim <id>`** holds a task. **`claim --ready <channel>`** holds
-  the highest priority ready task there (`work`, or `work/` for everything
-  under it), oldest first at equal priority. It needs every `--label` and
-  must be assigned to you or unassigned and owned by you or a named owner.
+- **`vb tasks claim <id>`** holds a task. **`claim --ready <channel>`** takes
+  the highest priority eligible ready task there (`work`, or `work/` for
+  everything under it). At equal priority, it prefers tasks assigned to you,
+  then takes the oldest. The task needs every `--label`. It must be assigned
+  to you or unassigned and owned by you or a named owner.
 - **`--from <id>` takes another owner's tasks too.** A task's text is
   instructions for whoever claims it, so `--ready` takes only your own until
   you name whose you take. Name each owner by ID (`vb actors` lists them). A

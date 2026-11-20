@@ -12,8 +12,9 @@ it in `local({ agentOps: true })` or start a board with:
 vb serve --agent-ops --no-inspect
 ```
 
-A board with the registry advertises `agent_ops: true` in discovery. Vercel's
-board and boards without the flag answer `501 no_agent_ops` for agent operations.
+Discovery advertises the registry with `agent_ops: true` and command intents
+and run health with `agent_intents: true`. Vercel's board and HTTP boards
+without the flag for a call return `501 no_agent_ops`.
 
 ## Register and check in
 

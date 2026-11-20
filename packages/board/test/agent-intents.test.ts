@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import type { AgentIntent, AgentRun } from '../src/api/routes.ts'
 import { http } from '../src/backend-http/index.ts'
+import { conformance } from '../src/conformance/index.ts'
 import { bearer, board, BOARD_URL, caller, localBoard, personToken, testBoard, workflowToken } from './harness.ts'
 
 const config = { channel: 'work', role: 'reviewer', harness: 'shell' } as const
@@ -14,6 +15,35 @@ const receiptPath = (id: string, action: 'take' | 'report') => `/ops/intents/${e
 
 function via(fetch: (request: Request) => Promise<Response>, token: string) {
   return board({ backend: http(BOARD_URL, { fetch: bearer((input, init) => fetch(new Request(input, init)), token) }) }).as(null)
+}
+
+/** An older mount backed by a real board for the registry and the rest of the protocol. */
+function registryOnlyMount(boardFetch: (request: Request) => Promise<Response>) {
+  const attempted: string[] = []
+  const mount = new URL(BOARD_URL).pathname
+  const discovery = async () => {
+    const { agent_intents: _, ...info } = await (await boardFetch(new Request(BOARD_URL))).json()
+    return Response.json(info)
+  }
+  const fetch = async (request: Request) => {
+    const path = new URL(request.url).pathname.slice(mount.length).replace(/\/$/, '')
+    if (path === '') return discovery()
+    if (/^\/ops\/(?:agents\/[^/]+\/intents$|intents(?:\/|$)|health\/)/.test(path)) {
+      attempted.push(`${request.method} ${path}`)
+      // Old mounts return discovery with 200 for an unknown GET.
+      if (request.method === 'GET') return discovery()
+      return Response.json({ error: { code: 'not_found', message: 'no such route' } }, { status: 404 })
+    }
+    return boardFetch(request)
+  }
+  return { fetch, attempted }
+}
+
+async function registryOnly(onTestFinished: (cleanup: () => Promise<void>) => void) {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const { fetch, attempted } = registryOnlyMount(team.fetch)
+  return { client: via(fetch, await personToken()), attempted }
 }
 
 // Only replace Date; HTTP, store concurrency and scheduler timers still run normally.
@@ -134,6 +164,40 @@ it.for(['issue', 'take', 'report'] as const)('rejects run probe %s after a pause
 
   const attempt = action === 'issue' ? issue('after-resume') : action === 'take' ? take(probe!) : report(probe!)
   await expect(attempt).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+})
+
+it('omits a pending run probe fenced by a board pause, even after resume', async ({ onTestFinished }) => {
+  clock(onTestFinished)
+  const { client, worker, agent, task, issue, take } = await runFixture()
+  const probe = await issue('before-pause')
+  const { intents: [ordinary] } = await client.agents.issueIntent(agent.id, command)
+  const listed = async () => (await worker.agents.intents(agent.id)).intents.map(({ id }) => id)
+  expect(await listed()).toEqual([probe.id, ordinary!.id])
+
+  await client.pause('fence active runs')
+  await expect(take(probe)).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  expect(await listed()).toEqual([ordinary!.id])
+
+  await client.resume('allow new runs')
+  expect(await listed()).toEqual([ordinary!.id])
+
+  const claim = await worker.tasks.claim(task.id)
+  await expect(take(probe)).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  expect(await listed()).toEqual([ordinary!.id])
+  const { intents: [fresh] } = await client.agents.issueIntent(agent.id, {
+    verb: 'status', run: { task: task.id, epoch: claim.epoch }, generation: agent.generation, requestId: 'new-claim', ttlSeconds: 30,
+  })
+  expect(await listed()).toEqual([ordinary!.id, fresh!.id])
+})
+
+it('omits a pending run probe after its claim is released', async () => {
+  const { worker, agent, claim, issue, take } = await runFixture()
+  const probe = await issue('before-release')
+  expect((await worker.agents.intents(agent.id)).intents.map(({ id }) => id)).toEqual([probe.id])
+
+  await claim.release()
+  await expect(take(probe)).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  expect((await worker.agents.intents(agent.id)).intents).toEqual([])
 })
 
 it.for(['paused', 'resumed'] as const)('does not confirm run health when the board has %s until a new claim is probed', async (phase, { onTestFinished }) => {
@@ -337,3 +401,73 @@ it('answers no_agent_ops locally and does not forward intents or health without 
   const send = caller(local.fetch, token)
   expect(await send('GET', '/ops/health/missing')).toMatchObject({ status: 501, body: { error: { code: 'no_agent_ops' } } })
 })
+
+it('advertises agent intents in discovery on an opted-in local board', async ({ onTestFinished }) => {
+  const local = localBoard({ agentOps: true })
+  onTestFinished(() => local.close())
+  const response = await local.fetch(new Request(BOARD_URL))
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ agent_ops: true, agent_intents: true })
+  expect(await local.discovery()).toMatchObject({ agent_ops: true, agent_intents: true })
+})
+
+it('forwards registry calls but no intent requests to a registry-only board', async ({ onTestFinished }) => {
+  const { client, attempted } = await registryOnly(onTestFinished)
+  const { agents } = client.as('worker')
+  const agent = await agents.register(config)
+  expect(await agents.list(config.channel)).toEqual({ agents: [agent] })
+
+  await expect(agents.issueIntent(agent.id, command)).rejects.toMatchObject(noOps)
+  await expect(agents.issueRoleIntent({ ...command, channel: config.channel, role: config.role })).rejects.toMatchObject(noOps)
+  await expect(agents.intents(agent.id)).rejects.toMatchObject(noOps)
+  await expect(agents.takeIntent('missing', agent.generation)).rejects.toMatchObject(noOps)
+  await expect(agents.reportIntent('missing', agent.generation, 'ok')).rejects.toMatchObject(noOps)
+  expect(attempted).toEqual([])
+})
+
+it('rechecks agent capabilities on the same HTTP handle when the mount changes', async ({ onTestFinished }) => {
+  const full = localBoard({ agentOps: true })
+  const disabled = localBoard()
+  onTestFinished(() => full.close())
+  onTestFinished(() => disabled.close())
+  const { fetch: registryFetch, attempted } = registryOnlyMount(full.fetch)
+  let mount = full.fetch
+  const client = via((request) => mount(request), await personToken()).as('worker')
+  expect(await client.discovery()).toMatchObject({ agent_ops: true, agent_intents: true })
+  const agent = await client.agents.register(config)
+  const issued = await client.agents.issueIntent(agent.id, command)
+  expect((await client.agents.intents(agent.id)).intents).toEqual(issued.intents)
+
+  mount = registryFetch
+  await expect(client.agents.intents(agent.id)).rejects.toMatchObject({
+    ...noOps,
+    origin: 'handle',
+    message: 'this board does not advertise agent intents or run health',
+    hint: expect.stringContaining('--agent-ops'),
+  })
+  expect(attempted).toEqual([])
+  expect(await client.agents.list(config.channel)).toEqual({ agents: [agent] })
+
+  mount = disabled.fetch
+  await expect(client.agents.list(config.channel)).rejects.toMatchObject({
+    ...noOps,
+    origin: 'handle',
+    message: 'this board does not keep an agent registry',
+    hint: expect.stringContaining('--agent-ops'),
+  })
+})
+
+it("never returns an older mount's discovery document as health", async ({ onTestFinished }) => {
+  const { client, attempted } = await registryOnly(onTestFinished)
+  await expect(client.agents.health('missing')).rejects.toMatchObject(noOps)
+  expect(attempted).toEqual([])
+})
+
+it('passes registry conformance but skips run health on a registry-only board', async ({ onTestFinished }) => {
+  const { client } = await registryOnly(onTestFinished)
+  const report = await conformance(client)
+  expect(report.checks.filter(({ group }) => group === 'agents')).toMatchObject([
+    { name: 'registers, lists, heartbeats, and retires an agent under its verified binding', status: 'passed' },
+    { name: 'confirms a claimed run only through a taken and reported status probe', status: 'skipped', detail: expect.stringContaining('not kept here') },
+  ])
+}, 30_000)

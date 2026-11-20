@@ -6,7 +6,7 @@ import { DERIVED_ID, keyId } from '../client/ids.ts'
 import { ATTACHMENT_BYTES_MAX, type Attachment } from '../contract/schemas.ts'
 import { type Backend, type BoardBinding, type Caller, type ProtocolMethods, type SelfCaller } from './backend.ts'
 import { HttpError, noAgentOps } from './errors.ts'
-import { isAgentOpsMethod, METHODS } from './routing.ts'
+import { isAgentIntentMethod, isAgentOpsMethod, METHODS } from './routing.ts'
 import { compileWatcher } from './watch-spec.ts'
 import { deployedOnVercel } from './registrant.ts'
 import { tailWatchers } from './tails.ts'
@@ -155,15 +155,18 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     return asProfile(caller.self ?? 'client')
   }
 
+  async function fetchDiscovery(init?: RequestInit): Promise<Discovery> {
+    const response = await doFetch(remote, init).catch(rethrow)
+    // This handle's own finding about the URL it was given, not the remote's words.
+    if (!response.ok)
+      throw new HttpError(response.status >= 400 ? response.status : 502, 'no_board', `There's no board at ${remote}: it answered ${response.status}.`, { origin: 'handle' })
+    return (await response.json()) as Discovery
+  }
+
   let discovered: Promise<Discovery> | null = null
   /** The board it uses' discovery, for a handle here: who it is, and the sync entries it lists. */
   const discovery = () =>
-    (discovered ??= doFetch(remote).then(async (response) => {
-      // This handle's own finding about the URL it was given, not the remote's words.
-      if (!response.ok)
-        throw new HttpError(response.status >= 400 ? response.status : 502, 'no_board', `There's no board at ${remote}: it answered ${response.status}.`, { origin: 'handle' })
-      return (await response.json()) as Discovery
-    }, rethrow)).catch((error: unknown) => {
+    (discovered ??= fetchDiscovery()).catch((error: unknown) => {
       discovered = null
       throw error
     })
@@ -248,7 +251,19 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
         })
       }
     }
-    if (isAgentOpsMethod(method) && (await discovery()).agent_ops !== true) throw noAgentOps()
+    if (isAgentOpsMethod(method)) {
+      // The mount can change. A registry-only mount can return discovery with 200 on an unknown intent or health GET.
+      const intents = isAgentIntentMethod(method)
+      const capability = intents ? 'agent_intents' : 'agent_ops'
+      if ((await fetchDiscovery({ signal, cache: 'no-store' }))[capability] !== true) {
+        throw noAgentOps(intents ? 'intents' : 'registry', {
+          origin: 'handle',
+          hint: intents
+            ? 'Upgrade the board or use one started with vb serve --agent-ops that supports intents.'
+            : 'Use a board started with vb serve --agent-ops.',
+        })
+      }
+    }
     start()
     const client = clientOf(caller)
     // A post board() gave an ID derived from a trigger, a task's new thread included: the remote

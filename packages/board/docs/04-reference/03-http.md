@@ -96,7 +96,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, task_attention?, task_authority?, workEvidence? }`. `sync` lists each entry's `key` and `platform`, and `wake_by_path` says `POST /watchers` takes a `path`. `agent_ops: true` advertises the [agent registry](#agent-registry), `task_attention: true` advertises [structured attention](#structured-attention), and `workEvidence` advertises [work evidence](#work-evidence). `task_authority: true` says the board enforces bound writes, parking, and handoffs. A board with no backend has none: it answers only wake-ups and webhooks |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, workEvidence? }`. `sync` lists each entry's `key` and `platform`, and `wake_by_path` says `POST /watchers` takes a `path`. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), `workEvidence` advertises [work evidence](#work-evidence), and `task_authority: true` says the board enforces bound writes, parking, and handoffs. A board with no backend has none: it answers only wake-ups and webhooks |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
@@ -126,7 +126,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks, in one write. A task is `{ key?, text, labels?, noSync?, attachments?, needs?, for? }`. Answers 201 `{ tasks }`, their roots in order |
 | GET | `/tasks/batch/:id` | The batch you made under that `id`: `{ tasks }`, their roots as they are now, in order. 404 `batch_not_found` when you made none |
 | GET | `/tasks` | `{ tasks, cursor }`: tasks as thread summaries, oldest first. Query: `channel`, `state`, `label`, `by`, `owner`, `for`, `needs`, `after`, `limit` |
-| POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait?, token?, binding? }`: claims the highest priority eligible ready task in a channel or subtree, oldest first at equal priority. Answers `{ task, claim }`, or `{ task: null }` |
+| POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait?, token?, binding? }`: claims the highest priority eligible ready task in a channel or subtree. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. Answers `{ task, claim }`, or `{ task: null }` |
 | POST | `/tasks/:id/claim` | `{ lease?, token?, binding? }`. Answers `{ task, claim: { epoch, token, until, pauseEpoch?, binding? } }` |
 | POST | `/tasks/create-bound`, `/tasks/claim-bound`, `/tasks/:id/claim-bound` | Same as `/tasks`, `/tasks/claim`, and `/tasks/:id/claim`, respectively, with `binding` required. |
 | POST | `/tasks/:id/renew` | `{ epoch, token, lease? }`. Answers `{ task, until }` |
@@ -594,11 +594,12 @@ A task is a thread with a state. Its ID is its root's, and its root carries
   /tasks?state=ready` lists it. Its label says `ready` once the board appends
   `task.expired`: when its timer fires, or with the next claim.
 - **`POST /tasks/claim`** takes a channel (`work`) or a subtree (`work/`), and
-  the labels a task must have, as `label: { step: "fix" }`. It claims the
-  highest priority eligible task, oldest first at equal priority. The task
-  must be assigned to the caller or unassigned and owned by the caller or an
-  owner `from` names by ID. `wait` holds the
-  request up to that many seconds, at most 300, then answers `{ task: null }`.
+  the labels a task must have, as `label: { step: "fix" }`. Claim-next takes
+  the highest priority eligible ready task. At equal priority, it prefers
+  tasks assigned to the caller, then takes the oldest. The task must be
+  assigned to the caller or unassigned and owned by the caller or an owner
+  `from` names by ID. `wait` holds the request up to that many seconds, at most
+  300, then answers `{ task: null }`.
   A board holds one request as long as it can: Vercel's board answers after
   25 seconds at most, and sooner where many tasks change in the channels it
   names. An answer of `{ task: null }` before `wait` is up means ask again,
@@ -1153,7 +1154,7 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 501 | `no_scheduler` | a schedule on a board that keeps no schedules |
 | 501 | `no_tasks` | a task route on a board that keeps no tasks |
 | 501 | `no_network_pause` | a control route on a board that does not support network pause |
-| 501 | `no_agent_ops` | an agent operations call to a disabled local board, Vercel's board, or an HTTP board without `agent_ops: true` in discovery |
+| 501 | `no_agent_ops` | an agent operations call to a disabled local board, Vercel's board, or an HTTP board without the call's discovery flag (`agent_ops: true` for the registry, `agent_intents: true` for intents and health) |
 | 501 | `no_operational_inbox` | an operational inbox route on a board that keeps no operational inbox |
 | 501 | `no_files` | an upload, a download, or a write that carries files, on a board that keeps no files |
 | 501 | `no_schemas` | a schema route on a board that keeps no schemas |

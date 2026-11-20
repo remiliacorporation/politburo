@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Protocol } from '../api/protocol.ts'
+import type { Task } from '../contract/folds.ts'
 import { own } from '../contract/own.ts'
-import { agentIntentsReducer, runKey, type AgentIntentsState } from '../contract/reducers.ts'
+import { agentIntentsReducer, runKey, type AgentIntentsState, type WorkState } from '../contract/reducers.ts'
 import type { AgentHealth, AgentIntent, AgentRun, Author } from '../contract/schemas.ts'
 import { authorize, type Access } from './access.ts'
 import type { Known } from './auth.ts'
@@ -21,6 +22,7 @@ const missingIntent = () => notFound('intent not found', 'intent_not_found')
 const missingTask = () => notFound('task not found', 'not_a_task')
 const conflict = (code: string, message: string) => new HttpError(409, code, message)
 const claimLost = () => conflict('claim_lost', 'the run no longer holds the task')
+const claimForRun = (task: Task, run: AgentRun) => task.epoch === run.epoch ? task.claim : null
 const sameBinding = (a: Agent['binding'], b: Agent['binding']) => a.principal === b.principal && a.profile === b.profile
 const mayReceive = (access: Access, channel: string) => access.readable(channel) && access.can('post', channel)
 const iso = (at: number) => new Date(at).toISOString()
@@ -70,25 +72,32 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
     return answer
   }
 
-  async function taskAt(task: string, index: number, access: Access) {
+  async function readTaskAt(task: string, index: number, access: Access) {
     const id = indexOf(task)
-    if (!id || !Number.isSafeInteger(id) || id > index) throw missingTask()
+    if (!id || !Number.isSafeInteger(id) || id > index) return
     // messagesAt is historical, not merely caught up: the registry and task checks must see the
     // same board index even when the tables have already applied a competing appender's write.
     const root = (await ctx.reads.messagesAt([id], index)).get(id)
-    if (!root?.task || root.deleted || !access.readable(root.channel)) throw missingTask()
+    if (!root?.task || root.deleted || !access.readable(root.channel)) return
     return { id, channel: root.channel, task: root.task }
+  }
+
+  async function taskAt(task: string, index: number, access: Access) {
+    const root = await readTaskAt(task, index, access)
+    if (!root) throw missingTask()
+    return root
   }
 
   async function findRun(view: Snapshot, run: AgentRun, agent: Agent, access: Access) {
     const root = await taskAt(run.task, view.index, access)
     if (root.channel !== agent.channel) throw missingTask()
     const { task } = root
-    if (task.epoch !== run.epoch || !task.claim) throw claimLost()
+    const claim = claimForRun(task, run)
+    if (!claim) throw claimLost()
     const by = own(view.state.claims, runKey(root.id, run.epoch))
-    if (!by || by.actor !== task.claim.actor || !sameBinding(agent.binding, by)) throw missingTask()
+    if (!by || by.actor !== claim.actor || !sameBinding(agent.binding, by)) throw missingTask()
     if (claimFenced(task, (await ctx.work.at(view.index)).status)) throw claimLost()
-    return Date.parse(task.claim.until)
+    return Date.parse(claim.until)
   }
 
   async function issue(caller: Caller, input: Issue) {
@@ -202,7 +211,7 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
   return {
     issue,
     async list({ author, principal: { access } }: Identity, id: string, after: string | undefined) {
-      const { state } = await snapshot()
+      const { state, index } = await snapshot()
       const agent = own(state.agents, id)
       if (!agent || !access.readable(agent.channel) || (!access.can('manage', agent.channel) &&
           !(agent.status === 'enabled' && sameBinding(agent.binding, author)))) throw missingAgent()
@@ -213,9 +222,19 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
       const stop = Math.min(ids.length, i + SCAN)
       const now = Date.now()
       const intents: AgentIntent[] = []
+      let status: WorkState | undefined
       for (; i < stop && intents.length < PAGE; i++) {
         const intent = effective(state.intents[ids[i]!]!.intent, agent, now)
-        if (intent.state === 'pending') intents.push(intent)
+        if (intent.state !== 'pending') continue
+        if (intent.run) {
+          const root = await readTaskAt(intent.run.task, index, access)
+          if (root) {
+            if (!claimForRun(root.task, intent.run)) continue
+            status ??= (await ctx.work.at(index)).status
+            if (claimFenced(root.task, status)) continue
+          }
+        }
+        intents.push(intent)
       }
       return { intents, next: i < ids.length ? ids[i - 1]! : null }
     },
