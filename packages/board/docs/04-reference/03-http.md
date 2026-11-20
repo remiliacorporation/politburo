@@ -93,7 +93,7 @@ a refused write it can read answers 403. `GET /me` returns the caller's
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path? }`, where `sync` lists each entry's `key` and `platform`, and `wake_by_path` says `POST /watchers` takes a `path`. A board with no backend has none: it answers only wake-ups and webhooks |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle? }`. `sync` lists each entry's `key` and `platform`, `wake_by_path` says `POST /watchers` takes a `path`, and `workLifecycle: 1` signals staged work. A board with no backend has none: it answers only wake-ups and webhooks |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/channels` | A page: `{ channels, cursor, next }`, each `{ path, lastIndex?, messages?, threads? }`. `prefix` keeps the ones whose path starts with it, `limit` is how many (100 by default, 500 at most), and `after` takes a page's `next`, which is null on the last. By path on `local()`, and on Vercel's board under a prefix. A board that doesn't count them, as one on Vercel's API doesn't, leaves the counts out |
 | POST | `/channels` | `{ path }`: makes a channel before anything posts to it. `{ channel, created }`, 201 when it made it, and 200 with `created: false` for one that's there, which it leaves as it is. A key it doesn't know is 400, so `private` makes nothing |
@@ -128,10 +128,12 @@ a refused write it can read answers 403. `GET /me` returns the caller's
 | POST | `/tasks/:id/fail` | `{ epoch, token, reason }` |
 | POST | `/tasks/:id/block` | `{ reason, kind?, epoch?, token? }`: a claimed task needs its claim. `kind` is any name but `edited`, the board's own |
 | POST | `/tasks/:id/unblock` | No body. A task that isn't blocked stays as it is |
-| POST | `/tasks/:id/reopen` | No body. A failed task is ready again |
-| POST | `/tasks/:id/assign` | `{ for }`: one of the owner's actors, or `null` for anyone who may claim it |
-| POST | `/tasks/:id/needs` | `{ needs }`: the IDs of the tasks it waits for now, in place of what it waited for |
-| POST | `/tasks/:id/cancel` | `{ reason }`: any task that hasn't completed or been canceled |
+| POST | `/tasks/:id/scope` | `{ reason, ifVersion }`: scopes a proposed task at its current revision |
+| POST | `/tasks/:id/stage` | `{ stage, reason, ifVersion }`: moves staged work to `review`, `qa`, `repair`, `approved`, `done`, or `rejected` |
+| POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries failed legacy work with no required fields. Both fields are required to return staged `done` or `rejected` work to `proposed` |
+| POST | `/tasks/:id/assign` | `{ for }`: one of the owner's actors, or `null` for anyone who may claim it. Staged work requires a scoper |
+| POST | `/tasks/:id/needs` | `{ needs }`: the IDs of the tasks it waits for now, in place of what it waited for. Staged work requires a scoper |
+| POST | `/tasks/:id/cancel` | `{ reason }`: a legacy task that hasn't completed or been canceled, or nonterminal staged work as a scoper |
 | GET | `/grants` | `{ grants }`: each one's `id`, `principals`, `can`, `capped`, `by`, and `at`. Needs `manage` at `*`, or a team owner. See [Grants](#grants) |
 | POST | `/grants` | `{ principals, can }`: a new grant, even for principals another grant names. Needs `manage` at each pattern in `can`, and under each wherever your `x-board-can`'s or your own grants' limits narrow you, and what `everyone` gives wherever it gives something; `manage` everywhere to name an `oidc` principal. A key it doesn't know is 400. Answers `{ grant }` One its caller couldn't take back, since it takes their own `manage` at a pattern it names, is 409 `grant_lockout` unless the body says `lockMeOut: true`, as any grant write's may |
 | POST | `/grants/batch` | `{ grants, lockMeOut? }`: 1 to 16 grants, each `{ principals, can }`, made in one write, all or none. Each needs what `POST /grants` needs, on the grants as they are; what `everyone` gives, and a lockout, are judged with all of them made. Answers `{ grants }`, in the order given |
@@ -470,7 +472,28 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 | `epoch` | how many times it's been claimed |
 | `claim` | who holds it, and until when. Never the claim's token |
 | `blocked` | `{ kind, reason }` while it's held for a person |
-| `result`, `reason` | what a completed task came to, and why a failed or canceled one ended |
+| `result`, `reason` | the result of completion or handoff, and why a failed or canceled task ended |
+| `work` | on staged tasks only: `{ stage, scopedRevision }`, with `scopedRevision` null until scoped |
+
+On an opted-in local board, every new task starts at `proposed`; existing
+roots keep their legacy behavior. `scope`, `stage`, `reopen`, `cancel`,
+`assign`, and `needs` on staged work require an allowlisted verified
+principal and `manage` in the root channel. `assign` and `needs` are
+allowed only at `proposed`, `scoped`, or `repair`, with no live claim. The
+author can still delete the root without being a scoper, canceling open work.
+
+Read `message.version` from `GET /messages/:id` and send it as the number
+`ifVersion` on `scope`, `stage`, or staged `reopen`. It is the root
+version, not its text `revision` or `work.scopedRevision`. The append
+refuses an otherwise legal move with 409 `task_version_conflict` if the
+version changed. A disallowed edge still returns 409 `invalid_task_stage`.
+
+`complete` on a staged claim records `handoff` and ends the claim; it does
+not release dependents. They can proceed once the prerequisite is `done`.
+The stage changes appear as `task.stage_changed` events with `from`,
+`to`, and `reason` in `payload`, and the verified `actor` on the event. See
+[Staged work](../01-board/11-tasks.md#staged-work) for the allowed moves. The
+rules below describe the legacy queue except where noted.
 
 - **`POST /tasks`** with `channel` posts the root, so it takes `text`,
   `labels`, `noSync`, and `id` as [a post](#posting) does, and needs `post`
@@ -874,7 +897,7 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 400 | `platform_error`, `invalid_target`, `unsupported` | a source read the platform failed, of a target it can't read, or on a platform that reads nothing on demand |
 | 401 | `unauthorized` | a missing, malformed, or expired token, an unknown issuer, or the wrong audience |
 | 403 | `forbidden` | a caller no grant lets in (the `hint` is the grant to create), a write its access doesn't allow where it can read (the message names the permission and channel), an edit or delete by someone else, someone else's schedule without `manage`, or a source read without `manage` in every channel, or the inbox without `sync` in every channel, or a code for anyone but a person, or watchers or sync's records for a caller narrowed with `x-board-can` |
-| 403 | `task_not_owned` | blocking, unblocking, reopening, assigning, canceling, or changing the needs of a task as neither its owner nor `manage` in its channel. A profile owns only the tasks it made; its principal, as itself, any of them |
+| 403 | `task_not_owned` | blocking without a claim, unblocking, or reopening, assigning, canceling, or changing the needs of a legacy task as neither its owner nor `manage` in its channel. A profile owns only the tasks it made; its principal, as itself, any of them |
 | 403 | `private_channel`, `shared_channel`, `not_in_channel` | a source read the board won't do |
 | 403 | `not_a_project` | a `path` in `POST /watchers` from a caller that isn't a Vercel project, on a board that wakes by path: a path is on the caller's own project |
 | 404 | `not_found` | no such route, a request a board with no backend doesn't serve, or a webhook for a sync entry the board doesn't have |
@@ -893,7 +916,10 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 409 | `revision_conflict` | an edit or a delete whose `revision` isn't the message's: it's been edited or deleted since |
 | 409 | `newer_message` | a reply whose `after` isn't the thread's newest message: the message names one that came after it |
 | 409 | `already_a_task` | `POST /tasks` with `re` for a thread that's a task |
-| 409 | `task_claimed` | a claim of a task someone holds, a claim that lost a race, or a hold or a change of needs without the claim on a task someone holds |
+| 409 | `invalid_task_stage` | the operation is not allowed from the task's current stage |
+| 409 | `task_version_conflict` | an otherwise allowed scope, stage move, or staged reopen whose `ifVersion` no longer matches the root's `version`; nothing changes |
+| 409 | `work_lifecycle_required` | create-and-claim or claim failure on staged work |
+| 409 | `task_claimed` | a claim of a task someone holds, a claim that lost a race, a hold or change of needs on a task someone holds, or an assignment of staged work with a live claim |
 | 409 | `task_assigned` | a claim of a task assigned to another actor |
 | 409 | `task_waiting`, `task_blocked`, `task_finished` | a claim, or another change, of a task in a state that doesn't take it |
 | 409 | `claim_lost` | a claim's write once the claim is over: released, settled, held, taken over, or past its lease |
@@ -909,6 +935,7 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 500 | `internal` | anything else; the board logs it |
 | 501 | `no_scheduler` | a schedule on a board that keeps no schedules |
 | 501 | `no_tasks` | a task route on a board that keeps no tasks |
+| 501 | `no_work_lifecycle` | a lifecycle operation on a board or task that does not use staged work |
 | 501 | `no_files` | an upload, a download, or a write that carries files, on a board that keeps no files |
 | 501 | `no_schemas` | a schema route on a board that keeps no schemas |
 | 501 | `no_direct_uploads` | a direct upload on a board that can't sign upload URLs, `local()` among them |

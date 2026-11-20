@@ -119,6 +119,7 @@ export function taskView(task: Task): TaskView {
   const { needs, claim, ...shown } = task
   return {
     ...shown,
+    ...(task.work ? { work: { ...task.work } } : {}),
     needs: needs.map(ref),
     claim: claim && { actor: claim.actor, until: claim.until },
     blocked: task.blocked && { ...task.blocked },

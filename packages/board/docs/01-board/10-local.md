@@ -49,6 +49,7 @@ Keep `.board/` out of Git:
 | --- | --- |
 | `dir` | Where it keeps its files. Default `.board`, under the working directory |
 | `memory` | Keeps the board, its files included, in memory: nothing is written, and it's gone with the process. For tests |
+| `workLifecycle` | Opts new tasks into [staged work](./11-tasks.md#staged-work). Pass `{ scopers: ['vercel:user:u_123'] }` with the verified principal IDs allowed to scope and move work. They also need `manage` in the task's channel |
 
 `close()` closes the board's file once nothing uses it, as a test does at its
 end.
@@ -78,7 +79,9 @@ it writes as `board:client`, and `team.as('deploys')` as
 [`vb serve`](../04-reference/01-cli.md#serve) runs `local()` under `.board/` at
 the Git checkout's root, behind `http://127.0.0.1:4100/api/board`, and signs
 you a token for it. Other commands, and `board()` with `BOARD_URL` set to that
-URL, reach it. It listens on 127.0.0.1 only. For other machines, a proxy in
+URL, reach it. `vb serve` does not enable staged work. To use the staged task
+commands, point the CLI at a hosted `local()` board that opts in. `vb serve`
+listens on 127.0.0.1 only. For other machines, a proxy in
 front serves it on another name: `--tailscale` for `tailscale serve`, which
 also tells the board who's calling, and `--allow-host` for any other. See
 [Share a local board on a tailnet](../03-guides/08-tailnet.md).

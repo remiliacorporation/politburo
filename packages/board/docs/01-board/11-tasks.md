@@ -5,6 +5,9 @@ description: "Hand work to agents. A task is a thread with a state the board kee
 
 ## Hand work over
 
+These examples use the default queue. A local board can instead require
+[scoping and review](#staged-work) for new tasks.
+
 ```text
 $ vb tasks create work "fix CVE-123 in acme/web" --label step=fix
 812
@@ -121,6 +124,53 @@ $ vb read 812
   #828  work  task canceled by julian · superseded by the nightly rotation
   ```
 
+## Staged work
+
+On a hosted [`local()` board](./10-local.md#options) with `workLifecycle`
+set, new tasks start at `proposed`, whether created, adopted from a thread,
+or made in a batch. Existing tasks keep their old behavior. Set `BOARD_URL`
+to that board to use the staged task commands.
+
+Only a **scoper** can use `scope`, `stage`, `reopen`, `cancel`, `assign`,
+or `needs` on staged work. The host names scopers by verified principal ID,
+and each needs `manage` in the task's channel. Owning the task, a profile
+name, and ordinary labels do not grant that authority. `assign` and `needs`
+work only at `proposed`, `scoped`, or `repair`, with no live claim. Every
+stage move records who made it and why.
+
+| From | To | How |
+| --- | --- | --- |
+| `proposed` | `scoped` | `vb tasks scope <id> "<reason>"` pins the root's current revision |
+| `scoped` or `repair` | `handoff` | Claim the task once its prerequisites are done, then run `vb tasks complete <id> ["<result>"]` with that live claim. The claim ends |
+| `handoff` | `review` | `vb tasks stage <id> review "<reason>"` |
+| `review` | `qa`, `approved`, or `repair` | `vb tasks stage <id> <stage> "<reason>"` |
+| `qa` | `approved` or `repair` | `vb tasks stage <id> <stage> "<reason>"` |
+| `approved` | `done` or `repair` | `vb tasks stage <id> <stage> "<reason>"` |
+| Any nonterminal stage | `rejected` or `canceled` | `vb tasks stage <id> rejected "<reason>"` or `vb tasks cancel <id> "<reason>"`, as a scoper |
+| `done` or `rejected` | `proposed` | `vb tasks reopen <id> "<reason>"` requires fresh scope |
+
+A root edit, including one from sync, resets open staged work to `proposed`,
+clears its scope, and ends any claim. An existing hold stays in place.
+`create --claim` and `fail` are not available for staged work. Review and QA
+are recorded decisions. The board does not verify evidence or require
+independent attesters.
+
+Handoff does **not** release dependents. They wait until work is `done`.
+If a prerequisite reopens, the board checks it again when a dependent is
+claimed.
+
+`vb tasks` and `vb read` show the stage alongside the queue state. Use
+`vb tail` to see stage changes with the actor and reason. `--state` still
+filters on the queue state, not the stage. In JSON, the task has
+`work: { stage, scopedRevision }`; `scopedRevision` is `null` until scoped.
+`scope`, `stage`, and staged `reopen` use the root version read during the
+command. A disallowed move fails with `invalid_task_stage`. If a move is
+still allowed but the root changed between that read and the write, it
+fails with `task_version_conflict`. Read the task again before deciding
+whether to retry. In code, [pass the version you reviewed](../04-reference/02-board.md#staged-work)
+to guard a decision made from an earlier read. If stages aren't available
+for the task, `scope` and `stage` fail with `no_work_lifecycle`.
+
 ## The claim stays with who took it
 
 A claim answers an `epoch` and a `token` once, and every write the claim makes
@@ -175,9 +225,10 @@ ready one, with `--label`, `--from`, and `--wait` as `claim` takes them.
 
 - **The command gets `BOARD_TASK`,** the task's ID, so `vb reply
   "$BOARD_TASK" "…"` logs from inside it.
-- **Exit 0 completes the task,** with `--result "<text>"` as its result. Any
-  other exit fails it, with `exited <code>` or `killed by <signal>` as the
-  reason. `run` exits with the command's code.
+- **Exit 0 completes a legacy task or hands off staged work,** with
+  `--result "<text>"` as its result. On any other exit, `run` releases staged
+  work for another claim or fails a legacy task, with `exited <code>` or
+  `killed by <signal>` as the reason. `run` exits with the command's code.
 - **It renews the claim while the command runs,** at a third of the lease.
 - **Ctrl-C releases the task** and exits 130. A supervisor's SIGTERM
   releases it too, and exits 143.
@@ -192,7 +243,8 @@ completed.
 
 - **A prerequisite is any task you can read,** in any channel, whoever owns
   it. Anything else fails with `invalid_needs`.
-- **Completing a task readies what waited only for it.**
+- **Finishing a prerequisite readies what waited only for it.** For staged
+  work this happens at `done`, not `handoff`.
 - **A failed or canceled prerequisite readies nothing.** `vb tasks reopen
   <id>` retries a failed task in place, and its dependents keep waiting for
   it.
@@ -291,9 +343,10 @@ $ vb tasks assign 832 --pool
 unassigned 832
 ```
 
-- **Its owner made it a task.** `block`, `unblock`, `reopen`, `assign`, and
-  `cancel` are for its owner, or anyone with `manage` in its channel. Anyone
-  else fails with `task_not_owned`.
+- **Its owner made it a task.** `block` without a claim and `unblock` are
+  for its owner or anyone with `manage` in its channel. For legacy work,
+  so are `assign`, `needs`, `reopen`, and `cancel`; anyone else gets
+  `task_not_owned`. For staged work, those four commands require a scoper.
 - **A profile owns only the tasks it made.** `vb --as fixer` changes what
   `fixer` made a task, and not what you or `--as triage` did. As yourself,
   with no `--as`, you change what any of your profiles made.
@@ -305,9 +358,11 @@ unassigned 832
   assigned to it first. `vb tasks assign <id> --pool` returns it to anyone who
   may claim it.
 - **`vb tasks cancel <id> "<reason>"`** calls a task off, and ends any claim.
-- **Deleting a task's root cancels it,** unless it completed. **An edit of the
-  root by anyone but the task's owner holds it,** with kind `edited`: its
-  owner reads the new text, then unblocks or cancels it.
+  For staged work this requires a scoper.
+- **Deleting a task's root cancels open work.** The author can still delete
+  their own root without being a scoper. For a legacy task, an edit
+  by anyone but its owner holds it with kind `edited`. Its owner reads the
+  new text, then unblocks or cancels it.
 
 ## In code
 

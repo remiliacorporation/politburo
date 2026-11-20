@@ -17,7 +17,7 @@ import type { Board } from '../server/board.ts'
  */
 
 /** What a check is about, for the report's headings. */
-export type CheckGroup = 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'
+export type CheckGroup = 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-lifecycle' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'
 
 export type CheckResult = {
   group: CheckGroup
@@ -161,6 +161,7 @@ type Context = {
   principals: Principals
   /** The board's own Vercel team, as its discovery names it. */
   team: string | null
+  workLifecycle: boolean
 }
 
 type Check = { group: CheckResult['group']; name: string; run: (ctx: Context) => Promise<void | string> }
@@ -452,6 +453,80 @@ function lostRace(racing: PromiseSettledResult<unknown>[]) {
     check(error instanceof BoardError && error.status === 409 && error.code === 'task_claimed', `a claim that lost the race should be 409 task_claimed, got ${error instanceof BoardError ? `${error.status} ${error.code}` : String(error)}`)
   }
 }
+
+/** Discovery advertises support, not the credential's authority to scope work. */
+async function scopeWork(ctx: Context, id: string, reason: string) {
+  try {
+    return await ctx.board.tasks.scope(id, reason)
+  } catch (error) {
+    if (error instanceof BoardError && error.status === 403 && error.code === 'forbidden') throw new Skip("this credential can't scope work in the check's channel")
+    throw error
+  }
+}
+
+const LIFECYCLE_CHECKS: Check[] = [
+  {
+    group: 'work-lifecycle',
+    name: 'makes proposed work and neither claims it nor lets labels authorize it',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: proposed work')
+      same(root.task?.work?.stage, 'proposed', "a new task's stage")
+      same(root.task?.work?.scopedRevision, null, "a new task's scoped revision")
+      await ctx.board.label(root.id, { set: { stage: 'scoped' } })
+      await rejects(ctx.board.tasks.claim(root.id), 409, 'invalid_task_stage', 'claiming a proposed task by ID')
+      same(await ctx.board.tasks.claim({ channel: ctx.channel, label: ctx.labels }), null, 'the next claim while work is proposed')
+      same((await ctx.board.thread(root.id)).message.task?.work?.stage, 'proposed', 'the work stage after a label write and refused claims')
+    },
+  },
+  {
+    group: 'work-lifecycle',
+    name: 'pins the scoped revision, hands off a live claim, and audits authorized moves',
+    run: async (ctx) => {
+      const { cursor } = await ctx.board.poll({ channel: ctx.channel, label: ctx.labels })
+      const { task: root } = await task(ctx, 'conformance: work to review')
+      const scoped = await scopeWork(ctx, root.id, 'scope agreed')
+      same(scoped.task?.work?.stage, 'scoped', 'the stage after scope')
+      same(scoped.task?.work?.scopedRevision, root.revision, 'scope pinned to the root revision')
+      const claim = await ctx.board.tasks.claim(root.id)
+      const handedOff = await claim.complete('implementation submitted')
+      same(handedOff.task?.work?.stage, 'handoff', 'the stage after a claim completes')
+      same(handedOff.task?.claim, null, 'the lease after handoff')
+      await rejects(ctx.board.tasks.stage(root.id, 'done', 'skip review'), 409, 'invalid_task_stage', 'marking a handoff done')
+      const review = await ctx.board.tasks.stage(root.id, 'review', 'review started')
+      same(review.task?.work?.stage, 'review', 'the stage after review starts')
+      const { events } = await ctx.board.poll({ channel: ctx.channel, label: ctx.labels, after: cursor })
+      const moves = events.filter((event) => event.type === 'task.stage_changed').filter((event) => event.payload.id === root.id)
+      alike(moves.map((event) => [event.payload.id, event.payload.thread, event.payload.from, event.payload.to, event.payload.reason, event.actor?.id]), [
+        [root.id, root.thread, 'proposed', 'scoped', 'scope agreed', ctx.me.actor],
+        [root.id, root.thread, 'scoped', 'handoff', 'implementation submitted', ctx.me.actor],
+        [root.id, root.thread, 'handoff', 'review', 'review started', ctx.me.actor],
+      ], 'stage changes visible with their reasons and actors')
+    },
+  },
+  {
+    group: 'work-lifecycle',
+    name: 'releases dependent work only at done, and checks that again after reopen',
+    run: async (ctx) => {
+      const { task: first } = await task(ctx, 'conformance: a prerequisite to approve')
+      await scopeWork(ctx, first.id, 'scope prerequisite')
+      const { task: second } = await task(ctx, 'conformance: dependent work', { needs: [first.id] })
+      await ctx.board.tasks.scope(second.id, 'scope dependent')
+      await (await ctx.board.tasks.claim(first.id)).complete()
+      await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite handed off')
+      await ctx.board.tasks.stage(first.id, 'review', 'review started')
+      await ctx.board.tasks.stage(first.id, 'approved', 'review passed')
+      await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite is only approved')
+      const done = await ctx.board.tasks.stage(first.id, 'done', 'finished')
+      same(done.task?.state, 'completed', 'how done work reads to legacy readers')
+      await (await ctx.board.tasks.claim(second.id)).release()
+      const reopened = await ctx.board.tasks.reopen(first.id, 'new requirements')
+      same(reopened.task?.work?.stage, 'proposed', 'the stage after reopen')
+      same(reopened.task?.work?.scopedRevision, null, 'the cleared scope after reopen')
+      await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite reopened')
+      same(await ctx.board.tasks.claim({ channel: ctx.channel, label: ctx.labels }), null, 'the next claim after reopen')
+    },
+  },
+]
 
 const CHECKS: Check[] = [
   {
@@ -2130,7 +2205,7 @@ const CHECKS: Check[] = [
       const attachment = await ctx.board.upload({ data: bytes, name: 'conformance-task.txt', type: 'text/plain' })
       const { task: root } = await task(ctx, 'conformance: a task with a file', { attachments: [attachment.id] })
       check(root.attachments.some((a) => a.id === attachment.id), "the task's root should carry the file")
-      same(root.task?.state, 'ready', "the task's state")
+      same(root.task?.state, ctx.workLifecycle ? 'waiting' : 'ready', "the task's state")
       check((await ctx.board.thread(root.id)).message.attachments.some((a) => a.id === attachment.id), 'the task, read as its thread, should carry the file')
     },
   },
@@ -2531,14 +2606,17 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
       app: options.principals?.app ?? null,
     },
     team: (discovery as { team_id?: string | null }).team_id ?? null,
+    workLifecycle: !(discovery instanceof Error) && discovery.workLifecycle === 1,
   }
   try {
-    for (const { group, name, run } of CHECKS) {
+    const checksToRun = ctx.workLifecycle ? [...CHECKS.filter(({ group }) => group !== 'tasks'), ...LIFECYCLE_CHECKS] : CHECKS
+    for (const { group, name, run } of checksToRun) {
       try {
         const skipped = await run(ctx)
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {
         if (OPTIONAL.has(group) && error instanceof BoardError && error.status === 501) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
+        else if (group === 'work-lifecycle' && error instanceof Skip) checks.push({ group, name, status: 'skipped', detail: error.message })
         // Vercel's API takes watchers only from a deployment: a run as anyone else can't check them.
         else if (group === 'watchers' && error instanceof BoardError && error.code === 'watchers_need_project') checks.push({ group, name, status: 'skipped', detail: 'only a deployment registers watchers here' })
         // Vercel's API takes no GitHub or OIDC principal in a grant.

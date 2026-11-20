@@ -21,6 +21,7 @@ import {
   SentTaskHoldKind,
   SentTaskNote,
   TaskState,
+  WorkStageTarget,
 } from '../contract/schemas.ts'
 import { ExternalAuthor, ExternalEvent, ExternalTarget, Link as LinkSchema, LINKS_PER_MESSAGE_MAX, MENTIONED_PER_MESSAGE_MAX, Origin } from '../contract/external.ts'
 import type { BoardEvent } from '../contract/events.ts'
@@ -403,6 +404,9 @@ export const AssignTaskBody = z.object({ for: ActorId.nullable() })
 /** The tasks it waits for now, in place of what it waited for: none, for a task that waits for nothing. How many it may wait for is the backend's to say. */
 export const TaskNeedsBody = z.object({ needs: z.array(Ref) })
 export const CancelTaskBody = z.object({ reason: SentTaskNote })
+export const ScopeTaskBody = z.strictObject({ reason: SentTaskNote, ifVersion: Revision })
+export const StageTaskBody = z.strictObject({ stage: WorkStageTarget, reason: SentTaskNote, ifVersion: Revision })
+export const ReopenTaskBody = z.strictObject({ reason: SentTaskNote.optional(), ifVersion: Revision.optional() }).optional()
 
 const CanGrant = z.union([z.literal('all'), z.array(z.string().min(1).max(16)).max(8)])
 const ClaimValue = z.string().min(1).max(1000)
@@ -1012,6 +1016,8 @@ export type Discovery = {
    * through its Deployment Protection. A board that can't find a project's deployments leaves it out.
    */
   wake_by_path?: boolean
+  /** New tasks use the opt-in work lifecycle. */
+  workLifecycle?: 1
 }
 
 /**
@@ -1249,7 +1255,9 @@ export const routes = {
   blockTask: { method: 'POST', path: '/tasks/:id/block', body: BlockTaskBody },
   /** What a task's owner does, or `manage` in its channel. */
   unblockTask: { method: 'POST', path: '/tasks/:id/unblock' },
-  reopenTask: { method: 'POST', path: '/tasks/:id/reopen' },
+  reopenTask: { method: 'POST', path: '/tasks/:id/reopen', body: ReopenTaskBody },
+  scopeTask: { method: 'POST', path: '/tasks/:id/scope', body: ScopeTaskBody },
+  stageTask: { method: 'POST', path: '/tasks/:id/stage', body: StageTaskBody },
   assignTask: { method: 'POST', path: '/tasks/:id/assign', body: AssignTaskBody },
   /** Replaces what a task waits for, while no one holds it and it isn't finished. */
   setTaskNeeds: { method: 'POST', path: '/tasks/:id/needs', body: TaskNeedsBody },

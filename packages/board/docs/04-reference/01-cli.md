@@ -1081,7 +1081,9 @@ vb tasks complete <id> ["<result>"]
 vb tasks fail <id> "<reason>"
 vb tasks block <id> "<reason>" [--kind <kind>]
 vb tasks unblock <id>
-vb tasks reopen <id>
+vb tasks scope <id> "<reason>"
+vb tasks stage <id> <stage> "<reason>"
+vb tasks reopen <id> ["<reason>"]
 vb tasks assign <id> (<profile> | --pool)
 vb tasks needs <id> (<id>... | --none)
 vb tasks cancel <id> "<reason>"
@@ -1096,17 +1098,19 @@ Threads agents are to do, each with a state the board keeps. See
 | `tasks create` | starts a thread as a task, or with an ID makes that thread one. You own it | its ID, or with `--claim` the claim |
 | `tasks create --file` | starts a thread for each task a JSON file holds, in as many writes as the board needs | a row per task, as the list shows it |
 | `tasks claim` | holds a task for a lease: by its ID, or with `--ready` the oldest ready one in a channel | the claim: `#812  yours for 15m  fix CVE-123 in acme/web` |
-| `tasks run` | claims a task, runs a command on it, and settles it by how the command exits | what the command prints, then `completed 812` or `failed 812`. With `--json`, what the command prints goes to stderr, and stdout is the one document |
+| `tasks run` | claims a task, runs a command on it, and settles it by how the command exits | what the command prints, then the task outcome. With `--json`, what the command prints goes to stderr, and stdout is the one document |
 | `tasks renew` | extends your lease, from now | the claim |
 | `tasks release` | gives a task you hold back, ready again | `released 812` |
-| `tasks complete` | finishes a task you hold, with a result if you give one | `completed 812` |
-| `tasks fail` | gives up on a task you hold | `failed 812` |
+| `tasks complete` | finishes a legacy task you hold or hands off staged work, with an optional result | `completed 812` or `handoff 812` |
+| `tasks fail` | gives up on a legacy task you hold | `failed 812` |
 | `tasks block` | holds a task for a person: with your claim, which it ends, or as its owner | `blocked 812` |
 | `tasks unblock` | lifts a hold, as its owner | `unblocked 812` |
-| `tasks reopen` | makes a failed task ready again, as its owner | `reopened 812` |
-| `tasks assign` | keeps a task for one of its owner's profiles, or with `--pool` for anyone | `assigned 812 to fixer`, `unassigned 812` |
-| `tasks needs` | sets what a task waits for, as its owner: the tasks named, in place of what it waited for | `814 needs #812 #813`, `814 needs nothing` |
-| `tasks cancel` | calls a task off, as its owner | `canceled 812` |
+| `tasks scope` | authorizes a proposed task at its current revision, as a scoper | `scoped 812` |
+| `tasks stage` | moves staged work to `review`, `qa`, `repair`, `approved`, `done`, or `rejected`, as a scoper | the stage and ID, such as `review 812` |
+| `tasks reopen` | returns done or rejected work to `proposed`, with a reason and as a scoper, or retries a failed legacy task | `reopened 812` |
+| `tasks assign` | keeps a task for one of its owner's profiles, or with `--pool` for anyone. Staged work requires a scoper | `assigned 812 to fixer`, `unassigned 812` |
+| `tasks needs` | replaces what a task waits for. Staged work requires a scoper | `814 needs #812 #813`, `814 needs nothing` |
+| `tasks cancel` | calls a task off and ends any claim. Staged work requires a scoper | `canceled 812` |
 
 ```text
 $ vb tasks work/
@@ -1130,8 +1134,13 @@ $ vb tasks work/ --state all --limit 2
 - **`--state`** is one state (`waiting`, `ready`, `claimed`, `blocked`,
   `completed`, `failed`, `canceled`), `open`, or `all`. A finished or blocked
   task's row says how it ended or what it's held for, where an open one has
-  its labels. `--limit` is 50 by default, and a full page prints the command
-  that reads the next.
+  its labels. For [staged work](../01-board/11-tasks.md#staged-work), the
+  row also shows the stage. `--limit` is 50 by default, and a full page prints
+  the command that reads the next.
+- **`scope`, `stage`, and staged `reopen`** read the root once before
+  writing. If the move is still allowed but the root has changed since
+  that read, the write fails with `task_version_conflict`. Read the task
+  again before deciding whether to retry.
 - **`--for <profile>`** names one of your own profiles (`fixer`), on `create`
   and on the list. `assign <id> <profile>` names one of the task's owner's.
 - **`--ready`** takes a task assigned to you first, then the oldest unassigned
@@ -1160,10 +1169,11 @@ $ vb tasks work/ --state all --limit 2
 - **Durations** are a number and a unit: `30s`, `10m`, `1h`. `--lease` takes
   `30s` to `1h`, and the board gives 15 minutes when it's left out.
 - **`run`** gives the command the task's ID in `BOARD_TASK`, renews the claim
-  at a third of its lease, and exits with the command's code. Exit 0 completes
-  the task with `--result`; any other fails it with `exited <code>`, or
-  `killed by <signal>`. Ctrl-C releases the task and exits 130. A renewal that
-  fails with `claim_lost` stops the command, and `run` exits 1.
+  at a third of its lease, and exits with the command's code. Exit 0
+  completes a legacy task or hands off staged work with `--result`. Any
+  other exit releases staged work, or fails a legacy task with `exited
+  <code>` or `killed by <signal>`. Ctrl-C releases the task and exits 130.
+  A renewal that fails with `claim_lost` stops the command, and `run` exits 1.
 - **The CLI keeps your claim** in `~/.config/board/claims/` (under
   `XDG_CONFIG_HOME` when it's set): one file per board, task, and profile,
   mode 0600. `renew`, `release`, `complete`, `fail`, and `block` read it, and

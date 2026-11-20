@@ -358,7 +358,9 @@ tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: str
 tasks.held(id: string, claim: { epoch: number; token: string }): HeldTask
 tasks.block(id: string, reason: string, opts?: { kind?: string }): Promise<MessageView>
 tasks.unblock(id: string): Promise<MessageView>
-tasks.reopen(id: string): Promise<MessageView>
+tasks.scope(id: string, reason: string, opts?: { ifVersion?: number }): Promise<MessageView>
+tasks.stage(id: string, stage: WorkStageTarget, reason: string, opts?: { ifVersion?: number }): Promise<MessageView>
+tasks.reopen(id: string, reason?: string, opts?: { ifVersion?: number }): Promise<MessageView>
 tasks.assign(id: string, actor: string | null): Promise<MessageView>
 tasks.needs(id: string, needs: string[]): Promise<MessageView>
 tasks.cancel(id: string, reason: string): Promise<MessageView>
@@ -420,9 +422,9 @@ if (claim) {
   over, each throws a 409 `claim_lost` and changes nothing.
 - **`held`** gives the same writes from an `epoch` and a `token`, for a
   process that kept them.
-- **`block`, `unblock`, `reopen`, `assign`, `needs`, and `cancel`** are for the
-  task's owner, or `manage` in its channel: anyone else gets 403
-  `task_not_owned`.
+- **`block` without a claim and `unblock`** are for the task's owner or
+  `manage` in its channel. For legacy work, so are `assign`, `needs`,
+  `reopen`, and `cancel`. Anyone else gets 403 `task_not_owned`.
   A handle that writes as a profile (`team.as('fixer')`) owns only the tasks
   it made. The principal itself owns what any of its profiles made. A task's
   `by` is the actor that made it, so a UI knows whose these are to offer.
@@ -438,6 +440,38 @@ if (claim) {
   page. `latest: true` answers the `limit` last active instead, by each
   thread's latest message, the latest active last: the board reads every task
   that matches to find them, and builds only those. It takes no `after`.
+
+#### Staged work
+
+On a `local()` board with `workLifecycle` enabled, new tasks have
+`task.work: { stage, scopedRevision }`. Existing tasks have no `task.work`.
+The host lists scopers by verified principal ID. With `manage` in the root's
+channel, a scoper can `scope` a proposed task, pinning its current revision,
+`stage` it through the allowed moves, `reopen` it with a reason, or
+`cancel` it while open. Only a scoper can `assign` or change `needs` on
+staged work, and only at `proposed`, `scoped`, or `repair` with no live
+claim. `WorkStageTarget` is
+`review | qa | repair | approved | done | rejected`.
+
+A worker's live claim calls `complete(result?)` to hand off staged work,
+not mark it done. `claim: true` on create and `claim.fail(reason)` on staged
+work fail with 409 `work_lifecycle_required`. Only `done` releases
+staged prerequisites. `reopen(id, reason)` returns a staged `done` or
+`rejected` task to `proposed`. Legacy `reopen(id)` still needs no reason.
+
+Pass `ifVersion: root.version` to `scope`, `stage`, or `reopen` with a
+reason to guard the root version you based the decision on. Use the root
+`MessageView.version`, not `revision` or `task.work.scopedRevision`. With
+no `ifVersion`, each of those calls makes one extra root read before the
+write. `reopen(id)` skips that read and sends neither field. A stale version
+on an otherwise allowed move throws a `BoardError` with `status: 409` and
+`code: 'task_version_conflict'`, without writing. Read the root again and
+reconsider the decision before retrying.
+
+Discovery advertises `workLifecycle: 1` on an opted-in board. `scope` and
+`stage` fail with 501 `no_work_lifecycle` if unsupported; disallowed moves
+fail with 409 `invalid_task_stage`. See the [allowed moves and CLI
+commands](../01-board/11-tasks.md#staged-work).
 
 #### Several tasks at once
 

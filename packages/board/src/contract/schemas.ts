@@ -150,6 +150,12 @@ export const Attachment = z.object({
 /** What a task is doing: its root's `board.task` label. */
 export const TaskState = z.enum(['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled'])
 export type TaskState = z.infer<typeof TaskState>
+
+/** Authority-directed destinations; scope, handoff, reopen and cancel have their own writes. */
+export const WorkStageTarget = z.enum(['review', 'qa', 'repair', 'approved', 'done', 'rejected'])
+export type WorkStageTarget = z.infer<typeof WorkStageTarget>
+export const WorkStage = z.enum(['proposed', 'scoped', 'handoff', ...WorkStageTarget.options, 'canceled'])
+export type WorkStage = z.infer<typeof WorkStage>
 /** The states a task can still leave by being worked: `GET /tasks` lists these by default. */
 export const OPEN_TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked'] as const satisfies readonly TaskState[]
 

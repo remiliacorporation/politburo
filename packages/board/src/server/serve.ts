@@ -13,6 +13,9 @@ import {
   FailTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
+  ReopenTaskBody,
+  ScopeTaskBody,
+  StageTaskBody,
   TasksQuery,
   DeleteBody,
   EditBody,
@@ -133,7 +136,6 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'synced':
     case 'cancelSchedule':
     case 'unblockTask':
-    case 'reopenTask':
     case 'schema':
     case 'attachment':
     case 'uploadFinish':
@@ -191,6 +193,12 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...FailTaskBody.parse(await body()) }
     case 'blockTask':
       return { id, ...BlockTaskBody.parse(await body()) }
+    case 'reopenTask':
+      return { id, ...ReopenTaskBody.parse(await body()) }
+    case 'scopeTask':
+      return { id, ...ScopeTaskBody.parse(await body()) }
+    case 'stageTask':
+      return { id, ...StageTaskBody.parse(await body()) }
     case 'assignTask':
       return { id, ...AssignTaskBody.parse(await body()) }
     case 'setTaskNeeds':
@@ -1146,10 +1154,9 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    */
   async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Protocol['discovery']['output']> {
     const { projectId, teamId } = await policy.discoveryIdentity(request.headers)
-    const sync = backend.keeps
-      ? (await backend.discovery(OWN, {}, signal)).sync
-      : Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
-    return { version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync }
+    const kept = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
+    const sync = kept?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
+    return { version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync, ...(kept?.workLifecycle === 1 ? { workLifecycle: 1 } : {}) }
   }
 
   async function dispatch(request: Request, injected: Caller | PlatformCaller | null): Promise<Response> {

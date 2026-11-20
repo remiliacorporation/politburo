@@ -21,6 +21,7 @@ import {
   TASK_NEEDS_MAX,
   TaskHoldKind,
   TaskNote,
+  WorkStage,
 } from './schemas.ts'
 import { ExternalEvent, ExternalTarget, Link, LINKS_PER_MESSAGE_MAX, Origin } from './external.ts'
 
@@ -151,7 +152,7 @@ export const boardEvents = {
      * The thread rooted at `id` is a task, and `by.principal` owns it. It waits while it has `needs`,
      * until `task.ready` says they've all completed; with none, it's ready.
      */
-    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), by: Author }),
+    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), by: Author, work: z.literal('proposed').optional() }),
     /** Only actor `for` claims it now, or with null, anyone who may. */
     'task.assigned': z.object({ ...Task, for: ActorId.nullable(), by: Author }),
     /**
@@ -177,6 +178,8 @@ export const boardEvents = {
     'task.canceled': z.object({ ...Task, reason: TaskNote, by: Author }),
     /** A failed task is ready again. */
     'task.reopened': z.object({ ...Task, by: Author }),
+    /** An audited work stage change. `result` belongs to the handoff only. */
+    'task.stage_changed': z.object({ ...Task, from: WorkStage, to: WorkStage, reason: TaskNote, by: Author, result: TaskNote.nullable().optional() }),
     'actor.seen': z.object({
       actor: ActorId,
       kind: SeenActorKind,

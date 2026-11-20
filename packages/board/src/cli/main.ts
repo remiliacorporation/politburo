@@ -15,7 +15,7 @@ import { board as boardAt, type Board } from '../server/index.ts'
 import { isBoardName } from '../server/board.ts'
 import { isApiMessageId } from '../server/backend-vercel.ts'
 import { normalizeEmoji } from '../contract/emoji.ts'
-import { ATTACHMENTS_PER_MESSAGE_MAX, DIRECT_UPLOAD_BYTES_MAX, MESSAGE_TEXT_MAX, type Attachment, AttachmentId } from '../contract/schemas.ts'
+import { ATTACHMENTS_PER_MESSAGE_MAX, DIRECT_UPLOAD_BYTES_MAX, MESSAGE_TEXT_MAX, type Attachment, AttachmentId, WorkStageTarget } from '../contract/schemas.ts'
 import { VERSION } from '../version.ts'
 import { conformance } from '../conformance/index.ts'
 import { explainPrincipalOf, explanationLine, GrantMisuse, grantCanOf, KINDS, patternsIn, principalsIn, type OptionToken } from './grants.ts'
@@ -1968,7 +1968,7 @@ async function run(command: string | undefined, args: string[]): Promise<number>
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'unblock', 'reopen', 'assign', 'needs', 'cancel'])
+const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'unblock', 'scope', 'stage', 'reopen', 'assign', 'needs', 'cancel'])
 const TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled']
 
 /** A task's ID as you'd write it: `#812` or `812`. */
@@ -2160,6 +2160,8 @@ function printTask(task: MessageView, outcome: string, more: object = {}) {
   if (flags.json) result({ task, outcome, ...more })
   else out(`${outcome} ${messageRef(task.id)}`)
 }
+
+const completionOutcome = (task: MessageView) => task.task?.work?.stage === 'handoff' ? 'handoff' : 'completed'
 
 /** A claim: the task, how long it's yours, and what it is. With `--json`, the task and the claim, without its token, which the CLI keeps. */
 function printClaim(task: MessageView, claim: { epoch: number; until: string }, more: object = {}) {
@@ -2416,11 +2418,14 @@ async function tasks(args: string[]): Promise<number> {
       // 130 for Ctrl-C, 143 for a supervisor's SIGTERM: what the signal would have said had it ended this process.
       return ran.code
     }
-    const settled = ran.code === 0
-      ? await withClaim(claims, id, () => claim.complete(flags.result))
-      : await withClaim(claims, id, () => claim.fail(ran.signal ? `killed by ${ran.signal}` : `exited ${ran.code}`))
+    // A command's failure can settle a legacy task, but cannot reject staged work.
+    const staged = claim.task.task?.work !== undefined
+    const settled = await withClaim(claims, id, () => ran.code === 0
+      ? claim.complete(flags.result)
+      : staged ? claim.release() : claim.fail(ran.signal ? `killed by ${ran.signal}` : `exited ${ran.code}`))
     await claims.drop(id)
-    printTask(settled, ran.code === 0 ? 'completed' : 'failed', ran.code === 0 ? {} : { code: ran.code })
+    const outcome = ran.code === 0 ? completionOutcome(settled) : staged ? 'released' : 'failed'
+    printTask(settled, outcome, ran.code === 0 ? {} : { code: ran.code })
     return ran.code
   }
 
@@ -2428,8 +2433,8 @@ async function tasks(args: string[]): Promise<number> {
   const one = (extra: string | undefined, takes: string) => {
     if (extra !== undefined) throw usage(`tasks ${verb} takes ${takes}: ${extra} is one too many.`)
   }
-  const reason = (what: string) => {
-    const given = rest[1]?.trim()
+  const reason = (what: string, at = 1) => {
+    const given = rest[at]?.trim()
     if (!given) throw usage(`Missing ${what}, in a line.`, { reason: 'missing_arguments' })
     return given
   }
@@ -2458,7 +2463,7 @@ async function tasks(args: string[]): Promise<number> {
       const held = await heldBy(board, claims, id)
       const task = await withClaim(claims, id, () => held.complete(rest[1]))
       await claims.drop(id)
-      printTask(task, 'completed')
+      printTask(task, completionOutcome(task))
       return 0
     }
     case 'fail': {
@@ -2481,14 +2486,33 @@ async function tasks(args: string[]): Promise<number> {
       printTask(task, 'blocked')
       return 0
     }
+    case 'scope': {
+      one(rest[2], 'a task and a reason, quoted')
+      printTask(await board.tasks.scope(id, reason('why it is ready to scope')), 'scoped')
+      return 0
+    }
+    case 'stage': {
+      one(rest[3], 'a task, a stage, and a reason, quoted')
+      const stage = WorkStageTarget.safeParse(rest[1])
+      if (!stage.success) throw usage(`Pass a stage: ${WorkStageTarget.options.join(', ')}.`, {
+        reason: rest[1] === undefined ? 'missing_arguments' : 'invalid_arguments',
+        next: [{ instruction: 'See how to move staged work', argv: [...cli(), 'tasks', 'stage', '--help'] }],
+      })
+      const task = await board.tasks.stage(id, stage.data, reason('why it is moving', 2))
+      if (stage.data === 'rejected') await claims.drop(id)
+      printTask(task, stage.data)
+      return 0
+    }
     case 'unblock':
     case 'reopen': {
-      one(rest[1], 'one task')
-      // The board answers the task either way: what it was says whether this changed it.
-      const from = verb === 'unblock' ? 'blocked' : 'failed'
-      const was = (await board.thread(id)).message.task?.state
-      const task = verb === 'unblock' ? await board.tasks.unblock(id) : await board.tasks.reopen(id)
-      if (was === from) printTask(task, verb === 'unblock' ? 'unblocked' : 'reopened')
+      const reopening = verb === 'reopen'
+      one(reopening ? rest[2] : rest[1], reopening ? 'a task and an optional reason, quoted' : 'one task')
+      const why = reopening && rest[1] !== undefined ? reason('why it is reopening') : undefined
+      // Legacy writes can succeed without a change. A staged reopen only succeeds if it moves.
+      const from = reopening ? 'failed' : 'blocked'
+      const { message: root } = await board.thread(id)
+      const task = reopening ? await board.tasks.reopen(id, why, { ifVersion: root.version }) : await board.tasks.unblock(id)
+      if ((reopening && task.task?.work) || root.task?.state === from) printTask(task, reopening ? 'reopened' : 'unblocked')
       else if (flags.json) result({ task, outcome: 'unchanged' })
       else out(`${messageRef(id)} wasn't ${from}`)
       return 0
@@ -2538,7 +2562,7 @@ function taskFailure(code: string, status: number): { class: Failure['class']; m
     case 'task_claimed':
       return { class: 'conflict', message: `Can't ${doing()}. Someone holds it.`, next: read('See who holds it, and until when') }
     case 'task_assigned':
-      return { class: 'conflict', message: `Can't ${doing()}. It's assigned to another profile.`, next: [...read("See whom it's for"), ...also('Or, as its owner, return it to the pool', 'assign', '--pool')] }
+      return { class: 'conflict', message: `Can't ${doing()}. It's assigned to another profile.`, next: [...read("See whom it's for"), ...also('Or, if you can reassign it, return it to the pool', 'assign', '--pool')] }
     case 'task_waiting':
       return { class: 'conflict', message: `Can't ${doing()}. It waits for other tasks.`, next: read('See what it waits for') }
     case 'task_blocked':
@@ -2566,6 +2590,23 @@ function taskFailure(code: string, status: number): { class: Failure['class']; m
       return { class: 'limit', message: `Can't ${doing()}. That's too many channels and owners.`, next: [{ instruction: 'Name fewer owners with --from, or a smaller subtree' }] }
     case 'channel_tree_too_large':
       return { class: 'limit', message: `Can't ${doing()}. That's too many channels.`, next: [{ instruction: 'Name a channel, or a smaller subtree' }] }
+    case 'invalid_task_stage':
+      return status === 409 ? { class: 'conflict', message: `Can't ${doing()} from its current stage.`, next: read('See its stage') } : null
+    case 'task_version_conflict':
+      return status === 409 && command === 'tasks' && ['scope', 'stage', 'reopen'].includes(args[0] ?? '')
+        ? { class: 'conflict', message: `Can't ${doing()}. It changed before the write.`, next: read('Read it again before deciding whether to retry') }
+        : null
+    case 'work_lifecycle_required': {
+      if (status !== 409) return null
+      const next = args[0] === 'create'
+        ? [{ instruction: 'Create it without --claim, then ask a scoper to scope it' }]
+        : args[0] === 'fail'
+          ? [...also('Release your claim for another attempt', 'release', ...asTyped()), { instruction: 'Or ask a scoper to reject it' }]
+          : []
+      return { class: 'conflict', message: `Can't ${doing()} on staged work.`, next }
+    }
+    case 'no_work_lifecycle':
+      return status === 501 ? { class: 'platform', message: `Can't ${doing()}. Staged work isn't available for this task.`, next: [] } : null
     case 'no_tasks':
       return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board keeps no tasks.`, next: [] } : null
     case 'reserved_label':

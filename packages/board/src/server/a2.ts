@@ -25,7 +25,7 @@ import { badRequest, duplicateId, forbidden, HttpError, notFound, textTooLong, t
 import { eventView, foldEvent, indexOf, lastFeed, loadBefore, OWN_CODE, pollFeed, readableFilter, ref, toMessageFilter, verifiedRecord, view, viewedBy, viewLinkedIds, viaOfRecord } from './feed.ts'
 import { createReads, tablesConsumer } from './reads.ts'
 import { createdBy, createSchedules, type Schedule } from './schedules.ts'
-import { createTasks, taskLimits } from './tasks.ts'
+import { createTasks, taskLimits, type WorkLifecycleOptions } from './tasks.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
 import { ack, pull, pullInbox, type QueueSession } from './registered.ts'
@@ -56,6 +56,7 @@ export type A2Options = {
    * platform's files where they are. `local()` always passes one.
    */
   blob?: BlobStore
+  workLifecycle?: WorkLifecycleOptions
 }
 
 const boardServer = (options: A2Options) =>
@@ -245,7 +246,7 @@ function build(options: A2Options, binding: BoardBinding) {
     registered: { state: registry.state, accessNow: (principal) => binding.accessNow(principal) },
   })
   const schedules = createSchedules({ store: log, scheduler: options.scheduler })
-  const tasks = createTasks({ store: log, scheduler: options.scheduler })
+  const tasks = createTasks({ store: log, scheduler: options.scheduler, workLifecycle: options.workLifecycle })
   const projection = tablesConsumer(store.tables)
 
   /** Sync's delivery in progress here: its receipts are its consumer's appends, fenced by its attempt. */
@@ -321,7 +322,7 @@ function build(options: A2Options, binding: BoardBinding) {
   // A schedule sends with what its creator may do now, which board()'s `access` says at each send. It
   // posts as its creator, through board(), so the middleware sees it.
   schedules.bind({ writes, accessNow: binding.accessNow, send: async (identity, origin, input) => sendAs(identity, origin, input) })
-  tasks.bind({ writes })
+  tasks.bind({ writes, accessNow: binding.accessNow })
   watchers.bind({ reads })
 
   /**
@@ -465,6 +466,7 @@ function build(options: A2Options, binding: BoardBinding) {
         project_id: id,
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
+        ...(options.workLifecycle ? { workLifecycle: 1 } : {}),
       }
       return body
     },
@@ -711,7 +713,9 @@ function build(options: A2Options, binding: BoardBinding) {
       return tasks.block(await identityOf(caller), messageAt(id), { reason, kind, ...(epoch !== undefined && token !== undefined ? { proof: { epoch, token } } : {}) })
     },
     unblockTask: async (caller, { id }) => tasks.unblock(await identityOf(caller), messageAt(id)),
-    reopenTask: async (caller, { id }) => tasks.reopen(await identityOf(caller), messageAt(id)),
+    reopenTask: async (caller, { id, reason, ifVersion }) => tasks.reopen(await identityOf(caller), messageAt(id), reason, ifVersion),
+    scopeTask: async (caller, { id, reason, ifVersion }) => tasks.scope(await identityOf(caller), messageAt(id), reason, ifVersion),
+    stageTask: async (caller, { id, stage, reason, ifVersion }) => tasks.stage(await identityOf(caller), messageAt(id), stage, reason, ifVersion),
     assignTask: async (caller, { id, for: actor }) => tasks.assign(await identityOf(caller), messageAt(id), actor),
     async setTaskNeeds(caller, { id, needs }) {
       taskLimits.needs(needs)

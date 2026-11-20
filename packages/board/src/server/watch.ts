@@ -43,6 +43,7 @@ const WATCHED = [
   'task.unblocked',
   'task.canceled',
   'task.reopened',
+  'task.stage_changed',
 ] as const
 
 /** Receipts and a claim's renewals: only a `--all` tail shows them. */

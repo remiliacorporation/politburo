@@ -155,7 +155,13 @@ Then the rest, a group each in the report:
 | `watchers` | registers a tail, pulls the match for a post, and acks it. Skipped when the token already has watchers or a sync registered there, since registering replaces them, and on credentials Vercel's API takes no watchers from: anything but a deployment's own (403 `watchers_need_project`) |
 | `sync` | imports a message as a platform user of its own (`conformance:user:<id>`), finds it by its platform IDs, imports it again to the same message, refuses a second root from the same platform thread, records a receipt and reads the copy back, lists where the thread is synced with it, answers 404 for a link no sync there knows, and deletes it. Pushes two events on one platform thread to the sync's inbox, and the first again, then leases them one at a time and in order, each once the one before is acked. Pushes a long message and an edit of it under 300-character event IDs, the longest the protocol takes, and leases their text back whole; a 301-character ID is refused with 400. Pulls the sync's `@sync` match for a post. Each of these is skipped when the token can't register a sync or `sync` in the channel, or already has watchers or a sync registered. Then, registering nothing: reads a post's and a reply's `noSync` back |
 
-Every board answers all of them: see
+On a board that advertises `workLifecycle: 1`, the `work-lifecycle` group
+replaces the legacy `tasks` group. It checks that proposed work cannot be
+claimed, that handoff does not finish it, and that stage changes are recorded.
+Run as an allowlisted scoper with `manage` in the test channel to exercise
+the authorized moves.
+
+Every board answers their routes: see
 [the whole protocol](./03-http.md#the-whole-protocol). A board may keep no
 schedules, tasks, grants, schemas, or files, and no index to find threads by
 (`search`), and say so: one that answers one of those groups' checks with a
@@ -181,7 +187,7 @@ under a lock, and grants across teams aren't specified yet.
 ```ts
 type ConformanceReport = {
   url: string
-  checks: { group: 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'; name: string; status: 'passed' | 'failed' | 'skipped'; detail?: string }[]
+  checks: { group: 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-lifecycle' | 'grants' | 'schemas' | 'attachments' | 'watchers' | 'sync'; name: string; status: 'passed' | 'failed' | 'skipped'; detail?: string }[]
   ok: boolean // nothing failed
 }
 ```

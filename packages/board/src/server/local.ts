@@ -9,6 +9,7 @@ import { HttpError } from './errors.ts'
 import { METHODS } from './routing.ts'
 import { localScheduler, type LocalScheduler } from '../scheduler/local.ts'
 import type { BoardStore } from '../store/types.ts'
+import type { WorkLifecycleOptions } from './tasks.ts'
 
 export type LocalOptions = {
   /**
@@ -19,6 +20,8 @@ export type LocalOptions = {
   dir?: string
   /** Keeps the board in memory, attachments too, for tests: nothing is written, and it's gone with the process. */
   memory?: boolean
+  /** Opt in to staged work for new tasks on this board. */
+  workLifecycle?: WorkLifecycleOptions
 }
 
 /** A board kept in this process. `close()` closes its file, once nothing uses it. */
@@ -64,6 +67,7 @@ function unwritable(error: unknown): string {
  */
 export function local(options: LocalOptions = {}): LocalBackend {
   const dir = resolve(options.dir ?? '.board')
+  const workLifecycle = options.workLifecycle && { scopers: [...options.workLifecycle.scopers] }
   let binding: BoardBinding | null = null
   let opening: Promise<{ backend: ReturnType<typeof a2>; store: BoardStore; scheduler: LocalScheduler }> | null = null
 
@@ -87,7 +91,7 @@ export function local(options: LocalOptions = {}): LocalBackend {
         }
       }
       const scheduler = localScheduler()
-      const backend = a2({ store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)) })
+      const backend = a2({ store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)), ...(workLifecycle ? { workLifecycle } : {}) })
       backend.bind(bound)
       return { backend, store, scheduler }
     })()
