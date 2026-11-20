@@ -8,7 +8,7 @@ import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { GLOBAL_CHAT, GLOBAL_CHAT_PATH, channelPath, here, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { channelPath, here, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
@@ -183,18 +183,15 @@ export function App() {
     if (!naming) board.boot().catch((error: Error) => setFailed(error.message))
   }, [naming])
 
-  // Old links: /t/12 opens the thread pane, and a sync entry's inbox is in settings.
+  // Old links: /t/12 opens the thread pane, a sync entry's inbox is in settings, and global-chat is a channel.
   useEffect(() => {
     const old = /^\/t\/(\d+)$/.exec(where.path)
     if (old) navigate(`/?thread=${old[1]}`, true)
     const inbox = /^\/inbox\/(.+)$/.exec(where.path)
     if (inbox) navigate(`/settings/sync/${inbox[1]}`, true)
     if (where.path === '/settings') navigate('/settings/access', true)
-    if (where.path !== GLOBAL_CHAT_PATH && route(where.path).view === 'global-chat') {
-      const query = where.params.toString()
-      navigate(`${GLOBAL_CHAT_PATH}${query ? `?${query}` : ''}${location.hash}`, true)
-    }
-  }, [where.path, where.params])
+    if (where.path === '/global-chat') navigate(`${channelPath('global-chat')}${location.search}${location.hash}`, true)
+  }, [where.path])
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
@@ -209,10 +206,15 @@ export function App() {
 
   const current = route(where.path)
   // The tab says which board too, so two inspectors side by side tell apart.
-  const named = boardWords(state.discovery).name
+  const { name, at } = boardWords(state.discovery)
   useEffect(() => {
-    document.title = `${current.view === 'channel' ? `#${current.channel}` : current.view === 'settings' ? `${current.section} · settings` : current.view === 'missing' ? 'nothing here' : current.view === 'presidium' ? 'Presidium' : current.view} · ${named}`
-  }, [where.path, named])
+    const title = current.view === 'channel' ? `#${current.channel}`
+      : current.view === 'settings' ? `${current.section} · settings`
+      : current.view === 'missing' ? 'nothing here'
+      : current.view === 'presidium' ? 'PRESIDIUM'
+      : current.view === 'home' ? 'Handoffs' : current.view
+    document.title = `${title} · ${name}`
+  }, [where.path, name])
 
   const known = useMemo(() => knownLabels(state), [state.messages])
   const viewer = useMemo(() => (state.me ? board.viewerOf(state.me) : null), [state.me])
@@ -278,25 +280,23 @@ export function App() {
         {current.view === 'home' && <Home state={state} now={now} lead={expand} />}
         {current.view === 'presidium' && (
           <>
-            <Header title="Presidium" lead={expand} />
+            <Header title="PRESIDIUM" lead={expand} />
             <div className="page home-view">
-              <div>
+              <section className="home-intro">
+                <p>This index lists only the board connected to this inspector.</p>
                 {state.discovery ? (
-                  <>
-                    <p>This inspector is connected to one board.</p>
-                    <ul className="handoff-list">
-                      <li><Link to="/">{state.discovery.name || 'Current board'}</Link></li>
-                    </ul>
-                  </>
+                  <ul className="handoff-list">
+                    <li>
+                      <strong>{name}</strong>{at && <small> · {at}</small>}
+                      <div><Link to="/">Handoffs</Link></div>
+                    </li>
+                  </ul>
                 ) : <p>Board discovery is unavailable.</p>}
-              </div>
+              </section>
             </div>
           </>
         )}
         {current.view === 'activity' && <Activity state={state} options={options} lead={expand} filters={filters} />}
-        {current.view === 'global-chat' && (
-          <Channel key="global-chat" chat channel={GLOBAL_CHAT} state={state} options={options} known={known} lead={expand} filters={filters} />
-        )}
         {current.view === 'channel' && (
           <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
         )}
@@ -347,16 +347,14 @@ function Activity(props: { state: State; options: RowOptions; lead: ReactNode; f
   const { state, options, lead } = props
   const { filter } = props.filters
   const key = JSON.stringify(filter)
-  useEffect(() => {
-    if (filtering(filter)) void board.loadFiltered(undefined, filter)
-  }, [key])
+  // A reply is task activity only when its root is known to be a task.
   const messages = useMemo(
-    () => recent(state, 200, filtering(filter) ? (m) => matches(state, m, filter) : undefined),
+    () => recent(state, 200, (m) => isTask(m.re === null ? m : state.messages[m.re]) && matches(state, m, filter)),
     [state.messages, state.ops, state.actors, key],
   )
   return (
     <>
-      <Header title="activity" meta={state.activityRefused === null ? 'the latest across every channel' : 'the latest of what this page has loaded'} live={state.live} lead={lead}>
+      <Header title="activity" meta="recent task messages loaded in this inspector" live={state.live} lead={lead}>
         <FilterControls filters={props.filters} />
       </Header>
       <FilterChips filter={filter} onChange={props.filters.setFilter} />
@@ -364,7 +362,7 @@ function Activity(props: { state: State; options: RowOptions; lead: ReactNode; f
         {/* A board that can't read its feed's newest events across channels: its own words, where they would be. */}
         {state.activityRefused !== null && <p className="empty error">{state.activityRefused}</p>}
         {state.activityRefused === null && messages.length === 0 && (
-          <p className="empty">{filtering(filter) ? 'nothing matches these filters' : state.cursor === null ? 'loading…' : 'no activity yet'}</p>
+          <p className="empty">{filtering(filter) ? 'nothing matches these filters' : state.cursor === null ? 'loading…' : 'no task activity loaded'}</p>
         )}
         <Messages
           messages={messages}
@@ -384,7 +382,7 @@ function Activity(props: { state: State; options: RowOptions; lead: ReactNode; f
   )
 }
 
-function Channel(props: { chat?: boolean; channel: string; state: State; options: RowOptions; known: KnownLabels; lead: ReactNode; filters: Filters }) {
+function Channel(props: { channel: string; state: State; options: RowOptions; known: KnownLabels; lead: ReactNode; filters: Filters }) {
   const { channel, state, options } = props
   const { filter } = props.filters
   const canPost = options.viewer.may('post', channel)
@@ -407,7 +405,6 @@ function Channel(props: { chat?: boolean; channel: string; state: State; options
   const threads = filtering(filter) ? all.filter((t) => matches(state, t.root, filter) || t.replies.some((r) => matches(state, r, filter))) : all
   const pending = filtering(filter) ? [] : posts
   const roots = threads.map((t) => t.root)
-  if (props.chat) roots.sort(byWritten)
   const summaries = new Map(threads.map((t) => [t.root.id, t.summary]))
   const info = state.channels[channel]
   const newest = listed
@@ -417,19 +414,19 @@ function Channel(props: { chat?: boolean; channel: string; state: State; options
   return (
     <>
       <Header
-        title={props.chat ? 'Global Chat' : `#${channel}`}
-        meta={props.chat ? 'the shared board conversation' : info?.threads !== undefined && info.messages !== undefined ? `${count(info.threads, 'thread')} · ${count(info.messages, 'message')}` : undefined}
+        title={`#${channel}`}
+        meta={info?.threads !== undefined && info.messages !== undefined ? `${count(info.threads, 'thread')} · ${count(info.messages, 'message')}` : undefined}
         live={state.live}
         lead={props.lead}
       >
         <FilterControls filters={props.filters} />
       </Header>
       <FilterChips filter={filter} onChange={props.filters.setFilter} />
-      <Feed scope={channel} first={roots[0]?.id ?? ''} last={`${props.chat ? roots.at(-1)?.id ?? '' : newest}+${pending.length}`} older={() => board.loadOlder(channel)}>
+      <Feed scope={channel} first={roots[0]?.id ?? ''} last={`${newest}+${pending.length}`} older={() => board.loadOlder(channel)}>
         {roots.length === 0 && pending.length === 0 && (
           <p className="empty">{loading ? 'loading…' : filtering(filter) ? 'nothing matches these filters' : canPost ? 'no messages yet: say something' : 'no messages yet'}</p>
         )}
-        <Messages messages={roots} now={options.now} options={{ ...options, summary: (m) => summaries.get(m.id) }} {...(listed && !props.chat ? { at: activeAt } : {})} />
+        <Messages messages={roots} now={options.now} options={{ ...options, summary: (m) => summaries.get(m.id) }} {...(listed ? { at: activeAt } : {})} />
         <Pendings posts={pending} me={state.me!} after={roots.at(-1)} afterHasReplies={(summaries.get(roots.at(-1)?.id ?? '')?.count ?? 0) > 0} />
       </Feed>
       {canPost && <Composer
@@ -439,7 +436,7 @@ function Channel(props: { chat?: boolean; channel: string; state: State; options
         known={props.known}
         syncConfigured={options.syncConfigured}
         mayLabel={() => options.viewer.may('label', channel)}
-        tasks={props.chat ? undefined : { state }}
+        tasks={{ state }}
         onSend={({ text, noSync, labels, files, task, later }) => void board.send({ channel, re: null, text, noSync, labels, files, ...(task ? { task } : {}), ...(later ? { later } : {}) })}
         onEditLast={() => {
           const mine = lastOwn(roots, state.me!.actor)

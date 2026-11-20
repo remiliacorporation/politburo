@@ -1,4 +1,4 @@
-import { Activity, Check, ChevronsUpDown, ClipboardList, House, LayoutGrid, Lock, MessageSquare, PanelLeftClose, Plus, Settings } from 'lucide-react'
+import { Activity, Check, ChevronsUpDown, ClipboardList, House, LayoutGrid, Lock, PanelLeftClose, Plus, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView, Me } from '../../api/routes.ts'
 import { compileAccess, type Access } from '../../server/access.ts'
@@ -6,7 +6,7 @@ import * as board from './board.ts'
 import { toast } from './chrome.ts'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Avatar } from './message.tsx'
-import { GLOBAL_CHAT, GLOBAL_CHAT_PATH, channelPath, Link, navigate, type Route } from './nav.tsx'
+import { channelPath, Link, navigate, type Route } from './nav.tsx'
 import { openTasks, type State } from './store.ts'
 import { ContextMenuArea, Menu, MenuItem, MenuSeparator } from './ui.tsx'
 import { boardWords, shownName } from './words.ts'
@@ -35,7 +35,7 @@ function useSeen(state: State, current: Route): Record<string, number> {
       save(Object.fromEntries(channels.map((channel) => [channel.path, channel.lastIndex ?? 0])))
   }, [state.channels])
   useEffect(() => {
-    const path = current.view === 'global-chat' ? GLOBAL_CHAT : current.view === 'channel' ? current.channel : null
+    const path = current.view === 'channel' ? current.channel : null
     if (path === null) return
     const channel = state.channels[path]
     if (channel?.lastIndex !== undefined && (seen[channel.path] ?? 0) < channel.lastIndex) save({ ...seen, [channel.path]: channel.lastIndex })
@@ -48,7 +48,6 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
   const groups = useMemo(() => {
     const out = new Map<string, ChannelView[]>()
     for (const channel of Object.values(state.channels).sort((a, b) => a.path.localeCompare(b.path))) {
-      if (channel.path === GLOBAL_CHAT) continue
       const at = channel.path.lastIndexOf('/')
       const group = at === -1 ? 'channels' : channel.path.slice(0, at)
       out.set(group, [...(out.get(group) ?? []), channel])
@@ -76,7 +75,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
       <div className="sidebar-scroll">
         <Link to="/presidium" className="item" current={current.view === 'presidium'}>
           <LayoutGrid size={14} aria-hidden="true" />
-          <span>Presidium</span>
+          <span>PRESIDIUM</span>
         </Link>
         <Link to="/" className="item" current={current.view === 'home'}>
           <House size={14} aria-hidden="true" />
@@ -126,11 +125,6 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
         ))}
       </div>
       <div className="sidebar-foot">
-        <Link to={GLOBAL_CHAT_PATH} className="item" current={current.view === 'global-chat'}>
-          <MessageSquare size={14} aria-hidden="true" />
-          <span className="name">Global Chat</span>
-          {(state.channels[GLOBAL_CHAT]?.lastIndex ?? 0) > (seen[GLOBAL_CHAT] ?? Number.POSITIVE_INFINITY) && current.view !== 'global-chat' && <i className="dot" />}
-        </Link>
         <Link to="/settings/access" className="item settings" current={current.view === 'settings'}>
           <Settings size={14} strokeWidth={1.75} />
           <span>settings</span>

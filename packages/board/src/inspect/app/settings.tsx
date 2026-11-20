@@ -32,15 +32,7 @@ export function Settings(props: { state: State; viewer: Viewer; now: number; lea
   const sections = SECTIONS.filter((name) => name === 'sync' ? syncAvailable : name !== 'watchers' || viewer.manages || section === 'watchers')
   return (
     <>
-      <Header title="settings" lead={props.lead} flat>
-        <label className="button-sounds">
-          <input type="checkbox" checked={sounds} onChange={(event) => {
-            setButtonSounds(event.target.checked)
-            setSounds(event.target.checked)
-          }} />
-          button sounds
-        </label>
-      </Header>
+      <Header title="settings" lead={props.lead} flat />
       <nav className="tabs">
         {sections.map((name) => (
           <Link key={name} to={`/settings/${name}`} className="tab" current={name === section}>
@@ -49,6 +41,14 @@ export function Settings(props: { state: State; viewer: Viewer; now: number; lea
         ))}
         <span className="tab-actions" ref={setSlot} />
       </nav>
+      <label className="button-sounds">
+        <input type="checkbox" checked={sounds} onChange={(event) => {
+          const checked = event.currentTarget.checked
+          setButtonSounds(checked)
+          setSounds(checked)
+        }} />
+        Button sounds
+      </label>
       <ActionsSlot.Provider value={slot}>
         <div className="page">
           {section === 'access' && <Access state={state} viewer={viewer} where={props.where} />}

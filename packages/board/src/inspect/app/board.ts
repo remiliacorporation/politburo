@@ -477,21 +477,28 @@ listeners.add(() => {
  * now, or what the board refused it for: `tooWide` when the filter's tree holds more channels than
  * one list reads, as Vercel's board says for a caller who doesn't read every channel.
  */
-export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<{ cursor: string; last: MessageView | undefined; more: boolean } | { refused: string; tooWide: boolean }> {
+export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<
+  { cursor: string; last: MessageView | undefined; more: boolean } | { refused: string; tooWide: boolean; retry: 'same' | 'first' | null }
+> {
   try {
     const page = await listTasks({
-        state: filter.state,
-        ...(filter.channel ? { channel: filter.channel } : {}),
-        ...(filter.label.length > 0 ? { label: filter.label } : {}),
-        ...(filter.owner ? { owner: filter.owner } : {}),
-        ...(filter.for ? { for: filter.for } : {}),
-        ...(after ? { after } : {}),
-      })
+      state: filter.state,
+      ...(filter.channel ? { channel: filter.channel } : {}),
+      ...(filter.label.length > 0 ? { label: filter.label } : {}),
+      ...(filter.owner ? { owner: filter.owner } : {}),
+      ...(filter.for ? { for: filter.for } : {}),
+      ...(after ? { after } : {}),
+    })
     const roots = page.tasks.map((task) => task.message)
     set((s) => store.merge(s, roots))
-    return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE }
+    const more = roots.length === PAGE
+    if (more && page.cursor === after) return { refused: 'The task list did not advance.', tooWide: false, retry: 'same' }
+    return { cursor: page.cursor, last: roots.at(-1), more }
   } catch (error) {
-    return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large' }
+    const failure = error as { code?: unknown; status?: unknown } | null
+    const tooWide = failure?.code === 'channel_tree_too_large'
+    const retry = tooWide || failure?.status === 501 ? null : after && failure?.code === 'invalid_cursor' ? 'first' : 'same'
+    return { refused: refusal(error), tooWide, retry }
   }
 }
 

@@ -1,4 +1,4 @@
-import { Clock, Ellipsis, FileText, MessageSquare, SmilePlus, Tag } from 'lucide-react'
+import { Clock, Ellipsis, FileText, MessageSquare, Tag } from 'lucide-react'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
@@ -14,9 +14,7 @@ import { Ago } from './nav.tsx'
 import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type Pending, type ReplySummary, type State, type Viewer } from './store.ts'
 import { TaskLine } from './task.tsx'
 import { authorName, fileSize, shownName, timingWords } from './words.ts'
-import { ContextMenuArea, EmojiPicker, fieldMenu, LabelEditor, Panel, Menu, MenuEmojiRow, MenuItem, MenuSeparator, nativeMenu, type KnownLabels } from './ui.tsx'
-
-const MENU_EMOJI = ['thumbs_up', 'heart', 'laugh', 'party', 'eyes', 'check']
+import { ContextMenuArea, fieldMenu, LabelEditor, Panel, Menu, MenuItem, MenuSeparator, nativeMenu, type KnownLabels } from './ui.tsx'
 
 export type RowOptions = {
   me: string
@@ -318,10 +316,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
   const name = authorName(m)
   const canEdit = m.by.actor === options.me && options.viewer.may('post', m.channel)
   const canLabel = !m.deleted && options.viewer.may('label', m.channel)
-  const canReact = !m.deleted && options.viewer.may('react', m.channel)
   const replyAction = m.re === null && options.viewer.may('post', m.channel) ? 'reply in thread' : 'open thread'
-  const reacted = (emoji: string) => (m.reactions[emoji] ?? []).includes(options.me)
-  const toggle = (emoji: string) => void board.react(m.id, emoji, reacted(emoji))
   const replies = m.re === null ? options.summary?.(m) : undefined
   const thread = m.re ?? m.id
   // A task's state is its `board.task` label too, which its line already says.
@@ -329,7 +324,6 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
 
   const items = (
     <>
-      {canReact && <><MenuEmojiRow emojis={MENU_EMOJI} onPick={toggle} /><MenuSeparator /></>}
       {options.openThread && <MenuItem onClick={() => options.openThread!(thread)}>{replyAction}</MenuItem>}
       {canLabel && <MenuItem onClick={() => setLabelsOpen(true)}>labels…</MenuItem>}
       {m.text && <MenuItem onClick={() => void copy(m.text, 'text')}>copy text</MenuItem>}
@@ -406,11 +400,11 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
                   {key}={value}
                 </button>
               ) : <span key={key} className="label">{key}={value}</span>)}
-              {Object.entries(m.reactions).map(([emoji, actors]) => {
-                const chip = { className: `chip${reacted(emoji) ? ' mine' : ''}`, title: `:${emoji}: ${actors.join(', ')}` }
-                const count = <>{displayEmoji(emoji)} {actors.length}</>
-                return canReact ? <button key={emoji} {...chip} onClick={() => toggle(emoji)}>{count}</button> : <span key={emoji} {...chip}>{count}</span>
-              })}
+              {Object.entries(m.reactions).map(([emoji, actors]) => (
+                <span key={emoji} className={`chip${actors.includes(options.me) ? ' mine' : ''}`} title={`:${emoji}: ${actors.join(', ')}`}>
+                  {displayEmoji(emoji)} {actors.length}
+                </span>
+              ))}
             </div>
           )}
           {Object.entries(m.undelivered ?? {}).map(([target, error]) => (
@@ -432,10 +426,6 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
         </div>
         {active && !m.deleted && (
           <div className="actions">
-            {canReact && <><button className="tool" title={`${reacted('thumbs_up') ? 'remove' : 'react'} 👍`} onClick={() => toggle('thumbs_up')}>
-              👍
-            </button>
-            <EmojiPicker trigger={<SmilePlus size={15} strokeWidth={1.75} />} onPick={toggle} onOpenChange={setMenuOpen} /></>}
             {options.openThread && (
               <button className="tool" title={replyAction} onClick={() => options.openThread!(thread)}>
                 <MessageSquare size={15} strokeWidth={1.75} />

@@ -15,7 +15,7 @@ const current = () => (location.pathname === base || location.pathname.startsWit
 const address = (to: string) => `${base}${to}`
 
 export function navigate(to: string, replace = false) {
-  if (to === current() + location.search) return
+  if (to === current() + location.search + location.hash) return
   history[replace ? 'replaceState' : 'pushState'](null, '', address(to))
   dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -67,7 +67,7 @@ export function here(changes: { thread?: string | null; filter?: Filter; params?
     if (changes.filter.text) params.set('text', changes.filter.text)
   }
   const query = params.toString()
-  return `${current()}${query ? `?${query}` : ''}`
+  return `${current()}${query ? `?${query}` : ''}${location.hash}`
 }
 
 export function Link(props: { to: string; className?: string; current?: boolean; title?: string; onNavigate?: () => void; children: ReactNode }) {
@@ -163,16 +163,12 @@ export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
 export const SECTIONS = ['access', 'schemas', 'schedules', 'watchers', 'sync'] as const
 export type Section = (typeof SECTIONS)[number]
 
+export const channelPath = (channel: string) => `/c/${channel}`
+
 /** The view a path names. Settings is one view: its section, and what's open in it (a schema, a sync entry). */
-export const GLOBAL_CHAT = 'global-chat'
-export const GLOBAL_CHAT_PATH = `/${GLOBAL_CHAT}`
-
-export const channelPath = (channel: string) => channel === GLOBAL_CHAT ? GLOBAL_CHAT_PATH : `/c/${channel}`
-
 export type Route =
   | { view: 'home' }
   | { view: 'presidium' }
-  | { view: 'global-chat' }
   | { view: 'activity' }
   | { view: 'tasks' }
   | { view: 'channel'; channel: string }
@@ -188,7 +184,6 @@ export function route(path: string): Route {
   }
   if (decoded === '/') return { view: 'home' }
   if (decoded === '/presidium') return { view: 'presidium' }
-  if (decoded === GLOBAL_CHAT_PATH || decoded === `/c/${GLOBAL_CHAT}`) return { view: 'global-chat' }
   if (decoded === '/activity') return { view: 'activity' }
   if (decoded === '/tasks') return { view: 'tasks' }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }

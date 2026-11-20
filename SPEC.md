@@ -2266,13 +2266,34 @@ computer who don't need it on the internet. No config file: it's flags only.
   the team, with what the grants give.
 
 **`inspect`** serves a web UI for whichever board the CLI points at, on this
-machine, with the CLI's identity. It's the board's own UI: every deployment gets
-it, and nothing is hosted.
-- **Read and write as you.** Activity, channels grouped by prefix with unread
-  dots, threads in a side pane (`?thread=12`), labels, reactions (with a
-  picker), tombstones, undelivered targets, and each sync entry's raw inbox,
-  which discovery lists. Start threads, reply, react, label, and edit or delete
-  your own messages. `--as` picks the profile, as for every command.
+machine, with the CLI's identity.
+- **Handoffs is home (`/`).** It lists the tasks the page has loaded, with
+  links to their threads and prerequisites. Each row reads the board's task
+  view for its state, assignment, claimant and lease, needs, hold, and outcome
+  (see [Tasks](#tasks)). An elapsed lease no longer holds a task, even if the
+  board hasn't recorded expiry yet. A completed task's result is a delivery,
+  not an approval. Neither reply text nor reactions decide task state.
+- **PRESIDIUM (`/presidium`) shows the connected board only.** The inspector
+  has one handle, which exposes no board list. The page neither discovers
+  other boards nor switches between them.
+- **Navigation and feedback.** The maroon and gold headers carry the
+  POLITBURO emblem and name where the home link is shown. That link and the
+  sidebar's Handoffs link return home without an open thread. **Show sidebar**
+  opens hidden navigation; on a narrow screen, picking a view closes it.
+  **Button sounds** in Settings mutes button feedback when off. The browser
+  remembers it without writing to the board.
+- **Activity shows recent messages from task threads known to the page.** A
+  reply qualifies only when the page knows its root is a task. Activity
+  filters loaded messages and follows live updates; it is not a board-wide
+  channel browser. Channels stay in the sidebar, grouped by prefix with
+  unread dots where supported. There is no separate Global Chat; the old
+  `/global-chat` path opens `/c/global-chat` as an ordinary channel.
+- **Read and write as you.** Start threads in channels and open their side
+  pane (`?thread=12`) to read or add work-log replies. Label messages and
+  edit or delete your own. Reactions display but have no picker or actions;
+  emoji in text and reactions through the CLI, handle, and sync are unchanged.
+  `--as` picks the profile, as for every command. The sidebar's Settings
+  opens access, schemas, schedules, watchers, and configured sync inboxes.
 - **A handle like any other.** The page is a handle on the inspector's
   `/board` proxy (the internal `http()`, from the default build, its `fetch`
   sending the per-run token), which forwards the board's API
@@ -3575,15 +3596,16 @@ the handle's `tasks`, the reserved `board.` labels (on every backend, since
 `board()` refuses them), the `tasks` conformance group, and the CLI: `vb tasks`
 and its claims directory, the task line in `vb read`, task events in `vb
 tail`, and the `tasks` command a `reserved_label` failure names. `vercel()`
-maps the routes onto Vercel's API. Next: the inspector, and sync re-rendering
-a copy when its task changes.
+maps the routes onto Vercel's API. The inspector shows tasks in Handoffs,
+in Tasks, and in the thread pane.
 
 A task is a thread that someone's agents are to do: its root says what, its
 replies are the work log and the discussion, and the board keeps its state:
 who may work it, who holds it, what it waits for, and how it ended. It's a
-thread with a state, not an entity of its own, so `read`, `tail`, labels,
-watchers, sync, and `vb inspect` work on a task as on any thread, with nothing
-new.
+thread with a state, not an entity of its own. Ordinary reads, `tail`, labels,
+watchers, and sync still work on its thread. The board decides when task
+state changes. Work-log replies, reactions, and platform delivery do not
+change it on their own.
 
 ```text
 $ vb tasks create work "fix CVE-123 in acme/web" --label step=fix
@@ -4219,7 +4241,7 @@ makes and writes every root it posts.
 | What does each import hold? | **Imports follow the backend.** `@vercel/board` is `board()`, the handle on every board, and what works with any backend. Each backend's own pieces live under its path: `@vercel/board/backend-local`. The backends `board()` picks itself, `vercel()` and `http()`, are internal, so a project writes `board()`, `board({ name })`, `board({ fetch })`, or `BOARD_URL`, never a backend of board's but `local()`. Beside them, `@vercel/board/access` for verifying callers and what they may do, `@vercel/board/sync-slack`, `@vercel/board/sync-github`, and `@vercel/board/sync-linear`, named for the platform they sync, `@vercel/board/sync-chat-sdk` for any other platform's Chat SDK adapter, `@vercel/board/sync` for a provider of your own, and `@vercel/board/conformance`. |
 | Is there one filter for every write, or one per source? | **One: `middleware` on `board()`**, on any backend (board thread #4100). It sees every write once, before it reaches the backend; a board on `http()` runs its own on what it writes, and the board it uses runs its own on what arrives. Sync functions only see synced events, and API writes never pass them, so a filter there misses the CLI, CI, and agents. |
 | Does the board link a person's Slack and GitHub accounts to them? | **No.** It linked them by a one-time code or the platform's own sign-in, and posted as the person with their token, and nobody linked an account, so both are gone. Each account is an actor of its own; an older log's links still read, and the folds ignore them. |
-| Is a task an entity of its own? | **No: a thread with a state** (see [Tasks](#tasks)). Its root is its text and its replies its log, so reads, `tail`, labels, watchers, sync, and the inspector need nothing new. The board writes its state as the `board.task` label and the root's `task` view. Vercel's API kept tasks apart from threads first; a thread makes them part of the conversation people already have. |
+| Is a task an entity of its own? | **No: a thread with a state** (see [Tasks](#tasks)). Its root is its text and its replies its log, so ordinary reads, `tail`, labels, watchers, and sync still work on its thread. The inspector also shows its task view. The board writes its state as the `board.task` label and the root's `task` view. Vercel's API kept tasks apart from threads first; a thread makes them part of the conversation people already have. |
 | Where does the board keep state people filter on? | **In labels under `board.`,** which only the board writes. Every filter, the event feed's before-or-after rule, watchers, the tables, the inspector, and renderers already handle labels; a filter of its own (`--task`) would have to be taught to each. A namespace nobody else uses keeps existing labels untouched, and the key says who wrote it. |
 | Who may work a task? | **Anyone with `label` in its channel.** A task's state is its root's `board.task` label, so working it changes a thread's state, which `label` grants; `post` only says things, and broad `post` grants are common. Its owner, or `manage`, keeps the rest: assigning, holding, reopening, canceling. Agents take others' tasks only with `--from`, so a teammate's text steers no one by accident. |
 | Who decides how tasks behave? | **board.** It specs them and the conformance kit's `tasks` group checks them; Vercel's API conforms check by check, as it did for label `if`, reply `after`, and `revision`. |

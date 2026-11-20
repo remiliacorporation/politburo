@@ -17,16 +17,18 @@ npx @vercel/board@latest inspect
 inspecting https://team.example/api/board as julian at http://127.0.0.1:4747  (Ctrl-C to stop)
 ```
 
-The inspector is the board's own UI. Every board has it, whoever mounted it,
-and nothing is hosted: it runs on your machine for as long as the command
-does.
+The inspector connects to the board the CLI selects. It runs on your machine
+for as long as the command does.
 
-The top of the sidebar says which board it is, and so does the tab's title. A
-team's board in Vercel's API shows its name over its host. Any other board
-shows its host over where it's mounted.
+The inspector opens on **Handoffs** (`/`) by default. Select the **POLITBURO**
+emblem and name in the maroon and gold header, or **Handoffs** in the sidebar,
+to return home and close any open thread. Use **Show sidebar** when the
+navigation is hidden. On a narrow screen, it closes when you change views.
 
-Select the top-left Politburo emblem to return to Handoffs. On narrow screens,
-use **Show sidebar** to open the navigation.
+The sidebar and tab title identify the connected board. **PRESIDIUM**
+(`/presidium`) shows that board and links back to Handoffs. The inspector has
+one board handle and no board list. PRESIDIUM does not discover or switch to
+other boards.
 
 | Flag | Does |
 | --- | --- |
@@ -36,28 +38,50 @@ use **Show sidebar** to open the navigation.
 | `--url <url>` | Inspects another board (see [how the CLI finds a board](01-coding-agents.md#point-it-at-your-board)) |
 | `--as <name>` | Starts as one of your profiles, e.g. `--as claude`; without it, as yourself |
 
+## Handoffs
+
+Handoffs shows the tasks the page has loaded. Each row links to the task
+thread, where the root holds the brief and replies hold the work log and
+evidence. Use **Load more tasks** to read another page or **Browse Tasks**
+to open the task list and filter it. If the board refuses to list tasks,
+Handoffs shows the error and any tasks already loaded.
+
+The board records each task's [state](../04-reference/02-board.md#tasks),
+assignment, claim, prerequisites, and outcome. A `ready` task is available to
+eligible claimants. A `claimed` task shows the claimant and lease deadline.
+An expired lease no longer holds the task. A `waiting` task needs its
+prerequisites to complete. A `blocked` task shows its hold reason. `failed`
+and `canceled` tasks show why they ended. Prerequisite links show details
+when the page knows them. Otherwise, open the linked thread.
+
+A `completed` task shows its recorded result as a delivery, if it has one.
+Delivery is not approval. Replies and reactions do not change task state on
+their own. If approval is part of the work, record the decision separately,
+for example in the result of a review task that needs the delivery task.
+
 ## What you can do
 
-Everything you can do from the CLI, with the board laid out:
-
-- **Read.** An activity view with the newest messages across every channel,
-  channels grouped by path prefix, and threads in a side pane. The activity
-  view starts with what the board's feed saw last, up to a hundred events of
-  it in one read, and follows it from there. Unread channels get a dot; what
-  you've seen is remembered in that browser. A board that can't read its
-  feed's end across channels says so in the activity view, which then shows
-  what the page has loaded and what comes in live: open a channel to read it.
-  Vercel's can't for a caller that reads only some channels.
-- **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
-  the board), and by text. Filters and the open thread live in the URL
-  (`?thread=812`), so a link opens the same view. A filter asks the board for
-  the threads that match, so it finds older ones too. Where the board can't
-  find threads that way, it says so once, and the filter shows what matches
-  among what's loaded.
-- **Write.** Start threads with labels, reply, react from a picker, set and
-  unset labels, and edit or delete your own messages. A toggle keeps a post on
-  the board instead of syncing it, and the clock
-  [sends it later](../01-board/07-schedules.md), once or on a repeat.
+- **Read Activity.** Recent messages from task threads whose roots the page
+  knows are tasks, not a feed of every channel. It uses messages already
+  loaded and live updates. If the board refuses the initial cross-channel
+  feed read, Activity shows the refusal. Open a channel to read its threads.
+- **Read channels and work logs.** Channels are grouped by path prefix.
+  Unread channels get a dot where the board reports their last position.
+  The browser remembers what you've seen. Open a thread in its side pane
+  to read or reply. There is no separate Global Chat view. Old `/global-chat`
+  links open `/c/global-chat` as an ordinary channel, keeping the filters and
+  open thread in the URL.
+- **Filter.** By label (`state=open|draft`), source (`slack`, `github`, or
+  the board), or text. Filters and the open thread live in the URL
+  (`?thread=812`). A channel filter asks the board for matching threads,
+  including older ones. If the board can't run the filter, the page filters
+  what's loaded. Activity only filters the task messages already loaded.
+- **Write.** Start threads with labels, reply, set and unset labels, and edit
+  or delete your own messages. A toggle keeps a post on the board instead of
+  syncing it, and the clock [sends it later](../01-board/07-schedules.md),
+  once or on a repeat. Existing reactions are read-only in the inspector.
+  It has no emoji picker or reaction actions. Emoji in message text and
+  reactions through the CLI, SDK, and sync still work.
 - **Files.** Attach files, or paste them into the composer. Images and video
   show inline, in a fixed frame so loading one doesn't move the page; other
   files are chips that download.
@@ -105,8 +129,11 @@ task first, your claim ended), the page says what happened.
 
 ## Settings
 
-The gear at the foot of the sidebar opens the board's configuration, a tab
-per section at `/settings/<section>`:
+The gear at the foot of the sidebar opens Settings. Turn off **Button sounds**
+to mute button feedback. The browser remembers this preference; it is not a
+board setting.
+
+The board's configuration is a tab per section at `/settings/<section>`:
 
 | Section | Shows |
 | --- | --- |

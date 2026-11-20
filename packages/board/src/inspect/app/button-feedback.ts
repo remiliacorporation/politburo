@@ -2,7 +2,7 @@ const preference = 'board.button-sounds'
 const majorPentatonic = [0, 2, 4, 7, 9]
 let enabled = true
 let context: AudioContext | undefined
-let previousNote: number | undefined
+const pitches = new WeakMap<HTMLButtonElement, number>()
 
 export function buttonSoundsEnabled() {
   return enabled
@@ -13,19 +13,33 @@ export function setButtonSounds(enabledNow: boolean) {
   try { localStorage.setItem(preference, enabled ? 'on' : 'off') } catch { /* optional storage */ }
 }
 
-export function installButtonFeedback(root: HTMLElement) {
+export function installButtonFeedback(page: Document) {
   try { enabled = localStorage.getItem(preference) !== 'off' } catch { /* optional storage */ }
-  // Native click covers pointer, touch, and keyboard activation without pairing
-  // pointer/key events with the click they synthesize.
-  root.addEventListener('click', (event) => {
+  // A trusted click covers pointer, touch and keyboard without playing on both
+  // press and activation. Listen on the document to include portaled buttons.
+  page.addEventListener('click', (event) => {
     if (!enabled || !event.isTrusted || event.defaultPrevented) return
     const button = event.target instanceof Element && event.target.closest('button')
-    if (!button || !root.contains(button) || button.closest(':disabled, [aria-disabled="true"], [inert]')) return
-    void thunk()
+    if (!button || button.matches(':disabled') || button.closest('[aria-disabled="true"], [inert]')) return
+    void thunk(pitchOf(button))
   }, { capture: true })
 }
 
-async function thunk() {
+function pitchOf(button: HTMLButtonElement): number {
+  const cached = pitches.get(button)
+  if (cached !== undefined) return cached
+  // Same label, same note after a remount. Keep the note for the life of a
+  // button even when it changes its caption (e.g. while a write is pending).
+  const label = button.getAttribute('aria-label') || button.title || button.textContent || ''
+  let hash = 2166136261
+  for (const char of label.trim().replace(/\s+/g, ' ')) hash = Math.imul(hash ^ char.codePointAt(0)!, 16777619)
+  const note = majorPentatonic[(hash >>> 0) % majorPentatonic.length]!
+  const pitch = 65.406 * 2 ** (note / 12) // C2, percussive rather than bright
+  pitches.set(button, pitch)
+  return pitch
+}
+
+async function thunk(pitch: number) {
   try {
     if (!context || context.state === 'closed') context = new AudioContext()
     const audio = context
@@ -36,12 +50,6 @@ async function thunk() {
     }
     if (!enabled || audio.state !== 'running') return
 
-    // Draw uniformly from the scale, excluding the last note. Both hits use
-    // this draw, rooted at C2 to keep the feedback percussive rather than bright.
-    const choices = majorPentatonic.filter((note) => note !== previousNote)
-    const note = choices[Math.floor(Math.random() * choices.length)]!
-    previousNote = note
-    const pitch = 65.406 * 2 ** (note / 12)
     const start = audio.currentTime
     hit(audio, start, pitch, 0.085)
     hit(audio, start + 0.052, pitch, 0.049)

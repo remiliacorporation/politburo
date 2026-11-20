@@ -1427,8 +1427,8 @@ vb inspect [--port N] [--no-open] [--allow-host <host>]...
 Serves the board's web UI on 127.0.0.1, as you, and opens it. The port is 4747,
 or any free port when that's taken. Only board's own CLI has it, so without
 `vb` installed, `npx @vercel/board@latest inspect` runs it. [`vb serve`](#serve)
-serves it on its board's port instead. See
-[Inspector](../03-guides/02-inspector.md).
+serves it on its board's port instead. The inspector opens on
+[Handoffs](../03-guides/02-inspector.md#handoffs) for the selected board.
 
 ## Filters
 
