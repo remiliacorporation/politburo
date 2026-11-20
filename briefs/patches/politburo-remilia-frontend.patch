@@ -1,0 +1,275 @@
+diff --git a/.changeset/quiet-board-workbench.md b/.changeset/quiet-board-workbench.md
+new file mode 100644
+index 00000000..386d5905
+--- /dev/null
++++ b/.changeset/quiet-board-workbench.md
+@@ -0,0 +1,5 @@
++---
++"@vercel/board": patch
++---
++
++Restyle the inspector with compact gray-and-indigo desktop chrome, distinct navigation and thread panes, and clearer keyboard focus.
+diff --git a/packages/board/src/inspect/app/App.tsx b/packages/board/src/inspect/app/App.tsx
+index 82fe70fa..f8500055 100644
+--- a/packages/board/src/inspect/app/App.tsx
++++ b/packages/board/src/inspect/app/App.tsx
+@@ -10,6 +10,7 @@ import { Messages, Pendings, type RowOptions } from './message.tsx'
+ import { GLOBAL_CHAT, GLOBAL_CHAT_PATH, channelPath, here, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+ import { Settings } from './settings.tsx'
+ import { Sidebar } from './sidebar.tsx'
++import { HomeEmblem } from './home-emblem.tsx'
+ import { actorFor, TaskCard, taskIds } from './task.tsx'
+ import { Tasks } from './tasks.tsx'
+ import { FilterButton, FilterChips } from './filters.tsx'
+@@ -171,7 +172,7 @@ export function App() {
+     if (nav) focus('.sidebar')
+     else if (where.thread !== null && (old?.thread !== where.thread || old.nav || (narrow && !root.querySelector('.pane')?.contains(document.activeElement)))) focus('.pane [data-view-title]')
+     else if (old?.path !== where.path) focus('.main [data-view-title]')
+-    else if (old.nav) restore(navOpener.current, '.main [data-view-title]')
++    else if (old.nav) restore(navOpener.current, '.header [aria-label="Show sidebar"]')
+     else if (old.thread !== null && where.thread === null) restore(threadOpener.current, '.main [data-view-title]')
+   }, [where.path, where.thread, nav, narrow, ready])
+ 
+@@ -226,22 +227,26 @@ export function App() {
+   const setFilter = (next: Filter) => navigate(here({ filter: next }), true)
+   const sources = (state.discovery?.sync ?? []).map((entry) => entry.key)
+   const filters = { filter, setFilter, sources, known }
+-  const expand = (
+-    <button
+-      className={`tool${sidebar.collapsed ? '' : ' only-narrow'}`}
+-      title="show the sidebar"
+-      aria-label="Show sidebar"
+-      aria-expanded={!sidebar.collapsed && (!narrow || nav)}
+-      onClick={(event) => {
+-        navOpener.current = event.currentTarget
+-        sidebar.collapse(false)
+-        if (narrow) setNav(true)
+-        else requestAnimationFrame(() => shell.current?.querySelector<HTMLElement>('.sidebar')?.focus())
+-      }}
+-    >
+-      <PanelLeftOpen size={15} strokeWidth={1.75} />
+-    </button>
+-  )
++  const hiddenSidebarLead = !nav && (narrow || sidebar.collapsed) ? (
++    <>
++      <HomeEmblem />
++      <button
++        className="tool"
++        title="show the sidebar"
++        aria-label="Show sidebar"
++        aria-expanded={false}
++        onClick={(event) => {
++          navOpener.current = event.currentTarget
++          sidebar.collapse(false)
++          if (narrow) setNav(true)
++          else requestAnimationFrame(() => shell.current?.querySelector<HTMLElement>('.sidebar')?.focus())
++        }}
++      >
++        <PanelLeftOpen size={15} strokeWidth={1.75} />
++      </button>
++    </>
++  ) : null
++  const expand = narrow && where.thread !== null ? null : hiddenSidebarLead
+   return (
+     <div
+       ref={shell}
+@@ -257,6 +262,7 @@ export function App() {
+           <Sidebar
+             state={state}
+             current={current}
++            onHome={() => setNav(false)}
+             onCollapse={() => {
+               if (nav) setNav(false)
+               else sidebar.collapse(true)
+@@ -303,7 +309,7 @@ export function App() {
+       {where.thread !== null && (
+         <aside className="pane" aria-label="Thread" inert={nav}>
+           <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
+-          <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} />
++          <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} lead={narrow ? hiddenSidebarLead : null} />
+         </aside>
+       )}
+       <Toasts />
+@@ -441,7 +447,7 @@ function Channel(props: { chat?: boolean; channel: string; state: State; options
+   )
+ }
+ 
+-function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels }) {
++function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
+   const { id, state, viewer } = props
+   const [missing, setMissing] = useState(false)
+   useEffect(() => {
+@@ -459,7 +465,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
+   const options: RowOptions = { me: state.me!.actor, viewer, now: props.now, known: props.known, platforms, syncConfigured: Boolean(state.discovery?.sync.length), schemas: state.schemas, names }
+   return (
+     <>
+-      <Header title={isTask(t?.root) ? 'task' : 'thread'} meta={t ? `in #${t.root.channel}` : undefined}>
++      <Header lead={props.lead} title={isTask(t?.root) ? 'task' : 'thread'} meta={t ? `in #${t.root.channel}` : undefined}>
+         {t && !isTask(t.root) && !t.root.deleted && viewer.may('label', t.root.channel) && (
+           <Ask
+             label={<ListTodo size={15} strokeWidth={1.75} />}
+diff --git a/packages/board/src/inspect/app/assets.d.ts b/packages/board/src/inspect/app/assets.d.ts
+new file mode 100644
+index 00000000..d768fd2b
+--- /dev/null
++++ b/packages/board/src/inspect/app/assets.d.ts
+@@ -0,0 +1,4 @@
++declare module '*.png' {
++  const url: string
++  export default url
++}
+diff --git a/packages/board/src/inspect/app/home-emblem.tsx b/packages/board/src/inspect/app/home-emblem.tsx
+new file mode 100644
+index 00000000..c72ebce7
+--- /dev/null
++++ b/packages/board/src/inspect/app/home-emblem.tsx
+@@ -0,0 +1,10 @@
++import emblem from '../../../../../.github/assets/politburo-emblem.png'
++import { Link } from './nav.tsx'
++
++export function HomeEmblem({ onNavigate }: { onNavigate?: () => void }) {
++  return (
++    <Link to="/" className="home-emblem" onNavigate={onNavigate}>
++      <img src={emblem} alt="Politburo home" width={32} height={32} />
++    </Link>
++  )
++}
+diff --git a/packages/board/src/inspect/app/home.tsx b/packages/board/src/inspect/app/home.tsx
+index 08de49b4..156dbbc0 100644
+--- a/packages/board/src/inspect/app/home.tsx
++++ b/packages/board/src/inspect/app/home.tsx
+@@ -90,7 +90,7 @@ export function Home({ state, now, lead }: { state: State; now: number; lead: Re
+   return (
+     <>
+       <Header title="Handoffs" lead={lead} live={state.live} />
+-      <div className="page home-view">
++      <div className="page home-view handoffs-view">
+         <div className="home-intro">
+           <p>Follow work from its prerequisites to delivery. Open a task thread for the brief and evidence. Delivery is not approval.</p>
+           <Link to="/tasks?state=all">Browse Tasks</Link>
+diff --git a/packages/board/src/inspect/app/nav.tsx b/packages/board/src/inspect/app/nav.tsx
+index da777a3b..fae8a7aa 100644
+--- a/packages/board/src/inspect/app/nav.tsx
++++ b/packages/board/src/inspect/app/nav.tsx
+@@ -70,7 +70,7 @@ export function here(changes: { thread?: string | null; filter?: Filter; params?
+   return `${current()}${query ? `?${query}` : ''}`
+ }
+ 
+-export function Link(props: { to: string; className?: string; current?: boolean; title?: string; children: ReactNode }) {
++export function Link(props: { to: string; className?: string; current?: boolean; title?: string; onNavigate?: () => void; children: ReactNode }) {
+   const navigatedAt = useRef(0)
+   const plain = (event: React.MouseEvent | React.PointerEvent) =>
+     event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+@@ -83,12 +83,16 @@ export function Link(props: { to: string; className?: string; current?: boolean;
+       onPointerDown={(event) => {
+         if (event.pointerType !== 'mouse' || !plain(event)) return
+         navigatedAt.current = Date.now()
++        props.onNavigate?.()
+         navigate(props.to)
+       }}
+       onClick={(event) => {
+         if (!plain(event)) return
+         event.preventDefault()
+-        if (Date.now() - navigatedAt.current > 500) navigate(props.to)
++        if (event.detail === 0 || Date.now() - navigatedAt.current > 500) {
++          props.onNavigate?.()
++          navigate(props.to)
++        }
+       }}
+     >
+       {props.children}
+diff --git a/packages/board/src/inspect/app/sidebar.tsx b/packages/board/src/inspect/app/sidebar.tsx
+index e6a3f3cc..3ab3f7bc 100644
+--- a/packages/board/src/inspect/app/sidebar.tsx
++++ b/packages/board/src/inspect/app/sidebar.tsx
+@@ -1,4 +1,5 @@
+ import { Activity, Check, ChevronsUpDown, ClipboardList, House, LayoutGrid, Lock, MessageSquare, PanelLeftClose, Plus, Settings } from 'lucide-react'
++import { HomeEmblem } from './home-emblem.tsx'
+ import { useEffect, useMemo, useState } from 'react'
+ import type { ChannelView, Me } from '../../api/routes.ts'
+ import { compileAccess, type Access } from '../../server/access.ts'
+@@ -42,7 +43,7 @@ function useSeen(state: State, current: Route): Record<string, number> {
+   return seen
+ }
+ 
+-export function Sidebar({ state, current, onCollapse }: { state: State; current: Route; onCollapse: () => void }) {
++export function Sidebar({ state, current, onHome, onCollapse }: { state: State; current: Route; onHome: () => void; onCollapse: () => void }) {
+   const seen = useSeen(state, current)
+   const groups = useMemo(() => {
+     const out = new Map<string, ChannelView[]>()
+@@ -63,7 +64,7 @@ export function Sidebar({ state, current, onCollapse }: { state: State; current:
+   return (
+     <div className="sidebar-col">
+       <div className="brand">
+-        <span className="board-mark" aria-hidden="true"><LayoutGrid size={15} /></span>
++        <HomeEmblem onNavigate={onHome} />
+         <span className="which grow" title={state.discovery?.url}>
+           <span className="name">{where.name}</span>
+           {where.at && <span className="at">{where.at}</span>}
+diff --git a/packages/board/src/inspect/style.ts b/packages/board/src/inspect/style.ts
+index e7567cf1..380d35f9 100644
+--- a/packages/board/src/inspect/style.ts
++++ b/packages/board/src/inspect/style.ts
+@@ -115,7 +115,10 @@ input, textarea { font: inherit; color: var(--bright); letter-spacing: inherit;
+ }
+ /* Which board this is: its name, and where it is under it. */
+ .brand .which { display: grid; min-width: 0; line-height: 1.3; }
+-.board-mark { flex: none; width: 26px; height: 26px; display: grid; place-items: center; color: var(--gold-text); background: var(--action); border: 1px solid var(--gold); border-radius: 4px; }
++.home-emblem { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 4px; }
++.home-emblem img { display: block; object-fit: contain; background: #fff; }
++.home-emblem:hover { background: var(--shade-hover); }
++.home-emblem:focus-visible { outline: 2px solid var(--bright); outline-offset: -2px; }
+ .brand .name, .brand .at { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .brand .at { color: var(--faint); font-size: 11px; font-weight: 400; }
+ .sidebar h2 { display: flex; align-items: center; justify-content: space-between; height: 18px; margin: 16px 8px 4px; font-size: 11px; font-weight: 500; color: var(--faint); }
+@@ -205,7 +208,6 @@ input, textarea { font: inherit; color: var(--bright); letter-spacing: inherit;
+ .text-link { color: var(--accent); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px; white-space: nowrap; cursor: default; }
+ .text-link:hover { text-decoration-color: currentColor; }
+ .scrim { display: none; }
+-@media (min-width: 64rem) { .tool.only-narrow { display: none; } }
+ 
+ .live { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11px; }
+ .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+@@ -489,22 +491,23 @@ button:not(:disabled, [aria-disabled="true"]):active {
+ .page { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0 16px; }
+ .home-view { padding: clamp(16px, 4vw, 40px); }
+ .home-view > * { max-width: 52rem; margin-inline: auto; }
+-.home-intro { padding-bottom: 20px; }
++.handoffs-view { padding-block: 12px 16px; }
++.home-intro { padding-bottom: 6px; }
+ .home-view p { margin: 0 0 6px; color: var(--muted); }
+ .home-view a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+ .home-intro a { display: inline-flex; min-height: 32px; align-items: center; }
+ .home-view a:focus-visible, .home-view button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+-.home-queue { padding: 14px 0 22px; border-top: 1px solid var(--hairline); }
+-.home-queue h2 { margin: 0 0 12px; font-size: 1rem; color: var(--bright); }
++.home-queue { padding: 7px 0 8px; border-top: 1px solid var(--hairline); }
++.home-queue h2 { margin: 0; font-size: 1rem; color: var(--bright); }
+ .handoff-list, .handoff-needs ul { list-style: none; margin: 0; padding: 0; }
+-.handoff { padding: 12px 0; overflow-wrap: anywhere; }
++.handoff { padding: 5px 0; overflow-wrap: anywhere; }
+ .handoff + .handoff { border-top: 1px solid var(--hairline); }
+-.handoff-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 4px; }
++.handoff-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; margin-bottom: 2px; }
+ .handoff-title { font-weight: 600; }
+ .handoff small { color: var(--muted); }
+ .handoff-result { white-space: pre-wrap; }
+-.handoff-needs { margin-top: 8px; padding-inline-start: 12px; border-inline-start: 2px solid var(--hairline); }
+-.handoff-needs li { margin-top: 4px; }
++.handoff-needs { margin-top: 3px; padding-inline-start: 8px; border-inline-start: 2px solid var(--hairline); }
++.handoff-needs li { margin-top: 1px; }
+ .more { display: block; margin: 8px 20px; }
+ /* A few facts, each a quiet name and what it is. */
+ .facts { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 3px 10px; margin: 0; }
+diff --git a/packages/board/tsdown.config.ts b/packages/board/tsdown.config.ts
+index f736f3e7..33ff2f8f 100644
+--- a/packages/board/tsdown.config.ts
++++ b/packages/board/tsdown.config.ts
+@@ -12,6 +12,7 @@ const page = {
+   outDir: 'dist/inspect',
+   format: 'esm',
+   platform: 'browser',
++  inputOptions: { moduleTypes: { '.png': 'dataurl' } },
+   target: 'es2022',
+   minify: true,
+   dts: false,
