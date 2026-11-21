@@ -1,4 +1,4 @@
-import type { ActorView, BlockView, BoardEventView, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, TaskView, ThreadsPage } from '../../api/routes.ts'
+import type { ActorView, AttentionView, BlockView, BoardEventView, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, TaskView, ThreadsPage } from '../../api/routes.ts'
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
@@ -68,6 +68,7 @@ export type State = {
   claims: Record<string, Claim>
   /** Whether every open task is loaded, so the page can count them. */
   tasksCounted: boolean
+  swarm: SwarmState
   /** Each opened channel's listing, or null on a board whose thread pages have no `older`: it loads by messages. */
   listings: Record<string, Listing | null>
   /** The board's schema registry, once it's read: what a block's fields mean. */
@@ -96,6 +97,7 @@ export const initialState: State = {
   live: 'connecting',
   claims: {},
   tasksCounted: false,
+  swarm: { lists: {}, attention: {}, answers: {} },
   listings: {},
   schemas: null,
   schemasRefused: null,
@@ -416,6 +418,15 @@ export function thread(state: State, root: string): Thread | null {
   return { root: view, replies, pending: state.pending.filter((post) => post.re === root) }
 }
 
+export type ReadFailure = { why: string; code?: string; status?: number }
+
+/** A failed backfill needn't replace an open thread. An authoritative denial must still hide it. */
+export function threadPane(state: State, id: string, refused: ReadFailure | null) {
+  const denied = refused?.status === 401 || refused?.status === 403 || refused?.status === 404
+  const shown = denied ? null : thread(state, id)
+  return { thread: shown, task: isTask(shown?.root) ? shown.root : null, why: refused?.why ?? null }
+}
+
 /** The newest messages across every channel (that `keep` keeps), oldest first. */
 export function recent(state: State, limit = 200, keep: (m: MessageView) => boolean = () => true): MessageView[] {
   return Object.values(state.messages)
@@ -604,7 +615,8 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
     held,
     elsewhere: !held && current === 'claimed' && task.claim?.actor === viewer.actor,
     hold: owns && (current === 'waiting' || current === 'ready'),
-    unblock: owns && current === 'blocked' && !task.parked,
+    // A refused read can't tell an old decision from an active one. The board still checks the hold.
+    unblock: owns && current === 'blocked' && !task.parked && (!blocksOnAttention(state, root) || attentionOf(state, root)?.is === 'failed'),
     reopen: owns && current === 'failed',
     assign: owns && !finished,
     cancel: owns && current !== 'completed' && current !== 'canceled',
@@ -673,6 +685,47 @@ export function tasks(state: State, filter: TaskFilter, now: number, through?: P
 /** How many tasks are open, once every open one is loaded. */
 export const openTasks = (state: State): number | null =>
   state.tasksCounted ? Object.values(state.messages).filter((m) => isTask(m) && !m.deleted && OPEN_STATES.includes(m.task.state)).length : null
+
+// --- swarm: task roots live in messages; decisions have a read of their own ----------------
+
+export type SwarmList = 'open' | 'completed'
+export type AttentionRead = { is: 'loading' } | { is: 'here'; attention: AttentionView | null } | ({ is: 'failed' } & ReadFailure)
+
+export type SwarmListing = {
+  key: string
+  rows: Listed<string>
+  /** Claims the board listed as ready despite the task still wearing `claimed`. */
+  readyClaims?: ReadonlyMap<string, { epoch: number; until: string }>
+}
+
+export type SwarmState = {
+  lists: Partial<Record<SwarmList, SwarmListing>>
+  attention: Record<string, { actor: string; request: string; version: number; read: AttentionRead }>
+  answers: Record<string, { is: 'sending' } | ({ is: 'failed' } & ReadFailure)>
+}
+
+export const answerKey = (actor: string, task: string, request: string) => JSON.stringify([actor, task, request])
+
+export function attentionOf(state: State, root: TaskRoot): AttentionRead | undefined {
+  const known = state.swarm.attention[root.id]
+  if (known && known.actor === state.me?.actor && known.request === root.task.attentionId && known.version === root.version) return known.read
+}
+
+/** An attention read has no version of its own. Keep it only for the task view and reader that asked. */
+export function mergeAttention(state: State, root: MessageView, actor: string, read: AttentionRead): State {
+  const request = root.task?.attentionId
+  const current = state.messages[root.id]
+  if (!request || actor !== state.me?.actor || current?.version !== root.version || current.task?.attentionId !== request) return state
+  return { ...state, swarm: { ...state.swarm, attention: { ...state.swarm.attention, [root.id]: { version: root.version, actor, request, read } } } }
+}
+
+/** A task keeps its last decision even after an answer. A later plain hold is not that decision. */
+export function blocksOnAttention(state: State, root: TaskRoot): boolean {
+  if (root.task.state !== 'blocked' || root.task.parked || !root.task.attentionId) return false
+  const read = attentionOf(state, root)
+  if (read?.is !== 'here') return true
+  return read.attention?.status === 'pending' || read.attention?.status === 'stale'
+}
 
 // --- blocks and schemas -------------------------------------------------------------------
 
