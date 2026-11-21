@@ -399,9 +399,9 @@ export function createBoardClient(options: ClientOptions) {
   async function raw(
     method: string,
     path: string,
-    init: { body?: unknown; auth?: boolean; headers?: Record<string, string>; signal?: AbortSignal; redirect?: RequestRedirect; claim?: boolean } = {},
+    init: { body?: unknown; auth?: boolean; headers?: Record<string, string>; signal?: AbortSignal; redirect?: RequestRedirect } = {},
   ): Promise<Response> {
-    const response = await (init.claim ? claimFetch(doFetch, base) : doFetch)(`${base}${path}`, {
+    const response = await (carriesToken(init.body) ? claimFetch(doFetch, base) : doFetch)(`${base}${path}`, {
       method,
       headers: {
         ...(await headers(init.auth ?? true)),
@@ -434,15 +434,14 @@ export function createBoardClient(options: ClientOptions) {
   }
 
   /** One write to task `id`, which answers its root. */
-  const taskWrite = async (id: string, verb: string, body: object = {}) =>
-    (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body, claim: 'token' in body })).task
+  const taskWrite = async (id: string, verb: string, body: object = {}) => (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body })).task
 
   /** What a claim on task `id` does, with the `epoch` and `token` the claim answered. */
   const held = (id: string, proof: Omit<TaskClaim, 'until'>): HeldTask => {
     const { epoch, token, pauseEpoch } = proof
     return {
       async renew(lease) {
-        const { task, until } = await call<{ task: MessageView; until: string }>('POST', `/tasks/${path(id)}/renew`, { body: { epoch, token, ...(lease !== undefined ? { lease } : {}) }, claim: true })
+        const { task, until } = await call<{ task: MessageView; until: string }>('POST', `/tasks/${path(id)}/renew`, { body: { epoch, token, ...(lease !== undefined ? { lease } : {}) } })
         const binding = task.task?.claim?.binding
         return claimed(task, { epoch, token, until, ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
       },
@@ -470,7 +469,7 @@ export function createBoardClient(options: ClientOptions) {
     // A new thread's root takes files as a post does: uploads, or their IDs.
     const made = typeof input === 'string' ? { text: input } : 'attachments' in input && input.attachments?.length ? { ...input, attachments: input.attachments.map((file) => (typeof file === 'string' ? file : file.id)) } : input
     const route = 'binding' in made && made.binding !== undefined ? boundTaskPaths.createTask : '/tasks'
-    const { task, claim, mentions } = await call<{ task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] }>('POST', route, { body: { ...where, ...made }, claim: 'token' in made })
+    const { task, claim, mentions } = await call<{ task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] }>('POST', route, { body: { ...where, ...made } })
     return { task, ...(claim ? { claim: claimed(task, claim) } : {}), ...(mentions ? { mentions } : {}) }
   }
 
@@ -507,7 +506,7 @@ export function createBoardClient(options: ClientOptions) {
     const signal = abort ? { signal: abort } : {}
     if (typeof target === 'string') {
       const route = body.binding !== undefined ? boundTaskPaths.claimTask.replace(':id', () => path(target)) : `/tasks/${path(target)}/claim`
-      const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', route, { body, ...signal, claim: 'token' in body })
+      const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', route, { body, ...signal })
       return claimed(task, claim)
     }
     const { wait, ...ready } = target
@@ -541,11 +540,9 @@ export function createBoardClient(options: ClientOptions) {
         signal?: AbortSignal
         /** Act as this profile (`null` for yourself) instead of the client's. */
         as?: ProfileOption
-        /** The request carries a claim's token: a redirect is refused, never followed. */
-        claim?: boolean
       } = {},
     ): Promise<Response> =>
-      (init.claim ? claimFetch(doFetch, base) : doFetch)(`${base}${path}`, {
+      (carriesToken(jsonBody(init.body, init.headers)) ? claimFetch(doFetch, base) : doFetch)(`${base}${path}`, {
         method: init.method ?? 'GET',
         headers: { ...init.headers, ...(await headers(true, init.as)) },
         ...(init.body ? { body: init.body } : {}),
@@ -1048,7 +1045,26 @@ export function createBoardClient(options: ClientOptions) {
 export type { ActorView, BoardEventView, ChannelView, Discovery, EventsPage, Me, MessagesPage, MessageView, ScheduleView, ThreadsPage, ThreadSummaryView, ThreadView }
 
 /** The statuses that send a request somewhere else (not 304, which sends nowhere). */
-const REDIRECTS = new Set([300, 301, 302, 303, 307, 308])
+const isRedirect = (status: number) => status >= 300 && status < 400 && status !== 304
+
+/** Whether a request body carries a claim's token: its own `token`, a `claim`'s, or a batched task's. */
+function carriesToken(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) return false
+  const { token, claim, tasks } = body as { token?: unknown; claim?: unknown; tasks?: unknown }
+  if (typeof token === 'string') return true
+  if (typeof claim === 'object' && claim !== null && typeof (claim as { token?: unknown }).token === 'string') return true
+  return Array.isArray(tasks) && tasks.some(carriesToken)
+}
+
+/** A JSON request's body as it was sent, for `carriesToken`; anything else (a file's bytes) has none. */
+function jsonBody(body: Uint8Array | undefined, headers: Record<string, string> | undefined): unknown {
+  if (!body || !/^application\/json\b/i.test(headers?.['content-type'] ?? '')) return undefined
+  try {
+    return JSON.parse(new TextDecoder().decode(body))
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * `doFetch` for a request that carries a claim's token, which goes to the board's own URL and
@@ -1059,7 +1075,7 @@ function claimFetch(doFetch: typeof fetch, url: string): typeof fetch {
   return async (input, init) => {
     const response = await doFetch(input, { ...init, redirect: 'manual' })
     // A browser's manual redirect is opaque: status 0, with no way to tell where it points.
-    if (response.type === 'opaqueredirect' || REDIRECTS.has(response.status)) {
+    if (response.type === 'opaqueredirect' || isRedirect(response.status)) {
       await response.body?.cancel().catch(() => {})
       throw new BoardError('redirect_refused', `The board at ${url} answered a claim's request with a redirect, and a claim's token goes nowhere else.`, response.status, {
         hint: "Use the board's own URL.",

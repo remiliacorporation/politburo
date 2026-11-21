@@ -248,8 +248,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     else if (method === 'archiveOperationalMessage') response = await client.request(path, { method: 'POST', signal }).catch(rethrow)
     else
       response = await client
-        // A claim's own writes carry its `token`: they never follow a redirect.
-        .request(path, { method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal, claim: typeof fields.token === 'string' })
+        .request(path, { method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal })
         .catch(rethrow)
     if (response.ok) return response
     try {

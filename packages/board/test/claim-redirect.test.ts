@@ -13,7 +13,7 @@ afterEach(async () => {
 
 type Seen = { method: string | undefined; url: string | undefined; headers: IncomingMessage['headers']; body: string }
 
-async function listen(handler: (seen: Seen, respond: { redirect(to: string): void; ok(): void }) => void) {
+async function listen(handler: (seen: Seen, respond: { redirect(to: string): void; ok(): void; status(code: number): void }) => void) {
   const seen: Seen[] = []
   const server = createServer((req, res) => {
     const chunks: Buffer[] = []
@@ -24,6 +24,7 @@ async function listen(handler: (seen: Seen, respond: { redirect(to: string): voi
       handler(one, {
         redirect: (to) => void res.writeHead(307, { location: to }).end(),
         ok: () => void res.writeHead(200, { 'content-type': 'application/json' }).end('{"task":{}}'),
+        status: (code) => void res.writeHead(code).end(),
       })
     })
   })
@@ -57,8 +58,59 @@ describe('a claim-bearing request that is answered with a redirect', () => {
 
       expect(elsewhere.seen).toEqual([])
       expect(configured.seen).toHaveLength(1)
+      expect(configured.seen[0]?.body).toContain(SECRET)
     },
   )
+
+  it('a request for a decision that carries a claim\'s proof does not send it to a redirect', async () => {
+    const elsewhere = await listen((_, respond) => respond.ok())
+    const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/stolen`))
+    const client = createBoardClient({ url: configured.url, fetch: (input, init) => globalThis.fetch(input, init) })
+
+    await expect(client.tasks.ask('task-1', { claim: { epoch: 1, token: SECRET } } as never)).rejects.toMatchObject({ code: 'redirect_refused' })
+
+    expect(elsewhere.seen).toEqual([])
+    expect(configured.seen[0]?.body).toContain(SECRET)
+  })
+
+  it('a claim of the next ready task with its own token does not send it to a redirect', async () => {
+    const elsewhere = await listen((_, respond) => respond.ok())
+    const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/stolen`))
+    const client = createBoardClient({ url: configured.url, fetch: (input, init) => globalThis.fetch(input, init) })
+
+    await expect(client.tasks.claim({ channel: 'work', token: SECRET } as never)).rejects.toMatchObject({ code: 'redirect_refused' })
+
+    expect(elsewhere.seen).toEqual([])
+    expect(configured.seen[0]?.body).toContain(SECRET)
+  })
+
+  it('a batch whose task carries a token does not send it to a redirect', async () => {
+    const elsewhere = await listen((_, respond) => respond.ok())
+    const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/stolen`))
+    const client = createBoardClient({ url: configured.url, fetch: (input, init) => globalThis.fetch(input, init) })
+
+    await expect(client.tasks.createMany('work', [{ text: 'one', token: SECRET } as never])).rejects.toMatchObject({ code: 'redirect_refused' })
+
+    expect(elsewhere.seen).toEqual([])
+  })
+
+  it('a 305 is refused with the others, since it names another place to send the request', async () => {
+    const configured = await listen((_, respond) => respond.status(305))
+    const client = createBoardClient({ url: configured.url, fetch: (input, init) => globalThis.fetch(input, init) })
+
+    await expect(client.tasks.held('task-1', { epoch: 1, token: SECRET }).release()).rejects.toMatchObject({ code: 'redirect_refused' })
+  })
+
+  it('a claim that brings no token follows a redirect as it does today', async () => {
+    const elsewhere = await listen((_, respond) => respond.ok())
+    const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/claim`))
+    const client = createBoardClient({ url: configured.url, fetch: (input, init) => globalThis.fetch(input, init) })
+
+    // `token: undefined` is not on the wire: nothing here is a claim's token.
+    await client.tasks.create('work', { text: 'a task', claim: true, token: undefined }).catch(() => {})
+
+    expect(elsewhere.seen.map((one) => one.url)).toEqual(['/claim'])
+  })
 
   it('a claim that brings its own token does not send it to a redirect either', async () => {
     const elsewhere = await listen((_, respond) => respond.ok())

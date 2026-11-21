@@ -373,7 +373,7 @@ export function connect(
   url = url.replace(/\/+$/, '')
   const rawFetch: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
   const doFetch = guarded(url, rawFetch, options.token)
-  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: 'error' })
+  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   // Every token is for `url`, the board it's sent to. A board whose discovery claims another
   // audience gets none, so its answer can't get us to mint one it could replay.
   let discovery: Promise<Discovery> | undefined
