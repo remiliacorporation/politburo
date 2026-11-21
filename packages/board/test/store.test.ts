@@ -439,7 +439,7 @@ describe('the inspector store', () => {
   it('keeps an answer on its way until the feed confirms it, then shows the receipt in place', () => {
     const root = hold(1)
     const known = withRead(store.merge(start, [root]), root, here(request(root)))
-    const sending = store.beginAnswer(known, root.id, 'request', 'Yes')
+    const sending = store.beginAnswer(known, root, request(root), 'Yes')
     expect(shownAttention(sending, root)).toMatchObject({ answering: 'Yes', disabled: true })
     const assignment = hold(1, { version: 2 })
     const moved = store.applyEvent(sending, { cursor: '2', type: 'task.assigned', createdAt: at(0), message: assignment,
@@ -452,13 +452,13 @@ describe('the inspector store', () => {
     expect(store.attentionTasks(done)).toEqual([])
     expect(store.attentionRows(done).map(({ id }) => id)).toEqual([root.id])
     expect(shownAttention(done, confirmed)).toMatchObject({ answering: null, attention: { status: 'answered', receipt } })
-    expect(store.attentionRows(store.leaveAttention(done))).toEqual([])
+    expect(store.attentionRows(store.clearAttentionFeedback(done))).toEqual([])
   })
 
   it('drops the answering overlay and shows the words of a refused answer', () => {
     const root = hold(1)
     const known = withRead(store.merge(start, [root]), root, here(request(root)))
-    const sending = store.beginAnswer(known, root.id, 'request', 'Yes')
+    const sending = store.beginAnswer(known, root, request(root), 'Yes')
     const failed = store.failAnswer(sending, root.id, 'request', { words: 'not a responder', unsupported: false })
     expect(shownAttention(failed, root)).toMatchObject({ answering: null, disabled: false, error: 'not a responder', attention: { status: 'pending' } })
   })

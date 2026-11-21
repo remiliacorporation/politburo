@@ -284,7 +284,7 @@ export function unlistedReply(state: State, event: BoardEventView): string | nul
 
 /** Folds one live event in: the message it concerns, channel counts, listed threads, and actor details. */
 export function applyEvent(state: State, event: BoardEventView): State {
-  let next = event.message ? foldAttention(merge(state, [event.message]), event) : state
+  let next = event.message ? foldAttention(merge(state, [event.message]), event, event.message) : state
   if (event.type === 'message.posted' && event.message) {
     next = listed(next, event.message)
     // One to send later isn't on its way as a message: nothing that lands now stands for it.
@@ -699,7 +699,7 @@ export type AttentionResult = { is: 'here'; value: AttentionView | null } | ({ i
 type AttentionItem = {
   latest?: AttentionRead
   view?: AttentionRead & { result: AttentionResult }
-  answering?: { requestId: string; label: string }
+  answering?: { request: AttentionView; version: number; label: string }
   error?: AttentionFailure
   /** The feed confirmed the answer. Keep it in place for this visit, not in the open count. */
   answered?: AttentionView
@@ -721,29 +721,28 @@ export function finishAttentionRead(state: State, id: string, read: AttentionRea
   return result.is === 'failed' && result.unsupported ? { ...next, attentionUnsupported: true } : next
 }
 
-export function beginAnswer(state: State, id: string, requestId: string, label: string): State {
-  const { error: _old, ...item } = state.attention[id] ?? {}
-  return putAttention(state, id, { ...item, answering: { requestId, label } })
+export function beginAnswer(state: State, root: TaskRoot, request: AttentionView, label: string): State {
+  const { error: _old, ...item } = state.attention[root.id] ?? {}
+  return putAttention(state, root.id, { ...item, answering: { request, version: root.version, label } })
 }
 
 export function failAnswer(state: State, id: string, requestId: string, error: AttentionFailure): State {
   const item = state.attention[id]
   // The feed may have moved on while the write was in flight. Don't drop another request's overlay.
-  const next = putAttention(state, id, { ...item, ...(item?.answering?.requestId === requestId ? { answering: undefined } : {}), error })
+  const next = putAttention(state, id, { ...item, ...(item?.answering?.request.id === requestId ? { answering: undefined } : {}), error })
   return error.unsupported ? { ...next, attentionUnsupported: true } : next
 }
 
-function foldAttention(state: State, event: BoardEventView): State {
-  const incoming = event.message!
+function foldAttention(state: State, event: BoardEventView, incoming: MessageView): State {
   const root = state.messages[incoming.id]
   const item = state.attention[incoming.id]
-  if (!item || !root || incoming.version < root.version) return state
+  if (!item || !root) return state
   const { answering, view } = item
-  const stillHeld = holdsAttention(root)
-  const done = answering && (!stillHeld || root.task.attentionId !== answering.requestId)
-  const attention = view?.result.is === 'here' ? view.result.value : null
-  if (event.type === 'task.attention_answered' && !stillHeld && attention?.id === event.payload.requestId && !root.deleted) {
-    return putAttention(state, root.id, { ...item, answering: undefined, answered: { ...attention, status: 'answered', receipt: event.payload.receipt } })
+  const done = answering && incoming.version >= answering.version && (!holdsAttention(incoming) || incoming.task.attentionId !== answering.request.id)
+  if (event.type === 'task.attention_answered' && !holdsAttention(root) && !root.deleted && root.task?.attentionId === event.payload.requestId) {
+    const read = view?.result.is === 'here' ? view.result.value : null
+    const request = [read, answering?.request].find((request) => request?.id === event.payload.requestId)
+    if (request) return putAttention(state, root.id, { ...item, answering: undefined, answered: { ...request, status: 'answered', receipt: event.payload.receipt } })
   }
   return done ? putAttention(state, root.id, { ...item, answering: undefined }) : state
 }
@@ -752,8 +751,9 @@ function foldAttention(state: State, event: BoardEventView): State {
 export function attentionRows(state: State): TaskRoot[] {
   return Object.values(state.messages).filter((root): root is TaskRoot => {
     if (holdsAttention(root)) return true
-    const answered = state.attention[root.id]?.answered
-    return !!answered && !root.deleted && isTask(root) && root.task.attentionId === answered.id
+    const item = state.attention[root.id]
+    // A refusal still has a place to show if the feed took the hold out while the write was on its way.
+    return isTask(root) && (!!item?.error || (!!item?.answered && !root.deleted && root.task.attentionId === item.answered.id))
   }).sort(byWritten)
 }
 
@@ -765,9 +765,10 @@ export function attentionFor(state: State, root: TaskRoot, viewer: Viewer | null
   const held = holdsAttention(root)
   const read = item?.view?.result
   const value = read?.is === 'here' ? read.value : null
-  const attention = held ? (value?.id === root.task.attentionId ? value : null) : item?.answered ?? null
+  const attention = held ? (value?.id === root.task.attentionId ? value : null)
+    : !root.deleted && item?.answered?.id === root.task.attentionId ? item?.answered ?? null : null
   const readError = held && read?.is === 'failed' ? read.words : null
-  const answering = held && item?.answering?.requestId === root.task.attentionId ? item.answering.label : null
+  const answering = held && item?.answering?.request.id === root.task.attentionId ? item.answering.label : null
   const unsupported = state.attentionUnsupported || state.discovery?.task_attention !== true
   const me = state.me
   const reason = unsupported ? NO_ATTENTION
@@ -776,14 +777,17 @@ export function attentionFor(state: State, root: TaskRoot, viewer: Viewer | null
       ? 'answering needs a person acting as themselves with post access'
       : null
   const refreshing = item?.latest?.request !== item?.view?.request || (attention !== null && attention.revision !== root.revision)
-  return { attention, readError, missing: read?.is === 'here' && read.value === null, error: item?.error?.words, answering, reason, disabled: answering !== null || refreshing }
+  return { held, attention, readError, missing: read?.is === 'here' && read.value === null, error: item?.error?.words, answering, reason, disabled: answering !== null || refreshing }
 }
 
-export function leaveAttention(state: State): State {
-  let next = state
-  for (const [id, item] of Object.entries(state.attention))
-    if (item.answered) next = putAttention(next, id, { ...item, answered: undefined })
-  return next
+export function clearAttentionFeedback(state: State): State {
+  let attention = state.attention
+  for (const [id, item] of Object.entries(state.attention)) {
+    if (!item.answered && !item.error) continue
+    if (attention === state.attention) attention = { ...attention }
+    attention[id] = { ...item, answered: undefined, error: undefined }
+  }
+  return attention === state.attention ? state : { ...state, attention }
 }
 
 // --- blocks and schemas -------------------------------------------------------------------

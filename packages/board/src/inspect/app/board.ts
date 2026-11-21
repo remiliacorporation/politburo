@@ -503,7 +503,7 @@ async function loadOpenTasks() {
     const page = await loadTasks({ state: 'open', label: [] }, after)
     if (attentionOpen) {
       for (const root of store.attentionTasks(state))
-        if (!state.attention[root.id]?.latest) void readAttention(root)
+        if (state.attention[root.id]?.latest?.version !== root.version) void readAttention(root)
     }
     if ('refused' in page) {
       set((s) => ({ ...s, tasksRefused: page.refused }))
@@ -521,10 +521,11 @@ let attentionOpen = false
 
 export function openAttention() {
   attentionOpen = true
+  set(store.clearAttentionFeedback)
   for (const root of store.attentionTasks(state)) void readAttention(root)
   return () => {
     attentionOpen = false
-    set(store.leaveAttention)
+    set(store.clearAttentionFeedback)
   }
 }
 
@@ -565,7 +566,7 @@ export async function answerAttention(id: string, requestId: string, optionId: s
   if (!attention || attention.id !== requestId || reason !== null || disabled) return
   const option = attention.options.find((option) => option.id === optionId)
   if (!option) return
-  set((s) => store.beginAnswer(s, id, requestId, option.label))
+  set((s) => store.beginAnswer(s, root, attention, option.label))
   try {
     await team.tasks.answer(id, requestId, { option: option.id, commit: attention.commit })
   } catch (error) {

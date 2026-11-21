@@ -39,11 +39,12 @@ export function Attention({ state, viewer, lead }: { state: State; viewer: Viewe
   }
 
   const supported = state.discovery?.task_attention === true && !state.attentionUnsupported
+  const canAnswer = rows.some((root) => attentionFor(state, root, viewer).reason === null)
   return (
     <>
       <Header title="attention" meta="oldest first" live={state.live} lead={lead} />
       <div className="page attention-list" role="region" aria-label="attention requests" tabIndex={0} onKeyDown={keys}>
-        {rows.length > 0 && <p className="attention-keys faint">with the list focused: j/k to select{supported ? ', 1–8 to answer' : ''}</p>}
+        {rows.length > 0 && <p className="attention-keys faint">with the list focused: j/k to select{canAnswer ? ', 1–8 to answer' : ''}</p>}
         {state.tasksRefused !== null && <p className="empty error">{state.tasksRefused}</p>}
         {rows.length === 0 && state.tasksRefused === null && (
           <p className="empty">{!state.tasksCounted ? 'loading…' : !supported ? NO_ATTENTION : 'no open attention requests'}</p>
@@ -55,7 +56,7 @@ export function Attention({ state, viewer, lead }: { state: State; viewer: Viewe
 }
 
 function AttentionRow({ root, state, viewer, selected, onSelect }: { root: TaskRoot; state: State; viewer: Viewer; selected: boolean; onSelect: () => void }) {
-  const { attention, readError, missing, error, answering, reason, disabled } = attentionFor(state, root, viewer)
+  const { held, attention, readError, missing, error, answering, reason, disabled } = attentionFor(state, root, viewer)
   const title = firstLine(root.text) || root.attachments?.map((file) => file.name).join(', ') || 'message removed'
   const chosen = attention?.status === 'answered' ? attention.options.find((option) => option.id === attention.receipt.option) : undefined
   return (
@@ -73,7 +74,7 @@ function AttentionRow({ root, state, viewer, selected, onSelect }: { root: TaskR
       {readError !== null ? (
         <p className="error" role="status">{readError}</p>
       ) : attention === null ? (
-        <p className="faint">{missing ? 'no request found' : 'reading request…'}</p>
+        held && <p className="faint">{missing ? 'no request found' : 'reading request…'}</p>
       ) : (
         <>
           <p className="attention-question">{attention.question}</p>
@@ -92,7 +93,7 @@ function AttentionRow({ root, state, viewer, selected, onSelect }: { root: TaskR
           <p className="attention-meta">expires <time dateTime={attention.expiresAt} title={attention.expiresAt}>{new Date(attention.expiresAt).toLocaleString()}</time></p>
         </>
       )}
-      {error !== undefined && <p className="error" role="status">{error}</p>}
+      {error !== undefined && error !== readError && <p className="error" role="status">{error}</p>}
       {attention !== null && reason !== null && <p className="faint">read only: {reason}</p>}
       {state.attentionUnsupported && attention === null && readError !== NO_ATTENTION && error !== NO_ATTENTION && <p className="faint">{NO_ATTENTION}</p>}
     </article>
