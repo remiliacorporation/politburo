@@ -181,6 +181,44 @@ or coordinate multiple instances.
 
 `refill` drafts up to 15 proposed tasks when the ready queue runs low. `scanDiff` and `preflight` refuse added lines with tokens, keys, or emails. `createInstance` writes a self-hosted instance directory with no credentials. `writeResumePacket` and `appendAttempt` keep resume packets and an attempt ledger as plain files.
 
+See [Names](#names) for the shared name pool.
+
+## Names
+
+Every name Politburo needs comes from one pool, `namePool`, defined in one
+module: spawners, agents, workers, boards, lanes, demo data, and codenames.
+A name is a Soviet industry noun in Russian transliteration, 8 letters or
+fewer.
+
+`pickName(inUse)` returns the first pool name that is not in `inUse`. Pass the
+names of everything alive that holds one. A freed name is taken again before
+any later unused name. It ignores strings that aren't pool names and throws
+when all 33 names are in use. Don't write pool names as literals elsewhere;
+import them.
+
+A spawner is one use. Its title is `<TAG> <NAME>`, for example `RW ZAVOD`. It
+takes the first unused name and keeps it. `pickName` only reads the names you
+pass: two callers that read the same snapshot of live names get the same name,
+so pick and reserve together, under one lock or in one atomic write.
+`spawnerTitle` throws a `RangeError` for an empty tag, a tag with whitespace,
+or a name outside the pool.
+
+```ts
+import { pickName, spawnerTitle } from '@remilia/politburo-runtime'
+
+const liveNames = ['FABRIKA']
+const name = pickName(liveNames) // 'ZAVOD'
+const title = spawnerTitle('RW', name) // 'RW ZAVOD'
+```
+
+| Group | Names and meanings in allocation order |
+| --- | --- |
+| Workplaces | `ZAVOD` (factory); `FABRIKA` (mill); `KOMBINAT` (industrial combine); `KOLKHOZ` (collective farm); `SOVKHOZ` (state farm); `ARTEL` (workers' cooperative); `SHAKHTA` (mine); `TSEKH` (workshop); `DOMNA` (blast furnace); `KOTLOVAN` (foundation pit) |
+| Bosses and roles | `PRORAB` (site foreman); `BRIGADIR` (brigade leader); `MASTER` (shop foreman); `NARKOM` (people's commissar); `UDARNIK` (shock worker); `TREST` (industrial trust); `GLAVK` (chief directorate) |
+| Planning | `GOSPLAN` (state planning committee); `NORMA` (production quota); `SMENA` (work shift); `OTDEL` (department) |
+| Tools and machines | `MOLOT` (hammer); `SERP` (sickle); `TRAKTOR` (tractor); `TURBINA` (turbine); `KRAN` (crane); `STAL` (steel); `GUDOK` (factory whistle) |
+| Famous plants | `MAGNITKA` (the Magnitogorsk steelworks); `URALMASH` (the Ural machine works); `ZIL` (Likhachov automobile plant); `GAZ` (Gorky automobile plant); `KAMAZ` (Kama automobile plant) |
+
 ## Dispatch policies
 
 ```ts

@@ -211,6 +211,8 @@ in the package, so they ship on npm and your agents can read them at
 | [`templates/`](./templates) | Apps to start from |
 | [`skills/`](./skills) | The skills agents install with `npx skills add` |
 | [`SPEC.md`](./SPEC.md) | The design |
+| [`design/`](./design) | Design docs for this fork's additions |
+| Swarm docs | How a swarm of agents is organized and named: [architecture](./design/swarm-architecture.md) · [naming](./design/swarm-naming.md) · [secretaries](./design/swarm-secretaries.md) · [mob retirement](./design/mob-retirement.md) |
 | [`TIGERYARD-PARITY.md`](./TIGERYARD-PARITY.md) | What this fork adds, as intent. It records what to build, not what exists |
 | [`LOCAL-DEVELOPMENT.md`](./LOCAL-DEVELOPMENT.md) | A task handed to a worker on a local board |
 | [`AGENTS.md`](./AGENTS.md) | How to work in this repo |
