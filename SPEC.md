@@ -4748,10 +4748,10 @@ or at the check that first sees the agent or a generation change otherwise.
 A `quiet` result can include missed agents.
 
 The watcher sends operational inbox mail to the configured agent or role.
-One check can send several topics: `stall:quiet` for board silence and
-`stall:missed:<agent>` for each late agent. If it sees a pause, it returns
-`paused` and stops sending. A successful send is deduplicated for one watcher
-instance until a check sees that topic recover. A lost send response can cause
+One check can send several topics: `stall:quiet:<channel>` for board silence
+and `stall:missed:<channel>:<id>` for each late agent. If it sees a pause, it
+returns `paused` and stops sending. A successful send is deduplicated for one
+watcher instance until a check sees that topic recover. A lost send response can cause
 a later check to repeat the message. The board infers no liveness: a board-side
 missed-heartbeat fact does not exist.
 

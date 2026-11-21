@@ -202,7 +202,10 @@ try {
     watcher.check().finally(() => stop.abort()), // Stop after one check in this example.
     heartbeat(team, agent, { everyMinutes: 30, offsetMinutes: 5, now: Date.now, signal: stop.signal }),
   ])
-  console.log(result)
+  const missedCount = result.kind === 'quiet' ? result.missed?.length ?? 0
+    : result.kind === 'missed' ? result.agents.length : 0
+  const errors = 'errors' in result ? result.errors ?? [] : []
+  console.log({ kind: result.kind, missedCount, failedCount: errors.length, failedTopics: errors.map(({ topic }) => topic) })
 } finally {
   stop.abort()
   await backend.close()
@@ -228,15 +231,16 @@ result includes `missed` if there are also late agents.
 
 The watcher sends one inbox message per topic (`stall:quiet:<channel>` or
 `stall:missed:<channel>:<agentId>`) until a check sees that issue recover.
-It escapes control characters in channel names, agent IDs, and roles, and
-shortens long values with a stable hash suffix.
+It escapes control and format characters in channel names, agent IDs, and roles,
+and shortens long values with a stable hash suffix.
 
 A check can send several topics. It reads pause status at the start and just
 before each send. If paused, it returns `paused` and sends no further messages.
-The extra read narrows the race but is not atomic with the send. A `quiet` or
-`missed` result reports failed sends in `errors` as `{ topic, error }` entries,
-with the error message as a string. Other sends in the same check still go
-out, and the next check retries failed topics that are still active.
+The extra read narrows the race but is not atomic with the send. The result
+reports failed sends in `errors` as `{ topic, error }` entries, even if a pause
+stops the check. Error messages omit control and format characters and are at
+most 256 UTF-16 code units. Unless paused, other sends in the same check still
+go out. The next check retries failed topics that are still active.
 
 The feed cursor and topic dedupe live only in memory for this watcher
 instance. If a send succeeds but its response is lost, the next check can
@@ -259,15 +263,17 @@ fewer.
 
 `pickName(inUse)` returns the first pool name that is not in `inUse`. Pass the
 names of everything alive that holds one. A freed name is taken again before
-any later unused name. It ignores strings that aren't pool names and throws
-when all 33 names are in use. Don't write pool names as literals elsewhere;
-import them.
+any later unused name. Duplicate names count once. It ignores strings that
+aren't pool names and throws when all 33 names are in use. Each entry must be
+a string without control or format characters. Don't write pool names as
+literals elsewhere; import them.
 
 A spawner is one use. Its title is `<TAG> <NAME>`, for example `RW ZAVOD`. It
 takes the first unused name and keeps it. `pickName` only reads the names you
 pass: two callers that read the same snapshot of live names get the same name,
 so pick and reserve together, under one lock or in one atomic write.
-`spawnerTitle` throws a `RangeError` for an empty tag, a tag with whitespace,
+`spawnerTitle` throws a `TypeError` for a non-string tag and a `RangeError`
+for an empty tag, a tag containing whitespace, control or format characters,
 or a name outside the pool.
 
 ```ts
