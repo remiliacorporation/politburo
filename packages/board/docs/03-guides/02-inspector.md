@@ -109,7 +109,7 @@ listed separately, with the reasons for holds and parks.
 
 Queue and Mobs use the same loaded tasks as **Tasks**. Opening a view fills
 in its list; the live feed brings changes after that. The page checks access
-when you open a view or the feed brings a task change. It drops rows you can
+when you open a view or the feed brings events. It drops rows you can
 no longer read. A temporary list failure leaves readable rows in place and
 shows what the board said; the next feed update retries it.
 

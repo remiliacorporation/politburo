@@ -90,23 +90,26 @@ const handleFor = (choice: Profile | null | undefined) => {
 /** The handle every call below goes through: you, or you as the profile you picked. */
 let team = handleFor(profile)
 let profileVersion = 0
+let profileSelection = 0
 
-/** Switches who you post as, then learns the identity that is, and remembers it once the board takes it. */
+/** Learns who you post as, and switches only when the board takes the current selection. */
 export async function setProfile(next: Profile | null | undefined): Promise<boolean> {
   const handle = handleFor(next)
-  const accept = onArrival('access')
+  const selection = ++profileSelection
+  const accept = onArrival('access', () => selection === profileSelection)
   try {
     const me = await handle.me()
-    team = handle
-    profile = next
-    // Reselecting the same actor does not invalidate that actor's in-flight reads.
-    if (state.me?.actor === me.actor) accept((s) => store.noteSwarmRead({ ...s, me }, 'access', null))
-    else {
+    if (!accept((s) => {
+      team = handle
+      profile = next
+      // Reselecting the same actor does not invalidate that actor's in-flight reads.
+      if (s.me?.actor === me.actor) return store.noteSwarmRead({ ...s, me }, 'access', null)
       profileVersion++
-      set((s) => ({ ...s, me, swarm: { ...s.swarm, reads: {}, attention: {}, answers: {} } }))
-    }
+      const answers = Object.fromEntries(Object.entries(s.swarm.answers).filter(([, answer]) => answer.is === 'sending'))
+      return { ...s, me, swarm: { ...s.swarm, reads: { access: null }, attention: {}, answers } }
+    })) return false
   } catch (error) {
-    toast(`couldn't switch: ${said(error)}`)
+    if (selection === profileSelection) toast(`couldn't switch: ${said(error)}`)
     return false
   }
   if (next) {
@@ -231,7 +234,11 @@ export async function boot() {
       if (queue.push(event) === 1) requestAnimationFrame(flush)
     },
     (feed) => set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' })),
-  ).catch((error) => toast(`live updates stopped: ${said(error)}`))
+  ).catch((error) => {
+    const failed = readFailure(error)
+    if (store.accessDenied(failed)) onArrival('access')((s) => store.noteSwarmRead(s, 'access', failed))
+    toast(`live updates stopped: ${failed.why}`)
+  })
   // Who's who, for the names of a task's owner and holder; and the open tasks, for their count.
   void team.actors().then((actors) => set((s) => ({ ...s, actors: { ...Object.fromEntries(actors.map((actor) => [actor.id, actor])), ...s.actors } })), () => {})
   void loadSchemas()
@@ -594,36 +601,30 @@ async function swarmRead(kind: store.SwarmRead, active: Active, read: () => Prom
   }
 }
 
-/** Use the same task cache as Tasks. Finish paging an open list so an older page can't mask higher priority work. */
-async function scanSwarm(kind: 'open' | 'completed' | 'claims', scope: SwarmScope, active: Active) {
+/** Use the same task cache as Tasks, paging in server order. Filtered lists also attest to the leases they return. */
+async function scanSwarm(kind: 'open' | 'completed' | 'ready' | 'claims', scope: SwarmScope, active: Active) {
   const handle = team
   const accept = onArrival(kind, active)
   const pauseEpoch = state.swarm.control?.pauseEpoch ?? 0
-  const checked = new Map<string, number>()
-  const fenced = new Map<string, { epoch: number; until: string }>()
-  if (kind === 'claims') {
-    const now = Date.now()
-    const cached = swarmRoots(state, scope, now).filter(({ task }) => task.state === 'claimed')
-    if (!cached.some((root) => swarmState(state, root, now) === null)) return
-    for (const { id, task } of cached) checked.set(id, task.epoch)
-  }
+  const check = kind === 'ready' ? 'readyCheck' : kind === 'claims' ? 'claimCheck' : null
+  const leases = new Map<string, { epoch: number; until: string }>()
   try {
     let after: string | undefined
     while (active()) {
       const page = await handle.tasks.list(kind === 'completed'
         ? { ...scope, state: 'completed', latest: true, limit: RECENT_COMPLETED }
-        : { ...scope, state: kind === 'claims' ? 'ready' : 'open', limit: PAGE, after })
+        : { ...scope, state: kind === 'claims' ? 'claimed' : kind, limit: PAGE, after })
       const done = kind === 'completed' || page.tasks.length < PAGE || page.cursor === after
-      if (kind === 'claims') {
+      if (check) {
         for (const { message: { id, task } } of page.tasks) {
-          if (task?.state === 'claimed' && task.claim) fenced.set(id, { epoch: task.epoch, until: task.claim.until })
+          if (task?.state === 'claimed' && task.claim) leases.set(id, { epoch: task.epoch, until: task.claim.until })
         }
       }
       if (!accept((s) => {
         const next = store.mergeTasks(s, page)
         if (!done) return next
-        const ready = kind === 'claims' ? { ...next, swarm: { ...next.swarm, readyCheck: { pauseEpoch, checked, fenced } } } : next
-        return store.noteSwarmRead(ready, kind, null)
+        const checked = check ? { ...next, swarm: { ...next.swarm, [check]: { pauseEpoch, leases } } } : next
+        return store.noteSwarmRead(checked, kind, null)
       }) || done) return
       after = page.cursor
     }
@@ -645,8 +646,16 @@ export function watchSwarm(section: 'queue' | 'mobs', scope: SwarmScope) {
       type.startsWith('task.') || !!message?.task || (message?.re != null && !!state.messages[message.re]?.task))
     const { reads, control } = state.swarm
     if (!touched && !events?.length) return Promise.resolve()
+    let checking: { pauseEpoch: number; result: Promise<unknown> } | undefined
     const check = () => {
-      if (active() && state.swarm.control?.pauseEpoch) return scanSwarm('claims', scope, active)
+      const pauseEpoch = state.swarm.control?.pauseEpoch
+      if (!active() || !pauseEpoch) return
+      if (checking?.pauseEpoch === pauseEpoch) return checking.result
+      const now = Date.now()
+      if (!swarmRoots(state, scope, now).some((root) => swarmState(state, root, now) === null)) return
+      const result = Promise.all([scanSwarm('ready', scope, active), scanSwarm('claims', scope, active)])
+      checking = { pauseEpoch, result }
+      return result
     }
     // A full reader gets work.control on the existing feed. Bootstrap if it isn't in history;
     // scoped readers don't get it, so sample /control once per navigation or task-event batch.
@@ -658,16 +667,17 @@ export function watchSwarm(section: 'queue' | 'mobs', scope: SwarmScope) {
       }).then(check)
     }
     const status = touched && (!control || reads.control || !feedReadAll || !store.readAccess(state).readsAll) && readStatus()
-    const access = touched && swarmRead('access', active, async () => {
+    // Grants change off-feed. Any live batch is an opportunity to check them.
+    const access = swarmRead('access', active, async () => {
       const me = await team.me()
       return (s) => ({ ...s, me })
     }).then(() => {
       // The next request may have lost the wide access that the feed opened with.
-      if (!status && !state.swarm.reads.access && !store.readAccess(state).readsAll) return readStatus()
+      if (touched && !status && !state.swarm.reads.access && !store.readAccess(state).readsAll) return readStatus()
     })
     const open = (navigation || reads.open) && scanSwarm('open', scope, active).then(check)
     const completed = section === 'mobs' && (navigation || reads.completed) && scanSwarm('completed', scope, active)
-    return Promise.all([access, completed, status, open, !open && !status && check()])
+    return Promise.all([access, completed, status, open, touched && !open && !status && check()])
   }
   const { access, control } = state.swarm.reads
   set((s) => ({ ...s, swarm: { ...s.swarm, reads: { access, control } } }))
@@ -688,14 +698,24 @@ export async function applyLiveEvents(events: BoardEventView[]) {
 
 export async function loadSwarmAttention(root: store.TaskRoot) {
   if (!root.task.attentionId || state.messages[root.id]?.version !== root.version) return
+  const handle = team
   const accept = onArrival(`attention:${root.id}`)
   try {
-    const { attention } = await team.tasks.attention(root.id)
+    const { attention } = await handle.tasks.attention(root.id)
     // A replacement (or no decision) isn't a result for this root version. Keep the old decision
     // until the feed or a task page brings the newer root, and read again for that root.
     accept((s) => store.mergeAttention(s, root, attention))
   } catch (error) {
-    accept((s) => store.mergeAttention(s, root, readFailure(error)))
+    const failed = readFailure(error)
+    if (!accept((s) => store.mergeAttention(s, root, failed)) || state.messages[root.id]?.version !== root.version ||
+        !store.blocksOnAttention(state, root) || !store.readAccess(state).readable(root.channel) || failed.status === 401 || failed.status === 404) return
+    // A plain hold can retain the same request ID, kind and question. Look for its answer in
+    // one read of the thread's recent events, without replaying history into the live feed.
+    const history = await handle.poll({ re: root.id, last: RECENT, all: true }).catch(() => null)
+    if (history?.events.some((event) => event.type === 'task.attention_answered' && event.payload.id === root.id &&
+      event.payload.requestId === root.task.attentionId && event.message?.version === root.version)) {
+      accept((s) => store.mergeAttention(s, root, 'closed'))
+    }
   }
 }
 
@@ -707,21 +727,22 @@ export async function answerSwarmAttention(root: store.TaskRoot, attention: Atte
   if (state.swarm.answers[key]?.is === 'sending') return
   const profile = profileVersion
   const answerState = (entry: store.SwarmState['answers'][string] | null) => set((s) => {
-    if (profile !== profileVersion) return s
     const answers = { ...s.swarm.answers }
     if (entry) answers[key] = entry
     else delete answers[key]
     return { ...s, swarm: { ...s.swarm, answers } }
   })
+  let failed: store.ReadFailure | undefined
   answerState({ is: 'sending' })
   try {
     const result = await team.tasks.answer(root.id, attention.id, { option, commit: attention.commit })
     if (profile !== profileVersion) return
     set((s) => store.mergeAttention(store.merge(s, [result.task]), result.task, result.attention))
-    answerState(null)
     if (result.attention.status === 'answered') toast(`decision answered · task ${result.attention.receipt.routedTo}`)
   } catch (error) {
-    answerState({ is: 'failed', ...readFailure(error) })
+    failed = readFailure(error)
+  } finally {
+    answerState(failed && profile === profileVersion ? { is: 'failed', ...failed } : null)
   }
 }
 

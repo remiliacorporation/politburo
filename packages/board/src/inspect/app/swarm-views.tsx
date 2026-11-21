@@ -22,7 +22,7 @@ export function Swarm({ section, state, where, now, lead }: { section: 'queue' |
     <>
       <Header title={section} meta={meta} lead={lead} live={state.live} />
       <div className="page">
-        {(['access', 'control', 'open', 'claims'] as const).map((read) => reads[read] && <p key={read} className="empty error">{reads[read].why}</p>)}
+        {(['access', 'control', 'open', 'ready', 'claims'] as const).map((read) => reads[read] && <p key={read} className="empty error">{reads[read].why}</p>)}
         {section === 'queue' ? <Queue state={state} scope={scope} now={now} thread={where.thread} />
           : <Mobs state={state} scope={scope} now={now} thread={where.thread} />}
         {section === 'mobs' && <Completed state={state} scope={scope} now={now} thread={where.thread} />}

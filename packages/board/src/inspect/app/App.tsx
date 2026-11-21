@@ -12,7 +12,7 @@ import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
-import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, profilesOf, recent, threadPane, threadSchedules, type Filter, type ReadFailure, type State, type Viewer } from './store.ts'
+import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, profilesOf, readableMessages, recent, threadPane, type Filter, type ReadFailure, type State, type Viewer } from './store.ts'
 import { Decision, Swarm } from './swarm-views.tsx'
 import { Ask, Header, nativeMenu, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, until } from './words.ts'
@@ -176,7 +176,9 @@ export function App() {
     document.title = `${current.view === 'channel' ? `#${current.channel}` : current.view === 'settings' ? `${current.section} · settings` : current.view === 'swarm' ? `${current.section} · swarm` : current.view === 'missing' ? 'nothing here' : current.view} · ${named}`
   }, [where.path, named])
 
-  const known = useMemo(() => knownLabels(state), [state.messages])
+  const messages = useMemo(() => readableMessages(state), [state.messages, state.me, state.swarm.reads.access])
+  const readable = messages === state.messages ? state : { ...state, messages }
+  const known = useMemo(() => knownLabels(readable), [messages])
   const viewer = useMemo(() => (state.me ? board.viewerOf(state.me) : null), [state.me])
 
   if (naming) return <NameGate done={() => setNaming(false)} />
@@ -208,7 +210,7 @@ export function App() {
       {!sidebar.collapsed && (
         <nav className="sidebar" style={{ width: sidebar.width, opacity: sidebar.fade }}>
           <Sidebar
-            state={state}
+            state={readable}
             current={current}
             onCollapse={() => {
               if (nav) setNav(false)
@@ -219,11 +221,11 @@ export function App() {
         </nav>
       )}
       <main className="main">
-        {current.view === 'activity' && <Activity state={state} options={options} known={known} lead={expand} filters={filters} />}
+        {current.view === 'activity' && <Activity state={readable} options={{ ...options, board: readable }} known={known} lead={expand} filters={filters} />}
         {current.view === 'channel' && (
           <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
         )}
-        {current.view === 'tasks' && <Tasks state={state} now={now} lead={expand} where={where} known={known} />}
+        {current.view === 'tasks' && <Tasks state={readable} now={now} lead={expand} where={where} known={known} />}
         {current.view === 'swarm' && <Swarm section={current.section} state={state} where={where} now={now} lead={expand} />}
         {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
         {current.view === 'missing' && (
@@ -236,7 +238,7 @@ export function App() {
       {where.thread !== null && (
         <aside className="pane" style={{ width: pane.width }}>
           <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
-          <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} />
+          <OpenThread key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} />
         </aside>
       )}
       <Toasts />
@@ -386,19 +388,23 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
   )
 }
 
-function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels }) {
-  const { id, state, viewer } = props
+type ThreadProps = { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels }
+
+function OpenThread(props: ThreadProps) {
+  const { id } = props
   const [refused, setRefused] = useState<ReadFailure | null>(null)
+  const [targets, setTargets] = useState<SyncedView['targets']>([])
   useEffect(() => {
     void board.loadThread(id).then(setRefused)
+    void board.loadSynced(id).then(setTargets)
   }, [id])
-  const { thread: t, task, why } = useMemo(() => threadPane(state, id, refused), [state.messages, state.ops, state.pending, state.actors, state.me, state.swarm.reads.access, id, refused])
-  // Where the thread's copies are, on the platforms it syncs with.
-  const [synced, setSynced] = useState<SyncedView['targets']>([])
-  useEffect(() => {
-    void board.loadSynced(id).then(setSynced)
-  }, [id])
-  const scheduled = threadSchedules(state, id)
+  return <ThreadPane {...props} refused={refused} targets={targets} />
+}
+
+export function ThreadPane(props: ThreadProps & { refused: ReadFailure | null; targets: SyncedView['targets'] }) {
+  const { id, state, viewer, refused, targets } = props
+  const { thread: t, task, why, synced, scheduled } = useMemo(() => threadPane(state, id, refused, targets),
+    [state.messages, state.ops, state.pending, state.actors, state.me, state.swarm.reads.access, state.schedules, id, refused, targets])
   const platforms = Object.fromEntries((state.discovery?.sync ?? []).map((entry) => [entry.key, entry.platform]))
   const names = namesOf(state)
   const options: RowOptions = { me: state.me!.actor, now: props.now, known: props.known, platforms, schemas: state.schemas, names }

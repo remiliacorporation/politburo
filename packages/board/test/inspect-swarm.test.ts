@@ -1,10 +1,20 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AttentionView, Me, TaskBinding, TaskView } from '../src/api/routes.ts'
+import type { AttentionView, Me, ScheduleView, SyncedView, TaskBinding, TaskView } from '../src/api/routes.ts'
 import { http } from '../src/backend-http/index.ts'
 import * as store from '../src/inspect/app/store.ts'
 import { answerDisabled, claimOrder, completedOf, mobsOf, phaseOf, queueOf, type SwarmScope } from '../src/inspect/app/swarm.ts'
 import { memory } from '../src/store/memory.ts'
 import { bearer, board, BOARD_URL, personToken, testBoard } from './harness.ts'
+
+// Render the real components without a DOM. Their client-only stores already have a snapshot.
+vi.mock('react', async (load) => {
+  const react = await load<typeof import('react')>()
+  const useSyncExternalStore: typeof react.useSyncExternalStore = (subscribe, snapshot, server = snapshot) =>
+    react.useSyncExternalStore(subscribe, snapshot, server)
+  return { ...react, useSyncExternalStore }
+})
 
 const CHANNEL = 'swarm/web/work'
 const ADA = 'vercel:user:u_ada'
@@ -185,7 +195,7 @@ async function openTab(authority: ReturnType<typeof testBoard>, user = 'u_ada', 
   vi.resetModules()
   const signed = bearer(transport, await personToken(user))
   vi.stubGlobal('document', { querySelector: (selector: string) => named && selector.includes('inspect-named') ? { content: '1' } : null })
-  vi.stubGlobal('location', { origin: 'http://inspector.test' })
+  vi.stubGlobal('location', new URL('http://inspector.test/'))
   vi.stubGlobal('addEventListener', () => {})
   vi.stubGlobal('fetch', (input: string, init?: RequestInit) => {
     const url = new URL(input)
@@ -329,7 +339,7 @@ describe('swarm with an in-process board', () => {
     }
   })
 
-  it.each([501, 403])('shows a %i backfill refusal alongside a cached or late live thread', async (status) => {
+  it.each([501, 403])('renders the board’s %i backfill refusal beside the reply composer and its unsent draft', async (status) => {
     const authority = testBoard()
     const { task: cached } = await authority.tasks.create(CHANNEL, 'Already on the page')
     const late = await authority.post(CHANNEL, 'Not loaded yet')
@@ -339,15 +349,25 @@ describe('swarm with an in-process board', () => {
       ? failRead(status, status === 501 ? 'not_supported' : 'forbidden', words)
       : send(input, init))
     await openLens(tab)
-    const refused = await tab.loadThread(cached.id)
-    expect(store.threadPane(tab.getState(), cached.id, refused)).toMatchObject({ thread: { root: cached }, why: words })
+    const { ThreadPane } = await import('../src/inspect/app/App.tsx')
+    vi.stubGlobal('sessionStorage', { getItem: (key: string) => key === `board.draft:thread:${cached.id}` ? 'An unsent reply' : null })
+    const render = (refused: store.ReadFailure | null) => {
+      const state = tab.getState()
+      return renderToStaticMarkup(createElement(ThreadPane, { state, id: cached.id, viewer: tab.viewerOf(state.me!), now: Date.now(), known: new Map(), refused, targets: [] }))
+    }
+    const draft = /<textarea[^>]*data-composer="thread"[^>]*>An unsent reply<\/textarea>/
+    expect(render(null)).toMatch(draft)
+    const markup = render(await tab.loadThread(cached.id))
+    expect(markup).toContain(words)
+    expect(markup).toContain(cached.text)
+    expect(markup).toMatch(draft)
     const lateRefusal = await tab.loadThread(late.id)
     expect(store.threadPane(tab.getState(), late.id, lateRefusal)).toMatchObject({ thread: null, why: words })
     await tab.applyLiveEvents((await authority.poll({ all: true, after: cached.id })).events)
     expect(store.threadPane(tab.getState(), late.id, lateRefusal)).toMatchObject({ thread: { root: late }, why: words })
   })
 
-  it('drops revoked queue rows, bindings, and reports from an already open view', async () => {
+  it('drops revoked queue rows, bindings, and reports on unrelated live traffic', async () => {
     const authority = testBoard()
     const team = await handle(authority)
     const privateChannel = 'swarm/private'
@@ -370,8 +390,11 @@ describe('swarm with an in-process board', () => {
     await claim.complete('Private result')
     const completion = (await team.poll({ all: true, after: cursor })).events
     await authority.revokeGrant(grant.id)
-    await authority.reply(ready.id, 'Still in view')
-    await tab.applyLiveEvents((await team.poll({ all: true, after: cursor })).events)
+    const chatter = await authority.post(CHANNEL, 'Still in view, not a task')
+    const { events } = await team.poll({ all: true, after: cursor })
+    expect(events.map(({ message }) => message?.id)).toContain(chatter.id)
+    expect(events.some(({ type, message }) => type.startsWith('task.') || !!message?.task)).toBe(false)
+    await tab.applyLiveEvents(events)
     expect(queued()).toEqual([ready.id])
     expect(mobIds(tab.getState())).toEqual([])
     expect(reports()).toEqual([])
@@ -381,6 +404,114 @@ describe('swarm with an in-process board', () => {
     const refused = await tab.loadThread(hiddenReady.id)
     expect(refused?.status).toBe(404)
     expect(store.threadPane(tab.getState(), hiddenReady.id, refused).thread).toBeNull()
+  })
+
+  it('hides cached rows when the live feed refuses authorization, despite an old /me or a later outage', async () => {
+    const authority = testBoard()
+    const { task } = await authority.tasks.create(CHANNEL, 'Read before the feed stopped')
+    const reachedFeed = Promise.withResolvers<void>()
+    const refuseFeed = Promise.withResolvers<void>()
+    const reachedMe = Promise.withResolvers<void>()
+    const releaseMe = Promise.withResolvers<void>()
+    let delayMe = false
+    let outage = false
+    const words = 'this token can no longer follow the board'
+    const send = inProcess(authority)
+    const tab = await openTab(authority, 'u_ada', async (input, init) => {
+      const { pathname: path, searchParams } = new URL(String(input))
+      if (path.endsWith('/events') && Number(searchParams.get('wait')) > 0) {
+        reachedFeed.resolve()
+        await refuseFeed.promise
+        return failRead(403, 'forbidden', words)
+      }
+      if (path.endsWith('/me')) {
+        if (outage) return failRead(503, 'unavailable', 'cannot check access now')
+        if (delayMe) {
+          const response = await send(input, init)
+          reachedMe.resolve()
+          await releaseMe.promise
+          return response
+        }
+      }
+      return send(input, init)
+    })
+    let refreshing: Promise<void> | undefined
+    vi.stubGlobal('requestAnimationFrame', () => {})
+    const rows = () => ids(queueOf(tab.getState(), {}, Date.now()).ready)
+    try {
+      await tab.boot()
+      await reachedFeed.promise
+      await openLens(tab)
+      expect(rows()).toEqual([task.id])
+      const { cursor } = await authority.poll({ all: true, last: 1 })
+      await authority.reply(task.id, 'An update before the refusal')
+      delayMe = true
+      refreshing = tab.applyLiveEvents((await authority.poll({ all: true, after: cursor })).events)
+      await reachedMe.promise
+      refuseFeed.resolve()
+      await vi.waitFor(() => expect(rows()).toEqual([]))
+      expect(store.threadPane(tab.getState(), task.id, null).why).toBe(words)
+    } finally {
+      refuseFeed.resolve()
+      releaseMe.resolve()
+      await refreshing
+    }
+    expect(rows()).toEqual([])
+    outage = true
+    await openLens(tab)
+    expect(rows()).toEqual([])
+  })
+
+  it('hides revoked thread facts and Swarm-loaded rows after leaving Mobs', async () => {
+    const authority = testBoard()
+    const team = await handle(authority)
+    const privateChannel = 'swarm/private'
+    await authority.createGrant({ principals: [{ kind: 'everyone' }], can: { [privateChannel]: [] } })
+    const { grant } = await authority.createGrant({ principals: [{ kind: 'user', userId: 'u_ada' }], can: { [privateChannel]: 'all' } })
+    const { task: visible } = await team.tasks.create(CHANNEL, 'Public work')
+    const { task: secret } = await team.tasks.create(privateChannel, 'Private report')
+    await (await team.tasks.claim(secret.id)).complete()
+    const last = await team.reply(secret.id, 'Private final reply')
+    const tab = await openTab(authority)
+    await tab.loadTasks({ state: 'open', label: [] })
+    expect(tab.getState().messages[secret.id]).toBeUndefined()
+    const lens = tab.watchSwarm('mobs', {})
+    await lens.ready
+    const { App, ThreadPane } = await import('../src/inspect/app/App.tsx')
+    const schedule: ScheduleView = {
+      id: 's1', channel: privateChannel, re: secret.id, text: 'Private scheduled reply', labels: {}, noSync: false, attachments: [],
+      first: at(1000), next: at(1000), every: null, until: null, times: null, sent: 0, last: null, state: 'pending', canceled: null,
+      by: author, author: { kind: 'person', handle: 'ada', name: 'Ada', avatar: null }, createdAt: at(0),
+    }
+    const targets: SyncedView['targets'] = [
+      { key: 'slack', target: 'slack:private-copy', url: 'https://example.test/private-copy', thread: null, message: null, undelivered: null },
+    ]
+    const pane = () => {
+      const state: store.State = { ...tab.getState(), schedules: { is: 'here', items: [schedule] } }
+      return renderToStaticMarkup(createElement(ThreadPane, { state, id: secret.id, viewer: tab.viewerOf(state.me!), now, known: new Map(), refused: null, targets }))
+    }
+    const page = (path: string) => {
+      vi.stubGlobal('location', new URL(path, 'http://inspector.test'))
+      return renderToStaticMarkup(createElement(App))
+    }
+    vi.stubGlobal('innerWidth', 1200)
+    const before = pane()
+    for (const text of [secret.text, last.text, schedule.text, targets[0]!.target]) expect(before).toContain(text)
+    expect(page(`/swarm/mobs?thread=${secret.id}`)).toContain(secret.text)
+    const { cursor } = await authority.poll({ all: true, last: 1 })
+    await authority.revokeGrant(grant.id)
+    await authority.post(CHANNEL, 'Unrelated update')
+    await tab.applyLiveEvents((await team.poll({ all: true, after: cursor })).events)
+    const after = pane()
+    expect(after).toContain('no access to this thread')
+    for (const text of [secret.text, last.text, schedule.text, targets[0]!.target, targets[0]!.url!]) expect(after).not.toContain(text)
+    lens.stop()
+    for (const path of ['/', '/tasks?state=all']) {
+      const html = page(path)
+      expect(html).toContain(visible.text)
+      expect(html).not.toContain(secret.text)
+      expect(html).not.toContain(last.text)
+    }
   })
 
   it('keeps rows and the board’s 503 on a failed rescan, then retries on the next feed event', async () => {
@@ -553,6 +684,135 @@ describe('swarm with an in-process board', () => {
     expect(tab.getState().messages[note.id]?.text).toBe('Lease changed')
   })
 
+  it('does not show the old holder when the same task is reclaimed before the ready scan', async () => {
+    const authority = testBoard()
+    const team = await handle(authority)
+    const { task } = await team.tasks.create(CHANNEL, 'Reclaimed just before the scan')
+    const { task: old } = await team.tasks.create(CHANNEL, 'Still fenced')
+    await team.as('worker').tasks.claim(task.id, { binding })
+    await team.as('worker').tasks.claim(old.id, { binding })
+    const openWaiting = Promise.withResolvers<void>()
+    const releaseOpen = Promise.withResolvers<void>()
+    const readyWaiting = Promise.withResolvers<void>()
+    const releaseReady = Promise.withResolvers<void>()
+    const releaseClaims = Promise.withResolvers<void>()
+    let opening = false
+    const scans = { ready: 0, claimed: 0 }
+    const send = inProcess(authority)
+    const tab = await openTab(authority, 'u_ada', async (input, init) => {
+      if (pathOf(input).endsWith('/tasks') && opening) {
+        const kind = new URL(String(input)).searchParams.get('state')
+        if (kind === 'open') {
+          const response = await send(input, init)
+          openWaiting.resolve()
+          await releaseOpen.promise
+          return response
+        }
+        if (kind === 'ready') {
+          scans.ready++
+          readyWaiting.resolve()
+          await releaseReady.promise
+        }
+        if (kind === 'claimed') {
+          scans.claimed++
+          await releaseClaims.promise
+        }
+      }
+      return send(input, init)
+    })
+    await tab.loadTasks({ state: 'open', label: [] })
+    await team.pause('Fence old leases')
+    await team.resume('Allow new leases')
+    opening = true
+    const refreshing = openLens(tab, 'mobs')
+    const replacement = `${ADA}+replacement`
+    const fresh = { ...binding, session: 'replacement-session', owner: { principal: ADA, actor: replacement } }
+    try {
+      await Promise.all([openWaiting.promise, readyWaiting.promise])
+      await team.as('replacement').tasks.claim(task.id, { binding: fresh })
+      releaseReady.resolve()
+      await vi.waitFor(() => expect(ids(queueOf(tab.getState(), {}, Date.now()).ready)).toEqual([old.id]))
+      expect(mobsOf(tab.getState(), {}, Date.now())).toEqual([])
+      releaseOpen.resolve()
+      await vi.waitFor(() => expect(tab.getState().swarm.reads.open).toBeNull())
+    } finally {
+      releaseOpen.resolve()
+      releaseReady.resolve()
+      releaseClaims.resolve()
+      await refreshing
+    }
+    expect(mobsOf(tab.getState(), {}, Date.now())).toMatchObject([{ session: fresh.session, work: [{ root: { id: task.id }, claim: { actor: replacement } }] }])
+    expect(scans).toEqual({ ready: 1, claimed: 1 })
+  })
+
+  it('keeps the later profile selection for subsequent writes when the earlier one returns last', async () => {
+    const authority = testBoard()
+    const send = inProcess(authority)
+    const reached = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let delayNext = false
+    const tab = await openTab(authority, 'u_ada', async (input, init) => {
+      if (delayNext && pathOf(input).endsWith('/me')) {
+        delayNext = false
+        const response = await send(input, init)
+        reached.resolve()
+        await release.promise
+        return response
+      }
+      return send(input, init)
+    })
+    delayNext = true
+    const older = tab.setProfile({ name: 'earlier' })
+    try {
+      await reached.promise
+      expect(await tab.setProfile({ name: 'later' })).toBe(true)
+    } finally {
+      release.resolve()
+    }
+    const took = await older
+    await tab.send({ channel: CHANNEL, re: null, text: 'Written under the later choice', noSync: true, labels: {} })
+    expect((await authority.channel(CHANNEL).messages()).messages.at(-1)?.by.actor).toBe(`${ADA}+later`)
+    expect(took).toBe(false)
+    expect(tab.getProfile()).toEqual({ name: 'later' })
+  })
+
+  it('does not submit the same answer twice after changing away and back', async () => {
+    const authority = testBoard({ attentionResponders: { [CHANNEL]: [ADA] } })
+    const team = await handle(authority)
+    const { task } = await team.tasks.create(CHANNEL, 'Review the rollout')
+    await team.tasks.ask(task.id, draft(task, new Date(Date.now() + 120_000).toISOString()))
+    const reached = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const send = inProcess(authority)
+    let answers = 0
+    const tab = await openTab(authority, 'u_ada', async (input, init) => {
+      if (pathOf(input).endsWith('/answer') && ++answers === 1) {
+        reached.resolve()
+        await release.promise
+      }
+      return send(input, init)
+    })
+    await openLens(tab)
+    const root = rootOf(tab.getState(), task.id)
+    await tab.loadSwarmAttention(root)
+    const answer = decisionOf(tab.getState(), root)
+    const first = tab.answerSwarmAttention(root, answer, 'proceed')
+    try {
+      await reached.promise
+      await tab.setProfile({ name: 'worker' })
+      await tab.setProfile(null)
+      await tab.loadSwarmAttention(root)
+      const disabled = answerDisabled(tab.getState(), root, answer, Date.now())
+      await tab.answerSwarmAttention(root, answer, 'stop')
+      expect(answers).toBe(1)
+      expect(disabled).toBe('sending answer…')
+    } finally {
+      release.resolve()
+      await first
+    }
+    expect((await team.tasks.attention(root.id)).attention).toMatchObject({ status: 'answered', receipt: { option: 'proceed' } })
+  })
+
   it('shows the queue after reselecting the active named profile during its first read', async () => {
     const authority = testBoard()
     const { task } = await authority.tasks.create(CHANNEL, 'Load under the worker profile')
@@ -674,20 +934,49 @@ describe('swarm with an in-process board', () => {
     expect(ids(queueOf(tab.getState(), {}, Date.now()).ready)).toEqual([task.id])
   })
 
-  it('gets the question from the task when the board no longer supports attention reads', async () => {
+  it('uses an answer event to allow Unblock on a later plain hold even with stale pending evidence', async () => {
+    const authority = testBoard({ attentionResponders: { [CHANNEL]: [ADA] } })
+    const team = await handle(authority)
+    const { task } = await team.tasks.create(CHANNEL, 'Review the rollout')
+    const { attention } = await team.tasks.ask(task.id, draft(task, new Date(Date.now() + 120_000).toISOString()))
+    const send = inProcess(authority)
+    let unavailable = false
+    const tab = await openTab(authority, 'u_ada', async (input, init) => unavailable && pathOf(input).endsWith('/attention')
+      ? failRead(503, 'unavailable', 'cannot read the decision now')
+      : send(input, init))
+    await openLens(tab)
+    const old = rootOf(tab.getState(), task.id)
+    await tab.loadSwarmAttention(old)
+    expect(decisionOf(tab.getState(), old).status).toBe('pending')
+    await team.tasks.answer(task.id, attention.id, { option: 'proceed', commit: COMMIT })
+    await team.tasks.block(task.id, attention.question, { kind: attention.kind })
+    await tab.loadTasks({ state: 'open', label: [] }) // the live feed hasn't reached the answer
+    const plain = rootOf(tab.getState(), task.id)
+    unavailable = true
+    await tab.loadSwarmAttention(plain)
+    const state = tab.getState()
+    expect(store.moves(state, plain, tab.viewerOf(state.me!), Date.now()).unblock).toBe(true)
+    expect(await tab.unblockTask(plain.id)).toBe(true)
+  })
+
+  it.each([501, 403, 503])('keeps the cold decision’s question and hides Unblock after a %i attention refusal', async (status) => {
     const data = memory()
     const configured = testBoard({ store: data, attentionResponders: { [CHANNEL]: [ADA] } })
     const team = await handle(configured)
     const { task } = await team.tasks.create(CHANNEL, 'Review the rollout')
     await team.tasks.ask(task.id, draft(task, new Date(Date.now() + 120_000).toISOString()))
-    const tab = await openTab(testBoard({ store: data }))
+    const authority = status === 501 ? testBoard({ store: data }) : configured
+    const send = inProcess(authority)
+    const words = status === 501 ? 'this board does not keep task attention requests' : 'cannot read the decision now'
+    const tab = await openTab(authority, 'u_ada', async (input, init) => status !== 501 && pathOf(input).endsWith('/attention')
+      ? failRead(status, status === 403 ? 'forbidden' : 'unavailable', words)
+      : send(input, init))
     await openLens(tab)
     const [root] = queueOf(tab.getState(), {}, Date.now()).decisions
     expect(root?.task.blocked?.reason).toBe('Continue?')
-    await tab.applyLiveEvents((await team.poll({ all: true, after: task.id })).events)
     await tab.loadSwarmAttention(root!)
     const state = tab.getState()
-    expect(store.attentionOf(state, root!)?.error).toMatchObject({ code: 'no_task_attention', why: 'this board does not keep task attention requests' })
+    expect(store.attentionOf(state, root!)?.error).toMatchObject({ status, why: words })
     expect(store.moves(state, root!, tab.viewerOf(state.me!), Date.now()).unblock).toBe(false)
   })
 })

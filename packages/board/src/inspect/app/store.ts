@@ -1,4 +1,4 @@
-import type { ActorView, AttentionView, BlockView, BoardEventView, BoardStatus, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, TaskView, TasksPage, ThreadsPage } from '../../api/routes.ts'
+import type { ActorView, AttentionView, BlockView, BoardEventView, BoardStatus, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, SyncedView, TaskView, TasksPage, ThreadsPage } from '../../api/routes.ts'
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
@@ -430,17 +430,30 @@ export function thread(state: State, root: string): Thread | null {
 
 export type ReadFailure = { why: string; code?: string; status?: number }
 
+export const accessDenied = (failure: ReadFailure | null | undefined): failure is ReadFailure & { status: 401 | 403 } =>
+  failure?.status === 401 || failure?.status === 403
+
 export function readAccess(state: State) {
-  const failure = state.swarm.reads.access
-  return compileAccess(failure?.status === 401 || failure?.status === 403 ? {} : state.me?.can ?? {})
+  return compileAccess(accessDenied(state.swarm.reads.access) ? {} : state.me?.can ?? {})
+}
+
+/** The shared cache can contain rows loaded by Swarm before a grant was revoked. */
+export function readableMessages(state: State): State['messages'] {
+  const access = readAccess(state)
+  return access.readsAll ? state.messages : Object.fromEntries(Object.entries(state.messages).filter(([, message]) => access.readable(message.channel)))
 }
 
 /** History may be refused even for a readable thread. Keep its content and composer in place. */
-export function threadPane(state: State, id: string, refused: ReadFailure | null) {
+export function threadPane(state: State, id: string, refused: ReadFailure | null, targets: SyncedView['targets'] = []) {
   const root = state.messages[id]
-  const denied = refused?.status === 401 || refused?.status === 404 || (root && state.me?.can && !readAccess(state).readable(root.channel))
-  const shown = denied ? null : thread(state, id)
-  return { thread: shown, task: isTask(shown?.root) ? shown.root : null, why: refused?.why ?? (denied ? 'no access to this thread' : null) }
+  const access = state.swarm.reads.access
+  const denied = accessDenied(access) ? access.why : refused?.status === 401 || refused?.status === 404 ? refused.why
+    : root && state.me && !readAccess(state).readable(root.channel) ? 'no access to this thread' : null
+  const shown = denied === null ? thread(state, id) : null
+  return {
+    thread: shown, task: isTask(shown?.root) ? shown.root : null, why: denied ?? refused?.why ?? null,
+    synced: shown ? targets : [], scheduled: shown ? threadSchedules(state, id) : [],
+  }
 }
 
 /** The newest messages across every channel (that `keep` keeps), oldest first. */
@@ -631,7 +644,7 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
     held,
     elsewhere: !held && current === 'claimed' && task.claim?.actor === viewer.actor,
     hold: owns && (current === 'waiting' || current === 'ready'),
-    unblock: owns && current === 'blocked' && !task.parked && canUnblock(state, root),
+    unblock: owns && current === 'blocked' && !task.parked && !blocksOnAttention(state, root),
     reopen: owns && current === 'failed',
     assign: owns && !finished,
     cancel: owns && current !== 'completed' && current !== 'canceled',
@@ -703,7 +716,9 @@ export const openTasks = (state: State): number | null =>
 
 // --- swarm: task roots live in messages; decisions have a read of their own ----------------
 
-export type SwarmRead = 'open' | 'completed' | 'control' | 'access' | 'claims'
+export type SwarmRead = 'open' | 'completed' | 'control' | 'access' | 'ready' | 'claims'
+
+export type ClaimCheck = { pauseEpoch: number; leases: ReadonlyMap<string, { epoch: number; until: string }> }
 
 type AttentionRead = {
   request: string
@@ -719,8 +734,9 @@ export type SwarmState = {
   reads: Partial<Record<SwarmRead, ReadFailure | null>>
   control: BoardStatus | null
   claimEpochs: Record<string, { epoch: number; pauseEpoch: number }>
-  /** For cached claims whose admission wasn't in the feed. The ready filter applies the board's fence. */
-  readyCheck?: { pauseEpoch: number; checked: ReadonlyMap<string, number>; fenced: ReadonlyMap<string, { epoch: number; until: string }> }
+  /** Positive evidence for cached claims whose admission wasn't in the feed. */
+  readyCheck?: ClaimCheck
+  claimCheck?: ClaimCheck
   completedAt: Record<string, Pick<MessageView, 'id' | 'createdAt'>>
   attention: Record<string, AttentionRead>
   answers: Record<string, { is: 'sending' } | ({ is: 'failed' } & ReadFailure)>
@@ -729,6 +745,8 @@ export type SwarmState = {
 export const answerKey = (actor: string, task: string, request: string) => JSON.stringify([actor, task, request])
 
 export function noteSwarmRead(state: State, read: SwarmRead, result: ReadFailure | null): State {
+  // An outage is not evidence that an authorization refusal has been lifted.
+  if (read === 'access' && accessDenied(state.swarm.reads.access) && result && !accessDenied(result)) return state
   return { ...state, swarm: { ...state.swarm, reads: { ...state.swarm.reads, [read]: result } } }
 }
 
@@ -782,10 +800,11 @@ function keepAttention(state: State, id: string, read: AttentionRead): State {
 }
 
 /** An unversioned read can be ahead of the feed. Only a matching response adds evidence to this root. */
-export function mergeAttention(state: State, root: MessageView, result: AttentionView | ReadFailure | null): State {
+export function mergeAttention(state: State, root: MessageView, result: AttentionView | ReadFailure | 'closed' | null): State {
   const current = state.messages[root.id]
   const request = root.task?.attentionId
   if (!request || !isTask(current) || current.version !== root.version || current.task.attentionId !== request) return state
+  if (result === 'closed') return { ...state, swarm: closeAttention(state.swarm, root.id, request) }
   if (!result || ('id' in result && result.id !== request)) return state
   const known = attentionOf(state, current)
   if ('why' in result) return keepAttention(state, root.id, { ...known, request, version: root.version, error: result })
@@ -797,13 +816,6 @@ export function mergeAttention(state: State, root: MessageView, result: Attentio
 /** A last request is not necessarily the hold: an answer can be followed by a plain block. */
 export function blocksOnAttention(state: State, root: TaskRoot): boolean {
   return root.task.state === 'blocked' && !root.task.parked && !!root.task.attentionId && !attentionOf(state, root)?.closed
-}
-
-function canUnblock(state: State, root: TaskRoot): boolean {
-  const read = attentionOf(state, root)
-  // Without a readable decision or a request event, a failed read can't distinguish a historical
-  // ID from a live hold. Offer Unblock in that case; the board still enforces attention_required.
-  return !blocksOnAttention(state, root) || (!!read?.error && !read.attention)
 }
 
 // --- blocks and schemas -------------------------------------------------------------------

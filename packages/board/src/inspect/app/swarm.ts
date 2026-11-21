@@ -1,6 +1,6 @@
 import type { AttentionView, Me, TaskView } from '../../api/routes.ts'
 import { priorityRank } from '../../contract/schemas.ts'
-import { answerKey, attentionOf, blocksOnAttention, byWritten, isTask, readAccess, stateNow, taskMatches, type State, type TaskFilter, type TaskRoot, type TaskState } from './store.ts'
+import { answerKey, attentionOf, blocksOnAttention, byWritten, isTask, readAccess, stateNow, taskMatches, type ClaimCheck, type State, type TaskFilter, type TaskRoot, type TaskState } from './store.ts'
 
 export type SwarmScope = { channel?: string; needs?: string }
 export const RECENT_COMPLETED = 25
@@ -30,14 +30,17 @@ export function swarmState(state: State, { id, task }: TaskRoot, now: number): T
   const current = stateNow(task, now)
   if (current !== 'claimed') return current
   if (!task.claim) return null
-  const { control, claimEpochs, readyCheck, reads } = state.swarm
-  const fenced = readyCheck?.fenced.get(id)
-  if (fenced?.epoch === task.epoch && fenced.until === task.claim.until) return 'ready'
+  const { control, claimEpochs, readyCheck, claimCheck, reads } = state.swarm
+  const matches = (check: ClaimCheck | undefined) => {
+    const lease = check?.leases.get(id)
+    return lease?.epoch === task.epoch && lease.until === task.claim!.until
+  }
+  if (matches(readyCheck)) return 'ready'
   if (!control) return reads.control?.status === 501 ? 'claimed' : null
   if (control.paused) return 'ready'
   const admission = claimEpochs[id]
   if (admission?.epoch === task.epoch) return admission.pauseEpoch < control.pauseEpoch ? 'ready' : 'claimed'
-  if (control.pauseEpoch === 0 || (readyCheck?.pauseEpoch === control.pauseEpoch && readyCheck.checked.get(id) === task.epoch && fenced?.epoch !== task.epoch)) return 'claimed'
+  if (control.pauseEpoch === 0 || (claimCheck?.pauseEpoch === control.pauseEpoch && matches(claimCheck))) return 'claimed'
   return null
 }
 
