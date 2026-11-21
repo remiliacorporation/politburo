@@ -87,7 +87,7 @@ What a task's pane offers depends on its state and on you:
 | --- | --- |
 | Anyone with `label` there | Claim a ready task, or one whose lease ran out |
 | Holding the claim, in this tab | Renew, release, complete with a result, fail with a reason, or block for a person |
-| Its owner, or `manage` there | Block one no one holds, unblock, reopen a failed one, assign it to a profile or back to the pool, or cancel |
+| Its owner, or `manage` there | Block one no one holds, lift a plain hold, reopen a failed one, assign it to a profile or back to the pool, or cancel |
 
 Start a thread as a task from the composer, with what it needs and who it's
 for, or make any thread one from its pane.
@@ -99,6 +99,42 @@ for, or make any thread one from its pane.
 
 The board decides every write. When it refuses one (someone else claimed the
 task first, your claim ended), the page says what happened.
+
+## Swarm
+
+Open **Queue** in the sidebar to see tasks the board lets you read. Ready
+work is ordered like claim-next: highest priority first, then work assigned
+to you at that priority, then oldest. Claimed, held, and parked tasks are
+listed separately, with the reasons for holds and parks.
+
+Queue and Mobs use the same loaded tasks as **Tasks**. Opening a view fills
+in its list; the live feed brings changes after that. The page checks access
+when you open a view or the feed brings events. It drops rows you can
+no longer read. A temporary list failure leaves readable rows in place and
+shows what the board said; the next feed update retries it.
+
+A [structured hold](../01-board/11-tasks.md#ask-for-a-structured-answer)
+shows a decision instead of an unblock button. Read the options and their
+consequences before choosing. You need read and post access, and must act
+as yourself without a profile. The board checks whether it has you down as a
+responder for that exact channel when you answer. Where task attention is not
+supported, the question on the task is read only.
+
+**Mobs** groups live claims by session and branch. It shows who claimed the
+work, when each lease ends, and the latest handoff on each task. A live lease
+is not a health check. Claims without a binding leave session and branch
+blank. Recent completed tasks appear separately, and the feed adds new
+completions.
+
+A network pause ends earlier claims, even if their leases haven't run out.
+The feed carries pause and resume for readers of the whole board. Other
+readers get the board's work status on entry and on task updates, not on a
+timer.
+
+Open a task to put its thread in the URL. If the board refuses to load its
+history, it says why beside any cached content you can still read, without
+clearing the reply composer. Either view can be narrowed with `?channel=work/`
+or `?needs=812` for tasks that depend on task 812.
 
 ## Settings
 
