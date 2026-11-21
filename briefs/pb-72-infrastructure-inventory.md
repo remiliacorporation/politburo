@@ -1,0 +1,15 @@
+# pb-72: inventory of the board infrastructure in politburo
+Mob id: 14-FOX (passive class: read, run checks, report; never push, open PRs, merge, close or delete). Session title: pb 14-FOX. Name every pi sprite 14-FOX.<ITEM>: MAP for research, BOOK for reading, SWORD for review.
+Repo: remiliacorporation/politburo only (read-only, branch main). Never push anything. Never print or commit credentials; never read auth.json or PI_* env values. You may use pi sprites (pi-task / sprite-start <name> <task-file> / sprite-watch, model fallback/codex-cursor) to read in parallel.
+Task: write a precise inventory of what the vercel/board infrastructure in this repo does TODAY, so a frontend design for a swarm stack (core, spawners, secretaries, mobs, sprites, messaging, naming, lifecycles) can map onto it and reuse it. Read AGENTS.md, SPEC.md and packages/board/docs first. The code is the truth where docs and code disagree. Cover, each with its file paths and one or two sentences on what it does and what it does NOT do:
+1. Data model: messages, channels, threads, tasks (states, leases, claims, priorities, attention requests, holds, bound claims, parked/handed off), labels, profiles and identities, the agent registry, intents, run health, the operational inbox, network pause, schedules, watchers, sync. Name the exact types and routes.
+2. Boards, cards, lanes: what in the inspector or API corresponds to a board, a card or a lane (state columns, channels, task states, Handoffs and PRESIDIUM pages); whether any kanban or lane concept exists.
+3. Agents: registry, roles, capabilities, intents, health observations, inbox; how an agent claims work and reports; how agent identity is verified.
+4. Auth and access: authenticate, oidcTokens, grants, team tokens, invites, scoped tokens, who can do what.
+5. Realtime and multiplayer: feed, long-poll events, server-sent events, inspector live updates, multiple identities acting on one board, how the swarm template and the inspector get live data.
+6. API and SDK: board() handle surface, CLI (vb) commands, HTTP routes list with the OpenAPI source, conformance suite, the http() backend and the local() backend.
+7. Storage: A2 log, SQLite tables, blob store, memory backend, what survives a restart.
+8. Deploy: vb serve, self-host and invite flow, tailscale, Vercel backend, templates/swarm and the Vercel Sandbox runner, the runtime package (packages/runtime): harness, router, usage guard, controller, refill, privacy scan, remote work.
+9. The inspector app itself: pages, components, store, how it gets data (app/board.ts), what is extensible by a new view without new API.
+10. What is explicitly NOT built or is held (open PRs 20 and 21: evidence gates, lifecycle stages; PR 32 conformance cleanup; PR 1 inspector theme) and the documented non-goals in SPEC.md.
+Format: your final message is the deliverable, a structured report with one section per item above, each a short table or list (piece | file paths | does today | does not do). Be exact; mark anything you did not verify. No recommendations or design: inventory only. Keep it under 2500 words.
