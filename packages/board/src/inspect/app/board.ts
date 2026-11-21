@@ -548,14 +548,18 @@ const attentionFailure = (error: unknown) => ({
   unsupported: error instanceof BoardError && error.status === 501 && error.code === 'no_task_attention',
 })
 
+export function attentionRendered(rendered: store.State) {
+  set((s) => store.showAttentionRefusals(s, rendered))
+}
+
 async function readAttention(root: MessageView) {
-  set((s) => store.beginAttentionRead(s, root))
-  const read = state.attention[root.id]!.latest!
+  const reading = store.beginAttentionRead(state, root)
+  set(() => reading.state)
   const result = await team.tasks.attention(root.id).then<store.AttentionResult, store.AttentionResult>(
     ({ attention }) => ({ is: 'here', value: attention }),
     (error: unknown) => ({ is: 'failed', ...attentionFailure(error) }),
   )
-  set((s) => store.finishAttentionRead(s, root.id, read, result))
+  set((s) => store.finishAttentionRead(s, root.id, reading.read, result))
 }
 
 /** Send the choice on the displayed request. Only the feed settles the overlay. */
@@ -570,8 +574,7 @@ export async function answerAttention(id: string, requestId: string, optionId: s
   try {
     await team.tasks.answer(id, requestId, { option: option.id, commit: attention.commit })
   } catch (error) {
-    set((s) => store.failAnswer(s, id, requestId, attentionFailure(error)))
-    if (error instanceof BoardError && (error.status === 404 || error.status === 409)) await readAttention(state.messages[id] ?? root)
+    set((s) => store.failAnswer(s, id, attention, said(error)))
   }
 }
 

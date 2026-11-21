@@ -700,37 +700,47 @@ type AttentionItem = {
   latest?: AttentionRead
   view?: AttentionRead & { result: AttentionResult }
   answering?: { request: AttentionView; version: number; label: string }
-  error?: AttentionFailure
+  refusal?: AttentionRefusal
   /** The feed confirmed the answer. Keep it in place for this visit, not in the open count. */
   answered?: AttentionView
 }
 
+type AttentionRefusal = Pick<AttentionView, 'id' | 'commit'> & { words: string; shown: boolean }
+
+const sameSnapshot = (refusal: AttentionRefusal, request: AttentionView | null) =>
+  request !== null && refusal.id === request.id && refusal.commit === request.commit
+
 const putAttention = (state: State, id: string, item: AttentionItem): State => ({ ...state, attention: { ...state.attention, [id]: item } })
 
-export function beginAttentionRead(state: State, root: MessageView): State {
+export function beginAttentionRead(state: State, root: MessageView) {
   const item = state.attention[root.id]
   const latest = { request: (item?.latest?.request ?? 0) + 1, version: root.version, revision: root.revision }
-  return putAttention(state, root.id, { ...item, latest })
+  return { state: putAttention(state, root.id, { ...item, latest }), read: latest }
 }
 
 export function finishAttentionRead(state: State, id: string, read: AttentionRead, result: AttentionResult): State {
   const item = state.attention[id]
   if (!item || read.request !== item.latest?.request) return state
   if (item.view && (read.version < item.view.version || read.revision < item.view.revision)) return state
-  const next = putAttention(state, id, { ...item, view: { ...read, result } })
+  const refusal = item.refusal && (result.is === 'failed' || sameSnapshot(item.refusal, result.value)) ? item.refusal : undefined
+  const next = putAttention(state, id, { ...item, refusal, view: { ...read, result } })
   return result.is === 'failed' && result.unsupported ? { ...next, attentionUnsupported: true } : next
 }
 
 export function beginAnswer(state: State, root: TaskRoot, request: AttentionView, label: string): State {
-  const { error: _old, ...item } = state.attention[root.id] ?? {}
+  const item = state.attention[root.id]
   return putAttention(state, root.id, { ...item, answering: { request, version: root.version, label } })
 }
 
-export function failAnswer(state: State, id: string, requestId: string, error: AttentionFailure): State {
+export function failAnswer(state: State, id: string, request: AttentionView, words: string): State {
   const item = state.attention[id]
-  // The feed may have moved on while the write was in flight. Don't drop another request's overlay.
-  const next = putAttention(state, id, { ...item, ...(item?.answering?.request.id === requestId ? { answering: undefined } : {}), error })
-  return error.unsupported ? { ...next, attentionUnsupported: true } : next
+  const root = state.messages[id]
+  const refusal = { id: request.id, commit: request.commit, words, shown: false }
+  const read = item?.view?.result
+  // A late write must not mark a replacement as refused or drop its overlay.
+  if ((root?.task?.attentionId !== undefined && root.task.attentionId !== request.id) ||
+      (holdsAttention(root) && read?.is === 'here' && read.value !== null && !sameSnapshot(refusal, read.value))) return state
+  return putAttention(state, id, { ...item, refusal, ...(item?.answering?.request === request ? { answering: undefined } : {}) })
 }
 
 function foldAttention(state: State, event: BoardEventView, incoming: MessageView): State {
@@ -738,13 +748,14 @@ function foldAttention(state: State, event: BoardEventView, incoming: MessageVie
   const item = state.attention[incoming.id]
   if (!item || !root) return state
   const { answering, view } = item
-  const done = answering && incoming.version >= answering.version && (!holdsAttention(incoming) || incoming.task.attentionId !== answering.request.id)
+  const done = answering && root.version >= answering.version && (!holdsAttention(root) || root.task.attentionId !== answering.request.id)
+  const refusal = item.refusal && holdsAttention(root) && root.task.attentionId === item.refusal.id ? item.refusal : undefined
   if (event.type === 'task.attention_answered' && !holdsAttention(root) && !root.deleted && root.task?.attentionId === event.payload.requestId) {
     const read = view?.result.is === 'here' ? view.result.value : null
     const request = [read, answering?.request].find((request) => request?.id === event.payload.requestId)
-    if (request) return putAttention(state, root.id, { ...item, answering: undefined, answered: { ...request, status: 'answered', receipt: event.payload.receipt } })
+    if (request) return putAttention(state, root.id, { ...item, refusal, answering: undefined, answered: { ...request, status: 'answered', receipt: event.payload.receipt } })
   }
-  return done ? putAttention(state, root.id, { ...item, answering: undefined }) : state
+  return done || refusal !== item.refusal ? putAttention(state, root.id, { ...item, refusal, answering: done ? undefined : answering }) : state
 }
 
 /** The requests in this visit, including answers that just landed in place. */
@@ -753,7 +764,7 @@ export function attentionRows(state: State): TaskRoot[] {
     if (holdsAttention(root)) return true
     const item = state.attention[root.id]
     // A refusal still has a place to show if the feed took the hold out while the write was on its way.
-    return isTask(root) && (!!item?.error || (!!item?.answered && !root.deleted && root.task.attentionId === item.answered.id))
+    return isTask(root) && (!!item?.refusal || (!!item?.answered && !root.deleted && root.task.attentionId === item.answered.id))
   }).sort(byWritten)
 }
 
@@ -777,17 +788,33 @@ export function attentionFor(state: State, root: TaskRoot, viewer: Viewer | null
       ? 'answering needs a person acting as themselves with post access'
       : null
   const refreshing = item?.latest?.request !== item?.view?.request || (attention !== null && attention.revision !== root.revision)
-  return { held, attention, readError, missing: read?.is === 'here' && read.value === null, error: item?.error?.words, answering, reason, disabled: answering !== null || refreshing }
+  const refusal = item?.refusal
+  return { held, attention, readError, missing: read?.is === 'here' && read.value === null, error: refusal?.words, answering, reason,
+    disabled: answering !== null || refreshing || (refusal !== undefined && sameSnapshot(refusal, attention)) }
+}
+
+export const hasUnshownRefusal = (state: State): boolean => Object.values(state.attention).some((item) => item.refusal?.shown === false)
+
+/** Acknowledge only the refusals actually rendered, not writes that arrived in the meantime. */
+export function showAttentionRefusals(state: State, rendered: State): State {
+  let next = state
+  for (const root of attentionRows(rendered)) {
+    const item = state.attention[root.id]
+    const refusal = item?.refusal
+    if (refusal?.shown === false && refusal === rendered.attention[root.id]?.refusal)
+      next = putAttention(next, root.id, { ...item, refusal: { ...refusal, shown: true } })
+  }
+  return next
 }
 
 export function clearAttentionFeedback(state: State): State {
-  let attention = state.attention
+  let next = state
   for (const [id, item] of Object.entries(state.attention)) {
-    if (!item.answered && !item.error) continue
-    if (attention === state.attention) attention = { ...attention }
-    attention[id] = { ...item, answered: undefined, error: undefined }
+    const root = state.messages[id]
+    const refusal = item.refusal?.shown && !holdsAttention(root) ? undefined : item.refusal
+    if (item.answered || refusal !== item.refusal) next = putAttention(next, id, { ...item, refusal, answered: undefined })
   }
-  return attention === state.attention ? state : { ...state, attention }
+  return next
 }
 
 // --- blocks and schemas -------------------------------------------------------------------

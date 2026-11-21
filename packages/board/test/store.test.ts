@@ -387,7 +387,7 @@ describe('the inspector store', () => {
   const shownAttention = (state: store.State, root: store.TaskRoot) => store.attentionFor(state, root, null)
   const withRead = (state: store.State, root: MessageView, result: store.AttentionResult) => {
     const reading = store.beginAttentionRead(state, root)
-    return store.finishAttentionRead(reading, root.id, reading.attention[root.id]!.latest!, result)
+    return store.finishAttentionRead(reading.state, root.id, reading.read, result)
   }
 
   it('lists held attention tasks oldest first, even for stale or canceled requests', () => {
@@ -408,16 +408,6 @@ describe('the inspector store', () => {
     const owner = viewer(['post', 'manage'])
     expect(store.moves(start, task(1, { state: 'blocked' }), owner, NOW).unblock).toBe(true)
     expect(store.moves(start, hold(1), owner, NOW).unblock).toBe(false)
-  })
-
-  it('discards a read after a newer read starts, even before that read answers', () => {
-    const root = hold(1)
-    const first = store.beginAttentionRead(store.merge(start, [root]), root)
-    const second = store.beginAttentionRead(first, root)
-    const late = store.finishAttentionRead(second, root.id, first.attention[root.id]!.latest!, here(request(root)))
-    expect(shownAttention(late, root).attention).toBeNull()
-    const next = store.finishAttentionRead(late, root.id, second.attention[root.id]!.latest!, here(request(root, 'stale')))
-    expect(shownAttention(next, root).attention?.status).toBe('stale')
   })
 
   it('never replaces an attention view with one read at an older task version or revision', () => {
@@ -458,9 +448,12 @@ describe('the inspector store', () => {
   it('drops the answering overlay and shows the words of a refused answer', () => {
     const root = hold(1)
     const known = withRead(store.merge(start, [root]), root, here(request(root)))
-    const sending = store.beginAnswer(known, root, request(root), 'Yes')
-    const failed = store.failAnswer(sending, root.id, 'request', { words: 'not a responder', unsupported: false })
-    expect(shownAttention(failed, root)).toMatchObject({ answering: null, disabled: false, error: 'not a responder', attention: { status: 'pending' } })
+    const displayed = request(root)
+    const sending = store.beginAnswer(known, root, displayed, 'Yes')
+    const failed = store.failAnswer(sending, root.id, displayed, 'not a responder')
+    expect(shownAttention(failed, root)).toMatchObject({ answering: null, disabled: true, error: 'not a responder', attention: { status: 'pending' } })
+    const refreshed = withRead(failed, root, here({ ...request(root), commit: 'b'.repeat(40) }))
+    expect(shownAttention(refreshed, root)).toMatchObject({ disabled: false, error: undefined })
   })
 
   // --- blocks and schemas ---

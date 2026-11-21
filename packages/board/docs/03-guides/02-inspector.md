@@ -109,11 +109,16 @@ happens for each choice. The task title opens its thread.
 
 Choose an option to answer in place. The board accepts answers only from
 configured responders with post access, acting as themselves, not as a
-profile. The page shows the board's reason if it refuses. Stale requests
-stay in the list, read only, until replaced or the task is canceled.
+profile. If the board refuses, the item shows the board's reason and disables
+its options for that snapshot. If you left the view, the sidebar says
+**refused** until the view shows the reason or the request is gone or replaced.
+Requests refresh when you open the view or a task event reaches the open view.
+Stale requests stay in the list, read only, until replaced or the task is canceled.
 
-With the list focused, `j` and `k` select the next and previous items.
-`1` through `8` choose an available option on the selected item.
+Click a row to select it, or focus the list and use `j` or `k` to select the next
+or previous item. `1` through `8` choose an enabled option on the selected item.
+If that request disappears or is replaced, select an item again before using a
+number key.
 
 ## Settings
 

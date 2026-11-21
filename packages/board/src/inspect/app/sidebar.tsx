@@ -5,7 +5,7 @@ import * as board from './board.ts'
 import { toast } from './chrome.ts'
 import { Avatar } from './message.tsx'
 import { Link, navigate, type Route } from './nav.tsx'
-import { attentionTasks, openTasks, type State } from './store.ts'
+import { attentionTasks, hasUnshownRefusal, openTasks, type State } from './store.ts'
 import { ContextMenuArea, Menu, MenuItem, MenuSeparator } from './ui.tsx'
 import { boardWords, shownName } from './words.ts'
 
@@ -79,6 +79,7 @@ export function Sidebar({ state, current, onCollapse }: { state: State; current:
           <CircleHelp size={14} strokeWidth={1.75} aria-hidden="true" />
           <span className="name">attention</span>
           {attention > 0 && <span className="count">{attention}</span>}
+          {hasUnshownRefusal(state) && <span className="faint">refused</span>}
         </Link>
         <h2>
           channels

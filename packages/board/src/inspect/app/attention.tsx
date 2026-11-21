@@ -5,37 +5,63 @@ import { attentionFor, attentionRows, NO_ATTENTION, type State, type TaskRoot, t
 import { Header } from './ui.tsx'
 import { firstLine } from './words.ts'
 
+type Selection = { taskId: string; requestId: string }
+
+export function selectionAfter(prev: Selection | null, items: Selection[]): Selection | null {
+  return prev && items.some(({ taskId, requestId }) => taskId === prev.taskId && requestId === prev.requestId) ? prev : null
+}
+
+type KeyEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'repeat' | 'defaultPrevented'> & {
+  target: unknown
+  currentTarget: { closest(selector: string): unknown; isContentEditable?: boolean }
+  nativeEvent: { isComposing: boolean }
+}
+type Choice = Pick<ReturnType<typeof attentionFor>, 'reason' | 'disabled' | 'attention'>
+
+export function keyAction(event: KeyEvent, ctx: { focused: unknown; choice: Choice | null }) {
+  const list = event.currentTarget
+  // Only the focused scroller, not its controls, an editable ancestor, or the composer.
+  if (event.target !== list || ctx.focused !== list || list.isContentEditable ||
+      list.closest('input, textarea, select, [contenteditable]') || event.defaultPrevented ||
+      event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return null
+  if (event.key === 'j' || event.key === 'k') return { type: 'move', by: event.key === 'j' ? 1 : -1 } as const
+  const choice = ctx.choice
+  if (event.repeat || !/^[1-8]$/.test(event.key) || choice?.reason !== null || choice.disabled) return null
+  const optionId = choice.attention?.options[Number(event.key) - 1]?.id
+  return optionId === undefined ? null : { type: 'answer', optionId } as const
+}
+
 export function Attention({ state, viewer, lead }: { state: State; viewer: Viewer; lead: ReactNode }) {
   useTypeToFocus('main')
   useEffect(board.openAttention, [])
   const rows = useMemo(() => attentionRows(state), [state.messages, state.attention])
-  const [selectedId, select] = useState<string | null>(null)
-  const selected = rows.find((root) => root.id === selectedId) ?? rows[0]
-  useEffect(() => {
-    select(selected?.id ?? null)
-  }, [selected?.id])
+  const items = rows.flatMap((root) => {
+    const { held, attention } = attentionFor(state, root, viewer)
+    return held && root.task.attentionId !== undefined && attention?.status !== 'canceled' && attention?.status !== 'answered'
+      ? [{ taskId: root.id, requestId: root.task.attentionId }]
+      : []
+  })
+  const [previous, select] = useState<Selection | null>(null)
+  const selected = selectionAfter(previous, items)
+  if (selected !== previous) select(selected)
+  const selectedRow = selected && rows.find((root) => root.id === selected.taskId)
+  const choice = selectedRow && attentionFor(state, selectedRow, viewer)
+  useEffect(() => board.attentionRendered(state), [state])
 
   function keys(event: KeyboardEvent<HTMLDivElement>) {
-    // Only this scroller, never its controls or the thread's composer.
     const list = event.currentTarget
-    if (event.target !== list || list.ownerDocument.activeElement !== list || list.isContentEditable ||
-        event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return
-    if (!selected) return
-    if (event.key === 'j' || event.key === 'k') {
-      event.preventDefault()
-      const at = rows.indexOf(selected) + (event.key === 'j' ? 1 : -1)
-      const next = rows[at]
+    const action = keyAction(event, { focused: list.ownerDocument.activeElement, choice: choice ?? null })
+    if (!action) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (action.type === 'move') {
+      const at = selected ? items.findIndex(({ taskId }) => taskId === selected.taskId) : action.by === 1 ? -1 : items.length
+      const next = items[at + action.by]
       if (next) {
-        select(next.id)
-        list.ownerDocument.getElementById(`attention-${next.id}`)?.scrollIntoView({ block: 'nearest' })
+        select(next)
+        list.ownerDocument.getElementById(`attention-${next.taskId}`)?.scrollIntoView({ block: 'nearest' })
       }
-    } else if (/^[1-8]$/.test(event.key)) {
-      event.preventDefault()
-      if (event.repeat) return
-      const { attention, reason, disabled } = attentionFor(state, selected, viewer)
-      const option = attention?.options[Number(event.key) - 1]
-      if (option && attention && reason === null && !disabled) void board.answerAttention(selected.id, attention.id, option.id)
-    }
+    } else if (selected) void board.answerAttention(selected.taskId, selected.requestId, action.optionId)
   }
 
   const supported = state.discovery?.task_attention === true && !state.attentionUnsupported
@@ -49,7 +75,13 @@ export function Attention({ state, viewer, lead }: { state: State; viewer: Viewe
         {rows.length === 0 && state.tasksRefused === null && (
           <p className="empty">{!state.tasksCounted ? 'loading…' : !supported ? NO_ATTENTION : 'no open attention requests'}</p>
         )}
-        {rows.map((root) => <AttentionRow key={root.id} root={root} state={state} viewer={viewer} selected={selected?.id === root.id} onSelect={() => select(root.id)} />)}
+        {rows.map((root) => (
+          <AttentionRow key={root.id} root={root} state={state} viewer={viewer} selected={selected?.taskId === root.id}
+            onSelect={() => {
+              const item = items.find(({ taskId }) => taskId === root.id)
+              if (item) select(item)
+            }} />
+        ))}
       </div>
     </>
   )
@@ -60,7 +92,7 @@ function AttentionRow({ root, state, viewer, selected, onSelect }: { root: TaskR
   const title = firstLine(root.text) || root.attachments?.map((file) => file.name).join(', ') || 'message removed'
   const chosen = attention?.status === 'answered' ? attention.options.find((option) => option.id === attention.receipt.option) : undefined
   return (
-    <article id={`attention-${root.id}`} className="attention-row" aria-current={selected ? 'true' : undefined} onFocus={onSelect}>
+    <article id={`attention-${root.id}`} className="attention-row" aria-current={selected ? 'true' : undefined} onClick={onSelect}>
       <div className="attention-meta">
         <span>#{root.channel}</span>
         <Ago iso={root.createdAt} />
