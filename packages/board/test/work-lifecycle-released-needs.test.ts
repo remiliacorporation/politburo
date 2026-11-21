@@ -96,6 +96,48 @@ it.each(['task.released', 'task.expired'] as const)('keeps a dependent waiting a
   expect((await other.tasks.claim(id)).task.task?.state).toBe('claimed')
 })
 
+it('leaves a lapsed dependent out of the ready list and claims until its prerequisite is done again', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  const ctx = await setup()
+  const { worker, scoper } = ctx
+  const { task: prerequisite } = await worker.tasks.create('work', 'Prerequisite')
+  await finish(ctx, prerequisite.id)
+  const claim = await holdDependent(ctx, prerequisite.id, 'Dependent', 30)
+  const { id } = claim.task
+  await scoper.tasks.reopen(prerequisite.id, 'Requirements changed')
+  lapse(claim.until)
+
+  const readyIds = async () => (await worker.tasks.list({ channel: 'work', state: 'ready' })).tasks.map(({ message }) => message.id)
+  expect((await worker.thread(id)).message.task?.state).toBe('claimed')
+  await expect(worker.tasks.claim(id)).rejects.toMatchObject(WAITING)
+  expect(await worker.tasks.claim({ channel: 'work' })).toBeNull()
+  expect(await readyIds()).toEqual([])
+  expect((await worker.thread(id)).message.task?.state).toBe('claimed')
+
+  await finish(ctx, prerequisite.id)
+  const listed = await readyIds()
+  expect(listed).toEqual([id])
+  expect((await worker.tasks.claim({ channel: 'work' }))?.task.id).toBe(listed[0])
+})
+
+it('lists ready staged work for non-scoper workers, but not when staged claims are disabled', async () => {
+  const store = newStore()
+  const { worker, scoper } = await setup({ store })
+  const { task: { id } } = await worker.tasks.create('work', 'Scoped work')
+  await scoper.tasks.scope(id, 'Scope the work')
+  const ready = { channel: 'work', state: 'ready' } as const
+  expect((await worker.tasks.list(ready)).tasks.map(({ message }) => message.id)).toEqual([id])
+  const claim = await worker.tasks.claim({ channel: 'work' })
+  expect(claim?.task.id).toBe(id)
+  await claim!.release()
+
+  const { worker: unstaged } = await setup({ store, enabled: false })
+  expect((await unstaged.tasks.list({ ...ready, state: 'all' })).tasks.map(({ message }) => message.id)).toEqual([id])
+  await expect(unstaged.tasks.claim(id)).rejects.toMatchObject({ status: 501, code: 'no_work_lifecycle' })
+  expect(await unstaged.tasks.claim({ channel: 'work' })).toBeNull()
+  expect((await unstaged.tasks.list(ready)).tasks).toEqual([])
+})
+
 it('refuses a lapsed dependent and records it waiting before replacing its needs', async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   const ctx = await setup() // No scheduler: the lapsed claim still has its stored state.

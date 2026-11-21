@@ -185,21 +185,25 @@ The legacy task checks still run.
 
 On a board that advertises `workLifecycle: 1`, the `work-lifecycle` group
 replaces the legacy queue checks. It checks that proposed work cannot be
-claimed, that handoff does not finish it, and that stage changes are recorded.
-It also runs the priority and task authority checks on staged tasks. The
+claimed and that stage changes are recorded. It checks that dependents stay
+waiting until `done` and return to waiting on reopen, in the thread and the
+feed. It also runs the priority and task authority checks on staged tasks. The
 structured attention and agent run health checks scope their tasks when
 advertised, as does the optional network pause check. Run as an allowlisted
 scoper with `manage` in the test channel to exercise these moves.
 
 Without `accessFence: 1`, the kit checks for 501 `no_access_fence` and
-skips the staged checks that depend on it. When the board advertises the
-fence, the SDK can also test revocation. In `principals.scoper`, pass a
+skips the staged checks that depend on it. If the board advertises the
+fence, a staged move that answers 501 `no_access_fence` fails the check.
+The SDK can also test revocation. In `principals.scoper`, pass a
 handle on the same board as a separate allowlisted deployment, and set
 `principals.project` to its project ID. That credential needs access to
 sign in but must not already have `manage` in the test channel. The kit
 grants `manage` there and revokes it. It checks that scope and stage fail
-after revocation and that a concurrent scope does not land after revocation.
-Without a second credential, the revocation checks skip.
+after revocation. For a race, it reads the feed from before either call.
+A successful scope must be visible by the first feed read after revocation,
+even if the scope response arrives later. Without a second credential, the
+revocation checks skip.
 
 Every board answers their routes: see
 [the whole protocol](./03-http.md#the-whole-protocol). A board may keep no

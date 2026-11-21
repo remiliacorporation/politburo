@@ -561,6 +561,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     return ids.every((id) => completedNeed(found.get(id)))
   }
 
+  /** Queue readiness, independent of who may read or claim the task. */
+  async function readyAt(task: Task, position: number, now: number, pauseEpoch: number): Promise<boolean> {
+    return !task.parked && stateNow(task, now, pauseEpoch) === 'ready' && canReady(task) && (!task.work || !!scopers) && (await satisfied(task, position))
+  }
+
   /** Every root that wears `board.task` as one of `states` and matches `filter`, oldest first, all as of `position`. */
   async function* rootsAt(filter: MessageFilter, states: readonly TaskState[], position: number): AsyncGenerator<Root> {
     const labels = [...(filter.labels ?? []), { key: TASK_LABEL, values: states }]
@@ -647,12 +652,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       let bestAssigned = false
       for await (const candidate of rootsAt(filter, ['ready', 'claimed'], position)) {
         const { task } = candidate
-        if (task.parked || stateNow(task, now, pauseEpoch) !== 'ready' || !canReady(task) || (task.work && !scopers)) continue
         if (scopers && (!current.readable(candidate.channel) || !current.can('label', candidate.channel))) continue
         const assigned = assignedTo(task, identity)
         if (!assigned && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
-        if (rank < best || (rank === best && (bestAssigned || !assigned)) || !(await satisfied(task, position))) continue
+        if (rank < best || (rank === best && (bestAssigned || !assigned)) || !(await readyAt(task, position, now, pauseEpoch))) continue
         root = candidate
         best = rank
         bestAssigned = assigned
@@ -847,8 +851,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const needed = query.needs === undefined ? null : (indexOf(query.needs) ?? -1)
       const now = Date.now()
       const { status: { pauseEpoch } } = await ctx.work.at()
-      const matches = ({ task }: Root) =>
-        (wanted === 'all' || wanted === 'open' || stateNow(task, now, pauseEpoch) === wanted) &&
+      const matches = (task: Task) =>
+        (wanted === 'all' || wanted === 'open' || wanted === 'ready' || stateNow(task, now, pauseEpoch) === wanted) &&
         (owners === null || owners.has(task.owner)) &&
         (assignees === null || (task.for !== null && assignees.has(task.for))) &&
         (needed === null || task.needs.includes(needed))
@@ -868,7 +872,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         more = page.threads.length === PAGE
         for (const thread of page.threads) {
           last = thread.root.id
-          if (thread.root.task && matches(thread.root as Root)) found.push(thread)
+          const { task } = thread.root
+          if (task && matches(task) && (wanted !== 'ready' || (await readyAt(task, position, now, pauseEpoch)))) found.push(thread)
           if (!query.latest && found.length === limit) break scan
         }
       }

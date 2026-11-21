@@ -691,15 +691,19 @@ const ACCESS_FENCE_CHECKS: Check[] = [
       for (let round = 0; round < 3; round++) {
         const skipped = await withRevocableScoper(ctx, async (scoper, revoke) => {
           const { task: root } = await task(ctx, 'conformance: scope racing revocation')
+          const feed = { re: root.id }
+          const { cursor } = await ctx.board.poll(feed)
           const [scope, revoked] = await Promise.allSettled([
             scoper.tasks.scope(root.id, 'scope agreed', { ifVersion: root.version }),
-            revoke().then(() => ctx.board.poll({ last: 1 })),
+            revoke().then(() => ctx.board.poll({ ...feed, after: cursor })),
           ])
           if (revoked.status === 'rejected') throw revoked.reason
-          // Read the log's position when the revoke answers. A scope response can arrive late
-          // even if its write landed first; response order alone can't tell which write won.
-          const { events } = await ctx.board.poll({ re: root.id, after: revoked.value.cursor })
-          check(!events.some((event) => event.type === 'task.stage_changed' && event.payload.id === root.id && event.payload.to === 'scoped'), 'scope landed after its grant was revoked')
+          // Grants aren't in the message feed. The first read after the revoke is our boundary:
+          // replay from before the race so it includes a scope that landed before its response.
+          const scoped = ({ type, payload }: (typeof revoked.value.events)[number]) => type === 'task.stage_changed' && payload.id === root.id && payload.to === 'scoped'
+          const { events } = await ctx.board.poll({ ...feed, after: revoked.value.cursor })
+          check(!events.some(scoped), 'scope landed after its grant was revoked')
+          same(revoked.value.events.filter(scoped).length, scope.status === 'fulfilled' ? 1 : 0, 'scope recorded in the feed by the revocation observation')
           if (scope.status === 'rejected') {
             revokedScoper(scope.reason, 'scoping while its grant is revoked')
             await unchangedWork(ctx, root)
@@ -758,23 +762,49 @@ const LIFECYCLE_CHECKS: Check[] = [
     name: 'releases dependent work only at done, and checks that again after reopen',
     run: async (ctx) => {
       const labels = { ...ctx.labels, queue: 'work-dependencies' }
+      const feed = { channel: ctx.channel, label: labels }
+      const { cursor } = await ctx.board.poll(feed)
       const { task: first } = await task(ctx, 'conformance: a prerequisite to approve', { labels })
       await scopeWork(ctx, first.id, 'scope prerequisite')
       const { task: second } = await task(ctx, 'conformance: dependent work', { labels, needs: [first.id] })
+      const stored = async (state: 'ready' | 'waiting', when: string) => {
+        const { message } = await ctx.board.thread(second.id)
+        same(message.task?.state, state, `the dependent stored ${when}`)
+        same(message.labels['board.task'], state, `the dependent's board.task label ${when}`)
+      }
       await ctx.board.tasks.scope(second.id, 'scope dependent')
+      await stored('waiting', 'after scope')
       await (await ctx.board.tasks.claim(first.id)).complete()
+      await stored('waiting', 'after handoff')
       await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite handed off')
       await ctx.board.tasks.stage(first.id, 'review', 'review started')
       await ctx.board.tasks.stage(first.id, 'approved', 'review passed')
+      await stored('waiting', 'after approval')
       await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite is only approved')
       const done = await ctx.board.tasks.stage(first.id, 'done', 'finished')
       same(done.task?.state, 'completed', 'how done work reads to legacy readers')
+      await stored('ready', 'after done')
       await (await ctx.board.tasks.claim(second.id)).release()
       const reopened = await ctx.board.tasks.reopen(first.id, 'new requirements')
       same(reopened.task?.work?.stage, 'proposed', 'the stage after reopen')
       same(reopened.task?.work?.scopedRevision, null, 'the cleared scope after reopen')
+      await stored('waiting', 'after reopen')
       await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite reopened')
       same((await ctx.board.tasks.claim({ channel: ctx.channel, label: labels }))?.task.id ?? null, null, 'the next claim after reopen')
+
+      const { events } = await ctx.board.poll({ ...feed, after: cursor })
+      const doneAt = events.findIndex((event) => event.type === 'task.stage_changed' && event.payload.id === first.id && event.payload.to === 'done')
+      const reopenedAt = events.findIndex((event) => event.type === 'task.stage_changed' && event.payload.id === first.id && event.payload.to === 'proposed')
+      check(doneAt >= 0 && reopenedAt > doneAt, 'the feed must record the prerequisite reaching done and then reopening')
+      const becameReady = events.filter((event) => event.type === 'task.ready' && event.payload.id === second.id)
+      same(becameReady.length, 1, 'ready events for the dependent in the feed')
+      const readyAt = events.indexOf(becameReady[0]!)
+      check(readyAt > doneAt && readyAt < reopenedAt, 'the dependent in the feed must become ready only while its prerequisite is done')
+      same(becameReady[0]!.message?.task?.state, 'ready', 'the dependent in the feed on task.ready')
+      const waiting = events.slice(reopenedAt + 1).find((event) => event.type === 'task.needs_changed' && event.payload.id === second.id)
+      same(waiting?.message?.task?.state, 'waiting', 'the dependent in the feed after reopen')
+      check(!events.some((event, i) => (i < doneAt || i > reopenedAt) && event.message?.id === second.id && event.message.task?.state === 'ready'),
+        'the dependent in the feed was ready with an open prerequisite')
     },
   },
 ]
@@ -3388,7 +3418,8 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {
         if (error instanceof Skip) checks.push({ group, name, status: 'skipped', detail: error.message })
-        else if (!requires && OPTIONAL.has(original) && error instanceof BoardError && error.status === 501 && (!taskAuthority || error.code === 'no_tasks')) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
+        // A staged probe belongs to work-lifecycle even if its legacy counterpart is optional.
+        else if (!requires && OPTIONAL.has(group) && error instanceof BoardError && error.status === 501 && (!taskAuthority || error.code === 'no_tasks')) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
         // Vercel's API takes watchers only from a deployment: a run as anyone else can't check them.
         else if (group === 'watchers' && error instanceof BoardError && error.code === 'watchers_need_project') checks.push({ group, name, status: 'skipped', detail: 'only a deployment registers watchers here' })
         // Vercel's API takes no GitHub or OIDC principal in a grant.

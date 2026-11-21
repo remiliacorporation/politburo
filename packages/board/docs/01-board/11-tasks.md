@@ -138,6 +138,12 @@ $ vb read 812
   #828  work  task canceled by julian · superseded by the nightly rotation
   ```
 
+On a local board, `vb tasks --state ready` excludes work with unfinished
+prerequisites even before an expired lease is recorded. The filter describes
+queue readiness, not who may claim: readers can still see ready work assigned
+to someone else. Staged work appears here only with staged claims enabled.
+Workers do not need to be scopers to claim it.
+
 A [network pause](./12-network-pause.md) stops new claims and invalidates
 existing leases. It does not stop reads, posts, or ordinary task creation.
 
