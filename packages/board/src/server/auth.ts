@@ -1,6 +1,7 @@
 import type { JWTVerifyGetKey } from 'jose'
 import type { PrincipalInput } from '../api/routes.ts'
 import { compileAccess, FULL_ACCESS, parseCan, writtenCan, type Access, type Can, type WrittenCan } from './access.ts'
+import type { GrantRead } from './backend.ts'
 import { badRequest, forbidden, HttpError, unauthorized } from './errors.ts'
 import { admits, grantAccess, subPrefix, type GrantFacts, type GrantSource } from './grants.ts'
 
@@ -467,12 +468,15 @@ export function createAuthority(options: {
   /** The board's own Vercel project and team. */
   project: () => Promise<{ id: string | null; teamId: string | null }>
   /** The grants the board keeps, as they are now. Null where it keeps none: there, people may do everything. */
-  grants?: (() => Promise<readonly StoredGrant[]>) | null
+  grants?: ((use?: GrantRead) => Promise<readonly StoredGrant[]>) | null
 }) {
   /** What `grantAccess` decides `principal` from: the grants of `snapshot`, when given, or as they are now. Null facts for one no grant names. */
   async function factsFor(principal: Known, facts: TokenFacts | null, team: string | null, snapshot?: readonly StoredGrant[]): Promise<{ grants: readonly StoredGrant[]; facts: GrantFacts<StoredGrant> | null }> {
-    const grants = snapshot ?? (options.grants ? await options.grants() : [])
     const known = callerFacts(principal, facts, team)
+    // Verified members can still be restricted by grants, but no OIDC subject can match a user.
+    // Invitees, although kind 'person', are not members here and need their stored grant.
+    // An explicit snapshot comes only from an already admitted caller's conditional grant write.
+    const grants = snapshot ?? (options.grants ? await options.grants(known?.member ? 'member' : undefined) : [])
     return { grants, facts: known ? { ...known, grants } : null }
   }
 

@@ -52,6 +52,7 @@ import {
   CreateInviteBody,
   RedeemInviteBody,
   GrantBody,
+  AcknowledgeGrantBody,
   RevokeGrantBody,
   UpdateGrantBody,
   ExplainQuery,
@@ -274,6 +275,9 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return CreateInviteBody.parse(await body())
     case 'updateGrant':
       return { id, ...UpdateGrantBody.parse(await body()) }
+    case 'acknowledgeGrant':
+      AcknowledgeGrantBody.parse(await body())
+      return { id: Ref.parse(id) }
     case 'revokeGrant':
       return { id, ...(RevokeGrantBody.parse(await body()) ?? {}) }
     case 'explain':
@@ -1330,6 +1334,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
         && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {
         if (INVITE_METHODS.has(target.name)) throw noInvites()
+        if (target.name === 'acknowledgeGrant') throw new HttpError(501, 'no_grant_review', 'this board does not review stored OIDC subjects')
         throw ops ? noAgentOps(ops) : notFound(`no route: ${request.method} ${url.pathname}`)
       }
       // A sync callback's client does everything but its own writes as sync, except private mail.

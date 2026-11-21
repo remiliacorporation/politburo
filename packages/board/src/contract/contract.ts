@@ -311,10 +311,11 @@ const GrantPrincipal = z.discriminatedUnion('kind', [
 ])
 /** A grant's `can`, as written: each pattern and `'all'` or its permissions. */
 const GrantCan = z.record(z.string().min(1).max(CHANNEL_PATTERN_MAX), Grant)
+const GrantRevision = z.object({ id: z.number().int().positive(), version: z.number().int().positive() })
 
 /**
- * Who the board trusts beside its code's rules, outside the board log: its grants. Session
- * `access`. A grant's ID comes from the fold, counting from the one the board starts with.
+ * The board's access log, session `access`. A grant's ID comes from the fold, counting from
+ * the defaults. An upgrade review is ordered with the grants it governs, in this same session.
  */
 export const accessContract = contract({
   name: 'board-access',
@@ -334,6 +335,10 @@ export const accessContract = contract({
     'grant.updated': z.object({ id: z.number().int().positive(), principals: z.array(GrantPrincipal).min(1).max(32), can: GrantCan, by: ActorId }),
     /** A grant revoked. */
     'grant.deleted': z.object({ id: z.number().int().positive(), by: ActorId }),
+    /** (server) The versions with trailing stars when this board first opens under the guard. */
+    'grant.oidc_star_baseline': z.object({ grants: z.array(GrantRevision), by: ActorId }),
+    /** (server) The version a verified manager agrees to keep under prefix matching. */
+    'grant.oidc_star_acknowledged': GrantRevision.extend({ by: ActorId }),
     // Only one-way verifiers of 256-bit random values are kept, never either bearer secret.
     'invite.created': z.object({ id: z.string().uuid(), name: z.string().max(32), digest: z.string().length(64), can: GrantCan, expiresAt: z.number().int(), by: ActorId }),
     'invite.revoked': z.object({ id: z.string().uuid(), by: ActorId }),

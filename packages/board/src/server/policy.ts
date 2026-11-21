@@ -20,8 +20,8 @@ import {
   type Principal,
   type StoredGrant,
 } from './auth.ts'
-import type { Identity, Trust } from './backend.ts'
-import { HttpError, RejectedError, unauthorized } from './errors.ts'
+import type { GrantRead, Identity, Trust } from './backend.ts'
+import { HttpError, OIDC_SUBJECT_REVIEW_REQUIRED, RejectedError, unauthorized } from './errors.ts'
 import type { ProjectIdentity } from './identity.ts'
 
 /** What decides a channel for a principal: the winning pattern and level, the grants there or the rule, and what they give. */
@@ -63,7 +63,7 @@ export type Policy = ReturnType<typeof createPolicy>
  * uses another board's answers only wake-ups and webhooks on Vercel's, and nothing at `BOARD_URL`.
  */
 export function createPolicy(options: PolicyOptions, keeps: boolean, serving: (() => Promise<Serving>) | null, trust: Trust | null = null) {
-  const grants = trust ? () => trust.grants() : null
+  const grants = trust ? (use?: GrantRead) => trust.grants(use) : null
 
   /** The board's own Vercel project and team, from the environment, asked once. */
   let own: Promise<{ id: string | null; teamId: string | null }> | null = null
@@ -108,7 +108,9 @@ export function createPolicy(options: PolicyOptions, keeps: boolean, serving: ((
     const iss = issuerOf(credential)
     // A grant's issuer is https: a local board's own (`vb serve`'s) never is.
     if (iss === null || !iss.startsWith('https://') || iss === GITHUB_ISSUER || VERCEL_ISSUER.test(iss)) return
-    const issuers = verifiedIssuers([], grantIssuers(await grants()))
+    // Authentication still verifies the credential. This read uses only issuer URLs, not sub
+    // matching or any authorization decision, so a verified workflow gets the review error.
+    const issuers = verifiedIssuers([], grantIssuers(await grants('issuers')))
     if (issuers.join('\n') !== context.issuers.join('\n')) context.issuers = issuers
   }
 
@@ -179,6 +181,7 @@ export function createPolicy(options: PolicyOptions, keeps: boolean, serving: ((
     try {
       resolved = await authority.resolve(principal)
     } catch (error) {
+      if (error instanceof HttpError && error.code === OIDC_SUBJECT_REVIEW_REQUIRED) throw error
       const status = (error as { status?: number }).status
       if (status === 401 || status === 403) return { pattern: null, over: [], level: null, grants: [], permissions: [] }
       throw error

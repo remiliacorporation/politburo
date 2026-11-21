@@ -222,6 +222,8 @@ export type Protocol = {
   createGrants: { input: Input<typeof CreateGrantsBody>; output: { grants: GrantView[] } }
   /** Adds and removes principals, or replaces its `can`: needs what `checkGrantChange` says, for the grant as it was and as it'd be. 404 `grant_not_found`. */
   updateGrant: { input: Id & Input<typeof UpdateGrantBody>; output: { grant: GrantView } }
+  /** Keeps a stored OIDC subject under prefix matching; false when the grant needs no review. */
+  acknowledgeGrant: { input: Id; output: { acknowledged: boolean } }
   /** Which grant decides `channel` for the caller, or with `manage` at `*` (or a team owner), the principal it names. */
   explain: { input: Input<typeof ExplainQuery>; output: Explanation }
   /** `revoked` is false when it was already gone. */

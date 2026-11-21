@@ -834,6 +834,8 @@ export function createBoardClient(options: ClientOptions) {
     revokeInvite: (id: string) => call<{ revoked: boolean }>('POST', `/invites/${path(id)}/revoke`),
     /** Redeems an invite on this board. Keep the returned bearer token private. */
     join: (secret: string) => call<Joined>('POST', '/invites/redeem', { body: { secret }, auth: false, redirect: 'error' }),
+    /** Keeps a stored OIDC subject under prefix matching. `acknowledged` is false if it needs no review. */
+    acknowledgeGrant: (id: string) => call<Protocol['acknowledgeGrant']['output']>('POST', `/grants/${path(id)}/acknowledge`),
     /** `revoked` is false when it was already gone. Its principals' next requests are refused. */
     revokeGrant: (id: string, options: GrantWriteOptions = {}) => call<{ revoked: boolean }>('POST', `/grants/${path(id)}/revoke`, { body: goAhead(options) }),
     /** Every schema: the built-ins, then the board's own, by name and version. */

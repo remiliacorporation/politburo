@@ -257,6 +257,7 @@ const WALK: Record<RouteName, Walk> = {
     { method: 'POST', path: '/grants/batch', body: { grants: [{ principals: [{ kind: 'everyone' }], can: { open: ['read', 'post'] } }], lockMeOut: true }, status: 403 },
   ],
   updateGrant: () => [{ method: 'PATCH', path: '/grants/g1', body: { can: { '*': 'all' } }, status: 403 }],
+  acknowledgeGrant: () => [{ method: 'POST', path: '/grants/g1/acknowledge', status: 403 }],
   // What it may do itself, anywhere, without the grants that decide it; anyone else's only with manage at *.
   explain: () => [
     { method: 'GET', path: '/grants/explain?channel=secret', status: 200, check: (body) => expect(body).toMatchObject({ channel: 'secret', can: [], grants: [] }) },

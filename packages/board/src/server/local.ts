@@ -118,7 +118,7 @@ export function local(options: LocalOptions = {}): LocalBackend {
     keeps: true,
     supportsTaskAuthority: true,
     trust: {
-      grants: async () => (await open()).backend.trust.grants(),
+      grants: async (use) => (await open()).backend.trust.grants(use),
       joined: async (digest, audience) => (await open()).backend.trust.joined(digest, audience),
     } satisfies Trust,
     bind(given: BoardBinding) {

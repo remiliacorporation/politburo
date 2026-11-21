@@ -355,6 +355,13 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         ],
       },
       {
+        name: 'acknowledge',
+        description: 'keep a reviewed OIDC subject under prefix matching on a local board',
+        arguments: [{ name: 'grant', required: true, description: 'the grant ID marked for review by grants list' }],
+        options: [],
+        examples: [{ name: 'keep the OIDC prefix after review', value: 'grants acknowledge g4' }],
+      },
+      {
         name: 'explain',
         description: 'which grant decides a channel, for you or anyone',
         arguments: [{ name: 'channel', required: true, description: 'a channel, such as security/incidents' }],

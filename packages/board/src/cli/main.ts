@@ -874,7 +874,10 @@ function doing(): string {
     case 'invite':
       return a === 'create' ? 'create the invite' : a === 'revoke' ? 'revoke the invite' : 'list invites'
     case 'grants':
-      return a === 'create' ? (flags.file !== undefined ? 'create the grants' : 'create the grant') : a === 'update' ? `update grant ${b}` : a === 'explain' ? `explain ${b ?? 'the channel'}` : a === 'revoke' ? `revoke grant ${b}` : 'list grants'
+      if (a === 'create') return flags.file === undefined ? 'create the grant' : 'create the grants'
+      if (a === 'update' || a === 'revoke' || a === 'acknowledge') return `${a} grant ${b}`
+      if (a === 'explain') return `explain ${b ?? 'the channel'}`
+      return 'list grants'
     case 'schemas':
       return a === 'create' ? `register schema ${b ?? ''}`.trimEnd() : a === 'inspect' ? `read schema ${b ?? ''}`.trimEnd() : 'list schemas'
     case 'sources':
@@ -917,7 +920,7 @@ function missing(): string | undefined {
   if (command === 'schedule' && a === 'cancel' && b !== undefined) return `schedule ${b}`
   // A task is its thread: one that isn't there is a message that isn't.
   if (command === 'tasks' && TASK_VERBS.has(a) && b !== undefined && isMessageRef(b)) return `message ${ref(b)}`
-  if (command === 'grants' && (a === 'revoke' || a === 'update') && b !== undefined) return `grant ${b}`
+  if (command === 'grants' && (a === 'revoke' || a === 'update' || a === 'acknowledge') && b !== undefined) return `grant ${b}`
   if (command === 'schemas' && a === 'inspect' && b !== undefined) return `schema ${b}`
   if (command === 'agents' && b !== undefined) {
     if (a === 'heartbeat' || a === 'retire' || a === 'intents') return `agent ${b}`
@@ -1091,6 +1094,10 @@ function failureOf(error: unknown, hold: TaskHold = 'unknown'): Failure {
               ? [{ instruction: 'Pass a token it accepts in BOARD_TOKEN' }]
               : [{ instruction: 'Log in again', argv: ['vercel', 'login'] }],
     )
+  if (status === 403 && code === 'oidc_star_review_required')
+    return theirs('permission', code, `Can't ${doing()}. Stored OIDC subjects need review.`, [
+      { instruction: 'List the grants as a person with manage', argv: [...cli(), 'grants', 'list', ...onSameBoard()] },
+    ])
   if (status === 403) return theirs('permission', 'permission_denied', `You can't ${doing()}.`, refusedRecoveries())
   if (status === 404) {
     const thing = missing()
@@ -1987,6 +1994,14 @@ async function run(command: string | undefined, args: string[]): Promise<number>
         const { grant } = await client().updateGrant(id, { ...(add.length > 0 ? { add } : {}), ...(remove.length > 0 ? { remove } : {}), ...(can !== undefined ? { can } : {}) }, lockMeOut())
         if (flags.json) result({ grant, outcome: 'updated' })
         else out(`updated ${grantRow(grant)}`)
+        return 0
+      }
+      if (verb === 'acknowledge') {
+        const id = grantId(rest[0])
+        if (rest.length > 1) throw usage(`grants acknowledge takes one grant: ${rest[1]} is one too many.`)
+        const { acknowledged } = await client().acknowledgeGrant(id)
+        if (flags.json) result({ grant: id, outcome: acknowledged ? 'acknowledged' : 'unchanged' })
+        else out(acknowledged ? `acknowledged ${id}` : `${id} needs no OIDC subject review`)
         return 0
       }
       if (verb === 'explain') {

@@ -163,12 +163,16 @@ export type BoardBinding = {
   url(): string | null
 }
 
+/** Grant reads that can't use OIDC subject matching: a member's access or issuer discovery. */
+export type GrantRead = 'member' | 'issuers'
+
 /**
  * What a backend that keeps the board keeps of who it trusts: its grants. board() reads them on
  * the requests they decide, as they are then, so a revoke takes effect on the next request.
  */
 export type Trust = {
-  grants(): Promise<readonly StoredGrant[]>
+  /** Without `use`, refuses if stored grants cannot safely decide a caller's access. */
+  grants(use?: GrantRead): Promise<readonly StoredGrant[]>
   /** Finds the profile for a verified digest on this board and URL. Never receives the bearer secret. */
   joined?(digest: string, audience: string): Promise<{ id: string; name: string } | null>
 }
@@ -181,7 +185,9 @@ export type InviteMethod = 'invites' | 'createInvite' | 'revokeInvite' | 'redeem
  * it verified. A backend stores and answers, honoring what each caller may do. Backends without
  * the agent registry or operational inbox can omit their methods; board() answers 501 for them.
  */
-export interface Backend extends Omit<ProtocolMethods, InviteMethod | AgentOpsMethod | OperationalInboxMethod | 'status' | 'pause' | 'resume'>, Partial<Pick<ProtocolMethods, InviteMethod | AgentOpsMethod | OperationalInboxMethod>> {
+export interface Backend extends Omit<ProtocolMethods, InviteMethod | AgentOpsMethod | OperationalInboxMethod | 'acknowledgeGrant' | 'status' | 'pause' | 'resume'>, Partial<Pick<ProtocolMethods, InviteMethod | AgentOpsMethod | OperationalInboxMethod>> {
+  /** Records approval of a stored OIDC subject under prefix matching, where the backend reviews those grants. */
+  acknowledgeGrant?: ProtocolMethods['acknowledgeGrant']
   /** Optional work admission control. Unimplemented methods answer 501 `no_network_pause`. */
   status?: ProtocolMethods['status']
   pause?: ProtocolMethods['pause']

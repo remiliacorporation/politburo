@@ -578,6 +578,9 @@ export const CreateGrantsBody = z.strictObject({
   lockMeOut: LockMeOut,
 })
 
+/** Acknowledgement names its grant in the path, and takes no provenance or other fields. */
+export const AcknowledgeGrantBody = z.strictObject({}).optional()
+
 /** What revoking a grant takes: nothing, or `lockMeOut`. */
 export const RevokeGrantBody = z.strictObject({ lockMeOut: LockMeOut }).optional()
 
@@ -1005,9 +1008,11 @@ export type GrantView = {
   can: Record<string, 'all' | Permission[]>
   /** Whether a person's team role caps what it gives them: a viewer only reads and reacts. False where the board has no roles. */
   capped: boolean
-  /** The actor that changed it last, and when: null for one the board started with. */
+  /** The actor that changed or acknowledged it last, and when: null for an unchanged default. */
   by: string | null
   at: string | null
+  /** On a local board, this grant still needs review after the OIDC prefix upgrade. */
+  needsOidcSubjectReview?: true
 }
 
 /** A schema version, as the board keeps it: it never changes. */
@@ -1439,6 +1444,7 @@ export const routes = {
   /** Several grants in one write, all or none, judged together. */
   createGrants: { method: 'POST', path: '/grants/batch', body: CreateGrantsBody },
   updateGrant: { method: 'PATCH', path: '/grants/:id', body: UpdateGrantBody },
+  acknowledgeGrant: { method: 'POST', path: '/grants/:id/acknowledge', body: AcknowledgeGrantBody },
   /** Which grant decides a channel, for the caller or, with `manage` at `*`, a principal it names. */
   explain: { method: 'GET', path: '/grants/explain', query: ExplainQuery },
   revokeGrant: { method: 'POST', path: '/grants/:id/revoke', body: RevokeGrantBody },
