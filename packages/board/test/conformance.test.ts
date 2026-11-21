@@ -2,8 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { board } from '../src/server/index.ts'
 import { http } from '../src/backend-http/index.ts'
 import { conformance } from '../src/conformance/index.ts'
-import type { GrantInput } from '../src/api/routes.ts'
-import { bearer, BOARD_URL, caller, deploymentToken, localBoard, personToken, testBoard, workflowToken } from './harness.ts'
+import type { EventsPage, GrantInput, MessageView, ThreadView } from '../src/api/routes.ts'
+import { oidcTokens } from '../src/access/index.ts'
+import { local } from '../src/backend-local/index.ts'
+import { a2 } from '../src/server/a2.ts'
+import { memory } from '../src/store/memory.ts'
+import { bearer, board as testMount, BOARD_URL, caller, deploymentToken, localBoard, personToken, testAuth, testBoard, workflowToken } from './harness.ts'
 import { fakeQueue } from './queue.ts'
 
 type Fetch = (request: Request) => Promise<Response>
@@ -25,6 +29,12 @@ async function grantingV0(environment = 'production', can: GrantInput['can'] = {
 
 /** A handle on the board behind `fetch`, as `vb conformance` checks it. */
 const clientOf = async (fetch: Fetch) => clientAs(fetch, () => personToken())
+
+function stagedBoard(...scopers: string[]) {
+  const backend = local({ memory: true, workLifecycle: { scopers: ['vercel:user:u_julian', ...scopers] } })
+  const team = testMount({ url: BOARD_URL, backend, authenticate: oidcTokens(testAuth) })
+  return { team, close: () => backend.close() }
+}
 
 /** A handle on the board behind `fetch`, with the token `token` gives. */
 const clientAs = async (fetch: Fetch, token: () => Promise<string>) =>
@@ -218,6 +228,147 @@ describe('the conformance kit', () => {
     // Every task it made went with its root: none is left open, and none still wears a state.
     expect((await client.tasks.list({ channel: 'conformance', state: 'all' })).tasks).toEqual([])
     expect((await client.threads({ channel: 'conformance', label: ['board.task'], limit: 500 })).threads).toEqual([])
+  })
+
+  it('checks staged writes fail closed and skips checks that need the missing access fence', async ({ onTestFinished }) => {
+    const store = { ...memory(), fence: undefined }
+    onTestFinished(() => store.close())
+    const scopers = ['vercel:user:u_julian']
+    const backend = a2({ store, workLifecycle: { scopers }, agentOps: true, attentionResponders: { conformance: scopers } })
+    const team = testMount({ url: BOARD_URL, backend, authenticate: oidcTokens(testAuth) })
+    const client = await clientOf(team.fetch)
+    const info = await client.discovery()
+    expect(info.workLifecycle).toBe(1)
+    expect(info).not.toHaveProperty('accessFence')
+
+    const report = await conformance(client, { networkPause: true })
+    expect(report.checks.filter((check) => check.status === 'failed')).toEqual([])
+    const lifecycle = report.checks.filter((check) => check.group === 'work-lifecycle')
+    expect(lifecycle.filter((check) => check.status === 'passed')).toMatchObject([
+      { name: 'refuses staged writes when the access fence is not advertised' },
+    ])
+    expect(lifecycle.filter((check) => check.status === 'skipped')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'pins the scoped revision, hands off a live claim, and audits authorized moves', detail: 'needs the access fence' }),
+    ]))
+    for (const group of ['tasks', 'agents', 'network-pause']) {
+      expect(report.checks.filter((check) => check.group === group)).toContainEqual(expect.objectContaining({ status: 'skipped', detail: 'needs the access fence' }))
+    }
+    expect(report.ok).toBe(true)
+  })
+
+  it('requires staged moves to work when a board advertises the access fence', async ({ onTestFinished }) => {
+    const { team, close } = stagedBoard()
+    onTestFinished(close)
+    for (const onlyPriority of [false, true]) {
+      const stubbed: Fetch = async (request) => {
+        if (request.method === 'POST' && /\/tasks\/[^/]+\/(scope|stage)$/.test(new URL(request.url).pathname) &&
+            (!onlyPriority || (await request.clone().json()).reason === 'conformance: ready to rank by priority')) {
+          return Response.json({ error: { code: 'no_access_fence', message: 'this board cannot fence staged moves' } }, { status: 501 })
+        }
+        return team.fetch(request)
+      }
+      const report = await conformance(await clientOf(stubbed))
+      const name = onlyPriority ? 'keeps task priority and claims highest priority first, then oldest' : 'pins the scoped revision, hands off a live claim, and audits authorized moves'
+      expect(report.checks.find((check) => check.name === name)).toMatchObject({ group: 'work-lifecycle', status: 'failed' })
+      expect(report.ok).toBe(false)
+    }
+  })
+
+  it('passes lifecycle checks across one-event pages, but still requires a racing scope in the feed', async ({ onTestFinished }) => {
+    const principal = 'vercel:project:prj_v0:production'
+    const { team, close } = stagedBoard(principal)
+    onTestFinished(close)
+    await team.createGrant({ principals: [{ kind: 'project', project: 'prj_v0', environments: ['production'] }], can: { conformance: ['read'] } })
+
+    const racingIds = new Set<string>()
+    let race: { id: string; landed: ReturnType<typeof Promise.withResolvers<void>>; revoked: ReturnType<typeof Promise.withResolvers<void>> } | undefined
+    const admin: Fetch = async (request) => {
+      const path = new URL(request.url).pathname
+      if (race && request.method === 'POST' && path.endsWith('/revoke')) {
+        const current = race
+        await current.landed.promise
+        const response = await team.fetch(request)
+        race = undefined
+        current.revoked.resolve()
+        return response
+      }
+      const response = await team.fetch(request)
+      if (request.method === 'POST' && path.endsWith('/tasks') && response.ok) {
+        const { task } = await response.clone().json() as { task: MessageView }
+        if (task.text === 'conformance: scope racing revocation') {
+          racingIds.add(task.id)
+          race = { id: task.id, landed: Promise.withResolvers(), revoked: Promise.withResolvers() }
+        }
+      }
+      return response
+    }
+    const scoper = await clientAs(async (request) => {
+      const current = race
+      if (!current || !new URL(request.url).pathname.endsWith(`/tasks/${current.id}/scope`)) return team.fetch(request)
+      // Put a reply on the first page. The scope lands before revoke, but its answer arrives after.
+      await team.reply(current.id, 'Discussing the scope')
+      const response = await team.fetch(request)
+      current.landed.resolve()
+      await current.revoked.promise
+      return response
+    }, () => deploymentToken('v0', 'prj_v0', 'production'))
+    const options = { principals: { project: 'prj_v0', scoper } }
+    const racingScope = 'does not land scope after a concurrent grant revocation answers'
+    const client = await clientOf(admin)
+    const healthy = await conformance({
+      ...client,
+      async poll(query, signal) {
+        const page = await client.poll(query, signal)
+        if (query?.after === undefined || page.events.length <= 1) return page
+        const event = page.events[0]!
+        return { events: [event], cursor: event.cursor }
+      },
+    }, options)
+    for (const name of [
+      'pins the scoped revision, hands off a live claim, and audits authorized moves',
+      'releases dependent work only at done, and checks that again after reopen',
+      racingScope,
+    ]) {
+      const result = healthy.checks.find((check) => check.name === name)
+      expect.soft(result?.status, `${name}: ${result?.detail ?? ''}`).toBe('passed')
+    }
+
+    const missingScope = broken(admin, { body: (text) => {
+      const page = JSON.parse(text) as Partial<EventsPage>
+      if (!page.events) return text
+      page.events = page.events.filter((event) => !(event.type === 'task.stage_changed' && event.payload.to === 'scoped' && racingIds.has(event.payload.id)))
+      return JSON.stringify(page)
+    } })
+    const missing = await conformance(await clientOf(missingScope), options)
+    expect(missing.checks.find(({ name }) => name === racingScope)).toMatchObject({
+      status: 'failed', detail: expect.stringContaining('scope recorded in the feed'),
+    })
+  })
+
+  it.for(['thread', 'feed'] as const)('fails the lifecycle check when the %s reports a dependent ready while its prerequisite is open', async (surface, { onTestFinished }) => {
+    const { team, close } = stagedBoard()
+    onTestFinished(close)
+    const readyTooSoon = (message: MessageView) => {
+      if (message.task?.work?.stage === 'scoped' && message.task.state === 'waiting' && message.task.needs.length > 0) {
+        message.task.state = 'ready'
+        message.labels['board.task'] = 'ready'
+      }
+    }
+    // Only corrupt the stored views. Claim routes still enforce the dependency.
+    const mutant = broken(team.fetch, { body: (text) => {
+      const view = JSON.parse(text) as Partial<ThreadView & EventsPage>
+      if (surface === 'thread' && view.message) readyTooSoon(view.message)
+      if (surface === 'feed') {
+        for (const event of view.events ?? []) if (event.message) readyTooSoon(event.message)
+      }
+      return JSON.stringify(view)
+    } })
+    const report = await conformance(await clientOf(mutant))
+    const check = report.checks.find(({ name }) => name === 'releases dependent work only at done, and checks that again after reopen')
+    expect(check).toMatchObject({
+      group: 'work-lifecycle', status: 'failed',
+      detail: expect.stringContaining(surface === 'thread' ? 'the dependent stored' : 'the dependent in the feed'),
+    })
   })
 
   it("passes through an opted-in local board's own handle, in-process", async ({ onTestFinished }) => {

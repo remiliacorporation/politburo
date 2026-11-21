@@ -535,7 +535,12 @@ export const blockTask = (id: string, reason: string, kind?: string) =>
     return mine ? held(id).block(reason, kind ? { kind } : {}) : team.tasks.block(id, reason, kind ? { kind } : {})
   })
 export const unblockTask = (id: string) => work(id, () => team.tasks.unblock(id))
-export const reopenTask = (id: string) => work(id, () => team.tasks.reopen(id))
+export async function reopenTask(id: string): Promise<boolean> {
+  // The page can't identify scopers, so it only retries legacy work.
+  const root = state.messages[id]
+  if (!store.isTask(root) || root.task.work) return false
+  return work(id, () => team.tasks.reopen(id))
+}
 /** `actor` is one of the owner's (`<owner>+<profile>`), or null for anyone who may claim it. */
 export const assignTask = (id: string, actor: string | null) => work(id, () => team.tasks.assign(id, actor))
 export const cancelTask = (id: string, reason: string) => work(id, () => team.tasks.cancel(id, reason))

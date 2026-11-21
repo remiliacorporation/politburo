@@ -202,6 +202,8 @@ const WALK: Record<RouteName, Walk> = {
     { method: 'POST', path: `/tasks/${secret.task}/reopen`, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/reopen`, status: 403 },
   ],
+  scopeTask: ({ open }) => [{ method: 'POST', path: `/tasks/${open.task}/scope`, body: { reason: 'start work', ifVersion: 1 }, status: 501 }],
+  stageTask: ({ open }) => [{ method: 'POST', path: `/tasks/${open.task}/stage`, body: { stage: 'review', reason: 'look at it', ifVersion: 1 }, status: 501 }],
   assignTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/assign`, body: { for: null }, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/assign`, body: { for: null }, status: 403 },

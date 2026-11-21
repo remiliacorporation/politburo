@@ -22,6 +22,9 @@ import {
   ParkTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
+  ReopenTaskBody,
+  ScopeTaskBody,
+  StageTaskBody,
   TasksQuery,
   DeleteBody,
   EditBody,
@@ -169,7 +172,6 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'cancelSchedule':
     case 'unblockTask':
     case 'taskAttention':
-    case 'reopenTask':
     case 'schema':
     case 'attachment':
     case 'uploadFinish':
@@ -252,6 +254,12 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...ParkTaskBody.parse(await body()) }
     case 'handoffTask':
       return { id, ...HandoffTaskBody.parse(await body()) }
+    case 'reopenTask':
+      return { id, ...ReopenTaskBody.parse(await body()) }
+    case 'scopeTask':
+      return { id, ...ScopeTaskBody.parse(await body()) }
+    case 'stageTask':
+      return { id, ...StageTaskBody.parse(await body()) }
     case 'requestTaskAttention':
       return { id, ...RequestAttentionBody.parse(await body()) }
     case 'answerTaskAttention':
@@ -1283,6 +1291,11 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     const sync = capabilities?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
     return {
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
+      ...(capabilities?.workLifecycle === 1 ? { workLifecycle: 1 } : {}),
+      ...(capabilities?.accessFence === 1 ? {
+        accessFence: 1,
+        ...(capabilities.accessFenceScope === 'process' ? { accessFenceScope: 'process' } : {}),
+      } : {}),
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),

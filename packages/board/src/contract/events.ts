@@ -29,6 +29,7 @@ import {
   TaskHoldKind,
   TaskNote,
   TaskPriority,
+  WorkStage,
 } from './schemas.ts'
 import { ExternalEvent, ExternalTarget, Link, LINKS_PER_MESSAGE_MAX, Origin } from './external.ts'
 import { AttentionDraft, AttentionReceipt } from './attention.ts'
@@ -165,7 +166,7 @@ export const boardEvents = {
      * The thread rooted at `id` is a task, and `by.principal` owns it. It waits while it has `needs`,
      * until `task.ready` says they've all completed; with none, it's ready.
      */
-    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author }),
+    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author, work: z.literal('proposed').optional() }),
     /** Only actor `for` claims it now, or with null, anyone who may. */
     'task.assigned': z.object({ ...Task, for: ActorId.nullable(), by: Author }),
     /** An epoch identifies a change made through a claim. */
@@ -183,9 +184,10 @@ export const boardEvents = {
     /** A board-wide authority change, never a message or a dispatch ticket. */
     'work.control': z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative(), reason: TaskNote, by: Author }),
     'task.renewed': z.object({ ...Task, epoch: Epoch, until: Until, by: Author }),
-    'task.released': z.object({ ...Task, epoch: Epoch, by: Author }),
-    /** (server) Its lease ran out. */
-    'task.expired': z.object({ ...Task, epoch: Epoch }),
+    /** The claim ended. `waiting` is set if a prerequisite is no longer done. */
+    'task.released': z.object({ ...Task, epoch: Epoch, by: Author, waiting: z.boolean().optional() }),
+    /** (server) Its lease ran out. `waiting` has the same meaning as on release. */
+    'task.expired': z.object({ ...Task, epoch: Epoch, waiting: z.boolean().optional() }),
     'task.completed': z.object({ ...Task, epoch: Epoch, result: TaskNote.nullable(), by: Author }),
     'task.failed': z.object({ ...Task, epoch: Epoch, reason: TaskNote, by: Author }),
     /** Held for a person, which ends any claim. Kind `edited` is the board's: `by` edited its root, and isn't its owner. */
@@ -198,6 +200,8 @@ export const boardEvents = {
     'task.canceled': z.object({ ...Task, reason: TaskNote, by: Author }),
     /** A failed task reopens, waiting only if it failed on an attention hold before its needs completed. */
     'task.reopened': z.object({ ...Task, by: Author, waiting: z.literal(true).optional() }),
+    /** An audited work stage change. `result` belongs to the handoff only. */
+    'task.stage_changed': z.object({ ...Task, from: WorkStage, to: WorkStage, reason: TaskNote, by: Author, result: TaskNote.nullable().optional() }),
     // Request and answer each change the task state in the same event as their attention fact.
     'task.attention_requested': z.object({ ...Task, requestId: Ref, epoch: AttentionEpoch, draft: AttentionDraft, by: Author, replaces: Ref.optional() }),
     'task.attention_answered': z.object({ ...Task, requestId: Ref, epoch: AttentionEpoch, by: Author, receipt: AttentionReceipt }),

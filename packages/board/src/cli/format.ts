@@ -180,7 +180,7 @@ export function leaseLeft(until: string, now = Date.now()): string {
  */
 function taskState(message: MessageView, task: TaskView, names: Map<string, string>, now: number): string {
   const named = (id: string) => names.get(id) ?? id
-  const parts: string[] = []
+  const parts: string[] = task.work && task.work.stage !== task.state ? [task.work.stage] : []
   if (task.state === 'claimed' && task.claim) {
     const left = Date.parse(task.claim.until) - now
     parts.push(`claimed by ${named(task.claim.actor)}`, left > 0 ? `${leaseLeft(task.claim.until, now)} left` : 'its lease ran out')
@@ -232,7 +232,13 @@ export function formatTasks(tasks: ThreadSummaryView[], showPriority = false): s
   const withPriority = showPriority || priorities.some((priority) => priority !== DEFAULT_TASK_PRIORITY)
   const rows = tasks.map(({ message }, at) => [`#${message.id}`, (message.task?.state ?? '').padEnd(STATE_WIDTH), ...(withPriority ? [priorities[at]!] : []), firstLine(message, withPriority ? TASK_TEXT_MIN : TASK_TEXT_MAX).padEnd(TASK_TEXT_MIN)])
   const room = Math.max(TASK_NOTE_MIN, 80 - rows.reduce((widest, row) => Math.max(widest, row.join('  ').length), 0) - 2)
-  return table(rows.map((row, at) => [...row, tasks[at]!.message.task ? taskNote(tasks[at]!.message, tasks[at]!.message.task!, room) : '']))
+  return table(rows.map((row, at) => {
+    const { message } = tasks[at]!
+    const task = message.task
+    if (!task) return row
+    const stage = task.work && task.work.stage !== task.state ? `stage ${task.work.stage}` : ''
+    return [...row, [stage, taskNote(message, task, room - (stage ? stage.length + 2 : 0))].filter(Boolean).join('  ')]
+  }))
 }
 
 /** Threads in order, each root followed by its replies. */
@@ -497,6 +503,7 @@ export function formatEvent(event: BoardEventView): string {
     case 'task.handoff':
     case 'task.canceled':
     case 'task.reopened':
+    case 'task.stage_changed':
       return `#${message.id}  ${where}  task ${taskEvent(event)}`
     default:
       return `#${event.cursor}  ${event.type}`
@@ -509,7 +516,9 @@ function taskEvent(event: Extract<BoardEventView, { type: `task.${string}` }>): 
   const more = (...parts: (string | null | undefined)[]) => parts.filter((part): part is string => !!part).map((part) => ` · ${part}`).join('')
   switch (event.type) {
     case 'task.created':
-      return `created${by}${more(event.payload.needs.length ? `needs ${event.payload.needs.map((id) => `#${id}`).join(' ')}` : null, event.payload.for !== null ? `for ${profileOf(event.payload.for)}` : null)}`
+      return `created${by}${more(event.payload.work, event.payload.needs.length ? `needs ${event.payload.needs.map((id) => `#${id}`).join(' ')}` : null, event.payload.for !== null ? `for ${profileOf(event.payload.for)}` : null)}`
+    case 'task.stage_changed':
+      return `${event.payload.from} to ${event.payload.to}${by}${more(noteLine(event.payload.reason))}`
     case 'task.assigned':
       return event.payload.for !== null ? `assigned to ${profileOf(event.payload.for)}${by}` : `unassigned${by}`
     case 'task.priority_changed':

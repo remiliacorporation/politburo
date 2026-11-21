@@ -3765,6 +3765,8 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
     parkTask: async () => noTaskAuthority(),
     unparkTask: async () => noTaskAuthority(),
     handoffTask: async () => noTaskAuthority(),
+    async scopeTask() { throw new HttpError(501, 'no_work_lifecycle', 'this board does not keep work stages') },
+    async stageTask() { throw new HttpError(501, 'no_work_lifecycle', 'this board does not keep work stages') },
     async reopenTask(caller, { id }, signal) {
       const who = whoOf(caller)
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/reopen`, {}, { id, signal })) }

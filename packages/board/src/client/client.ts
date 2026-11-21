@@ -73,7 +73,7 @@ import type { Protocol } from '../api/protocol.ts'
 import type { Actor } from '../contract/folds.ts'
 import type { Mentioned } from '../contract/mentions.ts'
 import { ATTACHMENT_BYTES_MAX, DIRECT_UPLOAD_BYTES_MAX, typeOf } from '../contract/files.ts'
-import type { Attachment, TaskPriority } from '../contract/schemas.ts'
+import type { Attachment, TaskPriority, WorkStageTarget } from '../contract/schemas.ts'
 import { normalizeEmoji } from '../contract/emoji.ts'
 import { parseSse } from './sse.ts'
 import { formatProfileHeader } from '../contract/profile-header.ts'
@@ -434,6 +434,7 @@ export function createBoardClient(options: ClientOptions) {
 
   /** One write to task `id`, which answers its root. */
   const taskWrite = async (id: string, verb: string, body: object = {}) => (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body })).task
+  const taskVersion = async (id: string, sent: number | undefined) => sent ?? (await call<ThreadView>('GET', `/messages/${path(id)}?limit=1`)).message.version
 
   /** What a claim on task `id` does, with the `epoch` and `token` the claim answered. */
   const held = (id: string, proof: Omit<TaskClaim, 'until'>): HeldTask => {
@@ -758,7 +759,14 @@ export function createBoardClient(options: ClientOptions) {
       /** Records packet metadata using explicit claim proof. */
       handoff: (id: string, input: TaskHandoffWrite) => taskWrite(id, 'handoff', input),
       /** Makes a failed task ready again, in place: what waits for it still does. */
-      reopen: (id: string) => taskWrite(id, 'reopen'),
+      reopen: async (id: string, reason?: string, opts: { ifVersion?: number } = {}) =>
+        taskWrite(id, 'reopen', reason === undefined ? {} : { reason, ifVersion: await taskVersion(id, opts.ifVersion) }),
+      /** Authorizes proposed work. Pass the version you scoped, or read it before writing. */
+      scope: async (id: string, reason: string, opts: { ifVersion?: number } = {}) =>
+        taskWrite(id, 'scope', { reason, ifVersion: await taskVersion(id, opts.ifVersion) }),
+      /** Moves staged work at the version you reviewed, or reads it before writing. */
+      stage: async (id: string, stage: WorkStageTarget, reason: string, opts: { ifVersion?: number } = {}) =>
+        taskWrite(id, 'stage', { stage, reason, ifVersion: await taskVersion(id, opts.ifVersion) }),
       /** Assigns a task to one of its owner's actors (`<owner>+<profile>`), the only one that claims it then, or with null to anyone who may. */
       assign: (id: string, actor: string | null) => taskWrite(id, 'assign', { for: actor }),
       /**

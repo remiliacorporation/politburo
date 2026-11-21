@@ -120,7 +120,8 @@ export function taskView(task: Task): TaskView {
   return {
     ...shown,
     priority: task.priority ?? DEFAULT_TASK_PRIORITY,
-    ...(attention ? { attentionId: attention.id } : {}),
+    ...(task.work ? { work: { ...task.work } } : {}),
+    ...(attention ? { attentionId: attention.id, attentionStatus: attention.status } : {}),
     needs: needs.map(ref),
     claim: claim && { actor: claim.actor, until: claim.until, ...(claim.binding ? { binding: structuredClone(claim.binding) } : {}) },
     blocked: task.blocked && { ...task.blocked },

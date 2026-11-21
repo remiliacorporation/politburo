@@ -29,7 +29,7 @@ import { eventView, foldEvent, indexOf, lastFeed, loadBefore, OWN_CODE, pollFeed
 import { createReads, tablesConsumer } from './reads.ts'
 import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
-import { createTasks, taskLimits } from './tasks.ts'
+import { createTasks, taskLimits, type WorkLifecycleOptions } from './tasks.ts'
 import { createOperationalInbox } from './operational-inbox.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
@@ -61,6 +61,7 @@ export type A2Options = {
    * platform's files where they are. `local()` always passes one.
    */
   blob?: BlobStore
+  workLifecycle?: WorkLifecycleOptions
   /** Enables structured attention; only these verified people may answer in each exact channel. */
   attentionResponders?: AttentionResponders
   agentOps?: boolean
@@ -259,7 +260,7 @@ function build(options: A2Options, binding: BoardBinding) {
   })
   const schedules = createSchedules({ store: log, scheduler: options.scheduler })
   const attentionEnabled = options.attentionResponders !== undefined
-  const tasks = createTasks({ store: log, scheduler: options.scheduler, attentionResponders: options.attentionResponders })
+  const tasks = createTasks({ store: log, scheduler: options.scheduler, workLifecycle: options.workLifecycle, attentionResponders: options.attentionResponders })
   const attentionAt = (id: string) => {
     if (!attentionEnabled) throw new HttpError(501, 'no_task_attention', 'this board does not keep task attention requests')
     return messageAt(id)
@@ -306,7 +307,16 @@ function build(options: A2Options, binding: BoardBinding) {
   const operationalInbox = createOperationalInbox(session, binding.inboxRolesFor ?? (() => []))
   const reads = createReads(store.tables, session, projection)
   const work = createControl(log, session, binding.initiallyPaused)
-  const writes: WriteContext = { session, reads, work }
+  // Who the board trusts beside its defaults: its grants.
+  const access = createTrust({
+    store: log,
+    fence: store.fence,
+    accessNow: (principal, grants) => binding.accessNow(principal, grants),
+    explain: (principal, channel) => binding.explain(principal, channel),
+    team: async () => (await binding.project()).teamId,
+    logins: () => binding.logins,
+  })
+  const writes: WriteContext = { session, reads, work, fence: store.fence, accessPosition: access.position }
 
   async function setPaused(caller: Caller, paused: boolean, reason: string) {
     if (!fromRequest(caller) || !('identity' in caller)) throw forbidden('only a person with board-wide manage can change work control')
@@ -354,14 +364,6 @@ function build(options: A2Options, binding: BoardBinding) {
     ...(options.scheduler ? { scheduler: options.scheduler } : {}),
     consumers: [inbound],
   })
-  // Who the board trusts beside its defaults: its grants.
-  const access = createTrust({
-    store: log,
-    accessNow: (principal, grants) => binding.accessNow(principal, grants),
-    explain: (principal, channel) => binding.explain(principal, channel),
-    team: async () => (await binding.project()).teamId,
-    logins: () => binding.logins,
-  })
   // The schema registry, in a session of its own beside the board's.
   const schemaRegistry = createSchemas({ store: log })
   const inboxes = inboxServer.session(INBOXES_SESSION)
@@ -371,7 +373,7 @@ function build(options: A2Options, binding: BoardBinding) {
   // A schedule sends with what its creator may do now, which board()'s `access` says at each send. It
   // posts as its creator, through board(), so the middleware sees it.
   schedules.bind({ writes, accessNow: binding.accessNow, send: async (identity, origin, input) => sendAs(identity, origin, input) })
-  tasks.bind({ writes })
+  tasks.bind({ writes, accessNow: binding.accessNow, accessPosition: access.position })
   watchers.bind({ reads })
 
   /**
@@ -520,6 +522,7 @@ function build(options: A2Options, binding: BoardBinding) {
         ...(attentionEnabled ? { task_attention: true } : {}),
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
+        ...(options.workLifecycle ? { workLifecycle: 1, ...(store.fence ? { accessFence: 1, accessFenceScope: 'process' } : {}) } : {}),
         task_authority: true,
         ...(agents ? { agent_ops: true } : {}),
         ...(intents ? { agent_intents: true } : {}),
@@ -824,7 +827,9 @@ function build(options: A2Options, binding: BoardBinding) {
       return tasks.park(caller.identity, messageAt(id), reason, 'unpark')
     },
     handoffTask: async (caller, { id, epoch, token, ...packet }) => tasks.handoff(await identityOf(caller), messageAt(id), { epoch, token }, packet),
-    reopenTask: async (caller, { id }) => tasks.reopen(await identityOf(caller), messageAt(id)),
+    reopenTask: async (caller, { id, reason, ifVersion }) => tasks.reopen(await identityOf(caller), messageAt(id), reason, ifVersion),
+    scopeTask: async (caller, { id, reason, ifVersion }) => tasks.scope(await identityOf(caller), messageAt(id), reason, ifVersion),
+    stageTask: async (caller, { id, stage, reason, ifVersion }) => tasks.stage(await identityOf(caller), messageAt(id), stage, reason, ifVersion),
     assignTask: async (caller, { id, for: actor }) => tasks.assign(await identityOf(caller), messageAt(id), actor),
     setTaskPriority: async (caller, { id, priority, epoch, token }) =>
       tasks.priority(await identityOf(caller), messageAt(id), priority, epoch !== undefined && token !== undefined ? { epoch, token } : undefined),

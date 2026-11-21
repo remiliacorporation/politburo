@@ -2,7 +2,7 @@ import { derivedId } from '../client/ids.ts'
 import { ALONG_MAX, type BoardEvent } from '../contract/events.ts'
 import type { Link, Origin } from '../contract/external.ts'
 import { actorsReducer, channelsReducer } from '../contract/reducers.ts'
-import { foldMessages, type Actor, type ActorsState, type Channel, type Message, type MessagesState, type Task } from '../contract/folds.ts'
+import { foldMessages, workTerminal, type Actor, type ActorsState, type Channel, type Message, type MessagesState, type Task } from '../contract/folds.ts'
 import { own } from '../contract/own.ts'
 import { channelOf, isThreadTarget } from '../contract/external.ts'
 import { EDITED_HOLD, type Attachment, type Author, type Labels } from '../contract/schemas.ts'
@@ -10,11 +10,12 @@ import { platformProfile } from '../contract/profiles.ts'
 import { wroteAs, type Granted } from './auth.ts'
 import { authorize, FULL_ACCESS, type Access, type Permission, type Proof } from './access.ts'
 import { actorSeen, ownedActor } from './actors.ts'
+import type { AccessFence } from '../store/fence.ts'
 import { replaceMentions } from '../contract/mentions.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import type { BoardSession } from './a2.ts'
 import type { BoardReads } from './reads.ts'
-import { badRequest, duplicateId, forbidden, HttpError, notFound } from './errors.ts'
+import { badRequest, duplicateId, forbidden, HttpError, noAccessFence, notFound } from './errors.ts'
 import { view, type Reader } from './feed.ts'
 import type { MessageView } from '../api/routes.ts'
 import type { WriteSource } from './middleware.ts'
@@ -40,6 +41,8 @@ export type WriteContext = {
   /** The board's tables, where writes check what they write to. */
   reads: BoardReads
   work: ReturnType<typeof createControl>
+  fence?: AccessFence
+  accessPosition: () => Promise<number>
 }
 
 
@@ -634,14 +637,18 @@ async function appendWhile(ctx: WriteContext, holds: () => Promise<number>, even
 /**
  * As `appendWhile`, for a write whose events depend on what it finds: `look` reads the tables,
  * throws what refuses the write, and returns what to append with the index its reads reflect. It
- * looks again, and decides again, each time the board moves on first. Nothing to append appends
- * nothing.
+ * looks again, and decides again, each time the board moves on first. If `look` also names an
+ * access position, that session must not have moved either. Nothing to append appends nothing.
  */
-export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events; access?: number }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
   return whileHeadMoves(async () => {
     await ctx.reads.ensure()
-    const { position, events } = await look()
-    return events.length === 0 ? [] : appendIfLast(ctx.session, position, events)
+    const { position, events, access } = await look()
+    if (events.length === 0) return []
+    const append = () => appendIfLast(ctx.session, position, events)
+    if (access === undefined) return append()
+    if (!ctx.fence) throw noAccessFence()
+    return ctx.fence.guarded(ctx.accessPosition, access, append)
   })
 }
 
@@ -714,8 +721,9 @@ export async function writeEdit(ctx: WriteContext, input: EditInput): Promise<vo
 async function commitEdit(ctx: WriteContext, input: EditInput, message: Message): Promise<void> {
   const { state: actors } = await ctx.session.state(actorsReducer)
   const seen = seenFor(input.identity, actors)
-  const events: Events = [...(seen ? [seen] : []), ...metBy(input.introduces, actors, input.identity.actor.id), {
-    type: 'message.edited',
+  const authors = [...(seen ? [seen] : []), ...metBy(input.introduces, actors, input.identity.actor.id)]
+  const edited = {
+    type: 'message.edited' as const,
     payload: {
       id: message.id,
       thread: message.thread,
@@ -723,7 +731,8 @@ async function commitEdit(ctx: WriteContext, input: EditInput, message: Message)
       by: input.identity.author,
       from: input.from ?? null,
     },
-  }]
+  }
+  const events: Events = [...authors, edited]
   const { revision } = input
   const rows =
     message.re === null
@@ -731,7 +740,9 @@ async function commitEdit(ctx: WriteContext, input: EditInput, message: Message)
         await appendFrom(ctx, async () => {
           const { position, found } = await asOfNow(ctx, message.id)
           if (revision !== undefined) atRevision(found, message.id, revision)
-          return { position, events: [...events, ...heldByEdit(found, input.identity)] }
+          const changes = heldByEdit(found, input.identity)
+          // Invalidate work before the edit: even the feed's edit snapshot shows no stale scope or lease.
+          return { position, events: found?.task?.work ? [...authors, ...changes, edited] : [...events, ...changes] }
         })
       : revision === undefined
         ? await ctx.session.append(...events)
@@ -816,7 +827,14 @@ function heldByEdit(root: Message | undefined, editor: Identity): Events {
   const task = root?.task
   // A platform user is never the owner, even one the owner's own sync speaks for: they write as its profile.
   const owner = task !== undefined && ownedBy(task, editor) && editor.principal.kind !== 'external'
-  if (!root || root.deleted || !task || owner) return []
+  if (!root || root.deleted || !task) return []
+  if (task.work) {
+    const from = task.work.stage
+    return from === 'proposed' || workTerminal(from) ? [] : [{
+      type: 'task.stage_changed', payload: { id: root.id, thread: root.thread, from, to: 'proposed', reason: 'root text edited', by: editor.author },
+    }]
+  }
+  if (owner) return []
   if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'claimed' && !(task.parked && !task.blocked)) return []
   return [{ type: 'task.blocked', payload: { id: root.id, thread: root.thread, kind: EDITED_HOLD, reason: EDITED, by: editor.author } }]
 }
@@ -824,7 +842,11 @@ function heldByEdit(root: Message | undefined, editor: Identity): Events {
 /** The cancel a delete of a task's root brings, unless the task has completed or been canceled: before the delete, while the root still wears its labels. */
 function canceledByDelete(root: Message | undefined, deleter: Identity): Events {
   const task = root?.task
-  if (!root || !task || task.state === 'completed' || task.state === 'canceled') return []
+  if (!root || !task) return []
+  if (task.work) return workTerminal(task.work.stage) ? [] : [{
+    type: 'task.stage_changed', payload: { id: root.id, thread: root.thread, from: task.work.stage, to: 'canceled', reason: 'deleted', by: deleter.author },
+  }]
+  if (task.state === 'completed' || task.state === 'canceled') return []
   return [{ type: 'task.canceled', payload: { id: root.id, thread: root.thread, reason: 'deleted', by: deleter.author } }]
 }
 
