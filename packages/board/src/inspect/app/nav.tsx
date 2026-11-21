@@ -163,6 +163,7 @@ export type Section = (typeof SECTIONS)[number]
 export type Route =
   | { view: 'activity' }
   | { view: 'tasks' }
+  | { view: 'swarm'; section: 'queue' | 'mobs' }
   | { view: 'channel'; channel: string }
   | { view: 'settings'; section: Section; open: string | null }
   | { view: 'missing' }
@@ -176,6 +177,8 @@ export function route(path: string): Route {
   }
   if (decoded === '/') return { view: 'activity' }
   if (decoded === '/tasks') return { view: 'tasks' }
+  if (decoded === '/swarm/queue') return { view: 'swarm', section: 'queue' }
+  if (decoded === '/swarm/mobs') return { view: 'swarm', section: 'mobs' }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
   const [, settings, section, ...rest] = decoded.split('/')
   if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))

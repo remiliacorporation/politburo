@@ -1,7 +1,8 @@
-import type { ActorView, BlockView, BoardEventView, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, TaskView, ThreadsPage } from '../../api/routes.ts'
+import type { ActorView, AttentionView, BlockView, BoardEventView, BoardStatus, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, TaskView, TasksPage, ThreadsPage } from '../../api/routes.ts'
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
+import { compileAccess } from '../../server/access.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { shownName } from './words.ts'
 
@@ -68,6 +69,7 @@ export type State = {
   claims: Record<string, Claim>
   /** Whether every open task is loaded, so the page can count them. */
   tasksCounted: boolean
+  swarm: SwarmState
   /** Each opened channel's listing, or null on a board whose thread pages have no `older`: it loads by messages. */
   listings: Record<string, Listing | null>
   /** The board's schema registry, once it's read: what a block's fields mean. */
@@ -96,6 +98,7 @@ export const initialState: State = {
   live: 'connecting',
   claims: {},
   tasksCounted: false,
+  swarm: { reads: {}, control: null, claimEpochs: {}, completedAt: {}, attention: {}, answers: {} },
   listings: {},
   schemas: null,
   schemasRefused: null,
@@ -170,6 +173,7 @@ export function merge(state: State, views: MessageView[]): State {
   if (messages === state.messages) return state
   let ops = state.ops
   let claims = state.claims
+  let swarm = state.swarm
   for (const view of views) {
     // An older view changed nothing.
     if (messages[view.id] !== view) continue
@@ -178,6 +182,10 @@ export function merge(state: State, views: MessageView[]): State {
     if (claim && !(view.task?.state === 'claimed' && view.task.epoch === claim.epoch)) {
       claims = { ...claims }
       delete claims[view.id]
+    }
+    // An attention ID remains on the task after its hold ends. That same request cannot reopen.
+    if (view.task?.attentionId && (view.deleted || view.task.state !== 'blocked' || view.task.parked)) {
+      swarm = closeAttention(swarm, view.id, view.task.attentionId)
     }
     const waiting = ops[view.id]
     if (waiting && state.me) {
@@ -189,8 +197,12 @@ export function merge(state: State, views: MessageView[]): State {
       }
     }
   }
-  return { ...state, messages, ops, claims }
+  return { ...state, messages, ops, claims, swarm }
 }
+
+/** Task lists fill the same cache as threads and the feed. Keep their latest replies too. */
+export const mergeTasks = (state: State, page: TasksPage): State =>
+  merge(state, page.tasks.flatMap(({ message, last }) => last ? [message, last] : [message]))
 
 // #region guide inspector/pending.ts
 /**
@@ -317,7 +329,7 @@ export function applyEvent(state: State, event: BoardEventView): State {
     next = { ...next, actors: { ...next.actors, [actor]: { kind: kind === 'profile' ? 'agent' : kind, handle, name, avatar, ...(via ? { via } : {}), ...(platform ? { platform } : {}) } } }
   }
   // The stream comes in order, so the last event's cursor is where to resume.
-  return { ...next, cursor: event.cursor }
+  return { ...taskEvent(next, event), cursor: event.cursor }
 }
 
 export function addOp(state: State, message: string, id: string, op: Op): State {
@@ -414,6 +426,21 @@ export function thread(state: State, root: string): Thread | null {
     .sort(byWritten)
     .map((message) => shown(state, message.id)!)
   return { root: view, replies, pending: state.pending.filter((post) => post.re === root) }
+}
+
+export type ReadFailure = { why: string; code?: string; status?: number }
+
+export function readAccess(state: State) {
+  const failure = state.swarm.reads.access
+  return compileAccess(failure?.status === 401 || failure?.status === 403 ? {} : state.me?.can ?? {})
+}
+
+/** History may be refused even for a readable thread. Keep its content and composer in place. */
+export function threadPane(state: State, id: string, refused: ReadFailure | null) {
+  const root = state.messages[id]
+  const denied = refused?.status === 401 || refused?.status === 404 || (root && state.me?.can && !readAccess(state).readable(root.channel))
+  const shown = denied ? null : thread(state, id)
+  return { thread: shown, task: isTask(shown?.root) ? shown.root : null, why: refused?.why ?? (denied ? 'no access to this thread' : null) }
 }
 
 /** The newest messages across every channel (that `keep` keeps), oldest first. */
@@ -604,7 +631,7 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
     held,
     elsewhere: !held && current === 'claimed' && task.claim?.actor === viewer.actor,
     hold: owns && (current === 'waiting' || current === 'ready'),
-    unblock: owns && current === 'blocked' && !task.parked,
+    unblock: owns && current === 'blocked' && !task.parked && canUnblock(state, root),
     reopen: owns && current === 'failed',
     assign: owns && !finished,
     cancel: owns && current !== 'completed' && current !== 'canceled',
@@ -673,6 +700,111 @@ export function tasks(state: State, filter: TaskFilter, now: number, through?: P
 /** How many tasks are open, once every open one is loaded. */
 export const openTasks = (state: State): number | null =>
   state.tasksCounted ? Object.values(state.messages).filter((m) => isTask(m) && !m.deleted && OPEN_STATES.includes(m.task.state)).length : null
+
+// --- swarm: task roots live in messages; decisions have a read of their own ----------------
+
+export type SwarmRead = 'open' | 'completed' | 'control' | 'access' | 'claims'
+
+type AttentionRead = {
+  request: string
+  /** A read is for a particular root version, but its decision is still evidence at newer versions. */
+  version?: number
+  attention?: AttentionView
+  closed?: boolean
+  error?: ReadFailure
+}
+
+export type SwarmState = {
+  /** Last settled reads: absent until one answers; null for a success. */
+  reads: Partial<Record<SwarmRead, ReadFailure | null>>
+  control: BoardStatus | null
+  claimEpochs: Record<string, { epoch: number; pauseEpoch: number }>
+  /** For cached claims whose admission wasn't in the feed. The ready filter applies the board's fence. */
+  readyCheck?: { pauseEpoch: number; checked: ReadonlyMap<string, number>; fenced: ReadonlyMap<string, { epoch: number; until: string }> }
+  completedAt: Record<string, Pick<MessageView, 'id' | 'createdAt'>>
+  attention: Record<string, AttentionRead>
+  answers: Record<string, { is: 'sending' } | ({ is: 'failed' } & ReadFailure)>
+}
+
+export const answerKey = (actor: string, task: string, request: string) => JSON.stringify([actor, task, request])
+
+export function noteSwarmRead(state: State, read: SwarmRead, result: ReadFailure | null): State {
+  return { ...state, swarm: { ...state.swarm, reads: { ...state.swarm.reads, [read]: result } } }
+}
+
+/** Pause advances the epoch; resume ends that same epoch's pause. Old status reads can't rewind either. */
+export function mergeControl(state: State, control: BoardStatus): State {
+  const current = state.swarm.control
+  if (current && (control.pauseEpoch < current.pauseEpoch || (control.pauseEpoch === current.pauseEpoch && !current.paused && control.paused))) return state
+  return noteSwarmRead({ ...state, swarm: { ...state.swarm, control } }, 'control', null)
+}
+
+function taskEvent(state: State, event: BoardEventView): State {
+  if (event.type === 'work.control') {
+    const { paused, pauseEpoch } = event.payload
+    return mergeControl(state, { paused, pauseEpoch })
+  }
+  const root = event.message && state.messages[event.message.id]
+  if (!isTask(root)) return state
+  const { swarm } = state
+  if (event.type === 'task.claimed' && root.task.epoch === event.payload.epoch) {
+    const { epoch, pauseEpoch = 0 } = event.payload
+    return { ...state, swarm: { ...swarm, claimEpochs: { ...swarm.claimEpochs, [root.id]: { epoch, pauseEpoch } } } }
+  }
+  if (event.type === 'task.completed' && root.task.state === 'completed') {
+    return { ...state, swarm: { ...swarm, completedAt: { ...swarm.completedAt, [root.id]: { id: event.cursor, createdAt: event.createdAt } } } }
+  }
+  if (event.type === 'task.attention_answered' && root.task.attentionId === event.payload.requestId) {
+    return { ...state, swarm: closeAttention(swarm, root.id, event.payload.requestId) }
+  }
+  if (event.type === 'task.attention_requested' && root.task.attentionId === event.payload.requestId) {
+    const { draft, requestId: id, by } = event.payload
+    const known = attentionOf(state, root)
+    if (!known?.closed && !known?.attention) return keepAttention(state, root.id, { ...known, request: id, attention: { ...draft, id, by, status: 'pending' } })
+  }
+  return state
+}
+
+export function attentionOf(state: State, root: TaskRoot): AttentionRead | undefined {
+  const known = state.swarm.attention[root.id]
+  return known?.request === root.task.attentionId ? known : undefined
+}
+
+function closeAttention(swarm: SwarmState, id: string, request: string): SwarmState {
+  const prior = swarm.attention[id]
+  if (prior?.request === request && prior.closed) return swarm
+  const known = prior?.request === request ? prior : undefined
+  return { ...swarm, attention: { ...swarm.attention, [id]: { ...known, request, closed: true } } }
+}
+
+function keepAttention(state: State, id: string, read: AttentionRead): State {
+  return { ...state, swarm: { ...state.swarm, attention: { ...state.swarm.attention, [id]: read } } }
+}
+
+/** An unversioned read can be ahead of the feed. Only a matching response adds evidence to this root. */
+export function mergeAttention(state: State, root: MessageView, result: AttentionView | ReadFailure | null): State {
+  const current = state.messages[root.id]
+  const request = root.task?.attentionId
+  if (!request || !isTask(current) || current.version !== root.version || current.task.attentionId !== request) return state
+  if (!result || ('id' in result && result.id !== request)) return state
+  const known = attentionOf(state, current)
+  if ('why' in result) return keepAttention(state, root.id, { ...known, request, version: root.version, error: result })
+  const closed = result.status === 'answered' || result.status === 'canceled'
+  if (known?.closed && !closed) return state
+  return keepAttention(state, root.id, { request, version: root.version, attention: result, closed })
+}
+
+/** A last request is not necessarily the hold: an answer can be followed by a plain block. */
+export function blocksOnAttention(state: State, root: TaskRoot): boolean {
+  return root.task.state === 'blocked' && !root.task.parked && !!root.task.attentionId && !attentionOf(state, root)?.closed
+}
+
+function canUnblock(state: State, root: TaskRoot): boolean {
+  const read = attentionOf(state, root)
+  // Without a readable decision or a request event, a failed read can't distinguish a historical
+  // ID from a live hold. Offer Unblock in that case; the board still enforces attention_required.
+  return !blocksOnAttention(state, root) || (!!read?.error && !read.attention)
+}
 
 // --- blocks and schemas -------------------------------------------------------------------
 
