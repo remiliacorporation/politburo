@@ -2,6 +2,7 @@ import { createServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createBoardClient, type BoardClient } from '../src/client/client.ts'
+import { route } from '../src/inspect/app/routes.ts'
 import { startInspector, type Inspector } from '../src/inspect/server.ts'
 import { serve } from './http.ts'
 import { personToken, testBoard } from './harness.ts'
@@ -42,9 +43,19 @@ function exactly(path: string, headers: Record<string, string> = {}) {
   })
 }
 
+describe('inspector navigation', () => {
+  it('opens Presidium at its own URL', () => {
+    expect(route('/presidium')).toEqual({ view: 'presidium' })
+  })
+
+  it.each(['/activity', '/global-chat', '/settings/schedules', '/settings/sync', '/settings/sync/slack', '/inbox/slack'])('shows no such page at %s', (path) => {
+    expect(route(path)).toEqual({ view: 'missing' })
+  })
+})
+
 describe('inspect', () => {
   it('serves the page for every route, and its bundle', async () => {
-    for (const path of ['/', '/c/errors-www', '/tasks', '/settings/schemas/test-run@1', '/inbox/slack']) {
+    for (const path of ['/', '/presidium', '/?thread=12', '/c/errors-www', '/tasks', '/settings/schemas/test-run@1']) {
       const response = await fetch(`${inspector.url}${path}`)
       expect(response.status).toBe(200)
       expect(response.headers.get('content-security-policy')).toContain("script-src 'self'")

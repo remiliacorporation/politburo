@@ -1,5 +1,8 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
+import type { Filter } from './store.ts'
 import { ago } from './words.ts'
+
+export { route, SECTIONS, type Route, type Section } from './routes.ts'
 
 // Navigation with the History API: no reloads. Links act on mouse down, like
 // native lists, and keep the browser's own behavior for new tabs. Every path
@@ -19,8 +22,6 @@ export function navigate(to: string, replace = false) {
   history[replace ? 'replaceState' : 'pushState'](null, '', address(to))
   dispatchEvent(new PopStateEvent('popstate'))
 }
-
-import type { Filter } from './store.ts'
 
 /** Where you are: the view's path, an open thread, and the view's filters, all in the URL. */
 export type Where = { path: string; thread: string | null; filter: Filter; params: URLSearchParams }
@@ -70,7 +71,7 @@ export function here(changes: { thread?: string | null; filter?: Filter; params?
   return `${current()}${query ? `?${query}` : ''}`
 }
 
-export function Link(props: { to: string; className?: string; current?: boolean; title?: string; children: ReactNode }) {
+export function Link(props: { to: string; className?: string; current?: boolean; title?: string; onNavigate?: () => void; children: ReactNode }) {
   const navigatedAt = useRef(0)
   const plain = (event: React.MouseEvent | React.PointerEvent) =>
     event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
@@ -83,12 +84,16 @@ export function Link(props: { to: string; className?: string; current?: boolean;
       onPointerDown={(event) => {
         if (event.pointerType !== 'mouse' || !plain(event)) return
         navigatedAt.current = Date.now()
+        props.onNavigate?.()
         navigate(props.to)
       }}
       onClick={(event) => {
         if (!plain(event)) return
         event.preventDefault()
-        if (Date.now() - navigatedAt.current > 500) navigate(props.to)
+        if (event.detail === 0 || Date.now() - navigatedAt.current > 500) {
+          props.onNavigate?.()
+          navigate(props.to)
+        }
       }}
     >
       {props.children}
@@ -113,11 +118,11 @@ export function useNow(every = 30_000): number {
 export function useTypeToFocus(composer: string) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
       const target = event.target as HTMLElement
       if (target !== document.body && target.closest('input, textarea, select, [contenteditable], [role="menu"], [role="dialog"], [role="listbox"]'))
         return
-      const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]`)
+      const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]:not([inert] *)`)
       const area = find('thread') ?? find(composer)
       area?.focus()
     }
@@ -153,32 +158,4 @@ export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
       {age < 5_000 ? 'now' : ago(iso)}
     </span>
   )
-}
-
-/** The sections of the board's settings, each a tab at `/settings/<section>`. */
-export const SECTIONS = ['access', 'schemas', 'schedules', 'watchers', 'sync'] as const
-export type Section = (typeof SECTIONS)[number]
-
-/** The view a path names. Settings is one view: its section, and what's open in it (a schema, a sync entry). */
-export type Route =
-  | { view: 'activity' }
-  | { view: 'tasks' }
-  | { view: 'channel'; channel: string }
-  | { view: 'settings'; section: Section; open: string | null }
-  | { view: 'missing' }
-
-export function route(path: string): Route {
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(path)
-  } catch {
-    return { view: 'missing' }
-  }
-  if (decoded === '/') return { view: 'activity' }
-  if (decoded === '/tasks') return { view: 'tasks' }
-  if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
-  const [, settings, section, ...rest] = decoded.split('/')
-  if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))
-    return { view: 'settings', section: (section ?? 'access') as Section, open: rest.join('/') || null }
-  return { view: 'missing' }
 }

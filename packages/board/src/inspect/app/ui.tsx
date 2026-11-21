@@ -339,7 +339,7 @@ export function Header(props: { title: string; meta?: string | undefined; live?:
   return (
     <header className={`header${props.flat ? ' flat' : ''}`}>
       {props.lead}
-      <span className="title">{props.title}</span>
+      <h1 className="title" data-view-title tabIndex={-1} aria-label={props.title}>{props.title}</h1>
       {props.meta && <span className="meta">{props.meta}</span>}
       <span className="spacer" />
       {props.children}

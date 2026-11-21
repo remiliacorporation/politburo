@@ -1,10 +1,11 @@
-import { Check, ChevronsUpDown, Lock, PanelLeftClose, Plus, Settings } from 'lucide-react'
+import { Check, ChevronsUpDown, ClipboardList, House, LayoutGrid, PanelLeftClose, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView, Me } from '../../api/routes.ts'
 import * as board from './board.ts'
 import { toast } from './chrome.ts'
+import { HomeEmblem } from './home-emblem.tsx'
 import { Avatar } from './message.tsx'
-import { Link, navigate, type Route } from './nav.tsx'
+import { Link, type Route } from './nav.tsx'
 import { openTasks, type State } from './store.ts'
 import { ContextMenuArea, Menu, MenuItem, MenuSeparator } from './ui.tsx'
 import { boardWords, shownName } from './words.ts'
@@ -40,7 +41,7 @@ function useSeen(state: State, current: Route): Record<string, number> {
   return seen
 }
 
-export function Sidebar({ state, current, onCollapse }: { state: State; current: Route; onCollapse: () => void }) {
+export function Sidebar({ state, current, onHome, onCollapse }: { state: State; current: Route; onHome: () => void; onCollapse: () => void }) {
   const seen = useSeen(state, current)
   const groups = useMemo(() => {
     const out = new Map<string, ChannelView[]>()
@@ -53,34 +54,33 @@ export function Sidebar({ state, current, onCollapse }: { state: State; current:
   }, [state.channels])
   const open = openTasks(state)
   const where = boardWords(state.discovery)
-  const [adding, setAdding] = useState(false)
   const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => toast(`copied ${text}`))
   return (
     <div className="sidebar-col">
       <div className="brand">
-        <span className="which" title={state.discovery?.url}>
-          <span className="name">{where.name}</span>
-          {where.at && <span className="at">{where.at}</span>}
-        </span>
-        <button className="tool" title="hide the sidebar" onClick={onCollapse}>
-          <PanelLeftClose size={15} strokeWidth={1.75} />
+        <HomeEmblem onNavigate={onHome} />
+        <Link to="/" className="wordmark" title={where.at ? `${where.name} · ${where.at}` : where.name} onNavigate={onHome}>
+          POLITBURO
+        </Link>
+        <button type="button" className="tool" title="Hide sidebar" aria-label="Hide sidebar" onClick={onCollapse}>
+          <PanelLeftClose size={15} strokeWidth={1.75} aria-hidden="true" />
         </button>
       </div>
       <div className="sidebar-scroll">
-        <Link to="/" className="item" current={current.view === 'activity'}>
-          <span>activity</span>
+        <Link to="/presidium" className="item" current={current.view === 'presidium'}>
+          <LayoutGrid size={14} aria-hidden="true" />
+          <span>Presidium</span>
+        </Link>
+        <Link to="/" className="item" current={current.view === 'home'}>
+          <House size={14} aria-hidden="true" />
+          <span>Handoffs</span>
         </Link>
         <Link to="/tasks" className="item" current={current.view === 'tasks'}>
+          <ClipboardList size={14} aria-hidden="true" />
           <span className="name">tasks</span>
           {open !== null && open > 0 && <span className="count">{open}</span>}
         </Link>
-        <h2>
-          channels
-          <button className="tool" title="new channel" onClick={() => setAdding(true)}>
-            <Plus size={12} />
-          </button>
-        </h2>
-        {adding && <NewChannel onDone={() => setAdding(false)} />}
+        <h2>channels</h2>
         {groups.map(([group, channels]) => (
           <section key={group}>
             {group !== 'channels' && <h2>{group}</h2>}
@@ -116,37 +116,6 @@ export function Sidebar({ state, current, onCollapse }: { state: State; current:
         <ProfileMenu me={state.me!} />
       </div>
     </div>
-  )
-}
-
-/** A channel, made before anything posts to it. Private closes it to everyone but you. */
-function NewChannel({ onDone }: { onDone: () => void }) {
-  const [closed, setClosed] = useState(false)
-  return (
-    <form
-      className="new-channel"
-      onSubmit={(event) => {
-        event.preventDefault()
-        const path = new FormData(event.currentTarget).get('path')?.toString().trim().replace(/^#/, '')
-        if (!path) return onDone()
-        void board.createChannel(path, closed ? { private: true } : {}).then((made) => made && navigate(`/c/${path}`))
-        onDone()
-      }}
-      onKeyDown={(event) => event.key === 'Escape' && onDone()}
-      onBlur={(event) => !event.currentTarget.contains(event.relatedTarget) && onDone()}
-    >
-      <input name="path" autoFocus placeholder="name, e.g. incidents" pattern="[a-z0-9][a-z0-9_\-]*(/[a-z0-9][a-z0-9_\-]*)*" title="lowercase letters, numbers, - and _, with / between parts" spellCheck={false} />
-      <button
-        type="button"
-        className={`tool${closed ? ' on' : ''}`}
-        aria-pressed={closed}
-        title={closed ? 'private: only you get in' : 'make it private'}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => setClosed(!closed)}
-      >
-        <Lock size={12} />
-      </button>
-    </form>
   )
 }
 

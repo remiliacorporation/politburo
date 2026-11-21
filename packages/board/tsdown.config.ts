@@ -12,6 +12,7 @@ const page = {
   outDir: 'dist/inspect',
   format: 'esm',
   platform: 'browser',
+  inputOptions: { moduleTypes: { '.png': 'dataurl' } },
   target: 'es2022',
   minify: true,
   dts: false,

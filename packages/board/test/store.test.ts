@@ -70,7 +70,6 @@ describe('the inspector store', () => {
     const posted = postedEvent(message(3, { channel: 'new' }))
     let state = store.applyEvent(start, posted)
     expect(state.channels.new).toMatchObject({ threads: 1, messages: 1, lastIndex: 3 })
-    expect(state.cursor).toBe('3')
     state = store.applyEvent(state, posted) // a repeat counts once
     expect(state.channels.new!.messages).toBe(1)
     state = store.applyEvent(state, {
@@ -210,7 +209,6 @@ describe('the inspector store', () => {
       ['3', [], 1],
     ])
     expect(store.thread(state, '1')!.replies.map((r) => r.id)).toEqual(['2'])
-    expect(store.recent(state, 2).map((m) => m.id)).toEqual(['3', '4'])
   })
 
   const NOW = Date.parse('2026-10-01T12:00:00.000Z')
@@ -330,7 +328,6 @@ describe('the inspector store', () => {
     state = store.applyEvent(state, changed as unknown as BoardEventView)
     expect((store.shown(state, '1') as store.TaskRoot).task.needs).toEqual(['6', '7'])
     expect(store.tasks(state, { state: 'waiting', label: [] }, NOW).map((t) => t.task.needs)).toEqual([['6', '7']])
-    expect(state.cursor).toBe('9')
   })
 
   it('lists tasks like the board: oldest first, by state, place, labels, owner, and who they are for', () => {
@@ -361,6 +358,23 @@ describe('the inspector store', () => {
     // They're counted only once every open one is here.
     expect(store.openTasks(state)).toBeNull()
     expect(store.openTasks({ ...state, tasksCounted: true })).toBe(4)
+  })
+
+  it('counts tasks by their current state, moving a lapsed claim back to ready', () => {
+    const state = store.merge(start, [
+      task(1),
+      task(2, claimedBy(ME, at(5))),
+      task(3, { state: 'waiting', needs: ['1'] }),
+      task(4, { state: 'blocked', blocked: { kind: null, reason: 'needs review' } }),
+      task(5, { state: 'failed', reason: 'checks failed' }),
+      task(6, { state: 'completed', result: 'delivered' }),
+      task(7, { state: 'canceled', reason: 'no longer needed' }),
+      task(8, { state: 'canceled', reason: 'deleted' }, { deleted: true }),
+      message(9),
+    ])
+    const counts = { ready: 1, claimed: 1, waiting: 1, blocked: 1, failed: 1, completed: 1, canceled: 1 }
+    expect(store.taskCounts(state, NOW)).toEqual(counts)
+    expect(store.taskCounts(state, NOW + 5 * 60_000)).toEqual({ ...counts, ready: 2, claimed: 0 })
   })
 
   it('says what is left of a lease, and what a refusal means', () => {

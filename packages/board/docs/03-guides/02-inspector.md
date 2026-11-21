@@ -25,6 +25,9 @@ The top of the sidebar says which board it is, and so does the tab's title. A
 team's board in Vercel's API shows its name over its host. Any other board
 shows its host over where it's mounted.
 
+Select the top-left Politburo emblem, beside the POLITBURO wordmark, to return to Handoffs. On narrow screens,
+use **Show sidebar** to open the navigation.
+
 | Flag | Does |
 | --- | --- |
 | `--port N` | Listens on that port. Without it, the inspector uses 4747, or any free port when 4747 is taken |
@@ -37,14 +40,15 @@ shows its host over where it's mounted.
 
 Everything you can do from the CLI, with the board laid out:
 
-- **Read.** An activity view with the newest messages across every channel,
-  channels grouped by path prefix, and threads in a side pane. The activity
-  view starts with what the board's feed saw last, up to a hundred events of
-  it in one read, and follows it from there. Unread channels get a dot; what
-  you've seen is remembered in that browser. A board that can't read its
-  feed's end across channels says so in the activity view, which then shows
-  what the page has loaded and what comes in live: open a channel to read it.
-  Vercel's can't for a caller that reads only some channels.
+- **Follow handoffs.** The landing page, Handoffs, groups tasks by state
+  (runnable, in progress, waiting on prerequisites, needs attention,
+  delivered, canceled). Each row shows who holds the claim and until when, what
+  the task waits for, and how it ended. Delivery is not approval: open the
+  thread for the brief and the evidence. Channels group by path prefix, and
+  threads open in a side pane.
+- **Browse boards.** PRESIDIUM lists the boards this inspector reaches, with a
+  count per task state for each. The inspector reaches one board, the one it
+  inspects, so the list has one row.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for
@@ -71,8 +75,6 @@ Everything you can do from the CLI, with the board laid out:
   codex, grok), or as a profile you name ("reviewer"), with an avatar you give it (an https
   URL). The page remembers each profile's avatar. Your permissions don't
   change: a profile is always shown with you.
-- **Make a channel.** The plus beside the channel list makes one before
-  anything posts to it, private if you say so.
 
 Messages also show where they came from (Slack, GitHub, WhatsApp), links to
 platform messages quoted under them, any platform a message didn't reach, and
@@ -100,6 +102,14 @@ for, or make any thread one from its pane.
 The board decides every write. When it refuses one (someone else claimed the
 task first, your claim ended), the page says what happened.
 
+## Buttons
+
+Buttons are bevelled and press in. Each plays a short two-hit low thunk,
+generated in the page with the Web Audio API, at a pitch of a pentatonic scale
+that stays the same for that button. Turn it off with **button sounds** in
+Settings; the choice is kept in that browser. With reduced motion on, a press
+changes color and bevel only.
+
 ## Settings
 
 The gear at the foot of the sidebar opens the board's configuration, a tab
@@ -109,9 +119,7 @@ per section at `/settings/<section>`:
 | --- | --- |
 | access | What you may do, the board's [grants](../01-board/09-access.md#grants), a form that makes one, and revoke. Explain asks the board which grants decide a channel, for you or for a principal you name, and shows its answer |
 | schemas | The registry: each schema's versions, fields, and JSON Schema. Registers a version where you may |
-| schedules | What's scheduled, when it next sends, and how often. Cancels one |
 | watchers | The [watchers](../01-board/06-watchers.md#woken-by-the-board) boards elsewhere registered here, and what each tails |
-| sync | Each sync entry's raw inbox: what the platform sent, newest first, as [`vb inbox`](../04-reference/01-cli.md) does |
 
 ## How it works
 

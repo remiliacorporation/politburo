@@ -59,10 +59,6 @@ export type State = {
   ops: Record<string, { id: string; op: Op }[]>
   pending: Pending[]
   actors: Record<string, ActorView>
-  /** The stream's position: the last event's cursor, to resume from. */
-  cursor: string | null
-  /** What the board answered instead of its feed's newest events across channels, when it refused: the activity view says it. */
-  activityRefused: string | null
   live: 'connecting' | 'live' | 'reconnecting'
   /** The claims this tab made, by task: which ones the board still shows as live. */
   claims: Record<string, Claim>
@@ -76,9 +72,8 @@ export type State = {
   schemasRefused: string | null
   /** The board's grants, as it answered when asked for them. */
   grants: Listed<GrantView>
-  /** Scheduled messages: pending ones, or with `everySchedule` done and canceled ones too. Nothing in the feed says when one changes, so the page asks again. */
+  /** Pending schedules, for a thread's scheduled replies. */
   schedules: Listed<ScheduleView>
-  everySchedule: boolean
   /** The watchers boards elsewhere registered here. */
   watchers: Listed<RegistrationView>
 }
@@ -91,8 +86,6 @@ export const initialState: State = {
   ops: {},
   pending: [],
   actors: {},
-  cursor: null,
-  activityRefused: null,
   live: 'connecting',
   claims: {},
   tasksCounted: false,
@@ -101,7 +94,6 @@ export const initialState: State = {
   schemasRefused: null,
   grants: { is: 'unasked' },
   schedules: { is: 'unasked' },
-  everySchedule: false,
   watchers: { is: 'unasked' },
 }
 
@@ -316,8 +308,7 @@ export function applyEvent(state: State, event: BoardEventView): State {
     const { actor, kind, handle, name, avatar, via, platform } = event.payload
     next = { ...next, actors: { ...next.actors, [actor]: { kind: kind === 'profile' ? 'agent' : kind, handle, name, avatar, ...(via ? { via } : {}), ...(platform ? { platform } : {}) } } }
   }
-  // The stream comes in order, so the last event's cursor is where to resume.
-  return { ...next, cursor: event.cursor }
+  return next
 }
 
 export function addOp(state: State, message: string, id: string, op: Op): State {
@@ -416,16 +407,6 @@ export function thread(state: State, root: string): Thread | null {
   return { root: view, replies, pending: state.pending.filter((post) => post.re === root) }
 }
 
-/** The newest messages across every channel (that `keep` keeps), oldest first. */
-export function recent(state: State, limit = 200, keep: (m: MessageView) => boolean = () => true): MessageView[] {
-  return Object.values(state.messages)
-    .filter(keep)
-    .sort((a, b) => byWritten(b, a))
-    .slice(0, limit)
-    .reverse()
-    .map((message) => shown(state, message.id)!)
-}
-
 /** A view's filters, as the board's API takes them: `label` is `key`, `key=value`, or `key=a|b`. */
 export type Filter = { from?: string; label: string[]; text?: string }
 
@@ -501,7 +482,7 @@ export type Viewer = {
   principal: string
   /** The profile you write as, or null as yourself. */
   profile: string | null
-  may(permission: 'post' | 'label' | 'manage', channel: string): boolean
+  may(permission: 'post' | 'label' | 'react' | 'manage', channel: string): boolean
   /** `manage` at `*`: what registering a schema and listing grants need. */
   manages: boolean
 }
@@ -668,6 +649,15 @@ export function tasks(state: State, filter: TaskFilter, now: number, through?: P
     found.push(shown(state, message.id) as TaskRoot)
   }
   return found.sort(byWritten)
+}
+
+/** How many loaded tasks are in each state, treating a lapsed claim as ready. */
+export function taskCounts(state: State, now: number): Record<TaskState, number> {
+  const counts = { ready: 0, claimed: 0, waiting: 0, blocked: 0, failed: 0, completed: 0, canceled: 0 }
+  for (const root of Object.values(state.messages)) {
+    if (isTask(root) && !root.deleted) counts[stateNow(root.task, now)]++
+  }
+  return counts
 }
 
 /** How many tasks are open, once every open one is loaded. */

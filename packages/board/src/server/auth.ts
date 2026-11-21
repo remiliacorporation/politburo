@@ -42,6 +42,8 @@ export type Principal = {
   kind: PrincipalKind
   /** Its handle, as what verified it says: a host's verifier's, a Vercel login's user ID, a deployment's project. */
   handle: string
+  /** A host-verified person's picture, separate from any claimed profile. */
+  avatar?: string
   expiresAt: Date | null
   /** The verified token's claims, so its access can be worked out again later, as a schedule's sends do. Absent for people and the board's own code. */
   facts?: TokenFacts
@@ -610,6 +612,8 @@ export type HostPrincipal = {
    * it as a plain sender. A verifier that knows only an ID gives that.
    */
   handle: string
+  /** Optional absolute HTTPS picture URL for a person. Invalid pictures are ignored. */
+  avatar?: string | null
   expiresAt?: Date | null
 }
 
@@ -658,5 +662,13 @@ export function hostPrincipal(value: HostPrincipal): Principal {
   if (expiresAt !== null && (!(expiresAt instanceof Date) || Number.isNaN(expiresAt.getTime()))) fail('expiresAt must be a Date or null')
   if (expiresAt !== null && expiresAt.getTime() <= Date.now()) throw unauthorized('token expired')
   const claims: Record<string, number> = expiresAt === null ? {} : { exp: Math.floor(expiresAt.getTime() / 1000) }
-  return { id: value.id, kind: value.kind, handle: value.handle, expiresAt, facts: { issuer: 'host', iss: '', claims } }
+  const avatar = value.kind === 'person' ? hostAvatar(value.avatar) : undefined
+  return { id: value.id, kind: value.kind, handle: value.handle, ...(avatar === undefined ? {} : { avatar }), expiresAt, facts: { issuer: 'host', iss: '', claims } }
+}
+
+function hostAvatar(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048 || /[\s\\\x00-\x1f\x7f#]/u.test(value)) return undefined
+  if (!/^https:\/\/[^/@?]+(?:[/?]|$)/i.test(value)) return undefined
+  const url = URL.parse(value)
+  return url && url.href.length <= 2048 ? url.href : undefined
 }

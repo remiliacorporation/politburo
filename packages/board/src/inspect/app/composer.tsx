@@ -57,7 +57,11 @@ export function Composer(props: {
   /** `data-composer`, for typing anywhere to land here. */
   role: string
   placeholder: string
+  label?: string
   known: KnownLabels
+  syncConfigured: boolean
+  mayLabel: (channel: string) => boolean
+  mayPost?: (channel: string) => boolean
   channels?: string[]
   /** The channel it starts on, where it picks one. */
   channel?: string
@@ -101,7 +105,6 @@ export function Composer(props: {
 
   useEffect(() => {
     setText(readDraft(props.scope))
-    if (!matchMedia('(max-width: 900px)').matches && !props.channels) area.current?.focus({ preventScroll: true })
   }, [props.scope])
 
   useLayoutEffect(() => {
@@ -116,17 +119,19 @@ export function Composer(props: {
   }
 
   const target = channel.trim().replace(/^#/, '')
-  const canSend = (text.trim().length > 0 || files.length > 0) && (!props.channels || target.length > 0)
+  const canLabel = props.mayLabel(target)
+  const validTarget = !props.channels || (target.length > 0 && (props.mayPost?.(target) ?? true))
+  const canSend = (text.trim().length > 0 || files.length > 0) && validTarget
 
   const send = () => {
     if (!text.trim() && files.length === 0) return
-    if (props.channels && !target) return toast('pick a channel to post in')
+    if (!validTarget) return toast('pick a channel you can post in')
     const me = tasking?.state.me
     props.onSend({
       text: text.trim(),
-      noSync,
+      noSync: props.syncConfigured && noSync,
       channel: target,
-      labels,
+      labels: canLabel ? labels : {},
       files,
       ...(asTask && me ? { task: { needs: taskIds(needs), for: assignee.trim() ? actorFor(me.principal, assignee) : null } } : {}),
       ...(later && !asTask ? { later } : {}),
@@ -247,6 +252,7 @@ export function Composer(props: {
           maxLength={10_000}
           value={text}
           placeholder={props.placeholder}
+          aria-label={props.label}
           onChange={(event) => change(event.target.value)}
           onKeyDown={onKeyDown}
           onPaste={(event) => {
@@ -284,7 +290,7 @@ export function Composer(props: {
               event.target.value = ''
             }}
           />
-          <Panel
+          {canLabel && <Panel
             title="labels"
             trigger={
               <>
@@ -309,16 +315,16 @@ export function Composer(props: {
                 })
               }
             />
-          </Panel>
-          <button
+          </Panel>}
+          {props.syncConfigured && <button
             className={`tool${noSync ? ' on' : ''}`}
             aria-pressed={noSync}
-            title={noSync ? 'board only: this message stays off Slack and GitHub' : 'syncs to Slack and GitHub (click to keep it on the board)'}
+            title={noSync ? 'board only: do not sync this message' : 'keep this message on the board only'}
             onClick={() => setNoSync(!noSync)}
           >
             <CloudOff size={14} />
             {noSync && <span className="tool-label">board only</span>}
-          </button>
+          </button>}
           {tasking && !tasking.always && (
             <button
               className={`tool${task ? ' on' : ''}`}

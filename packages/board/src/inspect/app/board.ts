@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { BoardEventView, Explanation, GrantInput, GrantWriteOptions, InboxEntry, Me, MessageView, SchemaInput, SyncedView, TaskView } from '../../api/routes.ts'
+import type { BoardEventView, Explanation, GrantInput, GrantWriteOptions, Me, MessageView, SchemaInput, SyncedView, TaskView } from '../../api/routes.ts'
 // `@vercel/board/access`, in an app of yours.
 import { compileAccess } from '../../server/access.ts'
 import { board, BoardError, type Attachment, type EventsState, type ExplainPrincipal, type PostOptions, type ScheduleTiming } from '../../server/index.default.ts'
@@ -160,29 +160,20 @@ function once(key: string, load: () => Promise<void>): Promise<void> {
 
 // --- reading -----------------------------------------------------------------------
 
-/** How many of the feed's newest events fill the activity view: the most one read of them answers. */
-const RECENT = 100
-
-/**
- * The page shows once it knows who you are and the channels. The feed's newest events across them fill the
- * activity view, in one read, and the feed goes on from that read's cursor. A board that can't read them
- * across channels says so: its words show there, and the feed starts from now.
- */
+/** The page shows once it knows who you are and the channels the sidebar lists. */
 export async function boot() {
-  // Settled either way: a refusal is what the view shows, not a failed boot.
-  const recent = team.poll({ all: true, last: RECENT }).then(
-    (page) => ({ page }),
-    (error: unknown) => ({ refused: refusal(error) }),
-  )
-  // Every channel, a page at a time: the sidebar lists them all.
-  const [me, discovery, channels] = await Promise.all([team.me(), team.discovery().catch(() => null), everyChannel(team)])
+  // Keep the first page's cursor so live updates cover posts while later pages are loading.
+  let after: string | undefined
+  const [me, discovery, channels] = await Promise.all([
+    team.me(),
+    team.discovery().catch(() => null),
+    everyChannel({ channels: async (query) => {
+      const page = await team.channels(query)
+      after ??= page.cursor
+      return page
+    } }),
+  ])
   set((s) => ({ ...s, me, discovery, channels: Object.fromEntries(channels.map((c) => [c.path, c])) }))
-  const latest = await recent
-  // Folded as live events are, oldest first, so an edit or a delete among them leaves its message as it is now.
-  if ('page' in latest) {
-    listed.apply(latest.page.events)
-    set((s) => ({ ...s, cursor: latest.page.cursor }))
-  } else set((s) => ({ ...s, activityRefused: latest.refused }))
   // A burst of events is one render: they're folded in a frame at a time.
   let queue: BoardEventView[] = []
   const flush = () => {
@@ -193,7 +184,7 @@ export async function boot() {
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
   }
   follow(
-    'page' in latest ? latest.page.cursor : undefined,
+    after,
     (event) => {
       if (queue.push(event) === 1) requestAnimationFrame(flush)
     },
@@ -255,13 +246,11 @@ export const loadThread = (id: string) =>
     set((s) => store.merge(s, [root, ...replies]))
   })
 
-export const loadInbox = (key: string): Promise<InboxEntry[]> => team.inbox(key, { limit: 100 })
-
 /** Threads a filtered view asks the board for, and how many of them it reads whole. */
 const FILTERED = 50
 const FILTERED_WHOLE = 30
 
-/** The kinds of filtered read the board refused, each asked once: where, and by what. */
+/** The kinds of filtered read the board refused, each asked once. */
 const unsupported = new Set<string>()
 
 /**
@@ -270,13 +259,13 @@ const unsupported = new Set<string>()
  * since the match may be any message of it. A board that can't find threads that way says so once,
  * and the filter then shows what matches among what's loaded.
  */
-export const loadFiltered = (channel: string | undefined, filter: store.Filter) => {
-  const kind = `${channel ? 'channel' : 'board'}:${filter.from ? 'from' : ''}:${filter.text ? 'text' : ''}:${filter.label.length > 0 ? 'label' : ''}`
+export const loadFiltered = (channel: string, filter: store.Filter) => {
+  const kind = `${filter.from ? 'from' : ''}:${filter.text ? 'text' : ''}:${filter.label.length > 0 ? 'label' : ''}`
   if (unsupported.has(kind)) return Promise.resolve()
-  return once(`filtered:${channel ?? '*'}:${JSON.stringify(filter)}`, async () => {
+  return once(`filtered:${channel}:${JSON.stringify(filter)}`, async () => {
     const page = await team
       .threads({
-        ...(channel ? { channel } : {}),
+        channel,
         ...(filter.from ? { from: filter.from } : {}),
         ...(filter.text ? { text: filter.text } : {}),
         ...(filter.label.length > 0 ? { label: filter.label } : {}),
@@ -632,11 +621,11 @@ export const explain = (channel: string, whom: ExplainPrincipal = {}): Promise<E
 
 // --- schedules: messages that post later --------------------------------------------------------
 
-/** What's scheduled: pending ones, or with `all`, done and canceled ones too. */
-export async function loadSchedules(all = state.everySchedule) {
-  set((s) => ({ ...s, everySchedule: all, schedules: s.schedules.is === 'here' ? s.schedules : { is: 'loading' } }))
+/** Pending scheduled posts, for a thread's scheduled replies. */
+async function loadSchedules() {
+  set((s) => (s.schedules.is === 'here' ? s : { ...s, schedules: { is: 'loading' } }))
   try {
-    const schedules = await team.schedules({ all })
+    const schedules = await team.schedules()
     set((s) => ({ ...s, schedules: { is: 'here', items: schedules } }))
   } catch (error) {
     set((s) => ({ ...s, schedules: { is: 'failed', why: said(error) } }))
@@ -653,7 +642,7 @@ export async function cancelSchedule(id: string) {
   await loadSchedules()
 }
 
-// --- watchers, sync, and channels ------------------------------------------------------------
+// --- watchers and a thread's synced copies ----------------------------------------------------
 
 /** The watchers boards elsewhere registered here, and what each tails: all of them with `manage` everywhere, or else your own. */
 export async function loadWatchers() {
@@ -673,18 +662,5 @@ export async function loadSynced(id: string): Promise<SyncedView['targets']> {
     return (await team.sync(id)).targets
   } catch {
     return []
-  }
-}
-
-/** Makes a channel before anything posts to it; `private` closes it to everyone but you, with two grants. Answers whether it's there to open. */
-export async function createChannel(path: string, options: { private?: boolean } = {}): Promise<boolean> {
-  try {
-    const { channel, created } = await team.createChannel(path, options)
-    set((s) => (s.channels[channel.path] ? s : { ...s, channels: { ...s.channels, [channel.path]: channel } }))
-    if (!created) toast(`#${path} is there already`)
-    return true
-  } catch (error) {
-    toast(`couldn't make #${path}: ${said(error)}`)
-    return false
   }
 }

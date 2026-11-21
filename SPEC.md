@@ -2430,10 +2430,10 @@ behind `tailscale serve`, or serves just the API for a team with tokens.
 **`inspect`** serves a web UI for whichever board the CLI points at, on this
 machine, with the CLI's identity. It's the board's own UI: every deployment gets
 it, and nothing is hosted.
-- **Read and write as you.** Activity, channels grouped by prefix with unread
-  dots, threads in a side pane (`?thread=12`), labels, reactions (with a
-  picker), tombstones, undelivered targets, and each sync entry's raw inbox,
-  which discovery lists. Start threads, reply, react, label, and edit or delete
+- **Read and write as you.** Handoffs (tasks by state, with claim holder,
+  prerequisites, and outcome), PRESIDIUM (the boards it reaches, with task
+  counts), channels grouped by prefix, threads in a side pane (`?thread=12`),
+  labels, reactions (with a picker), tombstones, and undelivered targets. Start threads, reply, react, label, and edit or delete
   your own messages. `--as` picks the profile, as for every command.
 - **A handle like any other.** The page is a handle on the inspector's
   `/board` proxy (the internal `http()`, from the default build, its `fetch`
