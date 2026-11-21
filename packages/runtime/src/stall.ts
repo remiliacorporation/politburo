@@ -98,11 +98,11 @@ type StallSendError = { topic: string; error: string }
 
 export type StallResult =
   | { kind: 'ok' }
-  | { kind: 'paused' }
+  | { kind: 'paused'; errors?: StallSendError[] }
   | { kind: 'quiet'; sinceMs: number; quietMinutes: number; missed?: MissedBeat[]; errors?: StallSendError[] }
   | { kind: 'missed'; agents: MissedBeat[]; errors?: StallSendError[] }
 
-// Escape backslashes as \\ and controls, lone surrogates, and reserved : and ~ as \u{hex}.
+// Escape backslashes as \\ and controls, format characters, lone surrogates, and reserved : and ~ as \u{hex}.
 function escapeAlertField(value: string): string {
   const maxLength = 64
   const hashLength = 32
@@ -110,7 +110,7 @@ function escapeAlertField(value: string): string {
   let prefixEnd = 0
   for (const char of value) {
     if (char === '\\') escaped += '\\\\'
-    else if (/[:~\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]/u.test(char)) escaped += `\\u{${char.charCodeAt(0).toString(16)}}`
+    else if (/[:~\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(char)) escaped += `\\u{${char.codePointAt(0)!.toString(16)}}`
     else escaped += char
     if (escaped.length > maxLength) {
       const hash = createHash('sha256').update(value, 'utf16le').digest('hex').slice(0, hashLength)
@@ -123,10 +123,20 @@ function escapeAlertField(value: string): string {
 }
 
 function sendErrorMessage(error: unknown): string {
+  const fallback = 'operational inbox send failed'
   try {
-    return String(error instanceof Error ? error.message : error)
+    const message = typeof error === 'object' && error !== null && 'message' in error ? error.message : undefined
+    const unsafe = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
+    // Removing separators must not join lone surrogates into a format character.
+    const clean = String(typeof message === 'string' ? message : error)
+      .toWellFormed()
+      .replace(unsafe, '')
+      .slice(0, 256)
+      .toWellFormed()
+    if (clean.search(unsafe) !== -1) return fallback
+    return clean.trim() && clean !== '[object Object]' ? clean : fallback
   } catch {
-    return 'operational inbox send failed'
+    return fallback
   }
 }
 
@@ -202,7 +212,7 @@ export function stallWatcher(
       const errors: StallSendError[] = []
       for (const [topic, text] of alerts) {
         if (sent.has(topic)) continue
-        if (await isPaused()) return { kind: 'paused' }
+        if (await isPaused()) return errors.length ? { kind: 'paused', errors } : { kind: 'paused' }
         try {
           await handle.operationalInbox.send({ to, topic, text })
         } catch (error) {

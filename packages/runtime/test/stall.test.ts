@@ -86,15 +86,15 @@ test('heartbeat staggers writes by offset, stays on the grid after a slow write,
   assert.deepEqual(reviewer.sleeps, [5 * minute, 10 * minute - 250])
 })
 
-test('heartbeat default sleep waits at least the requested delay', async (t) => {
+test('heartbeat with default sleep reaches the first slot without firing early', async (t) => {
   const everyMinutes = 40_000
-  const due = everyMinutes * minute
+  const period = everyMinutes * minute
+  const due = period
   const clock = fakeClock(0.5)
   const stop = new AbortController()
   t.mock.method(globalThis, 'setTimeout', () => assert.fail('use the fake clock instead of setTimeout'))
-  t.mock.method(timers, 'setTimeout', async (ms: number, _value: unknown, { signal }: { signal: AbortSignal }) => {
-    assert.equal(signal, stop.signal)
-    signal.throwIfAborted()
+  t.mock.method(timers, 'setTimeout', async (ms: number, _value: unknown, options?: { signal?: AbortSignal }) => {
+    options?.signal?.throwIfAborted()
     // Node truncates fractional delays and falls back to 1 ms for oversized delays.
     clock.advance(ms > 2_147_483_647 ? 1 : Math.trunc(ms))
   })
@@ -107,6 +107,7 @@ test('heartbeat default sleep waits at least the requested delay', async (t) => 
   })
   assert.equal(beats.length, 1)
   assert.ok(beats[0]! >= due, 'heartbeat ran before its slot')
+  assert.ok(beats[0]! < due + period, 'heartbeat missed its first slot')
 })
 
 for (const rejects of [false, true]) {
@@ -235,13 +236,18 @@ test('stall alerts escape controls and keep long IDs distinct in a real inbox', 
   const team = localInbox(t)
   const clock = fakeClock()
   const to = { agent: (await team.me()).principal }
-  const scope = 'runtime/work:\t\u2029'
+  const scope = 'runtime/work:\t\u2029\u202e\ufeff'
   const prefix = 'x'.repeat(4_999)
   const agents = [
-    registration('worker\nnext', start, { role: 'review\u2028er\x7f' }),
+    registration('worker\nnext', start, { role: 'review\u2028er\x7f\u202e\ufeff' }),
     registration('worker\u0085next', start),
     registration(String.raw`worker\u{a}next`, start),
     registration('worker\0next', start),
+    registration('worker\u202enext', start),
+    registration('worker\ufeffnext', start),
+    registration('worker\u{e0001}next', start),
+    registration('worker\u{e0020}next', start),
+    registration('workernext', start),
     registration('worker\ud800', start),
     registration(`${prefix}a`, start),
     registration(`${prefix}b`, start),
@@ -256,18 +262,19 @@ test('stall alerts escape controls and keep long IDs distinct in a real inbox', 
   assert.ok(!('errors' in result), 'all alerts should be accepted by the inbox')
   const { messages } = await team.operationalInbox.read()
   assert.equal(messages.length, agents.length + 1)
+  assert.equal(messages.filter(({ topic }) => topic.startsWith('stall:quiet:')).length, 1)
+  assert.equal(messages.filter(({ topic }) => topic.startsWith('stall:missed:')).length, agents.length)
+  // Every input survives as a distinct alert, even IDs that differ only by an invisible character.
   assert.equal(new Set(messages.map(({ topic }) => topic)).size, messages.length)
+  assert.equal(new Set(messages.map(({ text }) => text)).size, messages.length)
+  const unsafe = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u
   for (const { topic, text } of messages) {
     assert.ok(topic.length <= 256)
     assert.ok(text.length < 512)
-    assert.doesNotMatch(topic, /[\x00-\x1f\x7f-\x9f\u2028\u2029]/u)
-    assert.doesNotMatch(text, /[\x00-\x1f\x7f-\x9f\u2028\u2029]/u)
+    assert.equal(topic.split(':').length, topic.startsWith('stall:quiet:') ? 3 : 4)
+    assert.doesNotMatch(topic, unsafe)
+    assert.doesNotMatch(text, unsafe)
   }
-  const escapedScope = String.raw`runtime/work\u{3a}\u{9}\u{2029}`
-  const quiet = messages.find(({ topic }) => topic === `stall:quiet:${escapedScope}`)
-  assert.ok(quiet?.text.includes(`in ${escapedScope} for`))
-  const missed = messages.find(({ topic }) => topic === String.raw`stall:missed:${escapedScope}:worker\u{a}next`)
-  assert.ok(missed?.text.includes(String.raw`Agent worker\u{a}next (review\u{2028}er\u{7f})`))
 })
 
 test('the default quiet window starts at watcher creation and includes its exact boundary', async (t) => {
@@ -500,6 +507,15 @@ test('a fresh feed event does not suppress a missed alert', async (t) => {
   assert.deepEqual(f.topics(), [workerTopic])
 })
 
+test('a paused board reports paused even when no alert is due', async (t) => {
+  const f = fixture(t)
+  f.state.paused = true
+  assert.deepEqual(await f.check(), { kind: 'paused' })
+  assert.deepEqual(f.sent, [])
+  f.state.paused = false
+  assert.deepEqual(await f.check(), { kind: 'ok' })
+})
+
 test('a paused board sends nothing even when quiet and missing beats', async (t) => {
   const f = fixture(t)
   f.state.agents.push(registration('worker', start))
@@ -543,6 +559,35 @@ test('a pause between sends leaves the remaining topics unsent until resume', as
   assert.deepEqual(f.topics(), [workerTopic, quietTopic])
 })
 
+test('a pause between sends preserves earlier send errors', async (t) => {
+  const f = fixture(t)
+  f.state.agents.push(registration('worker', start))
+  const inbox = f.handle.operationalInbox
+  const send = inbox.send
+  const error = new Error('inbox unavailable')
+  let failedTopic: string | undefined
+  t.mock.method(inbox, 'send', async (message: (typeof f.sent)[number]) => {
+    if (failedTopic === undefined) {
+      failedTopic = message.topic
+      f.state.paused = true
+      throw error
+    }
+    await send(message)
+  })
+
+  f.clock.advance(61 * minute)
+  const paused = await f.check()
+  assert.ok(failedTopic, 'one send was attempted before the pause')
+  assert.deepEqual(paused, { kind: 'paused', errors: [{ topic: failedTopic, error: error.message }] })
+  assert.deepEqual(f.sent, [])
+
+  f.state.paused = false
+  const resumed = await f.check()
+  assert.equal(resumed.kind, 'quiet')
+  assert.ok(!resumed.errors)
+  assert.deepEqual(f.topics(), [workerTopic, quietTopic])
+})
+
 test('no_network_pause still allows a quiet notification', async (t) => {
   const f = fixture(t)
   f.state.statusError = Object.assign(new Error('unsupported'), { status: 501, code: 'no_network_pause' })
@@ -574,6 +619,68 @@ test('a failed quiet send is reported and retried until it succeeds', async (t) 
   assert.deepEqual(f.topics(), [quietTopic])
   assert.equal((await f.check()).kind, 'quiet')
   assert.deepEqual(f.topics(), [quietTopic])
+})
+
+test('send errors are bounded and free of control and format characters', async (t) => {
+  const f = fixture(t)
+  f.state.sendError = new Error(`\x1bInbox\n unavailable\u0085\u2028\u2029\u202e\ufeff: ${'a'.repeat(500)}`)
+  f.clock.advance(30 * minute)
+  const result = await f.check()
+  assert.equal(result.kind, 'quiet')
+  assert.equal(result.errors?.length, 1)
+  const failure = result.errors![0]!
+  assert.equal(failure.topic, quietTopic)
+  assert.match(failure.error, /^Inbox unavailable:/)
+  assert.doesNotMatch(failure.error, /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u)
+  assert.ok(failure.error.length <= 256, 'the error is too long')
+})
+
+test('sanitizing send errors cannot join lone surrogates into format characters', async (t) => {
+  const f = fixture(t)
+  f.clock.advance(30 * minute)
+  for (const message of ['\uDB40\n\uDC01', '\uDB40\u202E\uDC20', 'inbox \uDB40\u2028\uDC7F unavailable']) {
+    f.state.sendError = new Error(message)
+    const result = await f.check()
+    assert.equal(result.kind, 'quiet')
+    assert.equal(result.errors?.length, 1)
+    assert.doesNotMatch(result.errors![0]!.error, /[\p{Cc}\p{Cf}]/u)
+  }
+})
+
+test('a non-Error rejection with a message reports that message', async (t) => {
+  const f = fixture(t)
+  const rejection = { message: 'inbox is temporarily unavailable' }
+  t.mock.method(f.handle.operationalInbox, 'send', async () => { throw rejection })
+  f.clock.advance(30 * minute)
+  const result = await f.check()
+  assert.equal(result.kind, 'quiet')
+  assert.deepEqual(result.errors, [{ topic: quietTopic, error: rejection.message }])
+})
+
+test('quiet reports missed agents and send errors when some alerts succeed', async (t) => {
+  const f = fixture(t)
+  f.state.agents.push(registration('worker', start), registration('reviewer', start))
+  const inbox = f.handle.operationalInbox
+  const send = inbox.send
+  const error = new Error('worker alert failed')
+  let unavailable = true
+  t.mock.method(inbox, 'send', async (message: (typeof f.sent)[number]) => {
+    if (unavailable && message.topic === workerTopic) throw error
+    await send(message)
+  })
+
+  f.clock.advance(61 * minute)
+  const partial = await f.check()
+  assert.equal(partial.kind, 'quiet')
+  assert.deepEqual(partial.missed?.map(({ id }) => id).sort(), ['reviewer', 'worker'])
+  assert.deepEqual(partial.errors, [{ topic: workerTopic, error: error.message }])
+  assert.deepEqual(f.topics(), [reviewerTopic, quietTopic])
+
+  unavailable = false
+  const retried = await f.check()
+  assert.equal(retried.kind, 'quiet')
+  assert.ok(!retried.errors)
+  assert.deepEqual(f.topics(), [reviewerTopic, workerTopic, quietTopic])
 })
 
 test('a failed send does not block other alerts and only the failed topic is retried', async (t) => {
