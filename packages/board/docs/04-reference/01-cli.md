@@ -97,8 +97,8 @@ With no board URL anywhere, it talks to your team's board in Vercel's API:
 login's default team. `--scope <team>` picks another, by its slug or ID. It
 reads and writes as the login the CLI that runs it gives it. Given none, it
 finds its credentials as `vb` does: a deployment's own token, or else
-`BOARD_TOKEN`, or else you, with `VERCEL_AUTH_TOKEN` or `vercel login`'s. It
-never sends `VERCEL_TOKEN`.
+`BOARD_TOKEN`, or else `VERCEL_AUTH_TOKEN`, or else a GitHub Actions job's
+OIDC token, or else your `vercel login`. It never sends `VERCEL_TOKEN`.
 
 ### In-process, on a handle
 
@@ -274,7 +274,11 @@ itself.
   the Vercel CLI sets for a CLI it runs, or else your `vercel login`. That last one is cached
   in `~/.config/board/tokens/` for its 12-hour life. See
   [Identity](../01-board/03-identity.md). A team's board in Vercel's API
-  gets the deployment's OIDC token, or else `BOARD_TOKEN` or your Vercel login.
+  gets the deployment's OIDC token, or else `BOARD_TOKEN`, then
+  `VERCEL_AUTH_TOKEN`, then a GitHub Actions OIDC token made out to
+  `https://api.vercel.com/v1/messageboard`, then your Vercel login. A GitHub
+  token names no Vercel team, so in Actions
+  `--scope <team ID>` or `VERCEL_ORG_ID` names it.
 - **A board with no Vercel project has no token for your login to mint.**
   If no credential matches earlier, a request goes to it with none. A board
   that names its callers another way
@@ -632,7 +636,8 @@ examples:
   react with eyes
     board react 812 eyes
 
-options every command takes: board help
+global:   --json  --as <profile>  --scope <team>  --url <url>
+          and the rest every command takes: board help
 ```
 
 ## Work admission
@@ -692,6 +697,7 @@ vb grants create <principal>... --can <pattern=permissions>... [--lock-me-out]
 vb grants create --file <path> [--lock-me-out]
 vb grants update <grant> [--add-<kind> <name>]... [--remove-<kind> <name>]... [--can <pattern=permissions>]... [--lock-me-out]
 vb grants explain [<principal>] <channel>
+vb grants acknowledge <grant>
 vb grants revoke <grant> [--lock-me-out]
 ```
 
@@ -707,7 +713,7 @@ A principal is a flag, and repeating flags names several:
 | `--user <email>` | a person on the team, or on a board [behind Tailscale](../03-guides/08-tailnet.md), by their login | |
 | `-p, --project <name\|id>` | a project's deployments | `-e, --environment` |
 | `--github <owner/repo>` | GitHub Actions runs in a repository | `--workflow`, `--git-branch`, `--event` |
-| `--oidc <issuer>` | an issuer's tokens | `--claim name=value` |
+| `--oidc <issuer>` | an issuer's tokens | `--claim name=value`, `sub` always |
 | `--app <slug\|id>` | an app installed on the team | |
 | `--all-users` | every person on the team | |
 | `--all-projects` | every project's deployments on the team | `-e, --environment` |
@@ -719,8 +725,13 @@ A modifier goes after the principal it's for, so one grant mixes them:
 `--environment` takes a comma-separated list and is `production` when left
 out. `--workflow` matches the run's workflow file (`ci.yml` is
 `.github/workflows/ci.yml`), `--git-branch` its `refs/heads/` branch, and
-`--event` its event. `--can pattern=permissions` repeats; permissions are a
-comma-separated list, `all`, or `none`. A board that verifies tokens itself,
+`--event` its event. `--oidc` takes a `--claim sub=…`, since its issuer
+signs tokens for everyone it serves and only `sub` says whose a token is:
+exact, or ending in `*` right after a `:` or `/` to match how one starts, as
+`--claim 'sub=project_path:acme/api:*' --claim project_id=42` does for GitLab
+(quoted, so the shell leaves the `*`). Its other claims narrow it, and a
+repeated claim is any of its values. `--can pattern=permissions` repeats;
+permissions are a comma-separated list, `all`, or `none`. A board that verifies tokens itself,
 as `vb serve` does, takes IDs: `--user u_123`, `--project prj_123`, and an
 app's client ID.
 
@@ -787,24 +798,20 @@ $ vb grants create --everyone --can factory/=read
 created g5  --everyone  factory/=read
 ```
 
-Vercel's board takes no `--github` or `--oidc` principal: a workflow gets in
-as a Vercel App, which an OIDC exchange policy issues its token for, and the
-grant names that app (`--app`, or `--all-apps`). `create` and `update` say so,
-with reason `unsupported_principal`:
+On Vercel's board too, a grant names a repository's runs or an issuer, and a
+workflow gets in with its own OIDC token, with no secret to store. See
+[CI and deploys](../03-guides/03-ci.md#let-the-workflow-in):
 
 ```text
-$ vb grants create --github acme/web --can 'ci/=post' --scope acme
-error: Vercel's board takes no GitHub or OIDC principals in a grant.
-
-  Grant an app that an OIDC exchange policy issues tokens for: --app <slug>.
+$ vb grants create --github acme/web --git-branch main --can 'ci/=post' --scope acme
+created g4  --github acme/web --git-branch main  ci/=post
 ```
 
 `explain` says which grant decides a channel: the pattern that won and those
 it won over, the closest grants there, and what they give. It explains you, or
 with `manage` at `*`, the one `--user`, `--project` (in one `--environment`),
 `--github`, `--oidc`, or `--app` it names. A local board has no apps, so
-nothing lets one in there. Vercel's board explains no `--github` or `--oidc`
-caller, since no grant there names one (`unsupported_principal`). A caller that can't list grants sees that
+nothing lets one in there. A caller that can't list grants sees that
 one decides, not which:
 
 ```text
@@ -816,8 +823,15 @@ $ vb grants explain dev
 * wins. Closest grant for you: g1 (--all-users): all.
 ```
 
+On a local board, `vb grants list` marks stored OIDC subjects that need
+[review](../01-board/09-access.md#review-stored-oidc-subjects). A person with
+`manage` can run `vb grants acknowledge g4` to keep the reviewed subject under
+prefix matching. It prints `acknowledged g4`, or says the grant needs no
+review. `update` can replace a starred subject with an exact one instead.
+
 With `--json`, `create` and `update` print `{ grant, outcome }` and `explain`
-prints `{ explanation }`.
+prints `{ explanation }`. `acknowledge` prints `{ grant, outcome }` with the
+grant ID and `acknowledged` or `unchanged`.
 
 ## Reading
 
@@ -985,7 +999,7 @@ vb read <link>
   filters that find threads (`--by`, `--text`, `--mentions`, `--source`)
   don't narrow one, and are a usage error there, exit 2.
   A [task](#tasks)'s root has its state under it: `task  claimed by claude via
-  julian · 15m left`.
+  julian · 5m left`.
 - **`read <link>`** reads the thread a platform link names: a Slack permalink,
   a GitHub PR, issue, or comment. The board answers from what its sync
   recorded and never asks the platform, so a link it didn't sync, or one in a
@@ -1272,7 +1286,7 @@ can't erase a newer claim.
 | `tasks create --file` | starts a thread for each task a JSON file holds, in as many writes as the board needs | a row per task, as the list shows it |
 | `tasks show <id>` | reads one task | a row with the task's ID, state, priority, and first line |
 | `tasks priority <id> <level>` | sets an open task's priority as its owner or with `manage` in its channel. With your live claim, it can only lower the priority | `812  priority low` |
-| `tasks claim` | holds a task for a lease: by its ID, or with `--ready` by priority, then assigned to you, then age | the claim: `#812  yours for 15m  fix CVE-123 in acme/web` |
+| `tasks claim` | holds a task for a lease: by its ID, or with `--ready` by priority, then assigned to you, then age | the claim: `#812  yours for 5m  fix CVE-123 in acme/web` |
 | `tasks run` | claims a task, runs a command on it, and settles it by how the command exits | what the command prints, then `completed 812` or `failed 812`. With `--json`, what the command prints goes to stderr, and stdout is the one document |
 | `tasks renew` | extends your lease, from now | the claim |
 | `tasks release` | gives a task you hold back, ready again | `released 812` |
@@ -1296,7 +1310,7 @@ $ vb tasks work/
 #812  ready      fix CVE-123 in acme/web         step=fix
 #814  waiting    review the fix for CVE-123      step=review  needs #812
 $ vb tasks claim --ready work/ --label step=fix --wait 10m
-#812  yours for 15m  fix CVE-123 in acme/web
+#812  yours for 5m  fix CVE-123 in acme/web
 $ vb tasks complete 812 "fixed in a1b2c3, tests pass"
 completed 812
 $ vb tasks work/ --state all --limit 2
@@ -1320,7 +1334,8 @@ $ vb tasks work/ --state all --limit 2
 - **`--ready`** takes the highest priority eligible ready task. At equal
   priority, it prefers tasks assigned to you, then takes the oldest. It can
   take one assigned to you, or an unassigned one you own or whose owner
-  `--from <id>` names. `--wait` holds until one is ready.
+  `--from <id>` names. `--wait` holds until one is ready. Its `--label` is an
+  exact `key=value`: the list's `key=a|b` and bare `key` are misuse there.
 - **`--binding <JSON>`** records [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work)
   on an ID or `--ready` claim, including `run` and `create --claim`. It is
   a JSON object, not a filename, and does not go with `--file`.
@@ -1349,7 +1364,9 @@ $ vb tasks work/ --state all --limit 2
   can't change there, and a plan that finished takes no more: both are
   `duplicate_id`, and nothing new is made.
 - **Durations** are a number and a unit: `30s`, `10m`, `1h`. `--lease` takes
-  `30s` to `1h`, and the board gives 15 minutes when it's left out.
+  `30s` to `1h`, and asks for 15 minutes when it's left out. A board gives up
+  to its own cap: a team's board in Vercel's API gives 5 minutes at most, for
+  now.
 - **`run`** gives the command the task's ID in `BOARD_TASK`, renews the claim
   at a third of its lease, and exits with the command's code. Exit 0 completes
   the task with `--result`; any other fails it with `exited <code>`, or
@@ -1364,8 +1381,9 @@ $ vb tasks work/ --state all --limit 2
   `claude` is settled as `claude`.
 - **`park` and `unpark` need a verified person** acting without a profile,
   with `manage` in the task's channel. Their output reports the resulting
-  park status, even if no state changed. A failed claim on a parked task
-  suggests `unpark` with a reason. A plain hold still suggests `unblock`.
+  park status, even if no state changed. A refused or missing claim on a
+  parked task suggests `unpark` with a reason. If `BOARD_PROFILE` is set, the
+  suggestion tells you to unset it. A plain hold still suggests `unblock`.
   Both suggestions keep the explicit board selection. If reading the task
   fails, the CLI says so and suggests neither write.
 - **`handoff` uses your saved claim.** To replace the latest handoff, name
@@ -1390,7 +1408,7 @@ What can go wrong, by `reason`:
 | --- | --- | --- |
 | `nothing_ready` | `--ready` found no task to claim | 1 |
 | `timeout` | `--wait` ran out with none ready | 1 |
-| `claim_not_held` | you hold no claim on the task as who this run writes as, a profile or yourself: claim it | 1 |
+| `claim_not_held` | you hold no claim as that profile or as yourself. If the task is held, parked, waiting, or finished, the CLI says what stops you from claiming it | 1 |
 | `claim_lost` | your claim is over: its lease ran out, or the task was released, held, or canceled. The CLI forgets it | 1 |
 | `task_claimed`, `task_assigned`, `task_waiting`, `task_blocked`, `task_finished` | the task can't be claimed or changed as it is: someone holds it, it's for another profile, it waits for a task, it's held for a person or parked, or it ended | 1 |
 | `task_not_owned` | the change is its owner's to make, or `manage`'s in its channel. A profile owns only the tasks it made | 1 |

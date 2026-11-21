@@ -90,7 +90,7 @@ describe('the embedded CLI', () => {
     const app = createApp({ appName: 'vercel board' })
     const help = await capture(() => app.run(['help']))
     expect(help.code).toBe(0)
-    expect(help.stdout).toMatch(/^vercel board \d+\.\d+\.\d+\S*: a message board you mount in one route\n\nusage: vercel board <command> \[options\]\n/)
+    expect(help.stdout).toMatch(/^vercel board \d+\.\d+\.\d+\S*: your Vercel team's message board, for people and agents\n\nusage: vercel board <command> \[options\]\n/)
     expect(help.stdout).not.toMatch(/also installed as|^\s+(serve|inspect) /m)
     for (const command of ['inspect', 'serve'])
       expect(await capture(() => app.run([command]))).toEqual({ code: 2, stdout: '', stderr: `error: Unknown command ${command} for vercel board.\n\n  See all commands:\n    vercel board --help\n` })
@@ -321,6 +321,41 @@ describe('the embedded CLI', () => {
     }
   })
 
+  it("says to run it again in seconds when Vercel's API rate-limits it, the same wait with --json", async () => {
+    const home = await isolated()
+    vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
+    const api = fakeMessageboard({ slug: 'acme' })
+    // The API's 429: its whole minute, whatever its limit has left.
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
+      /\/threads$/.test(new URL(String(input)).pathname)
+        ? Promise.resolve(Response.json({ error: { code: 'rate_limited', message: 'Too many requests' } }, { status: 429, headers: { 'retry-after': '60', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 60), 'x-ratelimit-limit': '600' } }))
+        : api.fetch(input, init),
+    )
+    const cwd = process.cwd()
+    process.chdir(home)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+    try {
+      const app = createApp({ appName: 'vercel board' })
+      const read = async (...more: string[]) => {
+        const done = capture(() => app.run(['read', 'general', '--scope', 'acme', ...more]))
+        await vi.advanceTimersByTimeAsync(40_000)
+        return done
+      }
+      const shown = await read()
+      expect(shown.code).not.toBe(0)
+      expect(shown.stderr).toContain('Wait 15s, then run it again')
+      expect(shown.stderr).toContain('a try a few seconds later usually gets through')
+      expect(shown.stderr).not.toMatch(/Wait (6\d|1m)/)
+      const json = await read('--json')
+      expect(JSON.parse(json.stderr || json.stdout)).toMatchObject({ status: 'error', reason: 'rate_limited', data: { error: { retryAfter: 15 } } })
+    } finally {
+      vi.useRealTimers()
+      fetching.mockRestore()
+      process.chdir(cwd)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
   it("takes a team board's message ID as it prints one, bare, wherever a channel or a message goes", async () => {
     const home = await isolated()
     vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
@@ -373,7 +408,7 @@ describe('the embedded CLI', () => {
     }
   })
 
-  it("says what Vercel's board says of a read it doesn't serve: threads by author, mention, text, or source, and every channel at once", async () => {
+  it("says what Vercel's board says of a read it doesn't serve: threads by author or source, and every channel at once", async () => {
     const home = await isolated()
     const api = fakeMessageboard({ slug: 'acme' })
     const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => api.fetch(input, init))
@@ -389,7 +424,7 @@ describe('the embedded CLI', () => {
       expect((await as('u_jb', ['reply', root, 'on A, by jb'])).code).toBe(0)
       // The board's own words, under what the run was doing: what it doesn't do, and what to do there.
       const index = "they keep no search index. Read one channel's threads, or one thread, and look through what it answers"
-      for (const [flags, named] of [[['--by', 'me'], 'author'], [['--mentions'], 'mention'], [['--text', 'by val'], 'text'], [['--source', 'slack'], 'source']] as const) {
+      for (const [flags, named] of [[['--by', 'me'], 'author'], [['--source', 'slack'], 'source']] as const) {
         const refused = await as('u_val', ['read', 'dev', ...flags])
         expect([refused.code, refused.stdout, refused.stderr], flags[0]).toEqual([
           1,
@@ -417,7 +452,8 @@ describe('the embedded CLI', () => {
   it("pages a channel's threads back on Vercel's board with --before, by the command each read prints", async () => {
     const home = await isolated()
     const api = fakeMessageboard({ slug: 'acme', inlineThreadMessages: true })
-    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => api.fetch(input, init))
+    // Its files go to the attachments bucket, as presigned URLs send them.
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => (String(input instanceof Request ? input.url : input).startsWith('http://storage.test/') ? api.files(input, init) : api.fetch(input, init)))
     const cwd = process.cwd()
     process.chdir(home)
     vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
@@ -441,6 +477,51 @@ describe('the embedded CLI', () => {
       expect(seen).toEqual(ids)
       // The last page says nothing of older ones: there are none.
       expect(stdout).not.toContain('older not shown')
+    } finally {
+      fetching.mockRestore()
+      process.chdir(cwd)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it("finds what mentions you on Vercel's board in one page of a channel's threads, says how far it looked, and waits on from there", async () => {
+    const home = await isolated()
+    const api = fakeMessageboard({ slug: 'acme', inlineThreadMessages: true, inlineActors: true })
+    const val = board({ backend: vercel({ team: 'team_test', api: 'http://localhost', fetch: as(api, 'user:u_val') }) })
+    const asked = await val.post('dev', { text: '@julian/claude what is the cache key?' })
+    for (let n = 0; n < 3; n++) await val.post('dev', { text: `noise ${n}` })
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => api.fetch(input, init))
+    const cwd = process.cwd()
+    process.chdir(home)
+    vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
+    const app = createApp({ appName: 'vercel board' })
+    const run = (args: string[]) => capture(() => app.run([...args, '--scope', 'acme', '--as', 'claude']))
+    const reads = () => api.requests.filter((request) => request.startsWith('GET '))
+    try {
+      api.requests.length = 0
+      await run(['read', 'dev'])
+      const plain = reads().length
+      api.requests.length = 0
+      // The newest page holds no mention: it says how far it looked, and how to look further.
+      let read = await run(['read', 'dev', '--mentions', '--limit', '2'])
+      expect(read).toMatchObject({ code: 0, stderr: '' })
+      expect(read.stdout).toContain('dev · 0 threads')
+      expect(read.stdout).toContain('(looked through 2 threads, at the first and latest message of each: a match under a newer reply is not found)')
+      // No more requests than a plain read and who `me` is.
+      expect(reads().length).toBeLessThanOrEqual(plain + 1)
+      const older = /\(older not shown: vercel board (.+)\)/.exec(read.stdout)
+      expect(older?.[1]).toMatch(/^read dev --mentions --limit 2 --scope acme --as claude --before \S+$/)
+      read = await run(older![1]!.split(' ').filter((word, at, all) => !['--scope', '--as'].includes(word) && !['--scope', '--as'].includes(all[at - 1]!)))
+      expect(read.stdout).toContain(`#${asked.id}`)
+      expect(read.stdout).toContain('what is the cache key?')
+      // What's new since is a wait from the newest page's cursor, which sees a mention posted after the read.
+      read = await run(['read', 'dev', '--mentions'])
+      const since = /\nnew since then: vercel board (.+)\n/.exec(read.stdout)
+      expect(since?.[1]).toMatch(/^wait dev --mentions --scope acme --as claude --after \S+$/)
+      const later = await val.post('dev', { text: '@julian/claude and the TTL?' })
+      const waited = await run([...since![1]!.split(' ').filter((word, at, all) => !['--scope', '--as'].includes(word) && !['--scope', '--as'].includes(all[at - 1]!)), '--timeout', '5'])
+      expect(waited).toMatchObject({ code: 0 })
+      expect(waited.stdout).toContain(later.id)
     } finally {
       fetching.mockRestore()
       process.chdir(cwd)
@@ -472,6 +553,39 @@ describe('the embedded CLI', () => {
       // Inside www, its own key is as its sync names it.
       vi.stubEnv('VERCEL_AUTH_TOKEN', 'project:prj_www:production')
       expect(await read()).toEqual([['checkout is down', 'slack'], ['on the board', null]])
+    } finally {
+      fetching.mockRestore()
+      process.chdir(cwd)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it("shows someone a text mentions by ID by their handle, asking Vercel's API for them by ID, never for every actor", async () => {
+    const home = await isolated()
+    const api = fakeMessageboard({ slug: 'acme' })
+    const on = (principal: string) => board({ backend: vercel({ team: 'team_test', api: 'http://localhost', fetch: as(api, principal) }) })
+    // Val is on the board, but wrote nothing in general.
+    await on('user:u_val').post('dev', { text: 'elsewhere' })
+    const root = await on('user:u_ada').post('general', { text: 'can @[vercel:user:u_val] look?' })
+    const lists: string[][] = []
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/actors')) lists.push(url.searchParams.getAll('id'))
+      return api.fetch(input, init)
+    })
+    const cwd = process.cwd()
+    process.chdir(home)
+    try {
+      vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
+      const app = createApp({ appName: 'vercel board' })
+      for (const target of ['general', root.id]) {
+        lists.length = 0
+        const read = await capture(() => app.run(['read', target, '--scope', 'acme']))
+        expect(read).toMatchObject({ code: 0, stdout: expect.stringContaining('can @u_val look?') })
+        // One request names Val, and none lists everyone.
+        expect(lists.filter((ids) => ids.includes('vercel:user:u_val'))).toHaveLength(1)
+        expect(lists.filter((ids) => ids.length === 0)).toEqual([])
+      }
     } finally {
       fetching.mockRestore()
       process.chdir(cwd)
@@ -953,12 +1067,68 @@ describe('the embedded CLI', () => {
       })
       expect(await run('read', 'dev', '--name', 'security', '--ensure')).toMatchObject({
         code: 1,
-        stderr: "error: this project has no access to board security (prj_pong, preview).\n\n  Grant it: vb grants create --project prj_pong --environment preview --name security --can '*=read,post,react,label'\n",
+        stderr: "error: this project has no access to board security (prj_pong, preview).\n\n  Grant it: vb grants create --project prj_pong --environment preview --name security --scope team_test --can '*=read,post,react,label'\n",
       })
       expect(await run('read', 'dev')).toMatchObject({
         code: 1,
-        stderr: "error: this project has no access to the team's board (prj_pong, preview).\n\n  Grant it: vb grants create --project prj_pong --environment preview --can '*=read,post,react,label'\n",
+        stderr: "error: this project has no access to the team's board (prj_pong, preview).\n\n  Grant it: vb grants create --project prj_pong --environment preview --scope team_test --can '*=read,post,react,label'\n",
       })
+    } finally {
+      fetching.mockRestore()
+      process.chdir(cwd)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it("points the words people type for search, claim, and mentions at what a team's board takes", async () => {
+    const home = await isolated()
+    const run = async (...args: string[]) => JSON.parse((await capture(() => main([...args, '--json'], { name: 'board', commands: local }))).stderr).next
+    try {
+      // A team's board keeps no text index and reads one channel: one channel's page, by text or by mentions.
+      expect(await run('search', 'ENOTFOUND', '--scope', 'acme')).toMatchObject([{ argv: ['vb', 'read', '<CHANNEL>', '--text', '<PHRASE>'] }, { argv: ['vb', '--help'] }])
+      expect(await run('mentions', '--scope', 'acme')).toMatchObject([{ argv: ['vb', 'read', '<CHANNEL>', '--mentions'] }, { argv: ['vb', '--help'] }])
+      // A board at a URL of its own searches by text, and nothing says which board, so it's the one that works everywhere.
+      expect(await run('grep', 'ENOTFOUND', '--url', 'http://localhost:4000')).toMatchObject([{ argv: ['vb', 'read', '<CHANNEL>', '--text', '<PHRASE>'] }, { argv: ['vb', '--help'] }])
+      expect(await run('find', 'ENOTFOUND')).toMatchObject([{ argv: ['vb', 'read', '<CHANNEL>', '--text', '<PHRASE>'] }, { argv: ['vb', '--help'] }])
+      // A claim is a task's, on every board.
+      expect(await run('claim', '812', '--scope', 'acme')).toMatchObject([{ argv: ['vb', 'tasks', 'claim', '<ID>'] }, { argv: ['vb', '--help'] }])
+      expect(await run('assign', '812', '--url', 'http://localhost:4000')).toMatchObject([{ argv: ['vb', 'tasks', 'assign', '<ID>', '<PROFILE>'] }, { argv: ['vb', '--help'] }])
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it("gives a read, a post, and a schedule Vercel's board refuses the same command without what it can't do", async () => {
+    const home = await isolated()
+    const api = fakeMessageboard({ slug: 'acme' })
+    // Its files go to the attachments bucket, as presigned URLs send them.
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => (String(input instanceof Request ? input.url : input).startsWith('http://storage.test/') ? api.files(input, init) : api.fetch(input, init)))
+    const cwd = process.cwd()
+    process.chdir(home)
+    vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
+    const next = async (...args: string[]) => {
+      const run = await capture(() => main([...args, '--json'], { name: 'board', commands: local }))
+      const failure = JSON.parse(run.stderr)
+      expect(failure.reason, args.join(' ')).toBe('not_supported')
+      return failure.next.map((recovery: { argv: string[] }) => recovery.argv)
+    }
+    try {
+      await writeFile(join(home, 'notes.txt'), 'notes')
+      // A filter it keeps no index of: the same read without it, which it serves.
+      expect(await next('read', 'dev', '--source', 'slack', '--scope', 'acme')).toEqual([['vb', 'read', 'dev', '--scope', 'acme', '--json']])
+      expect(await next('read', 'dev', '--by', 'me', '--label', 'state=open', '--scope', 'acme')).toEqual([['vb', 'read', 'dev', '--label', 'state=open', '--scope', 'acme', '--json']])
+      // Every channel, or every one under a prefix: their names, then one of them.
+      expect(await next('read', '--scope', 'acme')).toEqual([
+        ['vb', 'channels', '--scope', 'acme'],
+        ['vb', 'read', '<CHANNEL>', '--scope', 'acme', '--json'],
+      ])
+      expect(await next('read', 'dev/', '--mentions', '--scope', 'acme')).toEqual([
+        ['vb', 'channels', 'dev/', '--scope', 'acme'],
+        ['vb', 'read', '<CHANNEL>', '--scope', 'acme', '--json'],
+      ])
+      // A post's --sync and a schedule's files: the same write without them.
+      expect(await next('post', 'dev', 'checkout is down', '--sync', 'slack:#incidents', '--scope', 'acme')).toEqual([['vb', 'post', 'dev', 'checkout is down', '--scope', 'acme', '--json']])
+      expect(await next('schedule', 'dev', 'standup', '--in', '5m', '--attach', join(home, 'notes.txt'), '--scope', 'acme')).toEqual([['vb', 'schedule', 'dev', 'standup', '--in', '5m', '--scope', 'acme', '--json']])
     } finally {
       fetching.mockRestore()
       process.chdir(cwd)
@@ -977,11 +1147,15 @@ describe('the embedded CLI', () => {
     process.chdir(home)
     try {
       // A project may read and post, and manages nothing: the API refuses with grant_forbidden.
-      expect(await run('grants')).toMatchObject({ code: 1, stderr: "error: You can't list grants.\n  listing grants takes manage at *\n" })
+      expect(await run('grants')).toMatchObject({ code: 1, stderr: expect.stringMatching(/^error: You can't list grants\.\n  listing grants takes manage at \*\n/) })
       expect(JSON.parse((await run('grants', '--json')).stderr)).toMatchObject({
         reason: 'permission_denied',
         data: { error: { code: 'grant_forbidden', message: 'listing grants takes manage at *', status: 403 } },
+        // What it may do is whoami's, as whoever it ran as, and more is someone else's to give.
+        next: [{ argv: ['vb', 'whoami'], when: 'See what you can do on this board' }],
+        hint: "Or ask someone who manages the board's grants to give you access",
       })
+      expect(JSON.parse((await run('grants', '--as', 'pinger', '--json')).stderr).next).toMatchObject([{ argv: ['vb', 'whoami', '--as', 'pinger'] }])
     } finally {
       fetching.mockRestore()
       process.chdir(cwd)
@@ -1019,26 +1193,91 @@ describe('the embedded CLI', () => {
     }
   })
 
-  it("says what Vercel's board refuses: a grant naming a GitHub run or an OIDC issuer", async () => {
+  it("takes a grant naming a repository's runs or an OIDC issuer on Vercel's board, and says an older API's refusal in its own words", async () => {
     const home = await isolated()
     vi.stubEnv('VERCEL_AUTH_TOKEN', 'user:u_jb')
     const api = fakeMessageboard()
-    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => api.fetch(input, init))
+    // An API from before it took them, which answers each with a 400 of its own.
+    let older = false
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const asked = new URL(input instanceof Request ? input.url : String(input))
+      if (older && ((typeof init?.body === 'string' && /"kind":"(github|oidc)"/.test(init.body)) || asked.searchParams.has('github')))
+        return Response.json({ error: { code: 'unsupported_principal', message: 'Grants name no GitHub or OIDC principals.' } }, { status: 400 })
+      return api.fetch(input, init)
+    })
     const run = (...args: string[]) => capture(() => main([...args, '--scope', 'test'], { name: 'board', commands: local }))
     const cwd = process.cwd()
     process.chdir(home)
     try {
-      const grant = "error: Vercel's board takes no GitHub or OIDC principals in a grant.\n\n  Grant an app that an OIDC exchange policy issues tokens for: --app <slug>.\n"
-      expect(await run('grants', 'create', '--github', 'acme/web', '--can', 'ci/=post')).toMatchObject({ code: 2, stdout: '', stderr: grant })
-      expect(await run('grants', 'create', '--oidc', 'https://gitlab.com', '--claim', 'project_id=42', '--can', 'ci/=post')).toMatchObject({ code: 2, stderr: grant })
-      const json = JSON.parse((await run('grants', 'create', '--github', 'acme/web', '--can', 'ci/=post', '--json')).stderr)
-      expect(json).toMatchObject({ status: 'error', reason: 'unsupported_principal', hint: 'Grant an app that an OIDC exchange policy issues tokens for: --app <slug>.' })
-      expect(await run('grants', 'explain', 'ci', '--github', 'acme/web')).toMatchObject({
-        code: 2,
-        stderr: "error: Vercel's board explains no GitHub or OIDC caller: no grant names one.\n\n  Explain the app an OIDC exchange policy issues tokens for: --app <slug>.\n",
+      expect(await run('grants', 'create', '--github', 'acme/web', '--git-branch', 'main', '--can', 'ci/=post')).toEqual({ code: 0, stdout: 'created g4  --github acme/web --git-branch main  ci/=post\n', stderr: '' })
+      expect(await run('grants', 'create', '--oidc', 'https://gitlab.com', '--claim', 'sub=project_path:acme/api:*', '--can', 'deploys=post')).toEqual({
+        code: 0,
+        stdout: 'created g5  --oidc https://gitlab.com --claim sub=project_path:acme/api:*  deploys=post\n',
+        stderr: '',
       })
-      // An app gets in, as the hint says.
-      expect((await run('grants', 'create', '--app', 'ship', '--can', 'ci/=post')).stdout).toMatch(/^created g4  --app ship  ci\/=post\n$/)
+      expect(await run('grants', 'explain', 'ci/www', '--github', 'acme/web', '--git-branch', 'main')).toEqual({ code: 0, stdout: 'ci/ wins. Closest grant for acme/web: g4 (--github): post.\n', stderr: '' })
+      older = true
+      // The API's words, and no way out of the handle's: it doesn't know what this API takes.
+      expect(await run('grants', 'create', '--github', 'acme/web', '--can', 'ci/=post')).toEqual({ code: 2, stdout: '', stderr: "error: Can't create the grant.\n  Grants name no GitHub or OIDC principals.\n" })
+      expect(JSON.parse((await run('grants', 'create', '--github', 'acme/web', '--can', 'ci/=post', '--json')).stderr)).toEqual({
+        status: 'error',
+        reason: 'unsupported_principal',
+        message: "Can't create the grant.",
+        data: { error: { code: 'unsupported_principal', message: 'Grants name no GitHub or OIDC principals.', status: 400 } },
+      })
+      expect(await run('grants', 'explain', 'ci', '--github', 'acme/web')).toEqual({ code: 2, stdout: '', stderr: "error: Can't explain ci.\n  Grants name no GitHub or OIDC principals.\n" })
+    } finally {
+      fetching.mockRestore()
+      process.chdir(cwd)
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it("goes as a GitHub Actions job's own OIDC token on Vercel's board, and says what to do when no team or token works", async () => {
+    const home = await isolated()
+    const part = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url')
+    const job = `${part({ alg: 'none' })}.${part({ repository: 'acme/web', exp: Math.floor(Date.now() / 1000) + 3600 })}.`
+    const api = fakeMessageboard({ tokens: { [job]: 'github:repo:700001' } })
+    vi.stubEnv('ACTIONS_ID_TOKEN_REQUEST_URL', 'https://actions.example/token')
+    vi.stubEnv('ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'request-for-the-cli')
+    // GitHub mints a token Vercel's API takes, or with another job's request token, one it doesn't.
+    const fetching = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      if (url.origin === 'https://actions.example') return Response.json({ value: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN === 'request-for-the-cli' ? job : 'not-a-token' })
+      return api.fetch(input, init)
+    })
+    const run = (...args: string[]) => capture(() => main(args, { name: 'board', commands: local }))
+    // Someone who manages the board let the repository's runs post in ci/.
+    await board({ backend: vercel({ team: 'team_test', api: 'http://localhost', fetch: as(api, 'user:u_jb') }) }).createGrant({ principals: [{ kind: 'github', repository: 'acme/web' }], can: { 'ci/': ['post'] } })
+    const cwd = process.cwd()
+    process.chdir(home)
+    try {
+      vi.stubEnv('VERCEL_ORG_ID', 'team_test')
+      expect(await run('whoami')).toEqual({
+        code: 0,
+        stdout: 'acme/web (github:repo:700001)\nboard   https://api.vercel.com/v1/messageboard/boards/brd_test?teamId=team_test\nsource  GitHub Actions OIDC\ncan     ci/  post\n',
+        stderr: '',
+      })
+      expect(await run('post', 'ci', 'deploy failed')).toMatchObject({ code: 0, stdout: expect.stringMatching(/^msg_[0-9a-f-]{36}_1\n$/) })
+      // A token that names no team, and nothing that does: a board by its name, with no --scope or VERCEL_ORG_ID.
+      vi.stubEnv('VERCEL_ORG_ID', '')
+      expect(await run('post', 'ci', 'deploy failed', '--name', 'ops')).toEqual({
+        code: 2,
+        stdout: '',
+        stderr: "error: A GitHub Actions token names no Vercel team, so there's no team's board to use.\n\n  Use a team's board: add --scope <TEAM_ID>\n  Or set VERCEL_ORG_ID to its ID\n",
+      })
+      // The job's log never repeats what it was about to post.
+      const { stderr } = await run('post', 'ci', 'deploy failed', '--name', 'ops', '--json')
+      expect(JSON.parse(stderr)).toMatchObject({ status: 'action_required', reason: 'missing_scope' })
+      expect(stderr).not.toContain('deploy failed')
+      // A token Vercel's API doesn't take: no login in the job to log in again with.
+      vi.stubEnv('VERCEL_ORG_ID', 'team_test')
+      vi.stubEnv('ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'request-for-another-job')
+      expect(await run('post', 'ci', 'deploy failed')).toEqual({
+        code: 1,
+        stdout: '',
+        stderr: "error: The board didn't accept your credentials.\n  This token is invalid, expired, or revoked.\n\n  Pass a token it accepts in BOARD_TOKEN\n",
+      })
     } finally {
       fetching.mockRestore()
       process.chdir(cwd)

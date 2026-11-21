@@ -151,6 +151,14 @@ export const ChannelsQuery = z.strictObject({
   limit: z.coerce.number().int().min(1).max(CHANNELS_LIMIT_MAX).optional(),
 })
 
+/** How many actors one read of them by ID names at most. */
+export const ACTORS_BY_ID_MAX = 100
+
+/** The board's actors, or with `id`, only the ones it names: someone it doesn't have is left out. */
+export const ActorsQuery = z.strictObject({
+  id: repeated.pipe(z.array(z.string().min(1).max(300)).min(1).max(ACTORS_BY_ID_MAX)).optional(),
+})
+
 /**
  * A thread read in part: the root, and of its replies the ones after one of its messages (`after`), `limit` of
  * them. With `after` they're the first after it, to read on from; without, the newest.
@@ -570,6 +578,9 @@ export const CreateGrantsBody = z.strictObject({
   lockMeOut: LockMeOut,
 })
 
+/** Acknowledgement names its grant in the path, and takes no provenance or other fields. */
+export const AcknowledgeGrantBody = z.strictObject({}).optional()
+
 /** What revoking a grant takes: nothing, or `lockMeOut`. */
 export const RevokeGrantBody = z.strictObject({ lockMeOut: LockMeOut }).optional()
 
@@ -888,6 +899,7 @@ export type SyncFindInput = z.input<typeof SyncFindQuery>
 export type ChannelMessagesQueryInput = z.input<typeof ChannelMessagesQuery>
 export type ThreadQueryInput = z.input<typeof ThreadQuery>
 export type ChannelsQueryInput = z.input<typeof ChannelsQuery>
+export type ActorsQueryInput = z.input<typeof ActorsQuery>
 export type ThreadsQueryInput = z.input<typeof ThreadsQuery>
 export type EventsQueryInput = z.input<typeof EventsQuery>
 export type PostInput = z.input<typeof PostBody>
@@ -996,9 +1008,11 @@ export type GrantView = {
   can: Record<string, 'all' | Permission[]>
   /** Whether a person's team role caps what it gives them: a viewer only reads and reacts. False where the board has no roles. */
   capped: boolean
-  /** The actor that changed it last, and when: null for one the board started with. */
+  /** The actor that changed or acknowledged it last, and when: null for an unchanged default. */
   by: string | null
   at: string | null
+  /** On a local board, this grant still needs review after the OIDC prefix upgrade. */
+  needsOidcSubjectReview?: true
 }
 
 /** A schema version, as the board keeps it: it never changes. */
@@ -1280,6 +1294,11 @@ export type ThreadsPage = {
    * threads backward sends it on every read without `after`; one from before it leaves it out.
    */
   older?: string | null
+  /**
+   * Set by a board that keeps no search index (Vercel's) on a read by `mentions` or `text`: how many threads of the
+   * channel's page it looked through, matching each one's first and newest message. Its `older` pages back the same way.
+   */
+  scanned?: number
 }
 /** Tasks, oldest first, each as its thread's summary: `message.task` is the task. `cursor` reads the next page, as `after`. */
 export type TasksPage = { tasks: ThreadSummaryView[]; cursor: string }
@@ -1350,7 +1369,7 @@ export const routes = {
   channels: { method: 'GET', path: '/channels', query: ChannelsQuery },
   /** Makes a channel before anything posts to it: needs `read` and `post` there. One that's there already is left as it is. */
   createChannel: { method: 'POST', path: '/channels', body: CreateChannelBody },
-  actors: { method: 'GET', path: '/actors' },
+  actors: { method: 'GET', path: '/actors', query: ActorsQuery },
   /** One channel's messages across its threads: the newest, or those after one of its cursors. */
   channelMessages: { method: 'GET', path: '/messages', query: ChannelMessagesQuery },
   message: { method: 'GET', path: '/messages/:id', query: ThreadQuery },
@@ -1425,6 +1444,7 @@ export const routes = {
   /** Several grants in one write, all or none, judged together. */
   createGrants: { method: 'POST', path: '/grants/batch', body: CreateGrantsBody },
   updateGrant: { method: 'PATCH', path: '/grants/:id', body: UpdateGrantBody },
+  acknowledgeGrant: { method: 'POST', path: '/grants/:id/acknowledge', body: AcknowledgeGrantBody },
   /** Which grant decides a channel, for the caller or, with `manage` at `*`, a principal it names. */
   explain: { method: 'GET', path: '/grants/explain', query: ExplainQuery },
   revokeGrant: { method: 'POST', path: '/grants/:id/revoke', body: RevokeGrantBody },

@@ -567,7 +567,7 @@ function build(options: A2Options, binding: BoardBinding) {
     async createChannel(caller, { path }) {
       return writeChannel(writes, { identity: await identityOf(caller), path })
     },
-    async actors(caller) {
+    async actors(caller, { id: only }) {
       const { principal, actor } = (await identityOf(caller))
       const { state, index } = await session.state(actorsReducer)
       // A reader of every channel sees everyone; anyone else, who wrote, was mentioned by ID, or reacted where they read, and themselves.
@@ -577,7 +577,8 @@ function build(options: A2Options, binding: BoardBinding) {
         ids.add(actor.id)
         seen = (id) => ids.has(id)
       }
-      const actors = Object.values(state.byId)
+      const wanted = only ? new Set(only) : null
+      const actors = (wanted ? [...wanted].flatMap((id) => (Object.hasOwn(state.byId, id) ? [state.byId[id]!] : [])) : Object.values(state.byId))
         .filter((a) => seen === null || seen(a.id))
         .sort((a, b) => a.handle.localeCompare(b.handle))
         .map((found) => {
@@ -840,6 +841,7 @@ function build(options: A2Options, binding: BoardBinding) {
     createGrant: async (caller, body) => access.createGrant(await identityOf(caller), body),
     createGrants: async (caller, body) => access.createGrants(await identityOf(caller), body),
     updateGrant: async (caller, input) => access.updateGrant(await identityOf(caller), input),
+    acknowledgeGrant: async (caller, input) => access.acknowledgeGrant(await identityOf(caller), input),
     explain: async (caller, query) => access.explain(await identityOf(caller), query),
     revokeGrant: async (caller, input) => access.revokeGrant(await identityOf(caller), input),
     invites: async (caller) => access.invites(await identityOf(caller)),
@@ -1487,7 +1489,7 @@ function build(options: A2Options, binding: BoardBinding) {
     methods,
     schedules,
     work,
-    trust: access.trust,
+    access,
     /** The scheduler's callback, for every A2 server behind the board. */
     scheduler: options.scheduler
       ? options.scheduler.handler(...servers)
@@ -1515,9 +1517,15 @@ export function a2(options: A2Options) {
   }
   /** A scheduler's delivery, through its callback, and everything it runs: watchers' writes too. */
   const delivery = new AsyncLocalStorage<true>()
-  const ready = async () => {
+  const boot = async () => {
     const ran = now()
+    // Work control distinguishes a new board by its existing logs, before the access baseline.
     await ran.work.ready()
+    await ran.access.ready()
+    return ran
+  }
+  const ready = async () => {
+    const ran = await boot()
     // The first call on an instance starts the schedules catching up, and doesn't wait. Only a call
     // that isn't a scheduler's delivery takes them over: an old instance's timers mustn't take them back.
     ran.schedules.catchUp({ takeOver: !delivery.getStore() })
@@ -1535,8 +1543,8 @@ export function a2(options: A2Options) {
     supportsTaskAuthority: true,
     // Its grants, in its log: board() checks requests against them.
     trust: {
-      grants: async () => (await ready()).trust.grants(),
-      joined: async (digest, audience) => now().trust.joined(digest, audience),
+      grants: async (use) => (await boot()).access.trust.grants(use),
+      joined: async (digest, audience) => now().access.trust.joined(digest, audience),
     } satisfies Trust,
     bind(given: BoardBinding) {
       if (binding) throw new Error('this backend already serves a board: create one per board()')

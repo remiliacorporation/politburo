@@ -1,10 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { reducer } from 'experimental-a2'
 import { createServer } from 'experimental-a2/server'
 import type { Protocol } from '../api/protocol.ts'
 import type { GrantView, InviteView, PrincipalView } from '../api/routes.ts'
 import { sha256 } from '../client/ids.ts'
-import { ACCESS_SESSION, accessContract, type AccessEvent } from '../contract/contract.ts'
+import { ACCESS_SESSION, accessContract } from '../contract/contract.ts'
+import { accessReducer, hasTrailingOidcStar, type AccessState, type GrantRow, type InviteRow } from '../contract/reducers.ts'
 import { checkGrantChange, compileAccess, parseCan, type Access, type GrantShape, type WrittenCan } from './access.ts'
 import {
   checkCan,
@@ -15,116 +15,16 @@ import {
   grantIssuers,
   issuerName,
   joined,
-  principalKey,
   removes,
   workflowPath,
   type GrantPrincipal,
   type Known,
   type StoredGrant,
 } from './auth.ts'
-import type { Identity, Trust } from './backend.ts'
+import type { GrantRead, Identity, Trust } from './backend.ts'
 import type { Decided } from './policy.ts'
 import { whileHeadMoves } from './writes.ts'
-import { badRequest, forbidden, HttpError, notFound } from './errors.ts'
-
-/** A grant as the fold keeps it: `event` is the index of the event that made it, null for the one the board starts with. */
-type GrantRow = { id: number; event: number | null; principals: GrantPrincipal[]; can: WrittenCan; by: string | null; at: number | null }
-type InviteRow = Omit<InviteView, 'expiresAt' | 'state'> & {
-  expiresAt: number
-  state: Exclude<InviteView['state'], 'expired'>
-  digest: string
-  by: string
-}
-
-/** Grants and onboarding bookkeeping, in the same session so a redemption and its grant land together. */
-export type AccessState = {
-  grants: Record<string, GrantRow>
-  nextGrant: number
-  invites: Record<string, InviteRow>
-  pending: Record<string, string>
-  joined: Record<string, { id: string; name: string; audience: string }>
-}
-
-/**
- * The grants a board starts with, as a team's board in Vercel's API does: g1, every person may do
- * everything (no team roles cap it here), g2, every project on the board's team, in every
- * environment, reads, posts, reacts, labels, and syncs everywhere, and g3, every app on the team,
- * reads, posts, reacts, and labels. A local board has no apps, so g3 names no one here, but the
- * defaults are the same everywhere. Revoke or change them like any other.
- */
-const STARTING_GRANTS: Record<string, GrantRow> = {
-  1: { id: 1, event: null, principals: [{ kind: 'all-users' }], can: { '*': 'all' }, by: null, at: null },
-  2: {
-    id: 2,
-    event: null,
-    principals: [{ kind: 'all-projects', environments: ['production', 'preview', 'development'] }],
-    can: { '*': ['read', 'post', 'react', 'label', 'sync'] },
-    by: null,
-    at: null,
-  },
-  3: { id: 3, event: null, principals: [{ kind: 'all-apps' }], can: { '*': ['read', 'post', 'react', 'label'] }, by: null, at: null },
-}
-
-/** The access session before its first event: the grants every board starts with. */
-export const startingAccess = (): AccessState => ({ grants: structuredClone(STARTING_GRANTS), nextGrant: 4, invites: {}, pending: {}, joined: {} })
-
-/** The access session's fold. */
-export function foldAccess(state: AccessState, event: AccessEvent): AccessState {
-  const at = new Date(event.createdAt).getTime()
-  switch (event.type) {
-    // From before grants named principals, and from when boards issued tokens: they let no one in now.
-    case 'grant.set':
-    case 'grant.revoked':
-    case 'token.minted':
-    case 'token.revoked':
-      break
-    case 'grant.created': {
-      const { principals, can, by } = event.payload
-      const id = state.nextGrant++
-      state.grants[id] = { id, event: event.index, principals: principals as GrantPrincipal[], can: can as WrittenCan, by, at }
-      break
-    }
-    case 'grant.updated': {
-      const { id, principals, can, by } = event.payload
-      const row = state.grants[id]
-      if (row) Object.assign(row, { principals: principals as GrantPrincipal[], can: can as WrittenCan, by, at })
-      break
-    }
-    case 'grant.deleted':
-      delete state.grants[event.payload.id]
-      break
-    case 'invite.created': {
-      const { id, digest, can } = event.payload
-      state.invites[id] = { ...event.payload, can: can as InviteView['can'], state: 'pending' }
-      state.pending[digest] = id
-      break
-    }
-    case 'invite.revoked': {
-      const row = state.invites[event.payload.id]!
-      row.state = 'revoked'
-      delete state.pending[row.digest]
-      break
-    }
-    case 'invite.redeemed': {
-      const { id, principal, digest, audience } = event.payload
-      const row = state.invites[id]!
-      row.state = 'redeemed'
-      delete state.pending[row.digest]
-      state.joined[digest] = { id: principal, name: row.name, audience }
-      const grant = state.nextGrant++
-      state.grants[grant] = { id: grant, event: event.index, principals: [{ kind: 'invitee', id: principal }], can: row.can, by: row.by, at }
-      break
-    }
-  }
-  return state
-}
-
-export const accessReducer = reducer({
-  contract: accessContract,
-  // v5 folds the invite bookkeeping alongside the grants.
-  name: 'board.access.v5',
-  initialState: startingAccess(),
-}).fold(foldAccess)
+import { badRequest, forbidden, HttpError, notFound, oidcSubjectReviewRequired } from './errors.ts'
 
 const grantId = (id: number) => `g${id}`
 /** The index a grant's ID names: `g12` for 12. Null for one that names none. */
@@ -163,6 +63,7 @@ const grantView = (row: GrantRow): GrantView => ({
   capped: false,
   by: row.by,
   at: row.at === null ? null : new Date(row.at).toISOString(),
+  ...(row.needsOidcSubjectReview && { needsOidcSubjectReview: true }),
 })
 
 const storedGrant = (row: GrantRow): StoredGrant => ({ id: grantId(row.id), principals: row.principals, can: row.can })
@@ -404,13 +305,31 @@ export function createTrust(options: {
   const logins = () => options.logins?.() ?? false
   const accessIn: AccessIn = (principal, grants) => options.accessNow(principal, grants)
   const session = createServer({ contract: accessContract, store: options.store }).session(ACCESS_SESSION)
-  const read = async () => (await session.state(accessReducer)).state
   /** The grants as they are now, and the index a conditional write holds them at. */
   const latest = () => session.state(accessReducer, { through: 'latest' })
+  const read = async () => (await latest()).state
+
+  let boot: Promise<void> | undefined
+  // "Before the merge" means in the replayed grants at the first open under this version,
+  // if there is no baseline yet. No timestamps enter the decision. The conditional append
+  // makes competing opens and grant writes share one order. Even an empty baseline is kept
+  // once, so an intentional prefix created later is never mistaken for an old literal.
+  const ready = () => (boot ??= whileHeadMoves(async () => {
+    const { state, index } = await latest()
+    if (state.oidcStarPending !== null) return
+    const grants = Object.values(state.grants).filter((row) => hasTrailingOidcStar(row.principals)).map(({ id, version }) => ({ id, version }))
+    await session.append.ifLastIndex(index, { type: 'grant.oidc_star_baseline', payload: { grants, by: 'board:access' } })
+  }).catch((error: unknown) => {
+    boot = undefined
+    throw error
+  }))
 
   const trust = {
-    async grants(): Promise<StoredGrant[]> {
-      return Object.values((await read()).grants).map(storedGrant)
+    async grants(use?: GrantRead): Promise<StoredGrant[]> {
+      const { grants, oidcStarPending } = await read()
+      // One check on the very snapshot access uses. No stale positive cache, no per-grant scan.
+      if (oidcStarPending === null || (use === undefined && oidcStarPending > 0)) throw oidcSubjectReviewRequired()
+      return Object.values(grants).map(storedGrant)
     },
     async joined(digest: string, audience: string) {
       const entry = (await read()).joined[digest]
@@ -457,6 +376,7 @@ export function createTrust(options: {
   }
 
   return {
+    ready,
     trust,
     async invites(identity: Identity): Promise<Protocol['invites']['output']> {
       mayList(identity, 'list invites')
@@ -528,6 +448,31 @@ export function createTrust(options: {
         return event.payload.id
       })
       return { grant: grantView((await read()).grants[id]!) }
+    },
+    async acknowledgeGrant(identity: Identity, { id }: Protocol['acknowledgeGrant']['input']): Promise<Protocol['acknowledgeGrant']['output']> {
+      const { principal } = identity
+      if (principal.kind !== 'person' || principal.facts?.issuer === 'joined') throw forbidden('only a person with manage can acknowledge an OIDC subject')
+      let version: number | undefined
+      return whileHeadMoves(async () => {
+        const { state, index } = await latest()
+        const at = indexOf(id)
+        const row = at === null ? undefined : state.grants[at]
+        if (!row) {
+          if (!lists(identity)) throw unreachable(`acknowledge ${id}`)
+          throw notFound(`grant not found: ${id}`, 'grant_not_found')
+        }
+        const grants = Object.values(state.grants).map(storedGrant)
+        const standing = await standingOf(identity, grants, accessIn)
+        judge(identity, standing, { revoked: row, changed: row }, grants, { what: `acknowledge ${id}`, doing: `acknowledging ${id}` })
+        if (!row.needsOidcSubjectReview) return { acknowledged: false }
+        // Do not approve a replacement that landed while this request was trying to append.
+        version ??= row.version
+        if (version !== row.version) throw new HttpError(409, 'grant_changed', `${id} changed; run vb grants list before acknowledging it`)
+        await session.append.ifLastIndex(index, {
+          type: 'grant.oidc_star_acknowledged', payload: { id: row.id, version, by: identity.actor.id },
+        })
+        return { acknowledged: true }
+      })
     },
     async explain(identity: Identity, query: Protocol['explain']['input']): Promise<Protocol['explain']['output']> {
       const named = query.user !== undefined || query.project !== undefined || query.github !== undefined || query.oidc !== undefined || query.app !== undefined

@@ -128,8 +128,8 @@ type DefaultOptions = {
   backend?: undefined
   /**
    * How requests reach Vercel's API, with credentials it takes: a token for the team. In Node it
-   * defaults to the deployment's OIDC token, `BOARD_TOKEN`, or your Vercel login, never `VERCEL_TOKEN`; elsewhere, a
-   * browser say, pass one. A board at `BOARD_URL` gets the credentials `vb` sends it instead.
+   * defaults to the deployment's OIDC token, `BOARD_TOKEN`, a GitHub Actions job's OIDC token, or your Vercel login,
+   * never `VERCEL_TOKEN`; elsewhere, a browser say, pass one. A board at `BOARD_URL` gets the credentials `vb` sends it instead.
    */
   fetch?: typeof fetch
 }

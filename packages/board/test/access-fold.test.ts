@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AccessEvent } from '../src/contract/contract.ts'
-import { foldAccess, startingAccess, type AccessState } from '../src/server/trust.ts'
+import { foldAccess, startingAccess, type AccessState } from '../src/contract/reducers.ts'
 
 const DAY = 24 * 3600_000
 const T0 = Date.parse('2026-11-02T12:00:00.000Z')

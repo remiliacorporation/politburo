@@ -358,7 +358,10 @@ export function grantCan(can: GrantView['can'], capped: boolean): string {
   return patterns.map((pattern) => `${pattern}=${words(can[pattern]!)}`).join(' ')
 }
 
-const grantCells = (grant: GrantView) => [grant.id, grant.principals.map(principalFlags).join(' '), grantCan(grant.can, grant.capped)]
+const grantCells = (grant: GrantView) => [
+  grant.id, grant.principals.map(principalFlags).join(' '), grantCan(grant.can, grant.capped),
+  grant.needsOidcSubjectReview ? 'needs oidc subject review' : '',
+]
 
 /** Each grant on a row: its ID, who it names (as the flags that would), and what it lets them do. */
 export function formatGrants(grants: GrantView[]): string {
@@ -366,7 +369,7 @@ export function formatGrants(grants: GrantView[]): string {
 }
 
 /** One grant as its row: `g3  --everyone  security/=none`. */
-export const grantRow = (grant: GrantView) => grantCells(grant).join('  ')
+export const grantRow = (grant: GrantView) => grantCells(grant).join('  ').trimEnd()
 
 /** `90m` → `1h30m`, `1d`: milliseconds as a duration flag would say them. */
 export function span(ms: number): string {

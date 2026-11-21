@@ -47,6 +47,18 @@ describe("the CLI's commands, as data", () => {
     // A bare --mentions means you: its value is optional.
     expect(read.stdout).toMatch(/\n  --mentions \[@handle\] +mentioning a handle/)
     expect(read.stdout).toContain("\nexamples:\n  list a channel's latest threads\n    board read dev\n")
+    // What Vercel's board refuses is said where it's offered: read's every channel and search filters, post's --sync, schedule's files.
+    expect(read.stdout).toContain("every channel without one, but not on Vercel's")
+    expect(read.stdout).toMatch(/repeated flags all must match\n  Vercel's board reads one channel or thread here, with only --re, --label, and\n  --after, or on a channel --mentions and --text, which look through one page of\n  its threads: it keeps no search index\n/)
+    expect((await capture(() => main(['post', '--help'], app))).stdout).toMatch(/--sync <target>\.\.\. +sync the new thread to a target too, e\.g\.\n +slack:#incidents \(not on Vercel's board yet\)\n/)
+    expect((await capture(() => main(['schedule', '--help'], app))).stdout).toMatch(/--attach <file>\.\.\. +attach a file to what it posts \(not on Vercel's board yet\)\n/)
+    // Where they work, as on tail and wait, they say nothing of it.
+    expect((await capture(() => main(['wait', '--help'], app))).stdout).not.toContain("Vercel's board")
+    // Every page ends with the global options most runs need, and where the rest are.
+    for (const path of every) {
+      const page = (await capture(() => main([...path.map((command) => command.name), '--help'], app))).stdout
+      expect(page.endsWith('\n\nglobal:   --json  --as <profile>  --scope <team>  --url <url>\n          and the rest every command takes: board help\n'), path.map((command) => command.name).join(' ')).toBe(true)
+    }
     expect((await capture(() => main(['sources', 'slack', 'read', '--help'], app))).stdout).toMatch(/^usage: board sources <key> read <target> \[options\]\n/)
     // The list shows the options most runs take, which were only on each command's own page.
     const list = (await capture(() => main(['--help'], app))).stdout
@@ -58,8 +70,18 @@ describe("the CLI's commands, as data", () => {
     for (const command of commands)
       for (const flag of command.brief?.match(/--[a-z-]+/g) ?? [])
         expect([...command.options, ...(command.filters ? filters : []), ...globalOptions].map((option) => `--${option.name}`), `${command.name} ${flag}`).toContain(flag)
-    // A word that names no command gets the list of them all.
-    expect((await capture(() => main(['nope', '--help'], app))).stdout).toMatch(/^board \S+: a message board you mount in one route\n/)
+    // A word that names no command is unknown with --help too, as without it: the closest one, and misuse's exit.
+    for (const argv of [['raed', '--help'], ['help', 'raed']])
+      expect(await capture(() => main(argv, app)), argv.join(' ')).toEqual({
+        code: 2,
+        stdout: '',
+        stderr: 'error: Unknown command raed for vb. Did you mean read?\n\n  See all commands:\n    vb --help\n',
+      })
+    // And what it goes by here, when it goes by another name, as without --help.
+    expect((await capture(() => main(['search', '--help'], app))).stderr).toBe((await capture(() => main(['search'], app))).stderr)
+    expect((await capture(() => main(['search', '--help'], app))).stderr).toMatch(/^error: Unknown command search for vb\.\n\n {2}Search a channel's latest threads, a page at a time/)
+    // With no word, or `help` alone, it's the list of every command.
+    for (const argv of [['--help'], ['help']]) expect((await capture(() => main(argv, app))).stdout, argv.join(' ')).toMatch(/^board \S+: /)
   })
 
   it('gives each short letter to one option, since every command parses them all', () => {

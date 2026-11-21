@@ -1,6 +1,7 @@
 // An in-memory `/v1/messageboard`, as Vercel's API behaves: what
 // `vercel()` from `@vercel/board/backend-vercel` is tested against. A bearer token names its principal:
-// `user:u_jb`, `app:oac_1`, or `project:prj_pong:production`.
+// `user:u_jb`, `app:oac_1`, `project:prj_pong:production`, a GitHub Actions run's `github:repo:700001`,
+// or another issuer's caller, `oidc:gitlab.com:project_path:acme/api`.
 import { createHash, randomUUID } from 'node:crypto'
 import { fakeGrants, GrantRefused, type Role, type Who } from './messageboard-grants.ts'
 import { importedHandle, userIdOf } from '../src/contract/profiles.ts'
@@ -14,6 +15,8 @@ type Principal =
   | { type: 'user'; userId: string }
   | { type: 'app'; clientId: string }
   | { type: 'project'; projectId: string; environment: string }
+  | { type: 'github'; repositoryId: string; repository: string }
+  | { type: 'oidc'; issuer: string; subject: string; claims: Record<string, string> }
   | { type: 'external'; id: string; syncKey: string }
 type Actor = {
   id: string
@@ -106,7 +109,7 @@ type Change = Record<string, unknown> & { createdAt: number; messageId?: string 
 /** On a platform user a project's sync imported, `via` is the project's name, or null, and its environment, and `platform` its key's platform. */
 type ActorView = {
   id: string
-  kind: 'person' | 'agent' | 'deployment' | 'app' | 'external'
+  kind: 'person' | 'agent' | 'deployment' | 'app' | 'workflow' | 'external'
   handle: string
   name?: string
   avatar?: string
@@ -154,8 +157,23 @@ const ACCOUNTS: Record<string, { username: string; name: string }> = {
   u_ada: { username: 'ada', name: 'Ada Lovelace' },
 }
 
+/** An issuer's host and path, as a principal's ID has it: `:` and `%` encoded. */
+const issuerName = (issuer: string) => {
+  const url = new URL(issuer)
+  return `${url.host}${url.pathname.replace(/\/+$/, '')}`.replace(/[%:]/g, (char) => (char === '%' ? '%25' : '%3A'))
+}
 const principalId = (p: Principal) =>
-  p.type === 'external' ? p.id : p.type === 'user' ? `vercel:user:${p.userId}` : p.type === 'app' ? `vercel:app:${p.clientId}` : `vercel:project:${p.projectId}:${p.environment}`
+  p.type === 'external'
+    ? p.id
+    : p.type === 'user'
+      ? `vercel:user:${p.userId}`
+      : p.type === 'app'
+        ? `vercel:app:${p.clientId}`
+        : p.type === 'github'
+          ? `github:repo:${p.repositoryId}`
+          : p.type === 'oidc'
+            ? `oidc:${issuerName(p.issuer)}:${p.subject}`
+            : `vercel:project:${p.projectId}:${p.environment}`
 const samePrincipal = (a: Principal, b: Principal) => principalId(a) === principalId(b)
 /** Whether `actor` may change what `by` wrote: its principal did, and as its profile when it writes as one. */
 const owns = (actor: Actor, by: Actor) => samePrincipal(by.principal, actor.principal) && (!actor.profile || by.id === actor.id)
@@ -166,10 +184,13 @@ const owns = (actor: Actor, by: Actor) => samePrincipal(by.principal, actor.prin
  * Vercel's API reads them today; `protocol` reads them as board's protocol has it: the profile and
  * its avatar in one structured `x-board-profile`, and the other two ignored.
  */
-function actorOf(request: Request, tokens: Record<string, string> = {}, protocol = false): Actor {
+function actorOf(request: Request, tokens: Record<string, string> = {}, protocol = false, repositories: Record<string, string> = REPOSITORIES): Actor {
   const bearer = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
   const token = tokens[bearer] ?? bearer
   const [type, id, environment] = token.split(':')
+  // A run's repository as GitHub names it, and another issuer's subject, which has colons of its own.
+  const repository = type === 'github' && id === 'repo' ? Object.keys(repositories).find((name) => repositories[name] === environment) : undefined
+  const subject = type === 'oidc' && id ? token.slice(`oidc:${id}:`.length) : ''
   const principal: Principal | null =
     type === 'user' && id
       ? { type, userId: id }
@@ -177,7 +198,11 @@ function actorOf(request: Request, tokens: Record<string, string> = {}, protocol
         ? { type, clientId: id }
         : type === 'project' && id && environment
           ? { type, projectId: id, environment }
-          : null
+          : repository
+            ? { type: 'github', repositoryId: environment!, repository }
+            : type === 'oidc' && subject
+              ? { type: 'oidc', issuer: `https://${decodeURIComponent(id!)}`, subject, claims: { sub: subject } }
+              : null
   if (!principal) throw new Refused(401, 'invalid_token', 'This token is invalid, expired, or revoked.')
   let { name, avatar, session } = {
     name: request.headers.get('x-board-profile') ?? undefined,
@@ -234,6 +259,11 @@ type Accounts = Record<string, { username: string; name: string }>
 function viewOf(names: Pick<Shared, 'accounts' | 'directory' | 'projectIdHandles'>, actor: Actor): Omit<ActorView, 'lastSeenAt'> {
   const p = actor.principal
   if (p.type === 'external') return { id: actor.id, kind: 'external', handle: p.id }
+  // A workflow by its repository, or its token's subject, cut to fit a handle.
+  if (p.type === 'github' || p.type === 'oidc') {
+    const handle = p.type === 'github' ? p.repository : p.subject.slice(0, 128)
+    return actor.profile ? { id: actor.id, kind: 'agent', handle: `${handle}/${actor.profile.name.toLowerCase()}`, name: actor.profile.name } : { id: actor.id, kind: 'workflow', handle }
+  }
   const account = p.type === 'user' ? names.accounts[p.userId] : undefined
   const project = p.type === 'project' && !names.projectIdHandles ? names.directory.projects[p.projectId] : undefined
   const base = p.type === 'user' ? (account?.username ?? p.userId) : p.type === 'app' ? p.clientId : (project ?? `project:${p.projectId}:${p.environment}`)
@@ -257,11 +287,16 @@ const whoOf = (actor: Actor): Who => {
   // A platform user a sync imported makes no requests of their own.
   if (actor.principal.type === 'external') throw new Refused(403, 'forbidden')
   const limit = actor.can ? { limit: actor.can as NonNullable<Who['limit']> } : {}
-  return actor.principal.type === 'user'
-    ? { kind: 'user', userId: actor.principal.userId, ...limit }
-    : actor.principal.type === 'project'
-      ? { kind: 'project', projectId: actor.principal.projectId, environment: actor.principal.environment, ...limit }
-      : { kind: 'app', clientId: actor.principal.clientId, ...limit }
+  const p = actor.principal
+  return p.type === 'user'
+    ? { kind: 'user', userId: p.userId, ...limit }
+    : p.type === 'project'
+      ? { kind: 'project', projectId: p.projectId, environment: p.environment, ...limit }
+      : p.type === 'github'
+        ? { kind: 'github', repositoryId: p.repositoryId, repository: p.repository, ...limit }
+        : p.type === 'oidc'
+          ? { kind: 'oidc', issuer: p.issuer, claims: p.claims, ...limit }
+          : { kind: 'app', clientId: p.clientId, ...limit }
 }
 
 /**
@@ -2687,13 +2722,15 @@ export function fakeMessageboard(
 
   const grantOf = (principal: Extract<Principal, { type: 'project' }>) => `${principal.projectId}:${principal.environment}`
   /**
-   * Who uses a board: a project, where it's granted in its environment; a person, a team-visible
-   * board, or a private one that lists them.
+   * Who uses a board: a project, where it's granted in its environment; a workflow, where it's
+   * granted by its principal; a person, a team-visible board, or a private one that lists them.
    */
-  const mayUse = (actor: Actor, board: Kept) =>
-    actor.principal.type === 'project'
-      ? board.granted === 'all' || board.granted.has(grantOf(actor.principal))
-      : board.members === null || (actor.principal.type === 'user' && board.members.has(actor.principal.userId))
+  const mayUse = (actor: Actor, board: Kept) => {
+    const { principal } = actor
+    if (principal.type === 'project') return board.granted === 'all' || board.granted.has(grantOf(principal))
+    if (principal.type === 'github' || principal.type === 'oidc') return board.granted === 'all' || board.granted.has(principalId(principal))
+    return board.members === null || (principal.type === 'user' && board.members.has(principal.userId))
+  }
   const show = (board: Kept) => ({ id: board.id, teamId, name: board.name, visibility: board.members === null ? 'team' : 'private' })
   const named = (name: string) => boards().some((board) => board.name.toLowerCase() === name.toLowerCase())
 
@@ -2703,7 +2740,7 @@ export function fakeMessageboard(
     if (url.searchParams.get('slug') && url.searchParams.get('slug') !== slug) throw new Refused(403, 'forbidden')
     if (options.notDefault && !url.searchParams.get('teamId') && !url.searchParams.get('slug')) throw new Refused(403, 'forbidden')
     const bearer = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
-    const actor = actorOf(request, options.tokens, options.protocolProfile ?? false)
+    const actor = actorOf(request, options.tokens, options.protocolProfile ?? false, directory.repositories)
     const version = url.pathname.startsWith('/v2/') ? 2 : 1
     const path = url.pathname.replace(/^\/v[12]\/messageboard/, '')
     const method = request.method

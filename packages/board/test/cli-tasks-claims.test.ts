@@ -48,7 +48,7 @@ describe("vb tasks, with the claim it keeps", () => {
     expect(await ok(['tasks', 'complete', id, 'migrated'], mine)).toBe(`completed ${id}\n`)
     // Settled, the claim is over, and so is its file.
     expect(await claimOn(id)).toEqual([])
-    expect((await vb(['tasks', 'release', id], mine)).stderr).toBe(`error: You hold no claim on task #${id} as migrator.\n\n  Claim it:\n    vb tasks claim ${id}\n`)
+    expect((await vb(['tasks', 'release', id], mine)).stderr).toBe(`error: You hold no claim on task #${id} as migrator. It's completed already.\n\n  See where it stands:\n    vb read ${id}\n`)
   }, 60_000)
 
   it('forgets a claim the board says is lost, and says how to take the task again', async () => {
@@ -107,6 +107,12 @@ describe("vb tasks, with the claim it keeps", () => {
 
     const blocked = await vb(['tasks', 'claim', id], await bo())
     expect(blocked.stderr).toMatch(new RegExp(`^error: Can't claim task #${id}\\. It's held for a person\\.\\n  [^\\n]+\\n\\n  See what it's held for:\\n    vb read ${id}\\n  Or, as its owner, lift the hold:\\n    vb tasks unblock ${id}\\n$`))
+    // Completing it without a claim says the hold comes first, as a claim would be refused.
+    expect(await vb(['tasks', 'complete', id, 'deployed'])).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: `error: You hold no claim on task #${id} as yourself. It's held for a person: claim it once the hold lifts.\n\n  As its owner, lift the hold, then claim it:\n    vb tasks unblock ${id}\n  See where it stands:\n    vb read ${id}\n`,
+    })
     expect(await ok(['tasks', 'unblock', id])).toBe(`unblocked ${id}\n`)
     expect(await ok(['tasks', 'unblock', id])).toBe(`${id} wasn't blocked\n`)
 
@@ -116,6 +122,17 @@ describe("vb tasks, with the claim it keeps", () => {
     await ok(['tasks', 'claim', id], await bo())
     const held = await vb(['tasks', 'block', id, 'wait'])
     expect(held).toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(`^error: Can't block task #${id}\\. Someone holds it\\.\\n`)) })
+    // One that waits for a task says so, as a claim of it would be refused until that completes.
+    const after = await create('holds', 'smoke test prod', ['--needs', id])
+    expect(await vb(['tasks', 'complete', after, 'passed'])).toEqual({
+      code: 1,
+      stdout: '',
+      stderr: `error: You hold no claim on task #${after} as yourself. It waits for what it needs (#${id}): claim it once those complete.\n\n  See what it waits for:\n    vb read ${after}\n`,
+    })
+    expect(failure(await vb(['tasks', 'claim', after, '--json'])).reason).toBe('task_waiting')
+    // Once it's finished, there's no claim to take.
+    await ok(['tasks', 'complete', id, 'deployed'], await bo())
+    expect(failure(await vb(['tasks', 'complete', id, 'deployed', '--json']))).toMatchObject({ reason: 'claim_not_held', message: `You hold no claim on task #${id} as yourself. It's completed already.`, next: [{ argv: ['vb', 'read', id] }] })
     expect(await vb(['tasks', 'block', id])).toMatchObject({ code: 2, stderr: expect.stringMatching(/^error: Missing what you need from a person, in a line\.\n/) })
   }, 60_000)
 
@@ -157,8 +174,39 @@ describe("vb tasks, with the claim it keeps", () => {
       { argv: ['vb', 'read', id, '--url', url, '--as', 'worker'] },
       { argv: ['vb', 'tasks', 'unpark', id, 'resume work', '--url', url] },
     ] })
+    const notHeld = await vb(['tasks', 'complete', id, '--url', url, '--as', 'worker', '--json'], elsewhere)
+    expect(notHeld).toMatchObject({ code: 1, stdout: '' })
+    expect(failure(notHeld)).toMatchObject({ reason: 'claim_not_held', message: expect.stringContaining("It's parked"), next: [
+      { argv: ['vb', 'read', id, '--url', url, '--as', 'worker'] },
+      { argv: ['vb', 'tasks', 'unpark', id, 'resume work', '--url', url] },
+    ] })
+    expect((await task(id)).task).toMatchObject({ state: 'blocked', parked: { reason: 'deployment freeze' } })
     // The suggested write still reaches the selected board, but unpark must act as a person, without --as.
     expect(await ok(refused.next![1]!.argv.slice(1), elsewhere)).toBe(`unparked ${id}\n`)
+  }, 60_000)
+
+  it.each(['complete', 'claim'])('follows the unpark recovery after tasks %s with BOARD_PROFILE set', async (verb) => {
+    const id = await create('parked', 'deploy to prod')
+    await ok(['tasks', 'park', id, 'deployment freeze'])
+
+    const worker = asProfile('worker')
+    const refused = await vb(['tasks', verb, id, '--json'], worker)
+    expect(refused).toMatchObject({ code: 1, stdout: '' })
+    const { reason, next } = failure(refused)
+    expect(reason).toBe(verb === 'complete' ? 'claim_not_held' : 'task_blocked')
+    const recovery = next?.find(({ argv }) => argv.includes('unpark'))
+    expect(recovery).toBeDefined()
+
+    const terminal = await vb(['tasks', verb, id], worker)
+    expect(terminal).toMatchObject({
+      code: 1,
+      stdout: '',
+      stderr: expect.stringContaining(`  ${recovery!.when}:\n    ${recovery!.command}\n`),
+    })
+    // Follow the terminal suggestion in the same shell, unsetting the profile only if told to.
+    if (/\bBOARD_PROFILE unset\b|\bunset BOARD_PROFILE\b|\bwithout BOARD_PROFILE\b/.test(recovery!.when)) delete worker.BOARD_PROFILE
+    expect(await ok(recovery!.argv.slice(1), worker)).toBe(`unparked ${id}\n`)
+    expect(await state(id)).toBe('ready')
   }, 60_000)
 
   it('keeps --scope in the unpark suggestion', async () => {

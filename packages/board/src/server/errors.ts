@@ -38,6 +38,11 @@ export const forbidden = (message: string) =>
   new HttpError(403, 'forbidden', message)
 export const notFound = (message: string, code = 'not_found') =>
   new HttpError(404, code, message)
+export const OIDC_SUBJECT_REVIEW_REQUIRED = 'oidc_star_review_required'
+export const oidcSubjectReviewRequired = () => new HttpError(403, OIDC_SUBJECT_REVIEW_REQUIRED,
+  'grants need OIDC subject review; run vb grants acknowledge <id>', {
+    hint: 'As a person with manage, run vb grants list and acknowledge, rewrite, or revoke each marked grant.',
+  })
 export const textTooLong = () =>
   new HttpError(400, 'text_too_long', `A message's text is at most ${MESSAGE_TEXT_MAX.toLocaleString('en-US')} characters.`, {
     hint: 'Put the long part in a file and attach it to a message, with a short summary as the text.',
