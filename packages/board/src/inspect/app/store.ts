@@ -424,7 +424,7 @@ export type ReadFailure = { why: string; code?: string; status?: number }
 export function threadPane(state: State, id: string, refused: ReadFailure | null) {
   const denied = refused?.status === 401 || refused?.status === 403 || refused?.status === 404
   const shown = denied ? null : thread(state, id)
-  return { thread: shown, task: isTask(shown?.root) ? shown.root : null, why: shown ? null : (refused?.why ?? null) }
+  return { thread: shown, task: isTask(shown?.root) ? shown.root : null, why: refused?.why ?? null }
 }
 
 /** The newest messages across every channel (that `keep` keeps), oldest first. */
@@ -615,7 +615,8 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
     held,
     elsewhere: !held && current === 'claimed' && task.claim?.actor === viewer.actor,
     hold: owns && (current === 'waiting' || current === 'ready'),
-    unblock: owns && current === 'blocked' && !task.parked && !blocksOnAttention(state, root),
+    // A refused read can't tell an old decision from an active one. The board still checks the hold.
+    unblock: owns && current === 'blocked' && !task.parked && (!blocksOnAttention(state, root) || attentionOf(state, root)?.is === 'failed'),
     reopen: owns && current === 'failed',
     assign: owns && !finished,
     cancel: owns && current !== 'completed' && current !== 'canceled',
@@ -722,9 +723,8 @@ export function mergeAttention(state: State, root: MessageView, actor: string, r
 export function blocksOnAttention(state: State, root: TaskRoot): boolean {
   if (root.task.state !== 'blocked' || root.task.parked || !root.task.attentionId) return false
   const read = attentionOf(state, root)
-  const status = read?.is === 'here' ? read.attention?.status : undefined
-  // With no details, don't offer to unblock a task that might still need an answer.
-  return status !== 'answered' && status !== 'canceled'
+  if (read?.is !== 'here') return true
+  return read.attention?.status === 'pending' || read.attention?.status === 'stale'
 }
 
 // --- blocks and schemas -------------------------------------------------------------------

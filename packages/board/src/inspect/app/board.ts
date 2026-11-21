@@ -560,11 +560,12 @@ addEventListener('beforeunload', (event) => {
 /** Read all open tasks before ranking them; the oldest page need not have the highest priority. */
 export async function loadSwarmTasks(which: store.SwarmList, scope: SwarmScope, { refresh = false, recent = [] }: { refresh?: boolean; recent?: readonly string[] } = {}) {
   const handle = team
-  const key = swarmKey(state.me?.actor, scope)
+  const actor = state.me?.actor
+  const key = swarmKey(actor, scope)
   const previous = refresh ? swarmListing(state, which, scope) : undefined
   const loading: store.SwarmListing = previous ? { ...previous } : { key, rows: { is: 'loading' } }
   set((s) => ({ ...s, swarm: { ...s.swarm, lists: { ...s.swarm.lists, [which]: loading } } }))
-  const current = () => state.swarm.lists[which] === loading && handle === team
+  const current = () => state.swarm.lists[which] === loading && actor === state.me?.actor
   const finish = (rows: store.Listed<string>, roots: MessageView[] = [], readyClaims?: store.SwarmListing['readyClaims']) => set((s) => {
     if (!current()) return s
     const next = store.merge(s, roots)
@@ -644,7 +645,41 @@ export function watchSwarm(section: 'queue' | 'mobs', scope: SwarmScope) {
     await Promise.all(loads)
   }
   refreshSwarm = refresh
-  return () => { if (refreshSwarm === refresh) refreshSwarm = undefined }
+
+  // Grants aren't in the feed, and a scoped reader doesn't see board-wide work control.
+  let can = JSON.stringify(state.me?.can ?? null)
+  let pauseEpoch = 0
+  let control = true
+  let checking = false
+  const active = () => refreshSwarm === refresh && actor === state.me?.actor
+  const timer = setInterval(async () => {
+    if (checking || !active()) return
+    checking = true
+    try {
+      const [access, status] = await Promise.all([
+        team.me().then((me) => JSON.stringify(me.can), (error: unknown) =>
+          error instanceof BoardError && (error.status === 401 || error.status === 403) ? 'null' : can),
+        control ? team.status().catch((error: unknown) => {
+          if (error instanceof BoardError && error.status === 501) control = false
+        }) : undefined,
+      ])
+      if (!active()) return
+      const accessChanged = can !== access
+      const fenced = status && status.pauseEpoch !== pauseEpoch
+      can = access
+      if (status) pauseEpoch = status.pauseEpoch
+      if (accessChanged || fenced) await Promise.all([
+        loadSwarmTasks('open', scope, { refresh: true }),
+        accessChanged && section === 'mobs' && loadSwarmTasks('completed', scope, { refresh: true, recent }),
+      ])
+    } finally {
+      checking = false
+    }
+  }, 5000)
+  return () => {
+    clearInterval(timer)
+    if (refreshSwarm === refresh) refreshSwarm = undefined
+  }
 }
 
 export async function applyLiveEvents(events: BoardEventView[]) {

@@ -461,9 +461,8 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
         </dl>
       )}
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
-        {!t ? (
-          <p className={why === null ? 'empty' : 'empty error'}>{why ?? 'loading…'}</p>
-        ) : (
+        {(why !== null || !t) && <p className={why === null ? 'empty' : 'empty error'}>{why ?? 'loading…'}</p>}
+        {t && (
           <>
             <Messages messages={[t.root]} now={props.now} options={options} />
             {isTask(t.root) && !t.root.deleted && t.root.task.attentionId && (
