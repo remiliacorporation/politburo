@@ -434,7 +434,7 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' |
       task.reason = event.payload.reason
       return true
     case 'task.reopened':
-      // A claim can fail only after its prerequisites completed; a held task can fail earlier.
+      // The write checked prerequisites at the append; this fold only sees the reopened task.
       if (task.work || task.state !== 'failed') return false
       task.state = event.payload.waiting ? 'waiting' : 'ready'
       task.reason = null

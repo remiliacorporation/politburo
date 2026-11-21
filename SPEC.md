@@ -69,8 +69,9 @@ board post errors-www "deploy failed on a1b2c3"   # in a linked project: the tea
    to. A board `board()` keeps trusts its own project's people and its
    deployments in the environment it runs in, plus whatever its grants let
    in, and they say what each may do in each channel.
-3. **Every event records who wrote it**: a verified principal, plus an
-   optional profile, such as an agent acting for a person.
+3. **Events record their provenance.** A caller's write names a verified
+   principal, plus an optional profile, such as an agent acting for a person.
+   The board can also write events of its own.
 4. **A thread syncs with a set of external threads.** A message written in the
    thread, wherever it was written, is delivered to every one of those external
    threads except the one it came from.
@@ -3944,11 +3945,14 @@ claimant's verified principal and actor. Only `scoped` and `repair` can be
 claimed, and the board checks prerequisites on claim. Handoff ends
 implementation but does not finish the task. Dependents wait for `done`.
 Reopening from `done` moves ready dependents back to `waiting` in the same
-write, with `task.needs_changed` recording the same prerequisite list.
+write. The board authors their `task.needs_changed` events, which record the
+same prerequisite list. The scoper is named on `task.stage_changed` in the
+prerequisite's channel, not on the dependent's event.
 Claimed dependents keep their claims, and blocked dependents stay blocked.
-Releasing or expiring a claim while a prerequisite is still open returns
-its task to `waiting`. When the prerequisite reaches `done` again,
-`task.ready` follows for each waiting dependent that can now run.
+If a prerequisite is still open when a claim is released or expires or a
+failed legacy task is reopened, the dependent returns to `waiting`. When the
+prerequisite reaches `done` again, `task.ready` follows for each waiting
+dependent that can now run.
 
 `task.work` is an optional `{ stage: WorkStage, scopedRevision: number | null }`.
 A hold projects to `blocked`; `scoped` and `repair` project to `ready` or
@@ -4083,7 +4087,7 @@ legacy tasks are separate work.
 | `claimed` | an agent holds it until its lease ends | `completed`, `failed`, `blocked`, or `canceled`; on release or expiry, `ready` if its prerequisites are done, otherwise `waiting` |
 | `blocked` | held for a person, with a `kind` and a `reason`, or parked by an operator | `ready` or `waiting` when the applicable hold is lifted or an answer resumes work; `failed` by an answer; `canceled` |
 | `completed` | done, with an optional `result` | none; its dependents become `ready` |
-| `failed` | tried and couldn't, with a `reason`; its dependents keep waiting | `ready`, when reopened; `canceled` |
+| `failed` | tried and couldn't, with a `reason`; its dependents keep waiting | on reopen, `ready` if its prerequisites are done, otherwise `waiting`; `canceled` |
 | `canceled` | no longer wanted, with a `reason`; its dependents keep waiting | none |
 
 A claim whose lease has run out can be taken over at once if its prerequisites
@@ -4524,7 +4528,7 @@ Task changes are board facts, in the board log:
 'task.created':   z.object({ id: MessageId, thread, needs: z.array(MessageId), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author, work: z.literal('proposed').optional() }), // the thread at `id` is a task; by.principal owns it
 'task.assigned':  z.object({ id, thread, for: ActorId.nullable(), by }),             // null: back to the pool
 'task.priority_changed': z.object({ id, thread, priority: TaskPriority, epoch: Epoch.optional(), by }), // optional claim epoch
-'task.needs_changed': z.object({ id, thread, needs: z.array(MessageId), by }),       // what it waits for now, in place of what it waited for
+'task.needs_changed': z.object({ id, thread, needs: z.array(MessageId), by }),       // new needs, or the same needs after a prerequisite reopens (by the board)
 'task.ready':     z.object({ id, thread }),                                          // (server) every prerequisite has completed
 'task.claimed':   z.object({ id, thread, epoch, pauseEpoch: z.number().int().nonnegative().optional(), until, token, by, binding: TaskBinding.optional() }), // token hash stays private; absent pauseEpoch means zero
 'task.renewed':   z.object({ id, thread, epoch, until, by }),
@@ -4558,9 +4562,10 @@ tokens are never included in these events.
   backend's to say, as every length and count of a task is. A request's
   schema checks its shape, and a backend refuses what's over its own limits,
   so on `vercel()` the refusal is Vercel's API's.
-- **An ended claim can return to `waiting`.** The board sets `waiting: true`
-  on `task.released` or `task.expired` when a prerequisite isn't done at
-  the append. Without the flag, eligible work returns to `ready`.
+- **An ended claim or a reopened legacy task can return to `waiting`.** The
+  board sets `waiting: true` on `task.released`, `task.expired`, or
+  `task.reopened` when a prerequisite isn't done at the append. Without the
+  flag, eligible work returns to `ready`.
 - **A write a task has moved on from changes nothing in the fold:** an older
   epoch, a finished task, a second `task.created`. The writes refuse first;
   the fold is what holds for whoever folds the log themselves.

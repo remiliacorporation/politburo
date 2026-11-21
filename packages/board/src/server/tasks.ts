@@ -23,6 +23,8 @@ export const LEASE_MIN_S = 30
 export const LEASE_CAP_S = 3600
 /** How many owners one claim takes tasks from on this board, beside its caller. */
 const FROM_MAX = 32
+/** The board's own author for derived task events that carry a `by`. */
+const TASKS_AUTHOR = { actor: 'board:tasks', principal: 'board:tasks', profile: null }
 
 /**
  * This board's own limits on a task. board() checks a request's shape and leaves how much a
@@ -1175,9 +1177,10 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           const events: Events = [stageChanged(found, identity, 'proposed', reason)]
           if (from === 'done') {
             // Only ready dependents wait again here. A dependent that was claimed keeps its claim.
+            // The board authors the change because the dependent's readers may not see the stage move.
             for await (const root of rootsAt({}, ['ready'], position)) {
               if (root.task.needs.includes(id))
-                events.push({ type: 'task.needs_changed', payload: { id: root.id, thread: root.thread, needs: root.task.needs, by: identity.author } })
+                events.push({ type: 'task.needs_changed', payload: { id: root.id, thread: root.thread, needs: root.task.needs, by: TASKS_AUTHOR } })
             }
           }
           return events
@@ -1186,8 +1189,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const { task } = found
         if (task.state === 'completed' || task.state === 'canceled') throw conflict('task_finished', `#${id} is ${task.state}`)
         if (task.state !== 'failed') return []
-        const attention = task.attention
-        const waiting = attention?.status === 'answered' && attention.receipt.routedTo === 'failed' && !(await satisfied(task, position))
+        const waiting = !(await satisfied(task, position))
         return [{ type: 'task.reopened', payload: { id, thread: found.thread, by: identity.author, ...(waiting ? { waiting: true as const } : {}) } }]
       })
       return { task: await shown(identity, root) }

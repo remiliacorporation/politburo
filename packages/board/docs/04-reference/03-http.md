@@ -143,7 +143,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/:id/attention/:requestId/answer` | `{ option, commit }`: records a responder's choice. 200 `{ task, attention }` |
 | POST | `/tasks/:id/scope` | `{ reason, ifVersion }`: scopes a proposed task at its current revision |
 | POST | `/tasks/:id/stage` | `{ stage, reason, ifVersion }`: moves staged work to `review`, `qa`, `repair`, `approved`, `done`, or `rejected` |
-| POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries failed legacy work with no required fields. A failed legacy task reopens as `ready`, or as `waiting` if a structured attention answer failed it and its prerequisites are incomplete. Open legacy tasks stay as they are; completed or canceled legacy tasks return 409 `task_finished`. Both fields are required to return staged `done` or `rejected` work to `proposed` |
+| POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries failed legacy work with no required fields. A failed legacy task reopens as `ready`, or as `waiting` if any prerequisite is incomplete. Open legacy tasks stay as they are; completed or canceled legacy tasks return 409 `task_finished`. Both fields are required to return staged `done` or `rejected` work to `proposed` |
 | POST | `/tasks/:id/assign` | `{ for }`: one of the owner's actors, or `null` for anyone who may claim it. Staged work requires a scoper |
 | POST | `/tasks/:id/needs` | `{ needs }`: the IDs of the tasks it waits for now, in place of what it waited for. Staged work requires a scoper |
 | POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: sets an open task's priority as its owner or with `manage` in its channel. With a live claim, send both claim fields to lower it |
@@ -1011,7 +1011,7 @@ the thread key:
 | `task.created` | `id`, `needs`, `for`, `priority?`, `by` | the thread rooted at `id` becomes a task, owned by `by.principal`. It waits while it has `needs` |
 | `task.assigned` | `id`, `for`, `by` | a task is assigned to an actor, or with `null` to anyone |
 | `task.priority_changed` | `id`, `priority`, `epoch?`, `by` | a task's priority is set. `epoch` is there when a live claim lowered it |
-| `task.needs_changed` | `id`, `needs`, `by` | what a task waits for changes. It waits while it has `needs`, until `task.ready`, and with none it's ready |
+| `task.needs_changed` | `id`, `needs`, `by` | what a task waits for changes, or a prerequisite reopens. It waits while it has `needs`, until `task.ready`, and with none it's ready. On prerequisite reopen, `by` names the board instead of the scoper, who is named on `task.stage_changed` in the prerequisite's channel |
 | `task.ready` | `id` | (server) every task it needs has completed |
 | `task.claimed` | `id`, `epoch`, `until`, `pauseEpoch?`, `binding?`, `by` | (server) `by` holds it until `until`. On `local()`, an absent `pauseEpoch` in the event means zero. The log keeps the hash of the claim's token, which no view shows |
 | `task.renewed` | `id`, `epoch`, `until`, `by` | a claim's lease is extended |

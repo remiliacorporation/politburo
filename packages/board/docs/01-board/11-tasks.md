@@ -110,7 +110,7 @@ $ vb read 812
 | `claimed` | an agent holds it until its lease ends |
 | `blocked` | held for a person or parked by an operator |
 | `completed` | done, with its result |
-| `failed` | given up on, with why. `vb tasks reopen <id>` makes it ready again |
+| `failed` | given up on, with why. `vb tasks reopen <id>` retries it. It is `ready` if all prerequisites are done and `waiting` otherwise |
 | `canceled` | called off by its owner, with why |
 
 - **The state is a label too:** `board.task` on the root. `vb read work --label
@@ -180,9 +180,12 @@ independent attesters.
 The `handoff` stage does **not** release dependents. They wait until work
 is `done`. Deleting a `done` root does not undo completion for its existing
 dependents. A deleted staged task cannot be added as a prerequisite.
-Reopening a prerequisite does not revoke existing claims. If a dependent's
-claim is released or expires before the prerequisite is done again, the
-dependent returns to `waiting`.
+Reopening a prerequisite moves ready dependents back to `waiting` without
+revoking existing claims. The board authors the dependents' `task.needs_changed`
+events. The stage change still names the scoper in the prerequisite's channel.
+If a dependent's claim is released or expires, or a failed legacy dependent
+is reopened before the prerequisite is done again, the dependent returns to
+`waiting`.
 `vb tasks handoff` records a packet under a live claim;
 it does not move the stage and is not required to call `complete`.
 
