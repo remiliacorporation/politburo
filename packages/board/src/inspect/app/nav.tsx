@@ -113,7 +113,7 @@ export function useNow(every = 30_000): number {
 export function useTypeToFocus(composer: string) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
       const target = event.target as HTMLElement
       if (target !== document.body && target.closest('input, textarea, select, [contenteditable], [role="menu"], [role="dialog"], [role="listbox"]'))
         return
@@ -163,6 +163,7 @@ export type Section = (typeof SECTIONS)[number]
 export type Route =
   | { view: 'activity' }
   | { view: 'tasks' }
+  | { view: 'attention' }
   | { view: 'channel'; channel: string }
   | { view: 'settings'; section: Section; open: string | null }
   | { view: 'missing' }
@@ -176,6 +177,7 @@ export function route(path: string): Route {
   }
   if (decoded === '/') return { view: 'activity' }
   if (decoded === '/tasks') return { view: 'tasks' }
+  if (decoded === '/attention') return { view: 'attention' }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
   const [, settings, section, ...rest] = decoded.split('/')
   if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))

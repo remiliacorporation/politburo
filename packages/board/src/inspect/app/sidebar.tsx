@@ -1,11 +1,11 @@
-import { Check, ChevronsUpDown, Lock, PanelLeftClose, Plus, Settings } from 'lucide-react'
+import { Check, ChevronsUpDown, CircleHelp, Lock, PanelLeftClose, Plus, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView, Me } from '../../api/routes.ts'
 import * as board from './board.ts'
 import { toast } from './chrome.ts'
 import { Avatar } from './message.tsx'
 import { Link, navigate, type Route } from './nav.tsx'
-import { openTasks, type State } from './store.ts'
+import { attentionTasks, openTasks, type State } from './store.ts'
 import { ContextMenuArea, Menu, MenuItem, MenuSeparator } from './ui.tsx'
 import { boardWords, shownName } from './words.ts'
 
@@ -52,6 +52,7 @@ export function Sidebar({ state, current, onCollapse }: { state: State; current:
     return [...out]
   }, [state.channels])
   const open = openTasks(state)
+  const attention = useMemo(() => attentionTasks(state).length, [state.messages])
   const where = boardWords(state.discovery)
   const [adding, setAdding] = useState(false)
   const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => toast(`copied ${text}`))
@@ -73,6 +74,11 @@ export function Sidebar({ state, current, onCollapse }: { state: State; current:
         <Link to="/tasks" className="item" current={current.view === 'tasks'}>
           <span className="name">tasks</span>
           {open !== null && open > 0 && <span className="count">{open}</span>}
+        </Link>
+        <Link to="/attention" className="item" current={current.view === 'attention'}>
+          <CircleHelp size={14} strokeWidth={1.75} aria-hidden="true" />
+          <span className="name">attention</span>
+          {attention > 0 && <span className="count">{attention}</span>}
         </Link>
         <h2>
           channels

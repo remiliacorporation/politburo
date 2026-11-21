@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardEventView, MessageView, ScheduleView, SchemaView, TaskView } from '../src/api/routes.ts'
+import type { AttentionView, BoardEventView, MessageView, ScheduleView, SchemaView, TaskView } from '../src/api/routes.ts'
 import { block } from '../src/contract/blocks.ts'
 import * as store from '../src/inspect/app/store.ts'
 import { continues } from '../src/inspect/app/store.ts'
@@ -373,6 +373,94 @@ describe('the inspector store', () => {
     expect(refusal(board('claim_lost'))).not.toContain('the board said so')
     expect(refusal(board('claim_lost'))).toMatch(/claim/)
     expect(refusal(board('invalid_needs'))).toBe('the board said so')
+  })
+
+  // --- attention ---
+
+  const hold = (id: number, root: Partial<MessageView> = {}) => task(id, { state: 'blocked', attentionId: 'request' }, root)
+  const request = (root: MessageView, status: 'pending' | 'stale' | 'canceled' = 'pending'): AttentionView => ({
+    id: 'request', status, question: 'Go ahead?', context: '', kind: 'needs_input',
+    options: [{ id: 'yes', label: 'Yes', consequence: 'Keep going', next: 'resume' }],
+    revision: root.revision, evidence: [{ message: root.id, revision: root.revision }], commit: 'a'.repeat(40), expiresAt: at(60), by: root.by,
+  })
+  const here = (value: AttentionView): store.AttentionResult => ({ is: 'here', value })
+  const shownAttention = (state: store.State, root: store.TaskRoot) => store.attentionFor(state, root, null)
+  const withRead = (state: store.State, root: MessageView, result: store.AttentionResult) => {
+    const reading = store.beginAttentionRead(state, root)
+    return store.finishAttentionRead(reading, root.id, reading.attention[root.id]!.latest!, result)
+  }
+
+  it('lists held attention tasks oldest first, even for stale or canceled requests', () => {
+    const oldest = hold(9, { createdAt: at(-9) })
+    const stale = hold(5, { createdAt: at(-5) })
+    const canceled = hold(2, { createdAt: at(-2) })
+    let state = store.merge(start, [canceled, stale, oldest,
+      task(4, { state: 'failed', attentionId: 'request' }), hold(1, { deleted: true }), task(3, { state: 'blocked' }), message(6),
+    ])
+    state = withRead(state, stale, here(request(stale, 'stale')))
+    state = withRead(state, canceled, here(request(canceled, 'canceled')))
+    expect(shownAttention(state, stale).attention?.status).toBe('stale')
+    expect(shownAttention(state, canceled).attention?.status).toBe('canceled')
+    expect(store.attentionTasks(state).map(({ id }) => id)).toEqual(['9', '5', '2'])
+  })
+
+  it('offers unblock for a plain hold but not for an attention hold', () => {
+    const owner = viewer(['post', 'manage'])
+    expect(store.moves(start, task(1, { state: 'blocked' }), owner, NOW).unblock).toBe(true)
+    expect(store.moves(start, hold(1), owner, NOW).unblock).toBe(false)
+  })
+
+  it('discards a read after a newer read starts, even before that read answers', () => {
+    const root = hold(1)
+    const first = store.beginAttentionRead(store.merge(start, [root]), root)
+    const second = store.beginAttentionRead(first, root)
+    const late = store.finishAttentionRead(second, root.id, first.attention[root.id]!.latest!, here(request(root)))
+    expect(shownAttention(late, root).attention).toBeNull()
+    const next = store.finishAttentionRead(late, root.id, second.attention[root.id]!.latest!, here(request(root, 'stale')))
+    expect(shownAttention(next, root).attention?.status).toBe('stale')
+  })
+
+  it('never replaces an attention view with one read at an older task version or revision', () => {
+    const root = hold(1, { version: 10, revision: 4 })
+    const known = withRead(store.merge(start, [root]), root, here(request(root, 'stale')))
+    for (const older of [hold(1, { version: 9, revision: 4 }), hold(1, { version: 10, revision: 3 })]) {
+      const next = withRead(known, older, here(request(older)))
+      expect(shownAttention(next, root).attention?.status).toBe('stale')
+    }
+  })
+
+  it('shows a refused attention read where the question was', () => {
+    const root = hold(1)
+    const known = withRead(store.merge(start, [root]), root, here(request(root)))
+    const failed = withRead(known, root, { is: 'failed', words: 'message not found', unsupported: false })
+    expect(shownAttention(failed, root)).toMatchObject({ attention: null, readError: 'message not found' })
+  })
+
+  it('keeps an answer on its way until the feed confirms it, then shows the receipt in place', () => {
+    const root = hold(1)
+    const known = withRead(store.merge(start, [root]), root, here(request(root)))
+    const sending = store.beginAnswer(known, root.id, 'request', 'Yes')
+    expect(shownAttention(sending, root)).toMatchObject({ answering: 'Yes', disabled: true })
+    const assignment = hold(1, { version: 2 })
+    const moved = store.applyEvent(sending, { cursor: '2', type: 'task.assigned', createdAt: at(0), message: assignment,
+      payload: { id: root.id, thread: root.thread, for: null, by: root.by } })
+    expect(shownAttention(moved, assignment).answering).toBe('Yes')
+    const confirmed = task(1, { state: 'ready', attentionId: 'request' }, { version: 3 })
+    const receipt = { option: 'yes', by: root.by, at: at(1), routedTo: 'ready' as const }
+    const done = store.applyEvent(moved, { cursor: '3', type: 'task.attention_answered', createdAt: at(1), message: confirmed,
+      payload: { id: root.id, thread: root.thread, requestId: 'request', epoch: 0, by: root.by, receipt } })
+    expect(store.attentionTasks(done)).toEqual([])
+    expect(store.attentionRows(done).map(({ id }) => id)).toEqual([root.id])
+    expect(shownAttention(done, confirmed)).toMatchObject({ answering: null, attention: { status: 'answered', receipt } })
+    expect(store.attentionRows(store.leaveAttention(done))).toEqual([])
+  })
+
+  it('drops the answering overlay and shows the words of a refused answer', () => {
+    const root = hold(1)
+    const known = withRead(store.merge(start, [root]), root, here(request(root)))
+    const sending = store.beginAnswer(known, root.id, 'request', 'Yes')
+    const failed = store.failAnswer(sending, root.id, 'request', { words: 'not a responder', unsupported: false })
+    expect(shownAttention(failed, root)).toMatchObject({ answering: null, disabled: false, error: 'not a responder', attention: { status: 'pending' } })
   })
 
   // --- blocks and schemas ---

@@ -87,7 +87,7 @@ What a task's pane offers depends on its state and on you:
 | --- | --- |
 | Anyone with `label` there | Claim a ready task, or one whose lease ran out |
 | Holding the claim, in this tab | Renew, release, complete with a result, fail with a reason, or block for a person |
-| Its owner, or `manage` there | Block one no one holds, unblock, reopen a failed one, assign it to a profile or back to the pool, or cancel |
+| Its owner, or `manage` there | Block one no one holds, lift a plain hold, reopen a failed one, assign it to a profile or back to the pool, or cancel |
 
 Start a thread as a task from the composer, with what it needs and who it's
 for, or make any thread one from its pane.
@@ -99,6 +99,21 @@ for, or make any thread one from its pane.
 
 The board decides every write. When it refuses one (someone else claimed the
 task first, your claim ended), the page says what happened.
+
+## Attention
+
+Open **attention** in the sidebar (`/attention`) to see tasks with a
+[structured hold](../01-board/11-tasks.md#ask-for-a-structured-answer), oldest
+first. Each item shows the request's question, context, options, and what
+happens for each choice. The task title opens its thread.
+
+Choose an option to answer in place. The board accepts answers only from
+configured responders with post access, acting as themselves, not as a
+profile. The page shows the board's reason if it refuses. Stale requests
+stay in the list, read only, until replaced or the task is canceled.
+
+With the list focused, `j` and `k` select the next and previous items.
+`1` through `8` choose an available option on the selected item.
 
 ## Settings
 

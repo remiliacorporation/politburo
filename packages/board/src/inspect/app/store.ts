@@ -722,7 +722,7 @@ export function finishAttentionRead(state: State, id: string, read: AttentionRea
 }
 
 export function beginAnswer(state: State, id: string, requestId: string, label: string): State {
-  const { error: _old, ...item } = state.attention[id]
+  const { error: _old, ...item } = state.attention[id] ?? {}
   return putAttention(state, id, { ...item, answering: { requestId, label } })
 }
 
@@ -746,6 +746,37 @@ function foldAttention(state: State, event: BoardEventView): State {
     return putAttention(state, root.id, { ...item, answering: undefined, answered: { ...attention, status: 'answered', receipt: event.payload.receipt } })
   }
   return done ? putAttention(state, root.id, { ...item, answering: undefined }) : state
+}
+
+/** The requests in this visit, including answers that just landed in place. */
+export function attentionRows(state: State): TaskRoot[] {
+  return Object.values(state.messages).filter((root): root is TaskRoot => {
+    if (holdsAttention(root)) return true
+    const answered = state.attention[root.id]?.answered
+    return !!answered && !root.deleted && isTask(root) && root.task.attentionId === answered.id
+  }).sort(byWritten)
+}
+
+export const NO_ATTENTION = 'this board does not keep task attention requests'
+
+/** What this viewer can see and do. The responder list isn't public; the board still decides each answer. */
+export function attentionFor(state: State, root: TaskRoot, viewer: Viewer | null) {
+  const item = state.attention[root.id]
+  const held = holdsAttention(root)
+  const read = item?.view?.result
+  const value = read?.is === 'here' ? read.value : null
+  const attention = held ? (value?.id === root.task.attentionId ? value : null) : item?.answered ?? null
+  const readError = held && read?.is === 'failed' ? read.words : null
+  const answering = held && item?.answering?.requestId === root.task.attentionId ? item.answering.label : null
+  const unsupported = state.attentionUnsupported || state.discovery?.task_attention !== true
+  const me = state.me
+  const reason = unsupported ? NO_ATTENTION
+    : attention?.status !== 'pending' ? `the request is ${attention?.status ?? 'not available'}`
+    : !me || me.kind !== 'person' || me.profile !== null || me.actor !== me.principal || !viewer?.may('post', root.channel)
+      ? 'answering needs a person acting as themselves with post access'
+      : null
+  const refreshing = item?.latest?.request !== item?.view?.request || (attention !== null && attention.revision !== root.revision)
+  return { attention, readError, missing: read?.is === 'here' && read.value === null, error: item?.error?.words, answering, reason, disabled: answering !== null || refreshing }
 }
 
 export function leaveAttention(state: State): State {

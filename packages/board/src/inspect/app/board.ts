@@ -189,6 +189,7 @@ export async function boot() {
     const events = queue
     queue = []
     listed.apply(events)
+    if (attentionOpen) refreshAttentionEvents(events)
     // A schedule's own state isn't in the feed, but its sends are: one that landed means the list moved.
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
   }
@@ -203,7 +204,7 @@ export async function boot() {
   void team.actors().then((actors) => set((s) => ({ ...s, actors: { ...Object.fromEntries(actors.map((actor) => [actor.id, actor])), ...s.actors } })), () => {})
   void loadSchemas()
   void loadSchedules()
-  void loadTasks({ state: 'open', label: [] }).then((listed) => 'cursor' in listed && !listed.more && set((s) => ({ ...s, tasksCounted: true })))
+  void loadOpenTasks()
 }
 
 // #region guide inspector/live.ts
@@ -492,6 +493,84 @@ export async function loadTasks(filter: store.TaskFilter, after?: string): Promi
     return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE }
   } catch (error) {
     return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large' }
+  }
+}
+
+/** Fill the shared open-task list, including holds beyond the first page. */
+async function loadOpenTasks() {
+  let after: string | undefined
+  for (;;) {
+    const page = await loadTasks({ state: 'open', label: [] }, after)
+    if (attentionOpen) {
+      for (const root of store.attentionTasks(state))
+        if (!state.attention[root.id]?.latest) void readAttention(root)
+    }
+    if ('refused' in page) {
+      set((s) => ({ ...s, tasksRefused: page.refused }))
+      return
+    }
+    if (!page.more || page.cursor === after) break
+    after = page.cursor
+  }
+  set((s) => ({ ...s, tasksCounted: true }))
+}
+
+// --- attention: decisions that hold tasks --------------------------------------------------
+
+let attentionOpen = false
+
+export function openAttention() {
+  attentionOpen = true
+  for (const root of store.attentionTasks(state)) void readAttention(root)
+  return () => {
+    attentionOpen = false
+    set(store.leaveAttention)
+  }
+}
+
+/** A task event touches its hold; an edit or delete of a reply can change the request's evidence. */
+function refreshAttentionEvents(events: BoardEventView[]) {
+  const touched = new Set<string>()
+  for (const event of events) {
+    const message = event.message
+    if (store.isTask(message)) touched.add(message.id)
+    if ((event.type === 'message.edited' || event.type === 'message.deleted') && message?.re) touched.add(message.re)
+  }
+  for (const id of touched) {
+    const root = state.messages[id]
+    if (store.holdsAttention(root)) void readAttention(root)
+  }
+}
+
+const attentionFailure = (error: unknown) => ({
+  words: said(error),
+  unsupported: error instanceof BoardError && error.status === 501 && error.code === 'no_task_attention',
+})
+
+async function readAttention(root: MessageView) {
+  set((s) => store.beginAttentionRead(s, root))
+  const read = state.attention[root.id]!.latest!
+  const result = await team.tasks.attention(root.id).then<store.AttentionResult, store.AttentionResult>(
+    ({ attention }) => ({ is: 'here', value: attention }),
+    (error: unknown) => ({ is: 'failed', ...attentionFailure(error) }),
+  )
+  set((s) => store.finishAttentionRead(s, root.id, read, result))
+}
+
+/** Send the choice on the displayed request. Only the feed settles the overlay. */
+export async function answerAttention(id: string, requestId: string, optionId: string) {
+  const root = state.messages[id]
+  if (!store.holdsAttention(root) || !state.me) return
+  const { attention, reason, disabled } = store.attentionFor(state, root, viewerOf(state.me))
+  if (!attention || attention.id !== requestId || reason !== null || disabled) return
+  const option = attention.options.find((option) => option.id === optionId)
+  if (!option) return
+  set((s) => store.beginAnswer(s, id, requestId, option.label))
+  try {
+    await team.tasks.answer(id, requestId, { option: option.id, commit: attention.commit })
+  } catch (error) {
+    set((s) => store.failAnswer(s, id, requestId, attentionFailure(error)))
+    if (error instanceof BoardError && (error.status === 404 || error.status === 409)) await readAttention(state.messages[id] ?? root)
   }
 }
 
