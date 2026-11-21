@@ -2,8 +2,9 @@
 // `token` once, and every write the claim makes needs both, so `vb tasks complete 812` is one
 // process and `vb tasks claim 812` was another.
 import { createHash, randomUUID } from 'node:crypto'
-import { link, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { configDir } from '../client/node.ts'
 
 /** A claim as the CLI keeps it: what its writes carry, and when its lease ends. */
@@ -47,19 +48,94 @@ async function read(file: string): Promise<Stored | null> {
   }
 }
 
-/** Removes the claims whose leases ended long ago: a process that was killed leaves its file behind. */
+const errorCode = (error: unknown) => (error as NodeJS.ErrnoException).code
+
+function ownerIsDead(owner: string) {
+  const pid = Number(owner.split('.')[0])
+  if (!Number.isInteger(pid) || pid < 1) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    return errorCode(error) === 'ESRCH'
+  }
+}
+
+async function removeEmpty(dir: string) {
+  await rmdir(dir).catch((error: unknown) => {
+    if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(errorCode(error) ?? '')) throw error
+  })
+}
+
+async function reapLock(lock: string) {
+  const owners = await readdir(lock).catch((error: unknown) => {
+    if (errorCode(error) === 'ENOENT') return []
+    throw error
+  })
+  // Remove only a dead owner's unique marker, never a successor's. The last
+  // rmdir can remove only an empty directory, even if a new owner beat us to it.
+  for (const owner of owners) {
+    if (!ownerIsDead(owner)) return
+    await removeEmpty(join(lock, owner))
+  }
+  await removeEmpty(lock)
+}
+
+/** Lock mutations of one claim without moving the file that readers use. */
+async function withClaimLock(file: string, mutate: () => Promise<void>, wait = true) {
+  const lock = `${file}.lock`
+  const owner = `${process.pid}.${randomUUID()}`
+  const pending = `${file}.${owner}.lock-tmp`
+  const deadline = performance.now() + 5_000
+  let acquired = false
+  try {
+    // Publish the owner's identity atomically. Rename cannot replace a nonempty lock.
+    await mkdir(join(pending, owner), { recursive: true, mode: 0o700 })
+    while (!acquired) {
+      try {
+        await rename(pending, lock)
+        acquired = true
+      } catch (error) {
+        if (!['ENOTEMPTY', 'EEXIST', 'EPERM'].includes(errorCode(error) ?? '')) throw error
+        // Pruning is best effort and never waits for an unrelated writer.
+        if (!wait) return
+        await reapLock(lock)
+        if (performance.now() >= deadline) throw new Error('timed out waiting to update the saved task claim')
+        await delay(10)
+      }
+    }
+    await mutate()
+  } finally {
+    const dir = acquired ? lock : pending
+    await removeEmpty(join(dir, owner))
+    await removeEmpty(dir)
+  }
+}
+
+/** Removes expired claims and abandoned writes, but never a live lock. */
 async function prune(now: number) {
+  const expired = (claim: Stored | null) => claim && now - Date.parse(claim.until) > DEAD_MS
   for (const name of await readdir(claimsDir()).catch(() => [])) {
-    if (!name.endsWith('.json')) {
-      // An abandoned write or drop. Renaming to a tombstone keeps the old mtime.
-      const file = join(claimsDir(), name)
+    const file = join(claimsDir(), name)
+    if (name.endsWith('.json')) {
+      if (expired(await read(file))) {
+        await withClaimLock(file, async () => {
+          if (expired(await read(file))) await unlink(file)
+        }, false).catch(() => {})
+      }
+    } else if (name.endsWith('.lock')) {
+      await reapLock(file).catch(() => {})
+    } else if (name.endsWith('.lock-tmp')) {
+      const owner = name.split('.').slice(-3, -1).join('.')
+      if (ownerIsDead(owner)) {
+        await removeEmpty(join(file, owner))
+        await removeEmpty(file)
+      }
+    } else {
+      // An abandoned write or a tombstone left by an older CLI.
       const info = await stat(file).catch(() => null)
       if (info && now - Math.max(info.mtimeMs, info.ctimeMs) > DEAD_MS) await unlink(file).catch(() => {})
-      continue
     }
-    const file = join(claimsDir(), name)
-    const stored = await read(file)
-    if (stored && now - Date.parse(stored.until) > DEAD_MS) await unlink(file).catch(() => {})
   }
 }
 
@@ -84,31 +160,24 @@ export function fileClaims(board: () => Promise<string>, profile: string | null)
       const file = await at(task)
       await mkdir(claimsDir(), { recursive: true, mode: 0o700 })
       const stored: Stored = { board: (await key)!, task, profile, ...claim }
-      // Beside it, then into place: a reader finds the old claim or the new one, never half of one.
-      const partial = `${file}.${process.pid}.${randomUUID()}.tmp`
-      await writeFile(partial, JSON.stringify(stored), { mode: 0o600 })
-      await rename(partial, file).catch(async (error: unknown) => {
-        await unlink(partial).catch(() => {})
-        throw error
-      })
+      await (async () => {
+        // Beside it, then into place: readers find the old claim or the new one, never half of one.
+        const partial = `${file}.${process.pid}.${randomUUID()}.tmp`
+        try {
+          await writeFile(partial, JSON.stringify(stored), { mode: 0o600 })
+          await withClaimLock(file, () => rename(partial, file))
+        } catch (error) {
+          await unlink(partial).catch(() => {})
+          throw error
+        }
+      })()
       await prune(Date.now()).catch(() => {})
     },
-    async drop(task, { epoch, token }) {
+    async drop(task, only) {
       const file = await at(task)
-      const tombstone = `${file}.${process.pid}.${randomUUID()}.drop`
-      // A put before the rename is checked; a put after it writes to `file`.
-      // Link a mismatch back only if that name is still free.
-      try {
-        await rename(file, tombstone)
-      } catch {
-        return
-      }
-      if (!matchesClaim(await read(tombstone), { epoch, token })) {
-        await link(tombstone, file).catch((error: unknown) => {
-          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        })
-      }
-      await unlink(tombstone).catch(() => {})
+      await withClaimLock(file, async () => {
+        if (matchesClaim(await read(file), only)) await unlink(file)
+      })
     },
   }
 }
