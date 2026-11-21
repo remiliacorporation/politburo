@@ -62,9 +62,17 @@ function rerun(...extra: string[]): string[] {
   return [...cli(), ...(at === -1 ? [...typed, ...extra] : [...typed.slice(0, at), ...extra, ...typed.slice(at)])]
 }
 
-/** A command line without `options` and their values. */
+/** A command line without `options` and their values: a bare `--mentions` has none, so what follows it stays. */
 const without = (argv: string[], ...options: string[]): string[] =>
-  argv.filter((arg, at) => !options.some((option) => arg === option || argv[at - 1] === option || arg.startsWith(`${option}=`)))
+  argv.filter(
+    (arg, at) =>
+      !options.some(
+        (option) =>
+          arg === option ||
+          arg.startsWith(`${option}=`) ||
+          (argv[at - 1] === option && !((OPTIONS as Record<string, { optionalValue?: true }>)[option.slice(2)]?.optionalValue && arg.startsWith('-'))),
+      ),
+  )
 
 /**
  * This run's command line without `options`, with `extra` in their place: both before any `--`,
@@ -248,11 +256,16 @@ let sent: () => string | null = () => null
 /** How long the message text this run sends is, for a backend's refusal of it to say what to do instead. */
 let sentLength = 0
 
-/** The help `words` ask for: a command's page when they name one (`read`, `sources read`), or else every command. */
+/**
+ * The help `words` ask for: a command's page when they name one (`read`, `sources read`), or with
+ * none, every command. A word that names no command is unknown, as it is without `--help`.
+ */
 function help(words: readonly string[] = []): string {
   const own = Object.values(app.commands).map((command) => command.spec)
   const path = commandPath(words, [...commands, ...own])
-  return path ? commandHelp(app.name, path) : rootHelp({ name: app.name, commands: own }, VERSION)
+  if (path) return commandHelp(app.name, path)
+  if (words[0] !== undefined && words[0] !== 'help') throw unknownCommand(words[0])
+  return rootHelp({ name: app.name, commands: own }, VERSION)
 }
 
 /** How messages name this CLI: `vb` for the standalone one, as they always have, or the app's own name. */
@@ -961,8 +974,15 @@ function failureOf(error: unknown, hold: TaskHold = 'unknown'): Failure {
         return own('permission', 'board_not_granted')
       case 'watchers_need_project':
         return own('permission', 'watchers_need_project')
-      case 'unsupported_principal':
-        return own(status === 403 ? 'permission' : 'usage', 'unsupported_principal')
+      case 'missing_team':
+        return {
+          // A CI log is read widely: this names the option without the command's text.
+          ...own('missing_input', 'missing_scope', [
+            { instruction: "Use a team's board: add --scope <TEAM_ID>" },
+            { instruction: 'Or set VERCEL_ORG_ID to its ID' },
+          ]),
+          actionRequired: true,
+        }
       case 'invalid_board_name':
         return own('usage', 'invalid_arguments', [helpRecovery()])
       case 'too_many_redirects':
@@ -1059,16 +1079,19 @@ function failureOf(error: unknown, hold: TaskHold = 'unknown'): Failure {
       'auth',
       'login_required',
       "The board didn't accept your credentials.",
-      // A token you passed is yours to replace, and so is BOARD_TOKEN: logging in changes nothing while either is the one sent.
+      // A token you passed is yours to replace, and so is BOARD_TOKEN: logging in changes nothing while either is the one
+      // sent, or a workflow's own, where there's no login.
       sent() === PASSED
         ? [{ instruction: 'Pass a token it accepts' }]
         : sent() === 'BOARD_TOKEN'
           ? [{ instruction: 'Pass a token it accepts in BOARD_TOKEN, or unset it' }]
           : sent() === JOINED
             ? [{ instruction: 'Ask for a new invite and join again' }]
-            : [{ instruction: 'Log in again', argv: ['vercel', 'login'] }],
+            : sent() === 'GitHub Actions OIDC'
+              ? [{ instruction: 'Pass a token it accepts in BOARD_TOKEN' }]
+              : [{ instruction: 'Log in again', argv: ['vercel', 'login'] }],
     )
-  if (status === 403) return theirs('permission', 'permission_denied', `You can't ${doing()}.`)
+  if (status === 403) return theirs('permission', 'permission_denied', `You can't ${doing()}.`, refusedRecoveries())
   if (status === 404) {
     const thing = missing()
     // What it names says it, and the board's "message not found: 812" says no more.
@@ -1116,9 +1139,50 @@ function failureOf(error: unknown, hold: TaskHold = 'unknown'): Failure {
     return theirs('platform', code, `Can't ${doing()}. This board doesn't keep an agent registry.`, [
       { instruction: 'Use a local board started with vb serve --agent-ops' },
     ])
-  if (status === 501) return theirs('platform', specific('not_supported'), `Can't ${doing()}. This board doesn't support it.`)
+  if (status === 501) return theirs('platform', specific('not_supported'), `Can't ${doing()}. This board doesn't support it.`, unsupportedRecoveries())
   if (code === 'unreachable') return theirs('network', 'network_error', "Couldn't reach the board.")
   return theirs('platform', 'api_error', `Failed to ${doing()}.`)
+}
+
+/** The options that say which board this run is on, and as whom, as typed: what a way out to another command keeps. */
+const onThisBoard = (): string[] => [...onSameBoard(), ...asTyped()]
+
+/** Where to go from a 403: what you may do on this board, and who can let you do more. */
+const refusedRecoveries = (): Recovery[] => [
+  { instruction: 'See what you can do on this board', argv: [...cli(), 'whoami', ...onThisBoard()] },
+  { instruction: "Or ask someone who manages the board's grants to give you access" },
+]
+
+/** The filters a board answers 501 to on a read when it keeps no index of them, as Vercel's does. */
+const UNINDEXED = ['--by', '--mentions', '--source', '--text']
+
+/**
+ * What to run instead of what a board answered 501 to, by what this run asked for: the same without
+ * the part a board may not do (a read's search filters or its every channel, a post's `--sync`, a
+ * schedule's files). Nothing when it asked for none of them.
+ */
+function unsupportedRecoveries(): Recovery[] {
+  const { command, args } = current
+  const given = (option: string) => (flags as Record<string, unknown>)[option.slice(2)] !== undefined
+  if (command === 'read') {
+    const filtered = UNINDEXED.filter(given)
+    const target = args[0]
+    const whole = target === undefined || (target.endsWith('/') && !isMessageRef(target))
+    if (!filtered.length && !whole) return []
+    const argv = rerunWithout(filtered)
+    if (whole) {
+      // One channel in place of every one (or every one under a prefix), whose names the channel list has.
+      const at = argv.indexOf(positionals[0]!, cli().length)
+      argv.splice(at + 1, target === undefined ? 0 : 1, '<CHANNEL>')
+    }
+    return [
+      ...(whole ? [{ instruction: 'See the channels', argv: [...cli(), 'channels', ...(target !== undefined ? [target] : []), ...onThisBoard()] }] : []),
+      { instruction: whole ? `Read one channel at a time${filtered.length ? `, without ${filtered.join(' or ')}` : ''}` : `Read it without ${filtered.join(' or ')}, and look through it`, argv },
+    ]
+  }
+  if ((command === 'post' || command === 'reply') && given('--sync')) return [{ instruction: 'Post it without --sync', argv: rerunWithout(['--sync']) }]
+  if (command === 'schedule' && given('--attach')) return [{ instruction: 'Schedule the text without its files', argv: rerunWithout(['--attach']) }]
+  return []
 }
 
 /** `42s`, `2m`: a wait the way people say it. */
@@ -1150,6 +1214,22 @@ function vercelBoard(url: string): { board: string; team?: string } | null {
   if (parsed.origin !== 'https://api.vercel.com' || !found) return null
   const team = parsed.searchParams.get('teamId')
   return { board: decodeURIComponent(found[1]!), ...(team ? { team } : {}) }
+}
+
+/**
+ * Whether this run's board is a team's board in Vercel's API, as its flags and environment say,
+ * without a request: undefined when they don't say (an in-process handle, or no board to use).
+ */
+function onTeamBoard(): boolean | undefined {
+  if (io.board) return undefined
+  try {
+    if (flags.url !== undefined) return vercelBoard(flags.url) !== null
+    if (flags.scope !== undefined || flags.team !== undefined || flags.name !== undefined) return true
+    const url = configuredUrl()
+    return url === null || vercelBoard(url) !== null
+  } catch {
+    return undefined
+  }
 }
 
 /** Who the handle writes as: `--as`'s profile (with `--avatar`), or what the environment says (`BOARD_PROFILE`), else yourself. */
@@ -1668,7 +1748,7 @@ async function run(command: string | undefined, args: string[]): Promise<number>
         const working = task ? [...(task.claim ? [task.claim.actor] : []), ...(task.owner !== thread.message.by.principal ? [task.owner] : [])] : []
         // And a text mentions people by ID, who show by name.
         const unnamed = [...new Set([...reactionNames([thread.message, ...replies]), ...working, ...mentionedIn([thread.message, ...replies])])].filter((id) => !authors.has(id))
-        const listed = unnamed.length ? (await board.actors().catch(() => [])).filter((a) => unnamed.includes(a.id)) : []
+        const listed = unnamed.length ? await board.actors({ id: unnamed }).catch(() => []) : []
         const known = new Map(listed.map((a) => [a.id, actorName(a)]))
         out(formatThreads([thread.message, ...replies], known, new Map(listed.map((a) => [a.id, a.handle]))))
         if (!narrowed) for (const schedule of thread.schedules ?? []) out(formatSchedule(schedule, { pad: '  ' }))
@@ -1678,7 +1758,8 @@ async function run(command: string | undefined, args: string[]): Promise<number>
       if (flags.before !== undefined && flags.after !== undefined) throw usage("Can't use --before with --after. One pages back, the other reads forward.")
       // A read of one channel's threads as they are is the one a board pages back, by the `older` its page answers:
       // it's asked for the page as shown, so that `older` goes on from the last thread listed.
-      const paged = target !== undefined && !target.endsWith('/') && Object.keys(filters()).length === 0
+      // So is one by mentions or text, which a board with no search index answers from that page.
+      const paged = target !== undefined && !target.endsWith('/') && Object.keys(filters()).every((key) => key === 'mentions' || key === 'text')
       // Otherwise one thread more than asked for, where a read lists that many, tells whether the page is all of
       // them. Not for --json, which is the board's page as it answered.
       const peek = !paged && !flags.json && flags.before === undefined && Number.isInteger(limit) && limit >= 1 && limit < THREADS_LIMIT_MAX
@@ -1696,8 +1777,10 @@ async function run(command: string | undefined, args: string[]): Promise<number>
       const older = !peek && typeof listed.older === 'string' ? listed.older : undefined
       const more = peek ? listed.threads.length > limit : listed.older === null ? false : older !== undefined || listed.threads.length === limit
       const page = listed.threads.length > limit ? { ...listed, threads: flags.after !== undefined ? listed.threads.slice(0, limit) : listed.threads.slice(-limit) } : listed
+      // A board that looked through threads to find none says by that the channel has some.
+      const scanned = typeof listed.scanned === 'number' ? listed.scanned : undefined
       // Nothing in a channel that doesn't exist is a typo, not an empty channel.
-      if (!page.threads.length && target) {
+      if (!page.threads.length && target && !scanned) {
         // Every channel, a page at a time: a name close to the one typed could be any of them.
         const channels = (await everyChannel(board)).map((c) => c.path)
         if (!channels.some((path) => path === target || path.startsWith(target.replace(/\/?$/, '/')))) {
@@ -1719,9 +1802,11 @@ async function run(command: string | undefined, args: string[]): Promise<number>
         const roots = page.threads.map(({ message }) => message)
         const wrote = new Set(page.threads.flatMap(({ message, last }) => (last ? [message.by.actor, last.by.actor] : [message.by.actor])))
         const unnamed = mentionedIn(roots).filter((id) => !wrote.has(id))
-        const handles = new Map(unnamed.length ? (await client().actors().catch(() => [])).filter((a) => unnamed.includes(a.id)).map((a) => [a.id, a.handle]) : [])
+        const handles = new Map(unnamed.length ? (await board.actors({ id: unnamed }).catch(() => [])).map((a) => [a.id, a.handle]) : [])
         out(formatThreadSummaries(page.threads, { channel: !target || target.endsWith('/'), handles }))
       }
+      // What it looked through is all it says: a mention further up a thread, or on an older page, isn't on this one.
+      if (scanned !== undefined) out(`\n(looked through ${scanned} ${scanned === 1 ? 'thread' : 'threads'}, at the first and latest message of each: a match under a newer reply is not found)`)
       // A page that isn't all of them says where the rest are. Without --after, they're older: --before the
       // page's `older` reaches them where the board answered one, and a bigger --limit where it didn't. After
       // a cursor, they're newer than the page, and its cursor is past them
@@ -1747,6 +1832,14 @@ async function run(command: string | undefined, args: string[]): Promise<number>
         )
       // A page back from one isn't where the board is now: only a read of the latest says what's new since.
       if (flags.before !== undefined) return 0
+      // Such a board reads no further by its cursor: a wait with the same filters from it sees what comes next, and
+      // misses nothing posted since this read.
+      if (scanned !== undefined) {
+        const argv = rerunWithout(['--after', '--limit', '-n'], '--after', String(page.cursor))
+        argv[argv.indexOf('read', cli().length)] = 'wait'
+        out(`\nnew since then: ${commandLine(argv)}`)
+        return 0
+      }
       // The cursor is where this read stopped: the next command is the one that reads on from it.
       // It's this run as typed, its board, identity and filters included, from where it stopped.
       out(`\nnew since then: ${commandLine(rerunWithout(['--after'], '--after', String(page.cursor)))}`)
@@ -2223,17 +2316,7 @@ async function run(command: string | undefined, args: string[]): Promise<number>
     default: {
       const own = app.commands[command]
       if (own) return own.run(args, context())
-      const names = [...commands.flatMap((known) => [known.name, ...(known.aliases ?? [])]), ...Object.keys(app.commands)]
-      const guess = closest(command, names)
-      // What people and agents type for a command that goes by another name here.
-      const said = Object.hasOwn(OTHER_NAMES, command.toLowerCase()) ? OTHER_NAMES[command.toLowerCase()] : undefined
-      throw usage(`Unknown command ${command} for ${named()}.${said ? '' : guess ? ` Did you mean ${guess}?` : ''}`, {
-        reason: 'unknown_command',
-        next: [
-          ...(said ? [{ instruction: said.instruction, argv: [...cli(), ...said.argv] }] : []),
-          { instruction: 'See all commands', argv: [...cli(), '--help'] },
-        ],
-      })
+      throw unknownCommand(command)
     }
   }
 }
@@ -2380,6 +2463,25 @@ async function agents(args: string[]): Promise<number> {
   return 0
 }
 
+/** Every name a command runs by here: board's, their aliases, and the app's own. */
+const commandNames = () => [...commands.flatMap((known) => [known.name, ...(known.aliases ?? [])]), ...Object.keys(app.commands)]
+
+/** `command` names nothing here: the closest that does, or what it goes by here. */
+function unknownCommand(command: string): Failed {
+  const guess = closest(command, commandNames())
+  // What people and agents type for a command that goes by another name here.
+  const other = Object.hasOwn(OTHER_NAMES, command.toLowerCase()) ? OTHER_NAMES[command.toLowerCase()] : undefined
+  // On a team's board, what works there; where nothing says which board, what works on every one.
+  const said = other?.teams && onTeamBoard() !== false ? other.teams : other
+  return usage(`Unknown command ${command} for ${named()}.${said ? '' : guess ? ` Did you mean ${guess}?` : ''}`, {
+    reason: 'unknown_command',
+    next: [
+      ...(said ? [{ instruction: said.instruction, argv: [...cli(), ...said.argv] }] : []),
+      { instruction: 'See all commands', argv: [...cli(), '--help'] },
+    ],
+  })
+}
+
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
 const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel'])
 const TASK_STATES = ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled']
@@ -2412,10 +2514,13 @@ function seconds(flag: 'wait' | 'lease' | 'ttl'): number | undefined {
  */
 async function createPlan(target: string, text: string | undefined, path: string): Promise<number> {
   if (isMessageRef(target)) throw usage(`--file holds a plan, which starts threads in a channel, and ${ref(target)} is a thread.`)
-  const own = text !== undefined ? 'text' : (['label', 'needs', 'for', 'claim', 'lease', 'binding', 'no-sync', 'priority'] as const).find((name) => (flags as Record<string, unknown>)[name] !== undefined && (flags as Record<string, unknown>)[name] !== false)
-  if (own !== undefined) throw usage(`${own === 'text' ? 'Text' : `--${own}`} is one task's: with --file, each task in the file has its own.`)
+  if (text !== undefined) throw usage("Text is one task's: with --file, each task in the file has its own.")
+  // What the file holds comes first: one task's text in it means these options are that task's, on stdin.
+  const parsed = await planSource(path)
+  const own = (['label', 'needs', 'for', 'claim', 'lease', 'binding', 'no-sync', 'priority'] as const).find((name) => flags[name] !== undefined && flags[name] !== false)
+  if (own !== undefined) throw usage(`--${own} is one task's: with --file, each task in the file has its own.`)
   const board = client()
-  const tasks = await planFrom(path, board)
+  const tasks = await planFrom(parsed, path, board)
   // Each root is a message: the longest says what a backend's refusal of one's text means, as for a task made alone.
   sentLength = Math.max(0, ...tasks.map((task) => (typeof task.text === 'string' ? task.text.length : 0)))
   const key = flags['idempotency-key'] ?? crypto.randomUUID()
@@ -2509,8 +2614,12 @@ function checkPlan(plan: Record<string, unknown>[], where: string): void {
   }
 }
 
-/** The tasks a plan's `--file` holds: a JSON array, from the file or from stdin for `-`. An ID may be written `#812`, and `for` as a profile's name. */
-async function planFrom(path: string, board: Board): Promise<TaskInBatch[]> {
+/**
+ * What a plan's `--file` holds, as JSON: the file, or stdin for `-`. Prose is the likeliest slip,
+ * --file carried over from post, where it's the text: it says the same command with the file on
+ * stdin, `-` as the text, and the options it was given.
+ */
+async function planSource(path: string): Promise<unknown> {
   const where = path === '-' ? 'stdin' : path
   let source: string
   if (path === '-') source = await io.stdin()
@@ -2519,13 +2628,17 @@ async function planFrom(path: string, board: Board): Promise<TaskInBatch[]> {
     if (!data) throw usage(`Can't read ${path}. There's no such file.`, { reason: 'file_not_found', next: [] })
     source = new TextDecoder().decode(data)
   }
-  let parsed: unknown
   try {
-    parsed = JSON.parse(source)
+    return JSON.parse(source)
   } catch {
-    // The likeliest slip is --file carried over from post, where it's the text.
-    throw usage(`${where} isn't JSON: --file on tasks create is a plan of tasks.`, { next: [{ instruction: "For one task's text, pass it, or - to read it from stdin" }, planHelp()] })
+    const piped = `${commandLine(rerunWithout(['--file'], '-'))}${path === '-' ? '' : ` < ${commandLine([path])}`}`
+    throw usage(`${where} isn't JSON: --file on tasks create is a plan of tasks.`, { next: [{ instruction: `One task's text goes on stdin, as -: ${piped}` }, planHelp()] })
   }
+}
+
+/** The tasks a plan's `--file` holds: a JSON array. An ID may be written `#812`, and `for` as a profile's name. */
+async function planFrom(parsed: unknown, path: string, board: Board): Promise<TaskInBatch[]> {
+  const where = path === '-' ? 'stdin' : path
   const shape = 'A plan is a JSON array of tasks: [{"key": "fix", "text": "…"}, {"text": "…", "needs": [{"key": "fix"}]}].'
   if (!Array.isArray(parsed) || parsed.length === 0 || parsed.some((task) => typeof task !== 'object' || task === null || Array.isArray(task))) throw usage(`${where} holds no tasks. ${shape}`, { next: [planHelp()] })
   const plan = parsed as (Record<string, unknown> & { needs?: unknown; for?: unknown })[]
@@ -2625,20 +2738,52 @@ function printClaim(task: MessageView, claim: { epoch: number; until: string }, 
   else out(claimLine(task, claim.until))
 }
 
+/** An operator unparks as themselves: dropping --as leaves any environment profile in effect. */
+function unparkRecovery(id: string): Recovery {
+  const withoutProfile = !io.board && environmentProfile() ? ' with BOARD_PROFILE unset' : ''
+  return {
+    instruction: `Or, as an operator, lift the park${withoutProfile}`,
+    argv: [...cli(), 'tasks', 'unpark', id, 'resume work', ...onSameBoard()],
+  }
+}
+
 /**
  * This run's claim on task `id`, as the board's handle acts on it, or the failure that says it
  * holds none as whoever it writes as: a claim taken as one profile isn't another's, or yours.
  */
 async function heldBy(board: Board, claims: Claims, id: string) {
   const stored = await claims.get(id)
-  if (!stored)
-    throw new Failed({
-      class: 'conflict',
-      reason: 'claim_not_held',
-      message: `You hold no claim on task ${ref(id)} as ${writesAs() ?? 'yourself'}.`,
-      next: [{ instruction: 'Claim it', argv: [...cli(), 'tasks', 'claim', id, ...asTyped()] }],
-    })
-  return board.tasks.held(id, stored)
+  if (stored) return board.tasks.held(id, stored)
+  const none = `You hold no claim on task ${ref(id)} as ${writesAs() ?? 'yourself'}.`
+  const notHeld = (why: string, next: Recovery[]) =>
+    new Failed({ class: 'conflict', reason: 'claim_not_held', message: why ? `${none} ${why}` : none, next })
+  const here = onThisBoard()
+  // A claim of one that's held, waiting, or finished would be refused too: what it is says the step that comes first, or that there's none.
+  const task = await board.thread(id, { limit: 1 }).then(({ message }) => message.task, () => undefined)
+  const see: Recovery = { instruction: 'See where it stands', argv: [...cli(), 'read', id, ...here] }
+  if (task?.state === 'blocked') {
+    if (task.parked) throw notHeld("It's parked: claim it once the park lifts.", [see, unparkRecovery(id)])
+    const held = "It's held for a person: claim it once the hold lifts."
+    if (task.attentionId !== undefined) {
+      // An answered request stays visible even if a later plain hold blocks the task again.
+      const request = await board.tasks.attention(id).then(({ attention }) => attention, () => null)
+      if (request?.id !== task.attentionId) throw notHeld(held, [see])
+      if (request.status === 'pending' || request.status === 'stale')
+        throw notHeld('It needs a structured answer: claim it once the hold lifts.', [{
+          instruction: 'See the current request', argv: [...cli(), 'tasks', 'attention', id, ...here],
+        }])
+    }
+    throw notHeld(held, [{ instruction: 'As its owner, lift the hold, then claim it', argv: [...cli(), 'tasks', 'unblock', id, ...here] }, see])
+  }
+  if (task?.state === 'waiting') {
+    const needs = task.needs.map(ref)
+    throw notHeld(`It waits for what it needs${needs.length ? ` (${needs.join(', ')})` : ''}: claim it once those complete.`, [
+      { instruction: 'See what it waits for', argv: see.argv },
+    ])
+  }
+  if (task?.state === 'completed' || task?.state === 'failed' || task?.state === 'canceled')
+    throw notHeld(`It's ${task.state} already.`, [see])
+  throw notHeld('', [{ instruction: 'Claim it', argv: [...cli(), 'tasks', 'claim', id, ...here] }])
 }
 
 /** A write a claim makes. One the board answers `claim_lost` is over: the CLI forgets it, and the failure says how to claim again. */
@@ -2652,11 +2797,39 @@ async function withClaim<T>(claims: Claims, id: string, write: () => Promise<T>)
 }
 
 /**
+ * `--label` on `claim --ready` and `run --ready`: each an exact `key=value`, the one thing a claim
+ * matches. The list's `key=a|b` and bare `key` would match nothing, or the value `a|b`, and wait
+ * out its `--wait` without a word: they're refused, with the claim of one value and the list.
+ */
+function readyLabels(values: string[], target: string, verb: 'claim' | 'run'): Record<string, string> {
+  for (const value of values) {
+    const at = value.indexOf('=')
+    const options = at > 0 ? value.slice(at + 1).split('|') : []
+    if (at > 0 && options.length < 2) continue
+    const key = at > 0 ? value.slice(0, at) : value
+    if (at === 0) throw usage(`--label on ${verb} --ready takes key=value, and ${value} has no key before its =.`)
+    const listed = { instruction: "See what's ready, and their labels", argv: [...cli(), 'tasks', target, '--state', 'ready', '--label', value] }
+    if (at === -1)
+      throw usage(`--label on ${verb} --ready takes key=value: ${value} has no value, and a claim matches one exactly.`, { next: [listed] })
+    // The same command with the first value alone, the label written as it was. What follows `--` is run's
+    // command, which it hands over as it is: the same text there is the command's own, and stays.
+    const one = `${key}=${options[0]}`
+    const dash = typed.indexOf('--')
+    const ours = (index: number) => dash === -1 || index < dash
+    const again = [...cli(), ...typed.map((arg, index) => (!ours(index) ? arg : arg === value && typed[index - 1] === '--label' ? one : arg === `--label=${value}` ? `--label=${one}` : arg))]
+    throw usage(`--label on ${verb} --ready takes one value: ${value} has ${options.length}, and a claim matches one exactly.`, {
+      next: [{ instruction: `Claim one with ${one}`, argv: again }, listed],
+    })
+  }
+  return labelPairs(values)
+}
+
+/**
  * Claims a task for this run, by its ID or with `--ready` the highest priority eligible one in `target`, and
  * keeps the claim. With nothing ready it fails: `nothing_ready`, or `timeout` once `--wait` ran
  * out, as `wait` does. Stopped while it waits, it answers the exit code instead.
  */
-async function claimFor(board: Board, claims: Claims, target: string | undefined, binding?: TaskBinding): Promise<ClaimedTask | number> {
+async function claimFor(board: Board, claims: Claims, target: string | undefined, verb: 'claim' | 'run', binding?: TaskBinding): Promise<ClaimedTask | number> {
   const lease = seconds('lease')
   const options = {
     ...(lease !== undefined ? { lease } : {}),
@@ -2682,7 +2855,7 @@ async function claimFor(board: Board, claims: Claims, target: string | undefined
     claim = await board.tasks.claim(
       {
         channel: target,
-        ...(flags.label?.length ? { label: labelPairs(flags.label) } : {}),
+        ...(flags.label?.length ? { label: readyLabels(flags.label, target, verb) } : {}),
         // Owners by their IDs: a handle names no owner.
         ...(flags.from?.length ? { from: flags.from } : {}),
         ...(wait !== undefined ? { wait } : {}),
@@ -2827,7 +3000,7 @@ async function tasks(args: string[]): Promise<number> {
     if (!flags.ready && rest[0] === undefined) throw usage('Missing the task to claim: its ID, or --ready and a channel.', { reason: 'missing_arguments' })
     const binding = bindingFlag()
     const { board, claims } = tasksOn()
-    const claim = await claimFor(board, claims, rest[0], binding)
+    const claim = await claimFor(board, claims, rest[0], 'claim', binding)
     if (typeof claim === 'number') return claim
     printClaim(claim.task, claim)
     return 0
@@ -2846,7 +3019,7 @@ async function tasks(args: string[]): Promise<number> {
     if (io.board) throw usage("tasks run isn't available in-process: it runs a command on this machine.", { reason: 'not_available', next: [] })
     const binding = bindingFlag()
     const { board, claims } = tasksOn()
-    const claim = await claimFor(board, claims, before[0], binding)
+    const claim = await claimFor(board, claims, before[0], 'run', binding)
     if (typeof claim === 'number') return claim
     const id = claim.task.id
     const lease = seconds('lease')
@@ -3131,8 +3304,7 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
       }
       const see = read("See what it's held for", ...board, ...asTyped())
       if (hold === 'unknown') return { class: 'conflict', message: `Can't ${doing()}. It's held, but the CLI couldn't read the task to see why.`, next: see }
-      // An operator acts without a profile, even if the failed command named one.
-      if (hold === 'parked') return { class: 'conflict', message: `Can't ${doing()}. It's parked.`, next: [...see, ...also('Or, as an operator, lift the park', 'unpark', 'resume work', ...board)] }
+      if (hold === 'parked') return { class: 'conflict', message: `Can't ${doing()}. It's parked.`, next: named === undefined ? see : [...see, unparkRecovery(named)] }
       const lift = args[0] === 'unblock' ? [] : also('Or, as its owner, lift the hold', 'unblock', ...board, ...asTyped())
       return { class: 'conflict', message: `Can't ${doing()}. It's held for a person.`, next: [...see, ...lift] }
     }
@@ -3217,11 +3389,23 @@ function stateCommand(): Recovery[] {
   return []
 }
 
-/** Words for a command this CLI names otherwise, and the command they mean. */
-const OTHER_NAMES: Record<string, { instruction: string; argv: string[] }> = {
-  search: { instruction: 'Search is a filter on read', argv: ['read', '<CHANNEL>', '--text', '<PHRASE>'] },
-  find: { instruction: 'Search is a filter on read', argv: ['read', '<CHANNEL>', '--text', '<PHRASE>'] },
-  grep: { instruction: 'Search is a filter on read', argv: ['read', '<CHANNEL>', '--text', '<PHRASE>'] },
+type OtherName = { instruction: string; argv: string[]; teams?: { instruction: string; argv: string[] } }
+
+/** Search: a filter on read. Vercel's board keeps no index of text, so there it looks through a page of a channel's threads. */
+const SEARCH: OtherName = {
+  instruction: 'Search is a filter on read',
+  argv: ['read', '<CHANNEL>', '--text', '<PHRASE>'],
+  teams: { instruction: "Search a channel's latest threads, a page at a time, since this board keeps no text search", argv: ['read', '<CHANNEL>', '--text', '<PHRASE>'] },
+}
+
+/**
+ * Words for a command this CLI names otherwise, and the command they mean: on a team's board in
+ * Vercel's API, `teams`, where it reads one channel's page (or when nothing says which board).
+ */
+const OTHER_NAMES: Record<string, OtherName> = {
+  search: SEARCH,
+  find: SEARCH,
+  grep: SEARCH,
   list: { instruction: "List a channel's threads with read", argv: ['read', '<CHANNEL>'] },
   ls: { instruction: "List a channel's threads with read", argv: ['read', '<CHANNEL>'] },
   threads: { instruction: "List a channel's threads with read", argv: ['read', '<CHANNEL>'] },
@@ -3243,11 +3427,15 @@ const OTHER_NAMES: Record<string, { instruction: string; argv: string[] }> = {
   remind: { instruction: 'Post later with schedule', argv: ['schedule', '<TARGET>', '<TEXT>', '--in', '<DURATION>'] },
   attach: { instruction: 'Attach a file to a post', argv: ['post', '<TARGET>', '<TEXT>', '--attach', '<FILE>'] },
   upload: { instruction: 'Attach a file to a post', argv: ['post', '<TARGET>', '<TEXT>', '--attach', '<FILE>'] },
-  claim: { instruction: 'Claim a thread with a label, unless someone has', argv: ['label', '<ID>', 'owner=<YOU>', '--if-unset', 'owner'] },
-  assign: { instruction: 'Claim a thread with a label, unless someone has', argv: ['label', '<ID>', 'owner=<YOU>', '--if-unset', 'owner'] },
+  claim: { instruction: 'Hold a task with tasks claim', argv: ['tasks', 'claim', '<ID>'] },
+  assign: { instruction: "Keep a task for one of its owner's profiles", argv: ['tasks', 'assign', '<ID>', '<PROFILE>'] },
   tag: { instruction: 'Set labels on a message', argv: ['label', '<ID>', '<KEY=VALUE>'] },
   labels: { instruction: 'Set labels on a message', argv: ['label', '<ID>', '<KEY=VALUE>'] },
-  mentions: { instruction: 'Mentions are a filter on read and wait', argv: ['read', '--mentions'] },
+  mentions: {
+    instruction: 'Mentions are a filter on read and wait',
+    argv: ['read', '--mentions'],
+    teams: { instruction: "Read what mentions you in a channel's latest threads, then wait from where it stops", argv: ['read', '<CHANNEL>', '--mentions'] },
+  },
   watch: { instruction: 'Block for the next match with wait, or follow live with tail', argv: ['wait', '<CHANNEL>', '--after', '<CURSOR>'] },
   follow: { instruction: 'Block for the next match with wait, or follow live with tail', argv: ['wait', '<CHANNEL>', '--after', '<CURSOR>'] },
   subscribe: { instruction: 'Block for the next match with wait, or follow live with tail', argv: ['wait', '<CHANNEL>', '--after', '<CURSOR>'] },

@@ -41,6 +41,8 @@ export type CliCommand = {
   readonly options: readonly CliOption[]
   /** It takes the filters (`--re`, `--by`, `--label`, …) as well. */
   readonly filters?: true
+  /** What its filters do differently on some boards, as help says it under them. */
+  readonly filtersNote?: string
   readonly examples: readonly CliExample[]
   readonly subcommands?: readonly CliCommand[]
   /** Its arguments come before its subcommand, as in `sources <key> read <target>`. */
@@ -123,7 +125,7 @@ export const options = {
   workflow: { type: 'string', multiple: true, value: 'file', description: "its --github's workflow, e.g. ci.yml" },
   'git-branch': { type: 'string', multiple: true, value: 'branch', description: "its --github's branch" },
   event: { type: 'string', multiple: true, value: 'event', description: "its --github's event, e.g. push" },
-  claim: { type: 'string', multiple: true, value: 'k=v', description: "a claim its --oidc's tokens carry" },
+  claim: { type: 'string', multiple: true, value: 'k=v', description: "a claim its --oidc's tokens carry: sub always, ending in :* or /* to match how it starts" },
   'add-user': { type: 'string', multiple: true, value: 'email', description: 'add a person' },
   'add-project': { type: 'string', multiple: true, value: 'name|id', description: "add a project's deployments" },
   'add-github': { type: 'string', multiple: true, value: 'owner/repo', description: "add a repository's runs" },
@@ -335,7 +337,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
           { name: 'several grants in one write, from a file', value: 'grants create --file grants.json' },
           { name: "a project's production and previews", value: "grants create --project sec --environment production,preview --can 'security/=read,post'" },
           { name: "two repositories' workflows", value: "grants create --github acme/web --workflow ci.yml --git-branch main --github acme/api --workflow deploy.yml --can 'ci/=post'" },
-          { name: "another issuer's tokens", value: "grants create --oidc https://gitlab.com --claim project_id=42 --can 'ci/=post'" },
+          { name: "another issuer's tokens, by their sub", value: "grants create --oidc https://gitlab.com --claim 'sub=project_path:acme/api:*' --claim project_id=42 --can 'ci/=post'" },
         ],
       },
       {
@@ -458,15 +460,17 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
       {
         name: 'channel|id|link',
         required: false,
-        description: "a channel (every channel without one), a message's ID, or a Slack or GitHub link the board synced",
+        description: "a channel (every channel without one, but not on Vercel's board), a message's ID, or a Slack or GitHub link the board synced",
       },
     ],
     options: [option('limit', 'threads to list (default: 50, at most 500)'), option('before')],
     filters: true,
+    filtersNote: "Vercel's board reads one channel or thread here, with only --re, --label, and --after, or on a channel --mentions and --text, which look through one page of its threads: it keeps no search index",
     examples: [
       { name: "list a channel's latest threads", value: 'read dev' },
       { name: 'read one thread, every message', value: 'read 812' },
       { name: 'list the open bugs', value: 'read dev --label kind=bug --label state=open' },
+      { name: 'what mentions you, before you wait for more: it prints the wait that goes on from there', value: 'read dev --mentions' },
       { name: "only what's new since the cursor an earlier read printed", value: 'read dev --after 1042' },
       { name: 'the page before one, by the older it printed', value: 'read dev --before 1031.1024' },
     ],
@@ -477,7 +481,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
     brief: '[--label k=v]... [--attach file]...',
     description: 'a new thread in a channel, or with an ID, a reply in its thread',
     arguments: [{ name: 'channel|id', required: true, description: 'a channel, or a message ID to reply in its thread' }, text()],
-    options: [option('label', 'label it', 'k=v'), option('file', 'the text, from a file: - reads stdin'), option('schema'), option('attach'), option('sync'), option('no-sync'), option('idempotency-key'), option('after', AFTER)],
+    options: [option('label', 'label it', 'k=v'), option('file', 'the text, from a file: - reads stdin'), option('schema'), option('attach'), option('sync', "sync the new thread to a target too, e.g. slack:#incidents (not on Vercel's board yet)"), option('no-sync'), option('idempotency-key'), option('after', AFTER)],
     examples: [
       { name: 'start a thread', value: 'post dev "deploys are green again"' },
       { name: 'start a labeled thread', value: 'post dev "checkout times out" --label kind=bug' },
@@ -502,7 +506,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
     brief: '(--in 5m | --at time | --every 30m)',
     description: 'post later, as you: once (--in or --at), or repeating (--every) until a stop or until canceled',
     arguments: [{ name: 'channel|id', required: true, description: 'a channel, or a message ID to reply in its thread' }, text()],
-    options: [option('in'), option('at'), option('every'), option('until'), option('for'), option('times'), option('label', 'label it', 'k=v'), option('file', 'the text, from a file: - reads stdin'), option('schema'), option('attach'), option('no-sync')],
+    options: [option('in'), option('at'), option('every'), option('until'), option('for'), option('times'), option('label', 'label it', 'k=v'), option('file', 'the text, from a file: - reads stdin'), option('schema'), option('attach', "attach a file to what it posts (not on Vercel's board yet)"), option('no-sync')],
     examples: [
       { name: 'reply in a thread tomorrow', value: 'schedule 812 "still broken?" --in 1d' },
       { name: 'post every morning', value: 'schedule dev "standup" --at 2026-11-02T09:00:00Z --every 1d' },
@@ -743,7 +747,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         name: 'claim',
         description: 'hold a task by ID, or claim the highest priority ready task with --ready',
         arguments: [{ name: 'id|channel', required: true, description: "a task's ID, or with --ready a channel or a path prefix (work/)" }],
-        options: [option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease'), option('binding')],
+        options: [option('ready'), option('label', 'with --ready: one whose root has this label, one value exactly', 'k=v'), option('from'), option('wait'), option('lease'), option('binding')],
         examples: [
           { name: 'claim a task', value: 'tasks claim 812' },
           { name: 'claim the next fix, waiting for one', value: 'tasks claim --ready work/ --label step=fix --wait 10m' },
@@ -756,7 +760,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
           { name: 'id|channel', required: true, description: "a task's ID, or with --ready a channel or a path prefix" },
           { name: 'cmd', required: true, multiple: true, description: 'the command, after --: it gets BOARD_TASK, the task\'s ID' },
         ],
-        options: [option('result'), option('ready'), option('label', 'with --ready: one whose root has this label', 'k=v'), option('from'), option('wait'), option('lease'), option('binding')],
+        options: [option('result'), option('ready'), option('label', 'with --ready: one whose root has this label, one value exactly', 'k=v'), option('from'), option('wait'), option('lease'), option('binding')],
         examples: [
           { name: 'run the tests as a task', value: 'tasks run 812 --result "tests pass" -- make test' },
           { name: 'work the next fix', value: 'tasks run --ready work/ --label step=fix -- ./fix.sh' },
@@ -1014,7 +1018,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
     options: [option('timeout')],
     filters: true,
     examples: [
-      { name: 'wait for a mention: when none comes in time it says "Nothing matched" and exits 1', value: 'wait dev --mentions --timeout 10m' },
+      { name: 'wait for a mention: it sees only what comes after it starts, so read dev --mentions first. When none comes in time it says "Nothing matched" and exits 1', value: 'wait dev --mentions --timeout 10m' },
       { name: "wait for a reply in a thread, from the last message you read so none is missed", value: 'wait --re 812 --after 815 --timeout 10m' },
     ],
   },

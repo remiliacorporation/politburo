@@ -91,6 +91,13 @@ it('rejects ambiguous drafts in the CLI and accepts a choice copied from plain a
   const opened = await ask()
   expect(opened).toMatchObject({ code: 0, stderr: '' })
   const { attention } = JSON.parse(opened.stdout) as { attention: AttentionView }
+  const refused = await cli('complete', id, '--json')
+  expect(refused).toMatchObject({ code: 1, stdout: '' })
+  expect(JSON.parse(refused.stderr)).toMatchObject({
+    reason: 'claim_not_held',
+    message: expect.stringContaining('It needs a structured answer'),
+    next: [{ argv: ['vb', 'tasks', 'attention', id] }],
+  })
   const shown = await cli('attention', id)
   expect(shown).toMatchObject({ code: 0, stderr: '' })
   const lines = shown.stdout.split('\n')

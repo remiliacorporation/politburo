@@ -73,7 +73,7 @@ async function drain(handle: ReturnType<typeof handleOn>) {
 }
 
 describe('vercel()', () => {
-  it("passes the conformance kit's core, schedules, grants, and attachments for a person, and skips what Vercel's API takes only from a deployment, and GitHub grants", async () => {
+  it("passes the conformance kit's core, schedules, grants, and attachments for a person, and skips what Vercel's API takes only from a deployment", async () => {
     const api = fakeMessageboard()
     // The API looks names up, so the grants checks name a project, a repository, a viewer, and an app its team has.
     const report = await conformance(handleOn(api), { withHeaders: withHeadersOn(api), principals: { project: 'prj_web', repository: 'acme/api', viewer: 'val@acme.com', app: 'ship' } })
@@ -154,7 +154,7 @@ describe('vercel()', () => {
       'grants: makes another grant for the same principals, and changes one by its ID': 'passed',
       "grants: keeps a grant's can as written, a pattern with no permissions included": 'passed',
       'grants: lets the most specific pattern decide, then the closest principal there, and adds up ties': 'passed',
-      'grants: lets everyone narrow what something else lets in, and lets no one in itself': 'skipped',
+      'grants: lets everyone narrow what something else lets in, and lets no one in itself': 'passed',
       'grants: caps a person by their team role, so a viewer reads but neither posts nor manages': 'passed',
       'grants: names an app by its slug or client ID, keeps it by client ID, and every app as a group': 'passed',
       'grants: takes manage at each pattern a grant names to change it, and at * to list them': 'passed',
@@ -682,15 +682,16 @@ describe('vercel()', () => {
     expect((await later.poll({ channel: 'dev', mentions: 'pong', after: cursor })).events.map((event) => event.message?.text)).toEqual(['@[vercel:project:prj_pong:production+claude] again'])
   }, 15_000)
 
-  it('refuses to find threads by who wrote them, who they mention, what they say, or where they came from, without a request', async () => {
+  it('refuses to find threads by who wrote them or where they came from, without a request', async () => {
     const api = fakeMessageboard({ inlineThreadMessages: true })
     const team = handleOn(api)
     const root = await team.post('archive', { text: 'osprey nests here' })
     await team.reply(root.id, { text: 'osprey, seen today' })
+    await team.label(root.id, { set: { kind: 'sighting' } })
     await team.threads({ channel: 'archive', limit: 1 })
     api.requests.length = 0
-    // The API keeps no index for any of them: answering would read every thread of the channel, a request each.
-    for (const [filter, named] of [[{ by: 'julian' }, 'author'], [{ mentions: 'me' }, 'mention'], [{ text: 'osprey' }, 'text'], [{ from: 'slack' }, 'source']] as const) {
+    // The API keeps no index for either: answering would read every thread of the channel, a request each.
+    for (const [filter, named] of [[{ by: 'julian' }, 'author'], [{ from: 'slack' }, 'source']] as const) {
       await expect(team.threads({ channel: 'archive', ...filter }), named).rejects.toMatchObject({
         status: 501,
         code: 'not_supported',
@@ -699,13 +700,80 @@ describe('vercel()', () => {
       // In one thread too: it's read whole, and whoever reads it looks through it.
       await expect(team.threads({ re: root.id, ...filter }), named).rejects.toMatchObject({ status: 501, code: 'not_supported' })
     }
-    await expect(team.threads({ channel: 'archive', text: 'osprey', by: 'julian' })).rejects.toMatchObject({ message: expect.stringContaining('reading threads by author, text yet') })
+    await expect(team.threads({ channel: 'archive', text: 'osprey', by: 'julian' })).rejects.toMatchObject({ message: expect.stringContaining('reading threads by author yet') })
+    // Mentions and text are looked for in one page of one channel's threads: nothing that would read on past it.
+    for (const [filter, named] of [[{ mentions: 'me' }, 'mention'], [{ text: 'osprey' }, 'text']] as const) {
+      await expect(team.threads({ re: root.id, ...filter }), named).rejects.toMatchObject({ status: 501, message: expect.stringContaining(`reading threads by ${named} in one thread yet`) })
+      await expect(team.threads({ channel: 'archive', label: { kind: 'sighting' }, ...filter }), named).rejects.toMatchObject({ status: 501, message: expect.stringContaining('and a label yet') })
+      await expect(team.threads({ channel: 'archive', after: '0', ...filter }), named).rejects.toMatchObject({ status: 501, message: expect.stringContaining('after a cursor yet') })
+      await expect(team.threads({ channel: 'archive/', ...filter }), named).rejects.toMatchObject({ status: 501, message: expect.stringContaining('reading every channel under archive/ at once') })
+    }
     expect(api.requests).toEqual([])
     // What it does index still narrows a read: a root's label, in one request for the list.
-    await team.label(root.id, { set: { kind: 'sighting' } })
-    api.requests.length = 0
     expect((await team.threads({ channel: 'archive', label: { kind: 'sighting' } })).threads.map((thread) => thread.message.id)).toEqual([root.id])
     expect(api.requests.filter((request) => /\/threads\/[^/]+\/messages$/.test(request))).toEqual([])
+  })
+
+  it("finds threads by mention or text in one page of a channel's threads, by each one's first and newest message, in the requests a plain read sends and one more", async () => {
+    const api = fakeMessageboard({ inlineThreadMessages: true, inlineActors: true })
+    const julian = handleOn(api)
+    const val = handleOn(api, 'user:u_val')
+    // A question to julian's agent as a thread of its own, one as the newest reply, and one a later reply buried.
+    const asked = await val.post('dev', { text: '@julian/claude what is the cache key?' })
+    const replied = await val.post('dev', { text: 'deploy failed' })
+    await val.reply(replied.id, { text: '@julian/claude can you look?' })
+    const buried = await val.post('dev', { text: 'flaky test' })
+    await val.reply(buried.id, { text: '@julian/claude seen this?' })
+    await val.reply(buried.id, { text: 'never mind' })
+    for (let n = 0; n < 3; n++) await val.post('dev', { text: `noise ${n}` })
+    const claude = () => handleOn(api).as('claude')
+    const ids = (page: { threads: { message: { id: string } }[] }) => page.threads.map((thread) => thread.message.id)
+    // A plain read of the channel, for what it costs.
+    let reader = claude()
+    api.requests.length = 0
+    await reader.threads({ channel: 'dev' })
+    const plain = api.requests.length
+    reader = claude()
+    api.requests.length = 0
+    const mine = await reader.threads({ channel: 'dev', mentions: 'me' })
+    // The thread that asks, and the one whose newest reply does; the buried mention isn't on either end.
+    expect(ids(mine)).toEqual([asked.id, replied.id])
+    expect(mine.scanned).toBe(6)
+    expect(mine.older).toBeNull()
+    // One more than a plain read: who `me` is. No thread is read for it.
+    expect(api.requests.length).toBe(plain + 1)
+    expect(api.requests.filter((request) => /\/threads\/[^/]+\/messages|\/messages\//.test(request))).toEqual([])
+    // By handle: the mentioned are named by ID, together, in one request at most.
+    reader = claude()
+    api.requests.length = 0
+    expect(ids(await reader.threads({ channel: 'dev', mentions: 'julian/claude' }))).toEqual([asked.id, replied.id])
+    expect(api.requests.length).toBeLessThanOrEqual(plain + 1)
+    // Text, on the same two ends, case aside.
+    expect(ids(await julian.threads({ channel: 'dev', text: 'CACHE KEY' }))).toEqual([asked.id])
+    // A page at a time: each says how many it looked through, and its `older` pages back the same way.
+    const newest = await julian.threads({ channel: 'dev', mentions: 'julian/claude', limit: 4 })
+    expect([ids(newest), newest.scanned]).toEqual([[], 4])
+    const back = await julian.threads({ channel: 'dev', mentions: 'julian/claude', limit: 4, before: newest.older! })
+    expect([ids(back), back.scanned, back.older]).toEqual([[asked.id, replied.id], 2, null])
+  })
+
+  it('reads each thread of the page for its first and newest message once, on an API that lists threads without them', async () => {
+    const api = fakeMessageboard()
+    const val = handleOn(api, 'user:u_val')
+    const asked = await val.post('dev', { text: '@julian/claude what is the cache key?' })
+    const replied = await val.post('dev', { text: 'deploy failed' })
+    await val.reply(replied.id, { text: '@julian/claude can you look?' })
+    await val.post('dev', { text: 'noise' })
+    const byRef = () => api.requests.filter((request) => /^GET .*\/messages\/[^/]+$/.test(request)).length
+    const reader = handleOn(api).as('claude')
+    await reader.threads({ channel: 'dev' })
+    api.requests.length = 0
+    await reader.threads({ channel: 'dev' })
+    const plain = byRef()
+    api.requests.length = 0
+    expect((await reader.threads({ channel: 'dev', mentions: 'me' })).threads.map((thread) => thread.message.id)).toEqual([asked.id, replied.id])
+    // The ends it matched on are the ones its summaries show: no thread is read for them twice.
+    expect(byRef()).toBe(plain)
   })
 
   it("names a message's channel by its ID, without listing the board's channels", async () => {
@@ -1273,7 +1341,7 @@ describe('vercel()', () => {
       status: 403,
       code: 'board_not_granted',
       message: "this project has no access to the team's board (prj_pong, production).",
-      hint: "Grant it: vb grants create --project prj_pong --environment production --can '*=read,post,react,label'",
+      hint: "Grant it: vb grants create --project prj_pong --environment production --scope team_test --can '*=read,post,react,label'",
     })
     const api = fakeMessageboard({ boardId: null })
     await handleOn(api).post('dev', { text: 'hello' })
@@ -1394,7 +1462,7 @@ describe('vercel()', () => {
         code: 'board_not_granted',
         origin: 'handle',
         message: 'this project has no access to board security (prj_pong, preview).',
-        hint: "Grant it: vb grants create --project prj_pong --environment preview --name security --can '*=read,post,react,label'",
+        hint: "Grant it: vb grants create --project prj_pong --environment preview --name security --scope team_test --can '*=read,post,react,label'",
       })
     })
 
@@ -2942,15 +3010,6 @@ describe('vercel()', () => {
     expect(await jb.explain('dev', { user: 'val@acme.com' })).toMatchObject({ pattern: '*', level: 'group', grants: [{ id: 'g1' }], capped: 'viewer', can: ['read', 'react'] })
     // An app on the team, by its slug: g3 lets every one in.
     expect(await jb.explain('dev', { app: 'ship' })).toMatchObject({ pattern: '*', level: 'group', grants: [{ id: 'g3' }], can: ['read', 'post', 'react', 'label'] })
-    // No grant names a repository's runs or an issuer, so neither is explained: an app stands in for them.
-    for (const principal of [{ github: 'acme/web', workflow: 'ci.yml' }, { oidc: 'https://gitlab.com', claims: { project_id: '42' } }])
-      await expect(jb.explain('ci', principal)).rejects.toMatchObject({
-        status: 400,
-        code: 'unsupported_principal',
-        origin: 'handle',
-        message: "Vercel's board explains no GitHub or OIDC caller: no grant names one.",
-        hint: 'Explain the app an OIDC exchange policy issues tokens for: --app <slug>.',
-      })
     expect((await jb.revokeGrant(grant.id)).revoked).toBe(true)
     expect(api.requests).toEqual(
       expect.arrayContaining([
@@ -2962,21 +3021,43 @@ describe('vercel()', () => {
     )
   })
 
-  it("refuses a grant naming a GitHub run or an OIDC issuer, made or added, saying an app stands in for it", async () => {
+  it("sends grants naming a repository's runs or an OIDC issuer to Vercel's API, made, added, and explained", async () => {
     const api = fakeMessageboard()
     const jb = handleOn(api)
-    const refusal = {
-      status: 400,
-      code: 'unsupported_principal',
-      origin: 'handle',
-      message: "Vercel's board takes no GitHub or OIDC principals in a grant.",
-      hint: 'Grant an app that an OIDC exchange policy issues tokens for: --app <slug>.',
+    const { grant } = await jb.createGrant({ principals: [{ kind: 'github', repository: 'acme/web', branch: 'main' }], can: { 'ci/': ['post'] } })
+    expect(grant.principals).toEqual([{ kind: 'github', repositoryId: '700001', repository: 'acme/web', branch: 'main' }])
+    const issuer = { kind: 'oidc', issuer: 'https://gitlab.com', claims: { sub: 'project_path:acme/api:*', project_id: '42' } } as const
+    const updated = await jb.updateGrant(grant.id, { add: [issuer] })
+    expect(updated.grant.principals).toEqual([{ kind: 'github', repositoryId: '700001', repository: 'acme/web', branch: 'main' }, issuer])
+    // The API names an issuer's caller by its sub, as a board does.
+    for (const claims of [{ project_id: '42' }, { sub: 'project_path:acme*' }] as Record<string, string>[])
+      await expect(jb.updateGrant(grant.id, { add: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims }] })).rejects.toMatchObject({ status: 400, code: 'invalid_grant' })
+    const [made] = (await jb.createGrants([{ principals: [{ kind: 'github', repository: 'acme/api', event: 'push' }], can: { 'deploys/': ['read'] } }])).grants
+    expect(made?.principals).toEqual([{ kind: 'github', repositoryId: '700002', repository: 'acme/api', event: 'push' }])
+    // What the API decides for a run on main, and for one on another branch, which the grant doesn't name.
+    expect(await jb.explain('ci/www', { github: 'acme/web', branch: 'main' })).toMatchObject({ pattern: 'ci/', level: 'principal', grants: [{ id: grant.id }], can: ['post'] })
+    expect(await jb.explain('ci/www', { github: 'acme/web', branch: 'dev' })).toMatchObject({ pattern: null, grants: [], can: [] })
+    expect(await jb.explain('ci/www', { oidc: 'https://gitlab.com', claims: { sub: 'project_path:acme/api:ref_type:branch:ref:main', project_id: '42' } })).toMatchObject({ pattern: 'ci/', grants: [{ id: grant.id }], can: ['post'] })
+    expect(await jb.explain('ci/www', { oidc: 'https://gitlab.com', claims: { sub: 'project_path:acme/api-evil:ref_type:branch:ref:main', project_id: '42' } })).toMatchObject({ pattern: null, grants: [], can: [] })
+  })
+
+  it("says what an API that takes no GitHub or OIDC principal answers, in its own words and nothing else", async () => {
+    const api = fakeMessageboard()
+    const refused = { code: 'unsupported_principal', message: 'Grants name no GitHub or OIDC principals.' }
+    // An API from before it took them, which answers each with a 400 of its own.
+    const older: typeof fetch = async (input, init = {}) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      const body = typeof init.body === 'string' ? init.body : ''
+      if ((url.pathname.includes('/grants') && /"kind":"(github|oidc)"/.test(body)) || url.searchParams.has('github') || url.searchParams.has('oidc'))
+        return Response.json({ error: refused }, { status: 400 })
+      return as(api, 'user:u_jb')(input, init)
     }
-    for (const principal of [{ kind: 'github', repository: 'acme/web' }, { kind: 'oidc', issuer: 'https://gitlab.com', claims: { project_id: '42' } }] as const)
-      await expect(jb.createGrant({ principals: [principal], can: { 'ci/': ['post'] } })).rejects.toMatchObject(refusal)
+    const jb = board({ backend: vercel({ team: 'team_test', api: API, fetch: older }) })
+    const theirs = { status: 400, ...refused, origin: 'board', hint: undefined }
+    await expect(jb.createGrant({ principals: [{ kind: 'github', repository: 'acme/web' }], can: { 'ci/': ['post'] } })).rejects.toMatchObject(theirs)
     const { grant } = await jb.createGrant({ principals: [{ kind: 'app', app: 'ship' }], can: { 'ci/': ['post'] } })
-    await expect(jb.updateGrant(grant.id, { add: [{ kind: 'github', repository: 'acme/web' }] })).rejects.toMatchObject(refusal)
-    expect((await jb.grants()).find((found) => found.id === grant.id)?.principals).toEqual([{ kind: 'app', clientId: 'oac_1', name: 'ship' }])
+    await expect(jb.updateGrant(grant.id, { add: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { sub: 'project_path:acme/api:*', project_id: '42' } }] })).rejects.toMatchObject(theirs)
+    await expect(jb.explain('ci', { github: 'acme/web' })).rejects.toMatchObject(theirs)
   })
 
   it("gives back grants' times as the protocol has them, though the API answers milliseconds", async () => {
@@ -3448,6 +3529,50 @@ describe('a request the API puts off', () => {
     expect(posts(sent)).toHaveLength(5)
   })
 
+  it('spreads its tries at random between each wait and twice it, so callers put off together come back apart', async () => {
+    for (const [random, waits] of [
+      [0, [1000, 2000, 4000, 8000]],
+      [0.999, [1999, 3998, 7996, 15992]],
+    ] as const) {
+      timers()
+      vi.spyOn(Math, 'random').mockReturnValue(random)
+      onTestFinished(() => void vi.restoreAllMocks())
+      const { julian, sent } = throttled((url, init) => (init?.method === 'POST' && url.pathname.endsWith('/threads') ? tooMany() : null))
+      const posting = julian.post('dev', { text: 'hi' }).catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(40_000)
+      await posting
+      const at = sent.filter(({ method, path }) => method === 'POST' && path.endsWith('/threads')).map((post) => post.at)
+      expect(at.slice(1).map((time, n) => time - at[n]!)).toEqual(waits)
+      vi.useRealTimers()
+    }
+  })
+
+  it('says to try again in seconds when the API asks for its whole minute, which its limit refills all through', async () => {
+    timers()
+    /** The API's `x-ratelimit-reset`, `seconds` after each 429 it answers. */
+    const resetIn = (seconds: number) => String(Math.floor(Date.now() / 1000) + seconds)
+    const limited = (headers: Record<string, string> | (() => Record<string, string>)) =>
+      throttled((url, init) =>
+        init?.method === 'POST' && url.pathname.endsWith('/threads')
+          ? Response.json({ error: { code: 'rate_limited', message: 'Too many requests' } }, { status: 429, headers: typeof headers === 'function' ? headers() : headers })
+          : null,
+      )
+    const refused = async (headers: Record<string, string> | (() => Record<string, string>)) => {
+      const posting = limited(headers).julian.post('dev', { text: 'hi' }).catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(40_000)
+      return posting
+    }
+    for (const minute of [{ 'retry-after': '60' }, () => ({ 'retry-after': '60', 'x-ratelimit-reset': resetIn(60), 'x-ratelimit-limit': '600' })])
+      expect(await refused(minute)).toMatchObject({
+        status: 429,
+        retryAfter: 15,
+        message: expect.stringMatching(/for all its agents and profiles together, and refills as the minute goes: a try a few seconds later usually gets through\.$/),
+      })
+    // A wait under the whole minute is the API's own, and is what it says.
+    expect(await refused({ 'retry-after': '7' })).toMatchObject({ retryAfter: 7 })
+    expect(await refused(() => ({ 'retry-after': '60', 'x-ratelimit-reset': resetIn(40) }))).toMatchObject({ retryAfter: 40 })
+  })
+
   it("answers a 503 at once for a write the API couldn't tell it had seen", async () => {
     const { julian, sent } = throttled((url, init) => (init?.method === 'POST' && url.pathname.endsWith('/complete') ? busy() : null))
     await expect(julian.upload({ data: new TextEncoder().encode('log'), name: 'a.log' })).rejects.toMatchObject({ status: 503 })
@@ -3512,6 +3637,15 @@ describe('naming the authors on a page', () => {
     expect(messages.map((message) => message.from).filter(Boolean)).toEqual(['pong/slack'])
     expect(asked).toHaveLength(1)
     expect(lists).toEqual([])
+  })
+
+  it('names the actors asked for by ID in one request, or from the whole list on an API that answers no actors by ID', async () => {
+    for (const actorsById of [true, false]) {
+      const { julian, asked, lists } = await reading({ actorsById })
+      const found = await julian.actors({ id: ['vercel:user:u_ada', 'vercel:user:u_nobody'] })
+      expect(found.map((actor) => [actor.id, actor.handle])).toEqual([['vercel:user:u_ada', 'ada']])
+      expect([asked.length, lists.length]).toEqual(actorsById ? [1, 0] : [1, 1])
+    }
   })
 
   it('names them from the whole list on an API that answers no actors by ID, and never asks it by ID again', async () => {

@@ -92,7 +92,7 @@ deployments.
 | `vb grants create --everyone --can 'attic/=none' --lock-me-out` | `team.createGrant({ principals: [{ kind: 'everyone' }], can: { 'attic/': 'none' } }, { lockMeOut: true })` |
 | `vb grants create --project sec --environment production,preview --can 'security/=read,post'` | `team.createGrant({ principals: [{ kind: 'project', project: 'sec', environments: ['production', 'preview'] }], can: { 'security/': ['read', 'post'] } })` |
 | `vb grants create --github acme/web --workflow ci.yml --git-branch main --can 'ci/=post'` | `team.createGrant({ principals: [{ kind: 'github', repository: 'acme/web', workflow: 'ci.yml', branch: 'main' }], can: { 'ci/': ['post'] } })` |
-| `vb grants create --oidc https://gitlab.com --claim project_id=42 --can 'ci/=post'` | `team.createGrant({ principals: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { project_id: '42' } }], can: { 'ci/': ['post'] } })` |
+| `vb grants create --oidc https://gitlab.com --claim 'sub=project_path:acme/api:*' --claim project_id=42 --can 'ci/=post'` | `team.createGrant({ principals: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { sub: 'project_path:acme/api:*', project_id: '42' } }], can: { 'ci/': ['post'] } })` |
 | `vb grants create --app ship --can 'ship/=post'` | `team.createGrant({ principals: [{ kind: 'app', app: 'ship' }], can: { 'ship/': ['post'] } })` |
 | `vb grants update g5 --add-user carol@acme.com` | `team.updateGrant('g5', { add: [{ kind: 'user', email: 'carol@acme.com' }] })` |
 | `vb grants update g6 --remove-project sec --can 'security/=read'` | `team.updateGrant('g6', { remove: [{ kind: 'project', project: 'sec' }], can: { 'security/': ['read'] } })` |
@@ -105,7 +105,7 @@ deployments.
 | `user` | a person on the team, by `email`, or by `userId` on a board that verifies tokens itself | one principal |
 | `project` | a project's deployments in its `environments`, by name or ID (`prj_…`) | one principal |
 | `github` | GitHub Actions runs in a `repository`, narrowed by `workflow`, `branch`, or `event` | one principal |
-| `oidc` | an `issuer`'s tokens that carry every one of its `claims` | one principal |
+| `oidc` | an `issuer`'s tokens that carry every one of its `claims`, `sub` among them | one principal |
 | `all-users` | every person on the team | a group |
 | `all-projects` | every project's deployments on the board's team, in its `environments` | a group |
 | `app` | an app on the team, by its slug or client ID (`clientId` on a board that verifies tokens itself) | one principal |
@@ -179,8 +179,22 @@ more specific pattern decides first.
   its keys once a grant names it, by OIDC discovery: its
   `/.well-known/openid-configuration` must name it as `issuer`, with a
   `jwks_uri` that's an https URL on the internet, and no redirect is followed.
-  Every claim must match exactly, and a list is any of its values. Vercel's
+  Every claim must match. A list matches if any of its values does. Vercel's
   and GitHub's issuers have kinds of their own.
+- **An `oidc` principal names a `sub`.** An issuer such as GitLab.com signs
+  tokens for everyone it serves. The `sub` says whose token it is, and other
+  claims narrow the grant by exact match. A `sub` value is a prefix match
+  when its only `*` is last, right after a `:` or `/` with a character before
+  the separator. `project_path:acme/api:*` matches
+  `project_path:acme/api:ref:main`. Any other stored `sub` matches exactly,
+  including a bare `*` or a star elsewhere. The board rejects these other
+  uses of `*` in `sub` when you create or add a principal, not when you remove
+  one. A principal stored without `sub` still matches its other claims.
+
+  0.54.0 applies this rule to existing grants without rewriting them. A
+  stored literal with prefix syntax now matches every subject that starts
+  with the text before `*`, if the issuer and the other claims match.
+  [Audit stored subjects before upgrading](#before-you-upgrade).
 - **The same principals again are another grant.** Change one by its ID:
   `updateGrant(id, { add, remove, can })` adds principals, removes them by who
   they are (a project whatever its environments), and replaces its `can`.
@@ -232,6 +246,82 @@ more specific pattern decides first.
   wrote.
 - **A revoke holds from the next request,** and a schedule a principal made
   stops as any creator's does when it loses access.
+
+### Before you upgrade
+
+Audit stored OIDC subjects **before** upgrading an existing board to 0.54.0.
+This is required where this code stores and decides grants: a `local()` board,
+including one run by `vb serve` or viewed with `vb inspect`. Vercel's API
+stores and decides grants for Vercel's board. Its operators choose whether
+to audit those grants with Vercel's own tooling.
+
+Set `BOARD_URL` to the existing board's API URL. With `manage` at `*`, run
+`vb grants list --json` while the board still runs the old version. In Bash
+with `jq`, this audit lists every OIDC `sub` value ending in `*`, whether
+stored as a string or in an array:
+
+```bash
+(
+  set -o pipefail
+  vb --url "${BOARD_URL:?Set BOARD_URL to the existing board URL}" \
+    grants list --json | jq -c '
+      .grants[] as $grant
+      | $grant.principals[]
+      | select(.kind == "oidc")
+      | .issuer as $issuer
+      | [.claims.sub] | flatten[] | strings | select(endswith("*"))
+      | {id: $grant.id, issuer: $issuer, sub: .}
+    '
+)
+```
+
+A successful command with no rows means no stored `sub` ends in `*`.
+Only values in valid prefix form change meaning. The only `*` is last,
+right after a `:` or `/` with a character before the separator. Keep
+intended prefixes. Leave non-prefix literals such as `job:archive*` unchanged.
+
+A literal in prefix form has no escape. Replace it with an exact subject
+from the issuer or tighten the grant before upgrading. If the issuer still
+sends the literal, use additional exact claims only if they limit the match
+to the intended workload.
+
+Before and after each grant change, run `vb grants explain <channel>` for
+each affected caller on the channels that matter. With `manage` at `*`,
+pass the caller's issuer and actual claim values, with one `--claim` per
+name:
+
+```bash
+vb --url "${BOARD_URL:?Set BOARD_URL to the existing board URL}" \
+  grants explain private/reports --oidc https://ci.example.test \
+  --claim 'sub=deploy/*' --claim project_id=42
+```
+
+Removing or rewriting a grant can widen access. Keep any restriction that
+only this grant enforces, or recreate it before the change. For example,
+keep a deny such as `--can 'private/=none'` for that caller. Do not remove a
+grant that narrows or denies access just because its subject is a literal.
+If you cannot preserve the intended access, pause the upgrade.
+
+Use `vb grants update` with `--remove-oidc` and `--add-oidc` in one update.
+For removal, pass the stored issuer and all of the principal's `--claim`
+values. Repeat the flag for each array entry. Include the claims and subject
+values you want to keep after `--add-oidc`. For example, replace the old `sub`
+on `g4` with one exact subject. This keeps `project_id` and leaves `can`
+unchanged.
+
+```bash
+vb --url "${BOARD_URL:?Set BOARD_URL to the existing board URL}" \
+  grants update g4 \
+  --remove-oidc https://gitlab.com --claim 'sub=project_path:acme/api:*' \
+  --claim project_id=42 \
+  --add-oidc https://gitlab.com \
+  --claim sub=project_path:acme/api:ref_type:branch:ref:main \
+  --claim project_id=42
+```
+
+Remove a principal without a replacement only if the caller no longer needs
+the grant and its restrictions stay in place. Omit `--add-oidc` and its claims.
+If that leaves the grant empty, use `vb grants revoke` with its ID instead.
 
 ## A backend of your own
 

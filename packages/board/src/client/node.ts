@@ -84,7 +84,8 @@ function localToken(url: string): { token: string } | null {
   }
 }
 
-const expiry = (token: string): number => {
+/** When `token` expires, in milliseconds: its `exp`, or five minutes from now for one that says none. */
+export const expiry = (token: string): number => {
   try {
     const { exp } = decodeJwt(token)
     return exp ? exp * 1000 : Date.now() + 5 * 60_000
@@ -311,7 +312,11 @@ async function tokenFromVercelCli(project: { id: string; team: string | null }):
   }
 }
 
-async function githubActionsToken(audience: string): Promise<string> {
+/** Whether this is a GitHub Actions job that may ask GitHub for an OIDC token (`permissions: id-token: write`). */
+export const inGithubActions = () => !!process.env.ACTIONS_ID_TOKEN_REQUEST_URL && !!process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
+/** The job's GitHub Actions OIDC token, made out to `audience`. */
+export async function githubActionsToken(audience: string): Promise<string> {
   const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL!)
   url.searchParams.set('audience', audience)
   const response = await fetch(url, {
@@ -430,7 +435,7 @@ export function connect(
       return { token: joined, expiresAt: Infinity }
     }
     const discovered = await discover()
-    if (process.env.ACTIONS_ID_TOKEN_REQUEST_URL && process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    if (inGithubActions()) {
       const token = await githubActionsToken(url)
       source = 'GitHub Actions OIDC'
       return { token, expiresAt: expiry(token) }

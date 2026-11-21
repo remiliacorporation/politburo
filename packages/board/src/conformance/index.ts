@@ -72,9 +72,8 @@ export type ConformanceOptions = {
    * no grant names, a `viewer` (a person's email or ID whose team role is viewer), to check
    * that a role caps what grants give, and an `app` installed on the board's team (its slug or
    * client ID), which a local board has none of. Checks that grant to someone besides the project
-   * name the app when there's one, and the repository otherwise: Vercel's board takes no GitHub
-   * principal in a grant, so give it an app. None may be the run's own: it throws before it
-   * writes.
+   * name the app when there's one, and the repository otherwise. None may be the run's own: it
+   * throws before it writes.
    */
   principals?: { project?: string; repository?: string; viewer?: string; app?: string }
 }
@@ -349,7 +348,7 @@ const grantFor = (ctx: Context) => ({ principals: [projectFor(ctx)], can: { [`${
 
 /**
  * Whom the checks that grant to someone besides the project name: the app the run was given, or
- * else the repository, which a board that takes no GitHub principal in a grant refuses (Vercel's).
+ * else the repository, which a board that takes no GitHub principal in a grant refuses.
  */
 const granteeOf = (ctx: Context) =>
   ctx.principals.app !== null ? ({ kind: 'app', app: ctx.principals.app } as const) : ({ kind: 'github', repository: ctx.principals.repository } as const)
@@ -3278,7 +3277,7 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
         else if (!requires && OPTIONAL.has(group) && error instanceof BoardError && error.status === 501 && (!taskAuthority || error.code === 'no_tasks')) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
         // Vercel's API takes watchers only from a deployment: a run as anyone else can't check them.
         else if (group === 'watchers' && error instanceof BoardError && error.code === 'watchers_need_project') checks.push({ group, name, status: 'skipped', detail: 'only a deployment registers watchers here' })
-        // Vercel's API takes no GitHub or OIDC principal in a grant.
+        // A board that takes no GitHub or OIDC principal in a grant can't check what names one.
         else if (group === 'grants' && error instanceof BoardError && error.code === 'unsupported_principal') checks.push({ group, name, status: 'skipped', detail: 'this board takes no GitHub or OIDC principals in a grant' })
         else if (group === 'invites' && !(error instanceof Mismatch)) checks.push({ group, name, status: 'failed', detail: inviteError(error, 'checking invites').message })
         else checks.push({ group, name, status: 'failed', detail: error instanceof Error ? error.message : String(error) })

@@ -103,7 +103,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/control/resume` | `{ reason }`: reopen work admission |
 | GET | `/channels` | A page: `{ channels, cursor, next }`, each `{ path, lastIndex?, messages?, threads? }`. `prefix` keeps the ones whose path starts with it, `limit` is how many (100 by default, 500 at most), and `after` takes a page's `next`, which is null on the last. By path on `local()`, and on Vercel's board under a prefix. A board that doesn't count them, as one on Vercel's API doesn't, leaves the counts out |
 | POST | `/channels` | `{ path }`: makes a channel before anything posts to it. `{ channel, created }`, 201 when it made it, and 200 with `created: false` for one that's there, which it leaves as it is. A key it doesn't know is 400, so `private` makes nothing |
-| GET | `/actors` | `{ actors, cursor }`: each `{ id, kind, handle, name, avatar, via?, platform?, verified? }`, sorted by handle. `verified: true` is for one the board checked rather than took their name from what they sent: shown under the handle a credential it checked gave them (an OIDC token, a host's verifier), as itself or after `via` |
+| GET | `/actors?id=` | `{ actors, cursor }`: each `{ id, kind, handle, name, avatar, via?, platform?, verified? }`, sorted by handle. `id` (repeated, up to 100) answers only those actors, leaving out one the board doesn't have. `verified: true` is for one the board checked rather than took their name from what they sent: shown under the handle a credential it checked gave them (an OIDC token, a host's verifier), as itself or after `via` |
 | GET | `/messages` | `{ messages, cursor }`: one channel's messages. See [Listing a channel's messages](#listing-a-channels-messages) |
 | GET | `/threads` | `{ threads, cursor, older }`: a summary per matching thread. See [Listing threads](#listing-threads) |
 | GET | `/messages/:id` | The thread around any message: `{ message, replies, cursor, schedules }`, where `message` is the root. `after`, one of its messages, answers the replies after it, and `limit` that many: the first after it, or without `after`, the newest |
@@ -387,11 +387,15 @@ none), newest last. On `local()`, filters read tables the board keeps from its
 log, where labels and mentions are an index lookup.
 
 Vercel's board keeps no search index, and lists threads one channel at a time.
-There, `by`, `mentions`, `text`, and `from` are 501 `not_supported`, and so is
+There, `by` and `from` are 501 `not_supported`, and so is
 a read with no `channel`, or with a pattern, unless `re` names one thread. It
 refuses them before it reads anything, and its message says what to do
 instead. `label`, `after`, `before`, and `re` work as on any board, in one
-channel.
+channel. `mentions` and `text` look through the one page of the channel's
+threads a read without them lists, `limit` of them before `before`, and keep
+those whose first or newest message matches; the page says how many it looked
+through as `scanned`, and its `older` pages back the same way. With `re`,
+`label`, or `after` they are 501 `not_supported`.
 
 A page read without `after` has `older`: the `before` for the next older page,
 or `null` when no thread is older. Pass it as it came; it isn't a message ID.
@@ -766,7 +770,14 @@ show `{ kind: 'user', userId, email }`, `{ kind: 'project', projectId, name,
 environments }`, and `{ kind: 'github', repositoryId, repository, … }`. One
 that verifies tokens itself takes a user's ID and a project's `prj_…`, and
 answers 400 `invalid_grant` for a name, as for a principal that would name
-more than it says. See [how grants combine](../01-board/09-access.md#how-grants-combine).
+more than it says. An `oidc` principal's `claims` name a `sub`, since its
+issuer signs tokens for everyone it serves. A `sub` matches as a prefix
+when its only `*` is last, right after a `:` or `/` with a character before
+the separator (`project_path:acme/api:*`). Other stored values match exactly.
+A missing `sub` or any other use of `*` in `sub` is 400 `invalid_grant` on
+creation or addition, not removal. 0.54.0 applies the prefix rule to stored
+grants too. For a local board, [audit stored subjects before upgrading](../01-board/09-access.md#before-you-upgrade).
+See [how grants combine](../01-board/09-access.md#how-grants-combine).
 
 ### Invites
 
@@ -1141,7 +1152,7 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 501 | `no_files` | an upload, a download, or a write that carries files, on a board that keeps no files |
 | 501 | `no_schemas` | a schema route on a board that keeps no schemas |
 | 501 | `no_direct_uploads` | a direct upload on a board that can't sign upload URLs, `local()` among them |
-| 501 | `not_supported` | on Vercel's board, what its API doesn't keep: for now files on a scheduled message, a post's `sync` targets, and [threads found](#listing-threads) by `by`, `mentions`, `text`, or `from`, or read across channels |
+| 501 | `not_supported` | on Vercel's board, what its API doesn't keep: for now files on a scheduled message, a post's `sync` targets, and [threads found](#listing-threads) by `by` or `from`, or read across channels |
 | 501 | `no_verifier` | a request to a board on board's default build, outside Node, with no `authenticate` |
 | 501 | `no_wake_by_path` | a `path` in `POST /watchers` on a board that wakes only a `url`: `` this board wakes a url, not a path: register `url` instead `` |
 | 502 | `no_client`, `list_failed`, … | the platform failed a source read |
