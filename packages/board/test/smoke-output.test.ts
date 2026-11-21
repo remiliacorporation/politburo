@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { expect, it } from 'vitest'
-import { hasCredential, watchServe } from './smoke-output.ts'
+import { createLeakCheck, watchServe } from './smoke-output.ts'
 
 it.each(['exit code 7', 'still running'])('redacts partial bearer output on startup failure (%s)', async (status) => {
   const stdout = 'starting\n'
@@ -31,41 +31,73 @@ it.each(['exit code 7', 'still running'])('redacts partial bearer output on star
   }
 }, 15_000)
 
-it('ignores 43-letter temp path components but flags the same strings outside paths', () => {
-  for (const component of ['a'.repeat(43), 'aB'.repeat(21) + 'A']) {
-    const stdout = `file  /tmp/${component}/board-smoke-test/sam.invite\n`
-    const stderr = `file  C:\\tmp\\${component}\\board-smoke-test\\sam.invite\n`
-    expect(hasCredential({ stdout, stderr }), 'invite paths are not credentials').toBe(false)
-    expect(hasCredential({ stdout: `claim=${component}/`, stderr }), 'a slash after a claim does not make it a path').toBe(true)
-  }
+const claim = 'fixture-claim-value'
+
+it.each([
+  ['before a JSON newline escape', `{"message":"claim: ${claim}\\nretry"}`],
+  ['after a slash', `/tmp/${claim}/file`],
+  ['after a backslash', `C:\\tmp\\${claim}\\file`],
+  ['adjacent to hyphens', `x-${claim}-y`],
+  ['adjacent to underscores', `x_${claim}_y`],
+  ['inside a local principal', `local:user:${claim}`],
+  ['inside a JSON handle', JSON.stringify({ handle: claim })],
+  ['inside a JSON name', JSON.stringify({ name: claim })],
+])('flags a tracked claim %s', (_label, text) => {
+  const check = createLeakCheck()
+  check.track(claim)
+  expect(check.hasCredential(text)).toBe(true)
 })
 
-it('flags bare claim tokens at the start, end, and next to punctuation', () => {
-  for (const bytes of [16, 32]) {
-    const token = Buffer.alloc(bytes, 0xff).toString('base64url')
-    expect(hasCredential({ stdout: `claim  ${token}`, stderr: '' }), 'bare claim at the end of stdout').toBe(true)
-    expect(hasCredential({ stdout: '', stderr: `claim  ${token}` }), 'bare claim at the end of stderr').toBe(true)
-    for (const stdout of [`${token} leaked`, `(${token}),`, `"${token}"`, `claim:${token}.`, `claim=${token};`]) {
-      expect(hasCredential({ stdout, stderr: '' }), 'bare claim next to a delimiter').toBe(true)
-    }
-  }
+it('flags a JSON-escaped secret without requiring the raw string to appear', () => {
+  const secret = 'fixture"\\\u0000value'
+  const text = JSON.stringify({ message: secret })
+  const check = createLeakCheck()
+  check.track(secret)
+  expect(text.includes(secret)).toBe(false)
+  expect(check.hasCredential(text)).toBe(true)
 })
 
-it.each(['\\n', '\\r', '\\t', '\\"', '\\\\', '\\/', '\\u2028'])('flags claims next to the JSON escape %s', (escape) => {
-  const token = Buffer.alloc(32, 0xff).toString('base64url')
-  const stdout = `{"message":"claim: ${token}${escape}retry"}`
-  const stderr = `{"message":"claim: ${escape}${token}"}`
-  expect(hasCredential({ stdout, stderr: '' }), 'claim before the escape').toBe(true)
-  expect(hasCredential({ stdout: '', stderr }), 'claim after the escape').toBe(true)
+const component = 'a'.repeat(43)
+const handle = 'integrationtestbuildgw'
+const principal = `local:user:${handle}`
+
+it.each([
+  ['a TMPDIR path', `/tmp/${component}/board-smoke-test/sam.invite`],
+  ['a Windows path', `C:\\tmp\\${component}\\board-smoke-test\\sam.invite`],
+  ['a JSON path with escaped slashes', `{"file":"\\/tmp\\/${component}\\/sam.invite"}`],
+  ['a whoami JSON handle', JSON.stringify({ actor: principal, principal, handle, name: handle, source: 'vb serve' })],
+  ['an untracked claim-shaped word', `message: ${component}`],
+])('does not guess credentials in %s', (_label, text) => {
+  const check = createLeakCheck()
+  check.track(claim)
+  expect(check.hasCredential(text)).toBe(false)
 })
 
-it('ignores a 22-character OS user handle in whoami output, but not a bare claim of the same shape', () => {
-  const handle = 'integrationtestbuildgw'
-  const principal = `local:user:${handle}`
-  const minimal = JSON.stringify({ handle })
-  const whoami = JSON.stringify({ actor: principal, principal, handle, name: handle, source: 'vb serve' })
-  expect(hasCredential({ stdout: minimal, stderr: '' }), 'JSON handle is not a credential').toBe(false)
-  expect(hasCredential({ stdout: whoami, stderr: '' }), 'JSON identity is not a credential').toBe(false)
-  expect(hasCredential({ stdout: `${handle} (${principal})\n`, stderr: '' }), 'text identity is not a credential').toBe(false)
-  expect(hasCredential({ stdout: JSON.stringify({ handle, message: `claim: ${handle}` }), stderr: '' }), 'same shape in a message is a possible claim').toBe(true)
+it('ignores empty and short secrets', () => {
+  const check = createLeakCheck()
+  check.track('')
+  check.track('shorter')
+  expect(check.hasCredential('a shorter message')).toBe(false)
+})
+
+it.each([
+  ['an invite prefix', `vbi_${component}`],
+  ['a join prefix', `vbj_${component}`],
+  ['a JWT', 'eyJfixture.payload.signature'],
+  ['a secret key', '{"secret":"fixture"}'],
+  ['a token key', '{"token" : "fixture"}'],
+])('still flags %s without a tracked secret', (_label, text) => {
+  expect(createLeakCheck().hasCredential(text)).toBe(true)
+})
+
+it('checks previously captured output when it learns another secret', () => {
+  const check = createLeakCheck()
+  const text = `path  /${claim}/report`
+  check.capture('CLI stdout', 'task claimed')
+  check.capture('server stderr', text)
+  expect(check.findLeak()).toBeUndefined()
+
+  check.track(claim, 'claim file')
+  check.track('another-fixture', 'invite file')
+  expect(check.findLeak()).toBe(`server stderr (length ${text.length}) matched claim file (length ${claim.length})`)
 })
