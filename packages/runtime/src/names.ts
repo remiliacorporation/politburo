@@ -43,9 +43,16 @@ export const namePool = Object.freeze([
   'KAMAZ', // Kama automobile plant
 ] as const)
 
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u
+
 /** Pick the first pool name not in use. Pass the names of everything alive that holds one. */
 export function pickName(inUse: Iterable<string>): string {
-  const used = new Set(inUse)
+  const used = new Set<string>()
+  for (const name of inUse) {
+    if (typeof name !== 'string') throw new TypeError('each in-use name must be a string')
+    if (CONTROL_OR_FORMAT.test(name)) throw new RangeError('in-use names must not contain control or format characters')
+    used.add(name)
+  }
   for (const name of namePool) {
     if (!used.has(name)) return name
   }
@@ -54,6 +61,8 @@ export function pickName(inUse: Iterable<string>): string {
 
 /** A spawner's title: `<TAG> <NAME>`, with the name from the pool. */
 export function spawnerTitle(tag: string, name: string): string {
+  if (typeof tag !== 'string') throw new TypeError('spawner tag must be a string')
+  if (CONTROL_OR_FORMAT.test(tag)) throw new RangeError('spawner tag must not contain control or format characters')
   if (!tag || /[\s\p{White_Space}]/u.test(tag)) {
     throw new RangeError('spawner tag must be nonempty and contain no whitespace')
   }

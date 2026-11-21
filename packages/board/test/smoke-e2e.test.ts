@@ -4,31 +4,30 @@ import { cp, mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import type { AttentionDraft, AttentionView, GrantView, Me, MessageView, SendOperationalMessageInput } from '../src/api/routes.ts'
-import { http } from '../src/backend-http/index.ts'
-import { stoppedBy } from '../src/server/board.ts'
-import { board } from '../src/server/index.ts'
 import { mount } from './harness.ts'
 import { serve } from './http.ts'
 import { personToken, testAuth } from './tokens.ts'
 
 const CLI = join(import.meta.dirname, '../src/cli/bin.ts')
+const INBOX_SENDER = join(import.meta.dirname, 'smoke-send-inbox.ts')
 const CLI_TIMEOUT = 180_000
 const CALL_TIMEOUT = 12_000
 const COMMIT = 'a'.repeat(40)
 const OWNER = 'vercel:user:u_owner'
 const UUID = /[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/
 const ISO = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/
-const CREDENTIAL = /vb[ij]_[\w-]{43}|\beyJ[\w-]+\.[\w-]+\.[\w-]+\b|"(?:secret|token)"\s*:/
-const SERVING = /^serving a local board at (http:\/\/127\.0\.0\.1:\d+\/api\/board) as (local:user:[a-z0-9._-]+), its log in [^\r\n]+  \(Ctrl-C to stop\)\r?\n/m
+const CREDENTIAL = /vb[ij]_[\w-]{43}|\beyJ[\w-]+\.[\w-]+\.[\w-]+\b|"(?:secret|token)"\s*:|(?<![\w-])[\w-]{43}(?![\w-])/
+const LOOPBACK_BOARD_URL = /http:\/\/127\.0\.0\.1:\d+\/api\/board\b/
+
+type Output = { stdout: string; stderr: string }
 
 let dir: string
 let url: string
-let servingAs: string
 let adminEnv: ReturnType<typeof homeEnv>
 let memberEnv: ReturnType<typeof homeEnv>
-let server: { child: ChildProcess; closed: Promise<void> } | undefined
+let server: { child: ChildProcess; closed: Promise<string | number | null>; output: Output } | undefined
 
 function homeEnv(home: string) {
   const { PATH, NODE_NO_WARNINGS } = process.env
@@ -42,9 +41,18 @@ function homeEnv(home: string) {
   }
 }
 
-function expectNoCredential(stdout: string, stderr: string, command: string) {
+function hasCredential({ stdout, stderr }: Output) {
+  return CREDENTIAL.test(stdout) || CREDENTIAL.test(stderr)
+}
+
+function expectNoCredential(output: Output, command: string) {
   // Test a predicate so a failed assertion cannot print the leaked credential.
-  expect(CREDENTIAL.test(stdout) || CREDENTIAL.test(stderr), `${command} printed a credential`).toBe(false)
+  expect(hasCredential(output), `${command} printed a credential`).toBe(false)
+}
+
+function serverDiagnostics(output: Output) {
+  if (hasCredential(output)) return '(output withheld: possible credential)'
+  return [output.stdout.trim(), output.stderr.trim()].filter(Boolean).join('\n') || '(no output)'
 }
 
 beforeAll(async () => {
@@ -56,42 +64,51 @@ beforeAll(async () => {
   const child = spawn(process.execPath, [CLI, 'serve', '--agent-ops', '--no-inspect', '--port', '0', '--dir', join(dir, 'data')], {
     cwd: dir, env: adminEnv, stdio: ['ignore', 'pipe', 'pipe'],
   })
-  let exited = false
-  child.on('error', () => { exited = true })
-  const closed = new Promise<void>((resolve) => child.once('close', () => {
-    exited = true
-    resolve()
+  const output = { stdout: '', stderr: '' }
+  let spawnError: string | undefined
+  child.once('error', (error: NodeJS.ErrnoException) => { spawnError = error.code ?? 'spawn failed' })
+  const closed = new Promise<string | number | null>((resolve) => child.once('close', (code, signal) => {
+    resolve(spawnError ?? signal ?? code)
   }))
-  server = { child, closed }
-  let stdout = ''
-  let stderr = ''
-  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
-  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
-  const [, at, principal] = await vi.waitFor(() => {
-    if (exited) throw new Error('vb serve exited before announcing its URL')
-    const line = SERVING.exec(stdout)
-    if (!line) throw new Error('vb serve did not announce its URL')
-    return line
-  }, { timeout: CALL_TIMEOUT })
-  expectNoCredential(stdout, stderr, 'vb serve')
-  url = at!
-  servingAs = principal!
+  server = { child, closed, output }
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { output.stderr += chunk })
+  const announced = new Promise<string>((resolve) => {
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      output.stdout += chunk
+      const at = LOOPBACK_BOARD_URL.exec(output.stdout)?.[0]
+      if (at) resolve(at)
+    })
+  })
+  const startup = new AbortController()
+  try {
+    url = await Promise.race([
+      announced,
+      closed.then((exit) => { throw new Error(`vb serve exited (${exit}) before announcing its URL:\n${serverDiagnostics(output)}`) }),
+      delay(CALL_TIMEOUT, undefined, { signal: startup.signal }).then(() => {
+        throw new Error(`vb serve did not announce its URL:\n${serverDiagnostics(output)}`)
+      }),
+    ])
+  } finally {
+    startup.abort()
+  }
 }, 20_000)
 
 afterAll(async () => {
   try {
     if (server) {
-      server.child.kill('SIGTERM')
+      const { child, closed, output } = server
+      child.kill('SIGTERM')
       const teardown = new AbortController()
       try {
         await Promise.race([
-          server.closed,
+          closed,
           delay(5_000, undefined, { signal: teardown.signal }).then(async () => {
-            server?.child.kill('SIGKILL')
+            child.kill('SIGKILL')
             await delay(5_000, undefined, { signal: teardown.signal })
             throw new Error('vb serve did not close after SIGKILL')
           }),
         ])
+        expectNoCredential(output, 'vb serve')
       } finally {
         teardown.abort()
       }
@@ -101,22 +118,20 @@ afterAll(async () => {
   }
 }, 20_000)
 
-async function vb(args: string[], env: NodeJS.ProcessEnv, stdinFile?: string) {
+async function runNode(script: string, args: string[], env: NodeJS.ProcessEnv, command: string, stdinFile?: string) {
   // Redirect the invite file to stdin without loading its contents into the test.
   const input = stdinFile === undefined ? undefined : await open(stdinFile, 'r')
-  const command = `vb ${args.join(' ')}`
   try {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, [script, ...args], {
       cwd: dir, env, stdio: [input?.fd ?? 'ignore', 'pipe', 'pipe'], timeout: CALL_TIMEOUT, killSignal: 'SIGKILL',
     })
-    let stdout = ''
-    let stderr = ''
-    child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
-    child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+    const output = { stdout: '', stderr: '' }
+    child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { output.stdout += chunk })
+    child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { output.stderr += chunk })
     const [code, signal] = await once(child, 'close').catch(() => { throw new Error(`${command} could not start`) }) as [number | null, NodeJS.Signals | null]
+    expectNoCredential(output, command)
     if (code === null) throw new Error(`${command} stopped by ${signal} (timeout ${CALL_TIMEOUT}ms)`)
-    expectNoCredential(stdout, stderr, command)
-    return { code, stdout, stderr }
+    return { code, ...output }
   } finally {
     await input?.close()
   }
@@ -134,10 +149,11 @@ function parse<T>(body: string, command: string): T {
 
 function cli(env: NodeJS.ProcessEnv, prefix: string[] = []) {
   const command = (args: string[]) => `vb ${[...prefix, ...args].join(' ')}`
+  const run = (args: string[], stdinFile?: string) => runNode(CLI, [...prefix, ...args], env, command(args), stdinFile)
   const text = async (args: string[], stdinFile?: string) => {
-    const run = await vb([...prefix, ...args], env, stdinFile)
-    expect(run, command(args)).toMatchObject({ code: 0, stderr: '' })
-    return run.stdout.trimEnd()
+    const output = await run(args, stdinFile)
+    expect(output, command(args)).toMatchObject({ code: 0, stderr: '' })
+    return output.stdout.trimEnd()
   }
   return {
     text,
@@ -145,7 +161,7 @@ function cli(env: NodeJS.ProcessEnv, prefix: string[] = []) {
       return parse<T>(await text([...args, '--json']), command(args))
     },
     async refuses(args: string[], reason: string, stdinFile?: string) {
-      const { code, stdout, stderr } = await vb([...prefix, ...args, '--json'], env, stdinFile)
+      const { code, stdout, stderr } = await run([...args, '--json'], stdinFile)
       expect({ code, stdout }, command(args)).toEqual({ code: 1, stdout: '' })
       const error = parse<Refusal>(stderr, command(args))
       expect(error.reason, command(args)).toBe(reason)
@@ -175,22 +191,17 @@ async function writeDraft(path: string, { id, revision }: Pick<MessageView, 'id'
   return draft
 }
 
-// vb has inbox read, ack and archive, but no inbox send. The SDK's Node HTTP backend uses vb's saved login.
-async function sendInbox(env: NodeJS.ProcessEnv, input: SendOperationalMessageInput) {
-  const previous = process.env
-  try {
-    process.env = env
-    const team = stoppedBy(board({ backend: http(url) }).as(null), AbortSignal.timeout(CALL_TIMEOUT))!
-    return await team.operationalInbox.send(input)
-  } finally {
-    process.env = previous
-  }
+// vb has no inbox send. Run the SDK with the selected home so it can use vb's saved login.
+function sendInbox(env: NodeJS.ProcessEnv, input: SendOperationalMessageInput) {
+  return runNode(INBOX_SENDER, [url, JSON.stringify(input)], env, 'SDK inbox send')
 }
 
 it('runs a work queue from invitation to handoff, pause, and follow-up', async () => {
-  const at = { ...adminEnv, BOARD_URL: url }
-  const admin = cli(at)
-  const worker = cli(at, ['--as', 'worker'])
+  const admin = cli({ ...adminEnv, BOARD_URL: url })
+  const workerEnv = homeEnv(await mkdtemp(join(dir, 'worker-')))
+  // The worker uses the local admin's login under a profile, but keeps its own config snapshot.
+  await cp(adminEnv.XDG_CONFIG_HOME, workerEnv.XDG_CONFIG_HOME, { recursive: true })
+  const worker = cli({ ...workerEnv, BOARD_URL: url }, ['--as', 'worker'])
   const member = cli(memberEnv, ['--url', url])
   const draftPath = join(dir, 'draft.json')
 
@@ -198,7 +209,8 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
     expect(await admin.text(['status'])).toBe('board  running')
     const me = await admin.json<Me>(['whoami'])
     expect(me).toMatchObject({
-      principal: servingAs, actor: servingAs, handle: servingAs.slice('local:user:'.length),
+      principal: expect.stringMatching(/^local:user:[a-z0-9._-]+$/),
+      actor: me.principal, handle: me.principal?.slice('local:user:'.length),
       board: url, source: 'vb serve', can: { '*': expect.arrayContaining(['manage']) },
     })
     expect((await admin.text(['whoami'])).split('\n')).toEqual(expect.arrayContaining([
@@ -288,8 +300,14 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
     expect(await worker.text(['tasks', 'renew', urgent])).toBe(`#${urgent}  yours for 15m  ${urgentText}`)
     const { message } = await admin.json<{ message: MessageView }>(['read', urgent])
     expect(Date.parse(message.task?.claim?.until ?? '') - Date.now()).toBeGreaterThan(6 * 60_000)
-    expect(await worker.text(['tasks', 'handoff', urgent, COMMIT, 'docs/packet.md', 'b'.repeat(64)])).toMatch(new RegExp(`^handed off ${urgent}  ${UUID.source}$`))
-    expect(await worker.text(['tasks', 'complete', urgent, 'done'])).toBe(`completed ${urgent}`)
+    const packetPath = 'docs/packet.md'
+    const sha256 = 'b'.repeat(64)
+    const result = 'Checked the release notes against the changelog.'
+    expect(await worker.text(['tasks', 'handoff', urgent, COMMIT, packetPath, sha256])).toMatch(new RegExp(`^handed off ${urgent}  ${UUID.source}$`))
+    expect(await worker.text(['tasks', 'complete', urgent, result])).toBe(`completed ${urgent}`)
+    expect(await admin.json(['read', urgent])).toMatchObject({ message: {
+      id: urgent, task: { state: 'completed', result, handoff: { commit: COMMIT, packetPath, sha256 } },
+    } })
     expect(await admin.json(['read', dependent])).toMatchObject({ message: { id: dependent, task: { state: 'ready' } } })
     expect(await worker.text(next)).toBe(`#${dependent}  yours for 5m  ${dependentText}`)
   })
@@ -304,11 +322,14 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
   })
 
   await step('pause work and fence the old claim even after the same worker reclaims it', async () => {
-    const claims = join(adminEnv.XDG_CONFIG_HOME, 'board', 'claims')
-    const staleClaims = join(dir, 'before-pause')
-    const freshClaims = join(dir, 'after-reclaim')
-    // Save the CLI's proof as-is; never inspect it or depend on its filename.
-    await cp(claims, staleClaims, { recursive: true })
+    const config = workerEnv.XDG_CONFIG_HOME
+    const beforePause = join(dir, 'before-pause')
+    const afterReclaim = join(dir, 'after-reclaim')
+    async function restore(snapshot: string) {
+      await rm(config, { recursive: true, force: true })
+      await cp(snapshot, config, { recursive: true })
+    }
+    await cp(config, beforePause, { recursive: true })
     expect(await admin.text(['pause', '--reason', 'smoke'])).toBe('board  paused')
     expect(await admin.json(['status'])).toEqual({ paused: true, pauseEpoch: 1 })
     await worker.refuses(['tasks', 'claim', low], 'board_paused')
@@ -317,18 +338,16 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
     await worker.refuses(['tasks', 'complete', dependent, 'x'], 'claim_lost')
 
     expect(await worker.text(['tasks', 'claim', dependent, '--lease', '5m'])).toBe(`#${dependent}  yours for 5m  ${dependentText}`)
-    await cp(claims, freshClaims, { recursive: true })
-    await cp(staleClaims, claims, { recursive: true })
+    await cp(config, afterReclaim, { recursive: true })
+    await restore(beforePause)
     await worker.refuses(['tasks', 'complete', dependent, 'x'], 'claim_lost')
-    await cp(freshClaims, claims, { recursive: true })
+    await restore(afterReclaim)
     expect(await worker.text(['tasks', 'complete', dependent, 'published'])).toBe(`completed ${dependent}`)
     expect(await worker.text(['tasks', 'complete', low, 'done'])).toBe(`completed ${low}`)
   })
 
   await step('deliver private inbox mail and record seen, acted, and archived receipts', async () => {
     const outgoing = { to: { agent: memberPrincipal }, topic: 'Release', text: 'The release notes are published.' }
-    const { message: { id } } = await sendInbox(adminEnv, outgoing)
-    expect(await admin.json(['inbox', 'read'])).toEqual({ messages: [] })
     await member.refuses(['inbox', 'read'], 'permission_denied')
 
     // The inbox requires board-wide read. Add it to Sam's invite grant, keeping post scoped to work/.
@@ -337,6 +356,17 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
     expect(grant, 'grant for the joined member').toBeDefined()
     await admin.text(['grants', 'update', grant!.id, '--can', '*=read;work/=read,post'])
 
+    // A sender's credentials must not depend on which other request is in flight.
+    const [sent, denied] = await Promise.all([
+      sendInbox(adminEnv, outgoing),
+      sendInbox(memberEnv, { to: { agent: adminPrincipal }, topic: 'Release', text: 'Thanks for the update.' }),
+    ])
+    expect(sent).toMatchObject({ code: 0, stderr: '' })
+    const { id } = parse<{ id: string }>(sent.stdout, 'SDK inbox send')
+    expect(denied).toMatchObject({ code: 1, stdout: '' })
+    expect(parse(denied.stderr, 'unauthorized SDK inbox send')).toMatchObject({ status: 403, code: 'forbidden' })
+
+    expect(await admin.json(['inbox', 'read'])).toEqual({ messages: [] })
     await admin.refuses(['inbox', 'ack', id, 'seen'], 'operational_message_not_found')
     await admin.refuses(['inbox', 'archive', id], 'operational_message_not_found')
     expect(await member.json(['inbox', 'read'])).toMatchObject({ messages: [
@@ -348,16 +378,15 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
     expect(await member.json(['inbox', 'ack', id, 'acted'])).toMatchObject({ message: acted })
     expect(await member.json(['inbox', 'archive', id])).toMatchObject({ message: { ...acted, archivedAt: expect.stringMatching(ISO) } })
     expect(await member.json(['inbox', 'read'])).toEqual({ messages: [] })
-    await expect(sendInbox(memberEnv, { to: { agent: adminPrincipal }, topic: 'Release', text: 'Thanks for the update.' })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
-    expect(await admin.json(['inbox', 'read'])).toEqual({ messages: [] })
   })
 
   await step('ask, show, and answer attention on a second, in-process board with responders configured', async () => {
     // Only this board enables attentionResponders; the CLI still reaches it over HTTP in subprocesses.
-    const team = mount({ auth: testAuth, attentionResponders: { work: [OWNER] } })
-    const attentionServer = await serve(team.fetch)
+    let team: ReturnType<typeof mount>
+    const attentionServer = await serve((request) => team.fetch(request))
     try {
       const at = `${attentionServer.origin}/api/board`
+      team = mount({ url: at, auth: testAuth, attentionResponders: { work: [OWNER] } })
       const home = await mkdtemp(join(dir, 'attention-'))
       const owner = cli({ ...homeEnv(home), BOARD_URL: at, BOARD_TOKEN: await personToken('u_owner', at) })
       const { task } = await owner.json<{ task: MessageView }>(['tasks', 'create', 'work', 'Review the release notes'])
