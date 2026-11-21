@@ -163,8 +163,10 @@ stage move records who made it and why.
 
 Discovery lists `accessFence: 1` when a board checks the scoper's grants
 at the same time it appends the move. A grant revocation that lands first
-can stop the move, but it does not undo one that already landed. A board
-without this fence refuses staged-scoper writes with `no_access_fence`.
+can stop the move, but it does not undo one that already landed.
+`accessFenceScope: 'process'` limits this guarantee to
+[one local store instance](./10-local.md#options). A board without the fence
+refuses staged-scoper writes with `no_access_fence`.
 
 | From | To | How |
 | --- | --- | --- |

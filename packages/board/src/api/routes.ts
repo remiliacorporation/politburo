@@ -1028,8 +1028,12 @@ export type SchemaView = {
  */
 export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention'> & {
   priority: TaskPriority
-  /** The current attention request, when the task has one. */
+  /** The latest attention request, when the task has one. */
   attentionId?: string
+  /** The request's recorded status. Read the attention route to check whether its evidence is still current. */
+  attentionStatus?: NonNullable<Task['attention']>['status']
+  /** The deadline of a request that is still recorded as pending. */
+  attentionExpiresAt?: string
   /** The tasks it waits for, by their IDs. */
   needs: string[]
   /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
@@ -1130,36 +1134,27 @@ export type BoardEventView = PublicBoardEvent extends infer E
     : never
   : never
 
-export type Discovery = {
-  version: string
-  url: string
-  audience: string
-  team_id: string | null
-  project_id: string | null
-  /**
-   * The board's name, where boards have one: a team's board in Vercel's API (`General`, the default's).
-   * A handle on one says it, for a UI to show which board it's on; `GET /` on a board never does.
-   */
+const DiscoveryResponse = z.object({
+  version: z.string(),
+  url: z.string(),
+  audience: z.string(),
+  team_id: z.string().nullable(),
+  project_id: z.string().nullable(),
+  sync: z.array(z.object({ key: z.string(), platform: z.string() })).describe('The sync entries. Each key names a webhook and inbox.'),
+  wake_by_path: z.boolean().optional().describe("POST /watchers takes a path for waking the caller's Vercel project through Deployment Protection."),
+  workLifecycle: z.literal(1).optional().describe('New tasks use the opt-in work lifecycle.'),
+  accessFence: z.literal(1).optional().describe('Staged-scoper writes are atomic with access changes within the advertised fence scope.'),
+  accessFenceScope: z.literal('process').optional().describe('One store instance in one process. Separate local backends on the same SQLite file are not fenced.'),
+  task_authority: z.boolean().optional().describe('The board enforces bound claims, parking, and handoffs.'),
+  task_attention: z.literal(true).optional().describe('The board keeps structured task attention requests.'),
+  agent_ops: z.literal(true).optional().describe('The board keeps an agent registry.'),
+  agent_intents: z.literal(true).optional().describe('The board keeps command intents and run health.'),
+})
+
+/** Board discovery. `accessFenceScope: 'process'` means one store instance in one process. */
+export type Discovery = z.infer<typeof DiscoveryResponse> & {
+  /** The board's name, where boards have one. A handle may show it; `GET /` never does. */
   name?: string
-  /** The board's sync entries: `key` names its webhook and inbox, `platform` is e.g. `slack`. */
-  sync: { key: string; platform: string }[]
-  /**
-   * Whether `POST /watchers` takes a `path`: the board wakes the caller's own Vercel project there,
-   * through its Deployment Protection. A board that can't find a project's deployments leaves it out.
-   */
-  wake_by_path?: boolean
-  /** New tasks use the opt-in work lifecycle. */
-  workLifecycle?: 1
-  /** Staged-scoper writes are atomic with access changes. */
-  accessFence?: 1
-  /** True when the board enforces bound claims, parking, and handoffs. */
-  task_authority?: boolean
-  /** Whether this board is configured to keep structured task attention requests. */
-  task_attention?: true
-  /** This board opts into the fork's agent registry. */
-  agent_ops?: true
-  /** Advertises command intents and run health. `agent_ops` alone only advertises the registry. */
-  agent_intents?: true
 }
 
 /**
@@ -1347,7 +1342,7 @@ export type InboxEntry = {
 /** The route table: method, path, and the schemas that validate input. */
 export const routes = {
   /** Where the board is, its project, and its sync entries. No token. */
-  discovery: { method: 'GET', path: '/' },
+  discovery: { method: 'GET', path: '/', response: DiscoveryResponse },
   me: { method: 'GET', path: '/me' },
   /** The board's current work admission and pause epoch. */
   status: { method: 'GET', path: '/control' },
@@ -1421,9 +1416,12 @@ export const routes = {
   unparkTask: { method: 'POST', path: '/tasks/:id/unpark', body: ParkTaskBody },
   /** Records a packet reference and hash under a live claim; it verifies no external bytes. */
   handoffTask: { method: 'POST', path: '/tasks/:id/handoff', body: HandoffTaskBody },
-  reopenTask: { method: 'POST', path: '/tasks/:id/reopen', body: ReopenTaskBody },
-  scopeTask: { method: 'POST', path: '/tasks/:id/scope', body: ScopeTaskBody },
-  stageTask: { method: 'POST', path: '/tasks/:id/stage', body: StageTaskBody },
+  reopenTask: {
+    method: 'POST', path: '/tasks/:id/reopen', body: ReopenTaskBody,
+    bodyDescription: 'Staged work requires both reason and ifVersion. Legacy work needs no body.',
+  },
+  scopeTask: { method: 'POST', path: '/tasks/:id/scope', body: ScopeTaskBody, bodyRequired: true },
+  stageTask: { method: 'POST', path: '/tasks/:id/stage', body: StageTaskBody, bodyRequired: true },
   assignTask: { method: 'POST', path: '/tasks/:id/assign', body: AssignTaskBody },
   /** Replaces what a task waits for, while no one holds it and it isn't finished. */
   setTaskNeeds: { method: 'POST', path: '/tasks/:id/needs', body: TaskNeedsBody },

@@ -177,6 +177,17 @@ describe.each(['memory', 'sqlite'] as const)('%s store', (kind) => {
     expect((await ctx.admin.thread(root.id)).message.task?.work?.stage).toBe('scoped')
   })
 
+  it('refuses staged reopen without an access fence', async () => {
+    const store = { ...await openStore(kind), fence: undefined }
+    const { team, admin, scoper, grantManage } = await setup(store)
+    await grantManage()
+    const { task: root } = await admin.tasks.create('work', 'Staged task')
+    // The board's fixed-access identity can make a rejected task without the fence.
+    const rejected = await team.tasks.stage(root.id, 'rejected', 'Change deferred', { ifVersion: root.version })
+    await expect(scoper.tasks.reopen(root.id, 'Change accepted again', { ifVersion: rejected.version })).rejects.toMatchObject(NO_FENCE)
+    expect((await admin.thread(root.id)).message).toMatchObject({ version: rejected.version, task: { work: { stage: 'rejected' } } })
+  })
+
   it('refuses scope and stage without a fence but still writes legacy tasks', async () => {
     const store = { ...await openStore(kind), fence: undefined }
     const legacy = await setup(store, false)

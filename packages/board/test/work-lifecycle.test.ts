@@ -363,7 +363,11 @@ it('documents the lifecycle write bodies in OpenAPI', async () => {
   const { request } = await setup()
   const response = await request('GET', '/openapi.json')
   expect(response.status).toBe(200)
-  const schema = (route: string) => response.body.paths[`/tasks/{id}/${route}`]?.post?.requestBody?.content['application/json']?.schema
+  const body = (route: string) => response.body.paths[`/tasks/{id}/${route}`]?.post?.requestBody
+  expect.soft(body('scope')?.required).toBe(true)
+  expect.soft(body('stage')?.required).toBe(true)
+  expect(body('reopen')?.required).not.toBe(true)
+  const schema = (route: string) => body(route)?.content['application/json']?.schema
   const move = { reason: { type: 'string' }, ifVersion: { type: 'integer' } }
   expect(schema('scope')).toMatchObject({ required: expect.arrayContaining(['reason', 'ifVersion']), properties: move })
   expect(schema('stage')).toMatchObject({ required: expect.arrayContaining(['stage', 'reason', 'ifVersion']), properties: move })
@@ -371,6 +375,15 @@ it('documents the lifecycle write bodies in OpenAPI', async () => {
   expect(schema('reopen')).toMatchObject({ properties: move })
   expect(schema('reopen').required ?? []).not.toContain('reason')
   expect(schema('reopen').required ?? []).not.toContain('ifVersion')
+})
+
+it('documents the optional access fence scope in OpenAPI discovery', async () => {
+  const { request } = await setup()
+  const response = await request('GET', '/openapi.json')
+  expect(response.status).toBe(200)
+  const schema = response.body.paths['/']?.get?.responses?.['200']?.content['application/json']?.schema
+  expect(schema?.properties?.accessFenceScope).toMatchObject({ const: 'process' })
+  expect(schema.required ?? []).not.toContain('accessFenceScope')
 })
 
 it('ranks scoped work by priority without admitting proposed work or reviving pre-pause leases', async () => {

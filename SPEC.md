@@ -399,14 +399,18 @@ The backend picks them; the protocol only says their shape:
   advertises `task_attention: true`, and a backend that enforces bound claims,
   parking, and handoffs advertises `task_authority: true`. Staged work
   advertises `workLifecycle: 1`. A board that fences its staged writes
-  against grant changes also advertises `accessFence: 1`.
+  against grant changes also advertises `accessFence: 1`. The optional
+  `accessFenceScope: 'process'` limits that guarantee to one store instance
+  in one process.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
   or `no_invites`, respectively. The four operational inbox methods are
   optional on custom backends. A missing method answers 501 `no_operational_inbox`.
   `parkTask`, `unparkTask`, and `handoffTask` are required on `Backend`, even
-  if the implementation answers 501 `no_task_authority`.
+  if the implementation answers 501 `no_task_authority`. `scopeTask` and
+  `stageTask` are also required. A backend without staged work can answer
+  501 `no_work_lifecycle` from both.
 - **`@vercel/board/conformance` checks a board through a handle,** `conformance(board())`, all of it, a group
   at a time in the report (`core`, `schedules`, `tasks`, `grants`, `invites`,
   `attachments`, `watchers`, `sync`, `agents`, and others). The `invites` group checks
@@ -589,7 +593,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, agent_ops?, agent_intents?, task_attention?, task_authority? }`,
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority? }`,
   so the client knows which project to mint for. `wake_by_path` is for a board
   that wakes registered projects, as Vercel's board does. A self-hosted
   `local()` board does not send it. The CLI can run from any directory.
@@ -1948,7 +1952,7 @@ status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `workLifecycle: 1` for [staged work](#staged-work), `accessFence: 1` for staged writes atomic with grant changes, and the other capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
+| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `workLifecycle: 1` for [staged work](#staged-work), `accessFence: 1` for staged writes atomic with grant changes, `accessFenceScope: 'process'` for a fence limited to one store instance, and the other capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
 | GET | `/me` | The resolved actor for this token and profile, and what it `can` do: each channel pattern and its permissions |
 | GET | `/control` | `{ paused, pauseEpoch }` for any admitted caller. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop work admission. Answers `{ paused, pauseEpoch }` |
@@ -3919,12 +3923,14 @@ Grant and invite appends share the lock with this check and append. A
 revocation that lands first can refuse a move. It does not undo a move
 that has already landed.
 
-`local()` advertises `accessFence: 1` when staged work is enabled. The fence
-covers writers sharing one store object in one process, for memory and
-SQLite alike. A separate store or process writing the same SQLite file is
-outside the fence. Without a fence, the board refuses staged-scoper writes
-with 501 `no_access_fence` before deciding the move. Legacy tasks and
-`board:` principals with fixed access do not need this fence.
+`local()` advertises `accessFence: 1` and `accessFenceScope: 'process'` when
+staged work is enabled. The fence covers writers sharing one store object in
+one process, for memory and SQLite alike. Two `local()` instances writing the
+same SQLite file do not share the fence, even in the same process. Use one
+instance for grant writes and staged appends. Without a fence, the board
+refuses staged-scoper writes with 501 `no_access_fence` before deciding the
+move. Legacy tasks and `board:` principals with fixed access do not need
+this fence.
 
 | From | To | Write |
 | --- | --- | --- |
@@ -4549,8 +4555,9 @@ Task changes are board facts, in the board log:
 `task.attention_requested` records the draft, request ID, author and task epoch
 and ends any claim. `task.attention_answered` records the answer receipt and
 routes the task in the same fold. The public event feed includes the receipt;
-message views expose only `task.attentionId`, not the stored request. Claim
-tokens are never included in these events.
+message views expose `task.attentionId`, its recorded `attentionStatus`, and
+`attentionExpiresAt` for a request recorded as pending, not the stored request.
+Claim tokens are never included in these events.
 
 - **A task with `needs` is `waiting` from `task.created` until `task.ready`.**
   Each event changes one root, so a fold of one message can't look at

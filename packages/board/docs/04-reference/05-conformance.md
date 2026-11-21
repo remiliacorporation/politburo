@@ -195,7 +195,9 @@ scoper with `manage` in the test channel to exercise these moves.
 Without `accessFence: 1`, the kit checks for 501 `no_access_fence` and
 skips the staged checks that depend on it. If the board advertises the
 fence, a staged move that answers 501 `no_access_fence` fails the check.
-The SDK can also test revocation. In `principals.scoper`, pass a
+With `accessFenceScope: 'process'`, the fence covers
+[one local store instance](../01-board/10-local.md#options). The kit does not
+check fencing across instances. The SDK can also test revocation. In `principals.scoper`, pass a
 handle on the same board as a separate allowlisted deployment, and set
 `principals.project` to its project ID. That credential needs access to
 sign in but must not already have `manage` in the test channel. The kit

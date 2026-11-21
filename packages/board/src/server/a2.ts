@@ -522,7 +522,7 @@ function build(options: A2Options, binding: BoardBinding) {
         ...(attentionEnabled ? { task_attention: true } : {}),
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
-        ...(options.workLifecycle ? { workLifecycle: 1, ...(store.fence ? { accessFence: 1 } : {}) } : {}),
+        ...(options.workLifecycle ? { workLifecycle: 1, ...(store.fence ? { accessFence: 1, accessFenceScope: 'process' } : {}) } : {}),
         task_authority: true,
         ...(agents ? { agent_ops: true } : {}),
         ...(intents ? { agent_intents: true } : {}),

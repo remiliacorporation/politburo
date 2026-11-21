@@ -73,7 +73,8 @@ export type ConformanceOptions = {
    * principal in a grant, so give it an app. None may be the run's own: it throws before it
    * writes. To check staged grant revocation, pass `scoper`, a handle on the same board as an
    * allowlisted deployment of `project` (use its project ID). It must be able to sign in but not
-   * manage the check's channel without a test grant.
+   * manage the check's channel without a test grant. Discovery's `accessFenceScope: 'process'`
+   * describes one store instance in one process; these checks do not verify cross-instance fencing.
    */
   principals?: { project?: string; repository?: string; viewer?: string; app?: string; scoper?: Board }
 }

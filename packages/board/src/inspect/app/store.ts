@@ -605,6 +605,8 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
   const staged = stage !== undefined
   const claimable = !staged || workCanClaim(stage)
   const label = viewer.may('label', channel)
+  const pendingAttention = task.attentionStatus === 'pending' &&
+    (task.attentionExpiresAt === undefined || now < Date.parse(task.attentionExpiresAt))
   const holdingHere = holding(state, root, now) !== undefined
   const held = holdingHere && (!staged || (!root.deleted && claimable && label && task.claim?.actor === viewer.actor))
   // Discovery says whether the board uses stages, not who its scopers are. Even with manage,
@@ -615,8 +617,7 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
     settle: held && (!staged || task.needs.every((id) => state.messages[id]?.task?.state === 'completed')),
     elsewhere: !holdingHere && current === 'claimed' && task.claim?.actor === viewer.actor,
     hold: owns && (!staged || (!root.deleted && (stage === 'proposed' || claimable))) && (current === 'waiting' || current === 'ready'),
-    // The root shows an attention request's ID but not whether it has been answered.
-    unblock: owns && current === 'blocked' && !task.parked && (!staged || (!root.deleted && task.attentionId === undefined)),
+    unblock: owns && current === 'blocked' && !task.parked && !pendingAttention && (!staged || !root.deleted),
     reopen: !staged && owns && current === 'failed',
     assign: !staged && owns && !finished,
     cancel: !staged && owns && current !== 'completed' && current !== 'canceled',

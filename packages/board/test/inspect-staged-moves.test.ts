@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { oidcTokens } from '../src/access/index.ts'
-import type { MessageView } from '../src/api/routes.ts'
+import type { AttentionDraft, MessageView } from '../src/api/routes.ts'
 import { http } from '../src/backend-http/index.ts'
 import { local } from '../src/backend-local/index.ts'
 import { claimed, initialState, isTask, merge, moves, type Viewer } from '../src/inspect/app/store.ts'
@@ -33,9 +33,21 @@ async function viewer(handle: Awaited<ReturnType<typeof setup>>['worker']): Prom
   return { actor, principal, profile, may: (permission, channel) => access.can(permission, channel), manages: access.at('manage', '*') }
 }
 
-function controls(root: MessageView, who: Viewer, state = initialState) {
+function controls(root: MessageView, who: Viewer, state = initialState, now = Date.now()) {
   if (!isTask(root)) throw new Error('expected a task')
-  return Object.entries(moves(state, root, who, Date.now())).flatMap(([move, yes]) => yes ? [move] : [])
+  return Object.entries(moves(state, root, who, now)).flatMap(([move, yes]) => yes ? [move] : [])
+}
+
+function draft(root: MessageView): AttentionDraft {
+  return {
+    kind: 'needs_input', question: 'Which route should we use?', context: 'Either route needs scope.',
+    options: [
+      { id: 'a', label: 'Route A', consequence: 'Use route A', next: 'resume' },
+      { id: 'b', label: 'Route B', consequence: 'Use route B', next: 'resume' },
+    ],
+    revision: root.revision, evidence: [{ message: root.id, revision: root.revision }],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), commit: 'a'.repeat(40),
+  }
 }
 
 it('offers only stage-appropriate moves and keeps legacy controls', async () => {
@@ -118,16 +130,30 @@ it('offers unblock for a staged plain hold but not for parked or structured hold
   const parked = await scoper.tasks.park(id, 'Wait for maintenance')
   expect(controls(parked, who)).not.toContain('unblock')
   await scoper.tasks.unpark(id, 'Maintenance finished')
-  const { task: structured } = await worker.tasks.ask(id, {
-    kind: 'needs_input', question: 'Which route should we use?', context: 'Either route needs scope.',
-    options: [
-      { id: 'a', label: 'Route A', consequence: 'Use route A', next: 'resume' },
-      { id: 'b', label: 'Route B', consequence: 'Use route B', next: 'resume' },
-    ],
-    revision: root.revision, evidence: [{ message: id, revision: root.revision }],
-    expiresAt: new Date(Date.now() + 60_000).toISOString(), commit: 'a'.repeat(40),
-  })
+  const { task: structured } = await worker.tasks.ask(id, draft(root))
   expect(controls(structured, who)).not.toContain('unblock')
+})
+
+it('hides unblock only while the attention request is pending', async () => {
+  const { scoper, worker } = await setup()
+  const who = await viewer(scoper)
+  const { task: root } = await worker.tasks.create('work', 'Choose a route')
+  const { id } = root
+  const { task: held, attention } = await worker.tasks.ask(id, draft(root))
+  const expiry = Date.parse(attention.expiresAt)
+  expect.soft(controls(held, who, initialState, expiry - 1), 'pending request').not.toContain('unblock')
+  expect.soft(controls(held, who, initialState, expiry), 'expired request').toContain('unblock')
+
+  await scoper.tasks.answer(id, attention.id, { option: 'a', commit: attention.commit })
+  const afterAnswer = await worker.tasks.block(id, 'Wait for a release window')
+  expect.soft(controls(afterAnswer, who), 'plain hold after an answer').toContain('unblock')
+  await worker.tasks.unblock(id)
+
+  await worker.tasks.ask(id, draft(root))
+  await scoper.tasks.stage(id, 'rejected', 'The work is no longer needed')
+  await scoper.tasks.reopen(id, 'The work is back on the plan')
+  const afterCancel = await worker.tasks.block(id, 'Wait for new requirements')
+  expect(controls(afterCancel, who), 'plain hold after cancellation').toContain('unblock')
 })
 
 it('sends no bare reopen for rejected staged work, even as a scoper', async () => {

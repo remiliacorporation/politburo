@@ -96,7 +96,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. A `board()` that uses a remote backend answers 404 here |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes within the fence's scope. `accessFenceScope: 'process'` covers [one local store instance](../01-board/10-local.md#options) only, even if two instances use the same SQLite file. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. A `board()` that uses a remote backend answers 404 here |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, via?, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
@@ -536,6 +536,8 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 | `claim` | who holds it, and until when. Never the claim's token |
 | `blocked` | `{ kind, reason }` while it's held for a person |
 | `attentionId` | the latest structured request's ID, when present. Read its details from the attention route |
+| `attentionStatus` | the latest request's recorded status: `pending`, `answered`, or `canceled`. The attention route checks for stale evidence |
+| `attentionExpiresAt` | the expiry time of a request recorded as `pending`, as an ISO timestamp |
 | `result`, `reason` | the result of completion or handoff, and why a failed or canceled task ended |
 | `work` | on staged tasks only: `{ stage, scopedRevision }`, with `scopedRevision` null until scoped |
 
@@ -1008,15 +1010,15 @@ the thread key:
 | `message.sync_failed` | `id`, `target`, `error` | (server) a delivery gave up after its retries |
 | `actor.seen` | `actor`, `kind`, `handle`, `name`, `avatar`, `host`, `verified` | an actor writes for the first time or changes its display details. `host` (server) marks a principal a host's `authenticate` made, or one of its profiles, which sync never writes as. `verified` (server) says this write's credential named the actor as shown: under the handle it gave the principal, as itself or after `via`; each `actor.seen` says it anew, and its absence clears it |
 | `work.control` | `paused`, `pauseEpoch`, `reason`, `by` | (server) work admission changes, or a new board starts paused |
-| `task.created` | `id`, `needs`, `for`, `priority?`, `by` | the thread rooted at `id` becomes a task, owned by `by.principal`. It waits while it has `needs` |
+| `task.created` | `id`, `needs`, `for`, `priority?`, `by`, `work?` | the thread rooted at `id` becomes a task, owned by `by.principal`. `work: 'proposed'` marks staged work. A legacy task waits while it has `needs` |
 | `task.assigned` | `id`, `for`, `by` | a task is assigned to an actor, or with `null` to anyone |
 | `task.priority_changed` | `id`, `priority`, `epoch?`, `by` | a task's priority is set. `epoch` is there when a live claim lowered it |
 | `task.needs_changed` | `id`, `needs`, `by` | what a task waits for changes, or a prerequisite reopens. It waits while it has `needs`, until `task.ready`, and with none it's ready. On prerequisite reopen, `by` names the board instead of the scoper, who is named on `task.stage_changed` in the prerequisite's channel |
 | `task.ready` | `id` | (server) every task it needs has completed |
 | `task.claimed` | `id`, `epoch`, `until`, `pauseEpoch?`, `binding?`, `by` | (server) `by` holds it until `until`. On `local()`, an absent `pauseEpoch` in the event means zero. The log keeps the hash of the claim's token, which no view shows |
 | `task.renewed` | `id`, `epoch`, `until`, `by` | a claim's lease is extended |
-| `task.released` | `id`, `epoch`, `by` | a claim gives the task back |
-| `task.expired` | `id`, `epoch` | (server) a claim's lease ran out |
+| `task.released` | `id`, `epoch`, `by`, `waiting?` | a claim gives the task back. `waiting: true` means a prerequisite is still open |
+| `task.expired` | `id`, `epoch`, `waiting?` | (server) a claim's lease runs out. `waiting: true` means a prerequisite is still open |
 | `task.completed` | `id`, `epoch`, `result`, `by` | a claim completes the task |
 | `task.failed` | `id`, `epoch`, `reason`, `by` | a claim fails the task |
 | `task.blocked` | `id`, `kind`, `reason`, `by` | a task is held for a person. Kind `edited` is the board's: `by` edited the root, and isn't the task's owner |
@@ -1024,7 +1026,8 @@ the thread key:
 | `task.attention_requested` | `id`, `by`, `requestId`, `epoch`, `draft`, `replaces?` | a structured hold is opened or replaced |
 | `task.attention_answered` | `id`, `by`, `requestId`, `epoch`, `receipt` | the answer and task's route land together |
 | `task.canceled` | `id`, `reason`, `by` | a task is canceled. Reason `deleted` when its root was |
-| `task.reopened` | `id`, `by`, `waiting?` | a failed task reopens as `ready`, or as `waiting` when `waiting` is `true` |
+| `task.reopened` | `id`, `by`, `waiting?` | a failed legacy task reopens as `ready`. `waiting: true` means a prerequisite is still open, so it reopens as `waiting` |
+| `task.stage_changed` | `id`, `from`, `to`, `reason`, `by`, `result?` | a staged task moves. `result` is present only on handoff and may be `null` |
 
 - **`by`** is `{ actor, principal, profile }`: the actor ID
   (`vercel:user:u_abc123+claude`), the verified principal, and the profile.

@@ -1,8 +1,8 @@
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { board } from '../src/server/index.ts'
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { board, type Discovery } from '../src/server/index.ts'
 import { http } from '../src/backend-http/index.ts'
 import { conformance } from '../src/conformance/index.ts'
 import { local } from '../src/backend-local/index.ts'
@@ -50,6 +50,25 @@ describe('local()', () => {
       await team.close()
     }
   }, 30_000)
+
+  it.each(['sqlite', 'memory'] as const)('advertises a process-scoped access fence in %s discovery', async (store) => {
+    const backend = local({
+      ...(store === 'sqlite' ? { dir: await scratch() } : { memory: true }),
+      workLifecycle: { scopers: ['vercel:user:u_123'] },
+    })
+    try {
+      const team = board({ backend, url: BOARD_URL })
+      const expected = { workLifecycle: 1, accessFence: 1, accessFenceScope: 'process' }
+      const info = await team.discovery()
+      expectTypeOf<Discovery['accessFenceScope']>().toEqualTypeOf<'process' | undefined>()
+      expect.soft(info).toMatchObject(expected)
+      const response = await team.fetch(new Request(BOARD_URL))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject(expected)
+    } finally {
+      await backend.close()
+    }
+  })
 
   it("keeps each name's board in its own file, its files beside it, and finds it again after a restart", async () => {
     const dir = await scratch()

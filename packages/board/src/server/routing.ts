@@ -186,7 +186,15 @@ export function openapi() {
     if ('body' in definition) {
       const schema = z.toJSONSchema(definition.body, { io: 'input' })
       if (bound) schema.required = [...(schema.required ?? []), 'binding', ...(name === 'createTask' ? ['claim'] : [])]
-      operation.requestBody = { ...(bound && { required: true }), content: { 'application/json': { schema } } }
+      operation.requestBody = {
+        ...(bound || ('bodyRequired' in definition && definition.bodyRequired) ? { required: true } : {}),
+        ...('bodyDescription' in definition ? { description: definition.bodyDescription } : {}),
+        content: { 'application/json': { schema } },
+      }
+    }
+    if ('response' in definition) {
+      const schema = z.toJSONSchema(definition.response)
+      operation.responses = { '200': { description: 'OK', content: { 'application/json': { schema } } } }
     }
     ;(paths[path] ??= {})[definition.method.toLowerCase()] = operation
   }
