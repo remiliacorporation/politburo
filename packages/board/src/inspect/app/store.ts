@@ -605,8 +605,9 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
   const staged = stage !== undefined
   const claimable = !staged || workCanClaim(stage)
   const label = viewer.may('label', channel)
-  const pendingAttention = task.attentionStatus === 'pending' &&
-    (task.attentionExpiresAt === undefined || now < Date.parse(task.attentionExpiresAt))
+  // Older boards only show the request ID. Expiry alone never lifts the hold.
+  const pendingAttention = task.attentionStatus === 'pending' ||
+    (task.attentionStatus === undefined && task.attentionId !== undefined)
   const holdingHere = holding(state, root, now) !== undefined
   const held = holdingHere && (!staged || (!root.deleted && claimable && label && task.claim?.actor === viewer.actor))
   // Discovery says whether the board uses stages, not who its scopers are. Even with manage,

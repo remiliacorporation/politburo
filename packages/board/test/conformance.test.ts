@@ -274,7 +274,7 @@ describe('the conformance kit', () => {
     }
   })
 
-  it('accepts a scope that lands before revocation but answers late only if it appears in the feed', async ({ onTestFinished }) => {
+  it('passes lifecycle checks across one-event pages, but still requires a racing scope in the feed', async ({ onTestFinished }) => {
     const principal = 'vercel:project:prj_v0:production'
     const { team, close } = stagedBoard(principal)
     onTestFinished(close)
@@ -304,18 +304,34 @@ describe('the conformance kit', () => {
     }
     const scoper = await clientAs(async (request) => {
       const current = race
+      if (!current || !new URL(request.url).pathname.endsWith(`/tasks/${current.id}/scope`)) return team.fetch(request)
+      // Put a reply on the first page. The scope lands before revoke, but its answer arrives after.
+      await team.reply(current.id, 'Discussing the scope')
       const response = await team.fetch(request)
-      if (current && new URL(request.url).pathname.endsWith(`/tasks/${current.id}/scope`)) {
-        current.landed.resolve()
-        await current.revoked.promise
-      }
+      current.landed.resolve()
+      await current.revoked.promise
       return response
     }, () => deploymentToken('v0', 'prj_v0', 'production'))
     const options = { principals: { project: 'prj_v0', scoper } }
-    const result = (report: Awaited<ReturnType<typeof conformance>>) => report.checks.find(({ name }) => name === 'does not land scope after a concurrent grant revocation answers')
-    const healthy = await conformance(await clientOf(admin), options)
-    expect(healthy.checks.filter((check) => check.status === 'failed')).toEqual([])
-    expect(result(healthy)).toMatchObject({ status: 'passed' })
+    const racingScope = 'does not land scope after a concurrent grant revocation answers'
+    const client = await clientOf(admin)
+    const healthy = await conformance({
+      ...client,
+      async poll(query, signal) {
+        const page = await client.poll(query, signal)
+        if (query?.after === undefined || page.events.length <= 1) return page
+        const event = page.events[0]!
+        return { events: [event], cursor: event.cursor }
+      },
+    }, options)
+    for (const name of [
+      'pins the scoped revision, hands off a live claim, and audits authorized moves',
+      'releases dependent work only at done, and checks that again after reopen',
+      racingScope,
+    ]) {
+      const result = healthy.checks.find((check) => check.name === name)
+      expect.soft(result?.status, `${name}: ${result?.detail ?? ''}`).toBe('passed')
+    }
 
     const missingScope = broken(admin, { body: (text) => {
       const page = JSON.parse(text) as Partial<EventsPage>
@@ -323,7 +339,8 @@ describe('the conformance kit', () => {
       page.events = page.events.filter((event) => !(event.type === 'task.stage_changed' && event.payload.to === 'scoped' && racingIds.has(event.payload.id)))
       return JSON.stringify(page)
     } })
-    expect(result(await conformance(await clientOf(missingScope), options))).toMatchObject({
+    const missing = await conformance(await clientOf(missingScope), options)
+    expect(missing.checks.find(({ name }) => name === racingScope)).toMatchObject({
       status: 'failed', detail: expect.stringContaining('scope recorded in the feed'),
     })
   })

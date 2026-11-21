@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -222,6 +223,31 @@ it('keeps a replacement saved while pruning an expired claim', async () => {
   await store.put('813', heldClaim(1))
   expect(await store.get(id)).toEqual(replacement)
 })
+
+it.each(['put', 'drop'] as const)('waits on a fresh live-PID marker but recovers once it is old (%s)', async (mutation) => {
+  const store = fileClaims(async () => BOARD_URL, null)
+  const id = '812'
+  const first = heldClaim(1)
+  const next = heldClaim(2)
+  await store.put(id, first)
+
+  // Simulate a leftover lock whose PID has been reused, without crashing a writer.
+  const [name] = await fs.readdir(claimsDir())
+  const marker = join(claimsDir(), `${name}.lock`, `${process.pid}.${randomUUID()}`)
+  await fs.mkdir(marker, { recursive: true })
+  const update = mutation === 'put' ? store.put(id, next) : store.drop(id, first)
+  try {
+    expect(await Promise.race([update.then(() => 'updated'), delay(100, 'waiting')])).toBe('waiting')
+    expect(await store.get(id)).toEqual(first)
+    const old = new Date(Date.now() - 60_000)
+    await fs.utimes(marker, old, old)
+    await update
+    expect(await store.get(id)).toEqual(mutation === 'put' ? next : null)
+  } finally {
+    await fs.rm(marker, { recursive: true, force: true })
+    await update.catch(() => {})
+  }
+}, 8_000)
 
 it.each([false, true])('recovers after a drop process is killed (proof matches: %s)', async (matches) => {
   const store = fileClaims(async () => BOARD_URL, null)

@@ -4555,8 +4555,8 @@ Task changes are board facts, in the board log:
 `task.attention_requested` records the draft, request ID, author and task epoch
 and ends any claim. `task.attention_answered` records the answer receipt and
 routes the task in the same fold. The public event feed includes the receipt;
-message views expose `task.attentionId`, its recorded `attentionStatus`, and
-`attentionExpiresAt` for a request recorded as pending, not the stored request.
+message views expose `task.attentionId` and its recorded `attentionStatus`,
+not the stored request. Read the deadline on the attention route.
 Claim tokens are never included in these events.
 
 - **A task with `needs` is `waiting` from `task.created` until `task.ready`.**

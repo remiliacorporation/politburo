@@ -202,9 +202,10 @@ handle on the same board as a separate allowlisted deployment, and set
 `principals.project` to its project ID. That credential needs access to
 sign in but must not already have `manage` in the test channel. The kit
 grants `manage` there and revokes it. It checks that scope and stage fail
-after revocation. For a race, it reads the feed from before either call.
-A successful scope must be visible by the first feed read after revocation,
-even if the scope response arrives later. Without a second credential, the
+after revocation. For a race, it reads the task as soon as revocation
+answers. A successful scope must be visible in that read, even if the scope
+response arrives later. The kit follows feed pages from before the race to
+check that the scope was recorded. Without a second credential, the
 revocation checks skip.
 
 Every board answers their routes: see

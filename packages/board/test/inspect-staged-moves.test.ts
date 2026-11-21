@@ -141,8 +141,10 @@ it('hides unblock only while the attention request is pending', async () => {
   const { id } = root
   const { task: held, attention } = await worker.tasks.ask(id, draft(root))
   const expiry = Date.parse(attention.expiresAt)
-  expect.soft(controls(held, who, initialState, expiry - 1), 'pending request').not.toContain('unblock')
-  expect.soft(controls(held, who, initialState, expiry), 'expired request').toContain('unblock')
+  // A board may still send the deadline in its task view.
+  const withDeadline = { ...held, task: held.task && { ...held.task, attentionExpiresAt: attention.expiresAt } }
+  expect.soft(controls(withDeadline, who, initialState, expiry - 1), 'pending request').not.toContain('unblock')
+  expect.soft(controls(withDeadline, who, initialState, expiry + 1), 'expired but still pending').not.toContain('unblock')
 
   await scoper.tasks.answer(id, attention.id, { option: 'a', commit: attention.commit })
   const afterAnswer = await worker.tasks.block(id, 'Wait for a release window')
@@ -154,6 +156,16 @@ it('hides unblock only while the attention request is pending', async () => {
   await scoper.tasks.reopen(id, 'The work is back on the plan')
   const afterCancel = await worker.tasks.block(id, 'Wait for new requirements')
   expect(controls(afterCancel, who), 'plain hold after cancellation').toContain('unblock')
+})
+
+it('hides unblock on an older board that only reports the attention ID', async () => {
+  const { scoper, worker } = await setup()
+  const who = await viewer(scoper)
+  const { task: root } = await worker.tasks.create('work', 'Choose a route')
+  const { task: held } = await worker.tasks.ask(root.id, draft(root))
+  if (!held.task) throw new Error('expected a task')
+  delete held.task.attentionStatus
+  expect(controls(held, who)).not.toContain('unblock')
 })
 
 it('sends no bare reopen for rejected staged work, even as a scoper', async () => {

@@ -1,6 +1,6 @@
 import { everyChannel } from '../client/channels.ts'
-import { INBOX_EVENT_ID_MAX, type AttentionDraft, type CreatedInvite, type Discovery, type Explanation, type GrantView, type InviteView, type Joined, type Me, type MessageView, type RegistrationView } from '../api/routes.ts'
-import { BoardError, type ExplainPrincipal, type TaskInBatch, type TaskOptions } from '../client/client.ts'
+import { INBOX_EVENT_ID_MAX, type AttentionDraft, type BoardEventView, type CreatedInvite, type Discovery, type Explanation, type GrantView, type InviteView, type Joined, type Me, type MessageView, type RegistrationView } from '../api/routes.ts'
+import { BoardError, type ExplainPrincipal, type Filters, type TaskInBatch, type TaskOptions } from '../client/client.ts'
 import { block } from '../contract/blocks.ts'
 import { canonical } from '../contract/data-schemas.ts'
 import { canText, compileAccess, type Permission } from '../server/access.ts'
@@ -619,6 +619,21 @@ async function taskAuthority<T>(attempt: Promise<T>): Promise<T> {
 const taskFeed = (ctx: Context, after?: string) => ctx.board.poll({ channel: ctx.channel, label: [`conformance=${ctx.labels.conformance}`], ...(after === undefined ? {} : { after }) })
 const handoffPacket = { commit: 'a'.repeat(40), packetPath: 'handoffs/conformance.md', sha256: 'b'.repeat(64) }
 
+async function replayFeed(board: Board, feed: Filters, after: string) {
+  const events: BoardEventView[] = []
+  for (let pages = 0; pages < 50; pages++) {
+    const page = await board.poll({ ...feed, after, wait: 0 })
+    // A scan can return no matches and still advance over unrelated traffic.
+    if (page.cursor === after) {
+      check(page.events.length === 0, 'the feed returned events without advancing its cursor')
+      return events
+    }
+    events.push(...page.events)
+    after = page.cursor
+  }
+  throw new Mismatch('the feed did not catch up within 50 pages')
+}
+
 const NO_ACCESS_FENCE: Check = {
   group: 'work-lifecycle',
   name: 'refuses staged writes when the access fence is not advertised',
@@ -694,17 +709,17 @@ const ACCESS_FENCE_CHECKS: Check[] = [
           const { task: root } = await task(ctx, 'conformance: scope racing revocation')
           const feed = { re: root.id }
           const { cursor } = await ctx.board.poll(feed)
+          // Observe the task as soon as revoke answers. A paged replay has no
+          // fixed end cursor and cannot tell us what was visible at that point.
           const [scope, revoked] = await Promise.allSettled([
             scoper.tasks.scope(root.id, 'scope agreed', { ifVersion: root.version }),
-            revoke().then(() => ctx.board.poll({ ...feed, after: cursor })),
+            revoke().then(() => ctx.board.thread(root.id, { limit: 1 })),
           ])
           if (revoked.status === 'rejected') throw revoked.reason
-          // Grants aren't in the message feed. The first read after the revoke is our boundary:
-          // replay from before the race so it includes a scope that landed before its response.
-          const scoped = ({ type, payload }: (typeof revoked.value.events)[number]) => type === 'task.stage_changed' && payload.id === root.id && payload.to === 'scoped'
-          const { events } = await ctx.board.poll({ ...feed, after: revoked.value.cursor })
-          check(!events.some(scoped), 'scope landed after its grant was revoked')
-          same(revoked.value.events.filter(scoped).length, scope.status === 'fulfilled' ? 1 : 0, 'scope recorded in the feed by the revocation observation')
+          const events = await replayFeed(ctx.board, feed, cursor)
+          const scoped = events.filter(({ type, payload }) => type === 'task.stage_changed' && payload.id === root.id && payload.to === 'scoped')
+          check(scoped.length === 0 || revoked.value.message.task?.work?.stage === 'scoped', 'scope landed after its grant was revoked')
+          same(scoped.length, scope.status === 'fulfilled' ? 1 : 0, 'scope recorded in the feed replay')
           if (scope.status === 'rejected') {
             revokedScoper(scope.reason, 'scoping while its grant is revoked')
             await unchangedWork(ctx, root)
@@ -749,7 +764,7 @@ const LIFECYCLE_CHECKS: Check[] = [
       await rejects(ctx.board.tasks.stage(root.id, 'done', 'skip review'), 409, 'invalid_task_stage', 'marking a handoff done')
       const review = await ctx.board.tasks.stage(root.id, 'review', 'review started')
       same(review.task?.work?.stage, 'review', 'the stage after review starts')
-      const { events } = await ctx.board.poll({ channel: ctx.channel, label: ctx.labels, after: cursor })
+      const events = await replayFeed(ctx.board, { channel: ctx.channel, label: ctx.labels }, cursor)
       const moves = events.filter((event) => event.type === 'task.stage_changed').filter((event) => event.payload.id === root.id)
       alike(moves.map((event) => [event.payload.id, event.payload.thread, event.payload.from, event.payload.to, event.payload.reason, event.actor?.id]), [
         [root.id, root.thread, 'proposed', 'scoped', 'scope agreed', ctx.me.actor],
@@ -793,7 +808,7 @@ const LIFECYCLE_CHECKS: Check[] = [
       await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite reopened')
       same((await ctx.board.tasks.claim({ channel: ctx.channel, label: labels }))?.task.id ?? null, null, 'the next claim after reopen')
 
-      const { events } = await ctx.board.poll({ ...feed, after: cursor })
+      const events = await replayFeed(ctx.board, feed, cursor)
       const doneAt = events.findIndex((event) => event.type === 'task.stage_changed' && event.payload.id === first.id && event.payload.to === 'done')
       const reopenedAt = events.findIndex((event) => event.type === 'task.stage_changed' && event.payload.id === first.id && event.payload.to === 'proposed')
       check(doneAt >= 0 && reopenedAt > doneAt, 'the feed must record the prerequisite reaching done and then reopening')

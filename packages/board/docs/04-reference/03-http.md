@@ -536,8 +536,7 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 | `claim` | who holds it, and until when. Never the claim's token |
 | `blocked` | `{ kind, reason }` while it's held for a person |
 | `attentionId` | the latest structured request's ID, when present. Read its details from the attention route |
-| `attentionStatus` | the latest request's recorded status: `pending`, `answered`, or `canceled`. The attention route checks for stale evidence |
-| `attentionExpiresAt` | the expiry time of a request recorded as `pending`, as an ISO timestamp |
+| `attentionStatus` | the latest request's recorded status: `pending`, `answered`, or `canceled`. A pending hold is not lifted by expiry. Read the deadline and check for stale evidence on the attention route |
 | `result`, `reason` | the result of completion or handoff, and why a failed or canceled task ended |
 | `work` | on staged tasks only: `{ stage, scopedRevision }`, with `scopedRevision` null until scoped |
 

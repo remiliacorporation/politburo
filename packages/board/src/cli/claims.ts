@@ -28,6 +28,9 @@ type Stored = HeldClaim & { board: string; task: string; profile: string | null 
 /** A claim whose lease ended this long ago is no one's to settle: its file goes when another is written. */
 const DEAD_MS = 24 * 60 * 60_000
 
+/** Claim mutations only rename or compare and unlink a local file. A marker this old is abandoned. */
+const LOCK_MAX_AGE_MS = 30_000
+
 /** The claims directory: `~/.config/board/claims`, or under `XDG_CONFIG_HOME`, as the CLI's tokens are. */
 export const claimsDir = () => join(configDir(), 'claims')
 
@@ -61,6 +64,17 @@ function ownerIsDead(owner: string) {
   }
 }
 
+async function abandonedOwner(dir: string, owner: string) {
+  if (ownerIsDead(owner)) return true
+  // A crashed writer's PID may already belong to an unrelated process.
+  try {
+    return Date.now() - (await stat(join(dir, owner))).mtimeMs > LOCK_MAX_AGE_MS
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return false
+    throw error
+  }
+}
+
 async function removeEmpty(dir: string) {
   await rmdir(dir).catch((error: unknown) => {
     if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(errorCode(error) ?? '')) throw error
@@ -72,10 +86,10 @@ async function reapLock(lock: string) {
     if (errorCode(error) === 'ENOENT') return []
     throw error
   })
-  // Remove only a dead owner's unique marker, never a successor's. The last
+  // Remove only the abandoned owner's unique marker, never a successor's. The last
   // rmdir can remove only an empty directory, even if a new owner beat us to it.
   for (const owner of owners) {
-    if (!ownerIsDead(owner)) return
+    if (!(await abandonedOwner(lock, owner))) return
     await removeEmpty(join(lock, owner))
   }
   await removeEmpty(lock)
@@ -112,7 +126,7 @@ async function withClaimLock(file: string, mutate: () => Promise<void>, wait = t
   }
 }
 
-/** Removes expired claims and abandoned writes, but never a live lock. */
+/** Removes expired claims and abandoned writes, without waiting for a lock. */
 async function prune(now: number) {
   const expired = (claim: Stored | null) => claim && now - Date.parse(claim.until) > DEAD_MS
   for (const name of await readdir(claimsDir()).catch(() => [])) {
@@ -127,7 +141,7 @@ async function prune(now: number) {
       await reapLock(file).catch(() => {})
     } else if (name.endsWith('.lock-tmp')) {
       const owner = name.split('.').slice(-3, -1).join('.')
-      if (ownerIsDead(owner)) {
+      if (await abandonedOwner(file, owner)) {
         await removeEmpty(join(file, owner))
         await removeEmpty(file)
       }

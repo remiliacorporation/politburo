@@ -1032,8 +1032,6 @@ export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention'> 
   attentionId?: string
   /** The request's recorded status. Read the attention route to check whether its evidence is still current. */
   attentionStatus?: NonNullable<Task['attention']>['status']
-  /** The deadline of a request that is still recorded as pending. */
-  attentionExpiresAt?: string
   /** The tasks it waits for, by their IDs. */
   needs: string[]
   /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
