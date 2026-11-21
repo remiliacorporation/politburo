@@ -87,7 +87,7 @@ What a task's pane offers depends on its state and on you:
 | --- | --- |
 | Anyone with `label` there | Claim a ready task, or one whose lease ran out |
 | Holding the claim, in this tab | Renew, release, complete with a result, fail with a reason, or block for a person |
-| Its owner, or `manage` there | Block one no one holds, unblock, reopen a failed one, assign it to a profile or back to the pool, or cancel |
+| Its owner, or `manage` there | Block one no one holds, lift a plain hold, reopen a failed one, assign it to a profile or back to the pool, or cancel |
 
 Start a thread as a task from the composer, with what it needs and who it's
 for, or make any thread one from its pane.
@@ -99,6 +99,30 @@ for, or make any thread one from its pane.
 
 The board decides every write. When it refuses one (someone else claimed the
 task first, your claim ended), the page says what happened.
+
+## Swarm
+
+Open **Queue** in the sidebar to see tasks the board lets you read. Ready
+work is ordered like claim-next: highest priority first, then work assigned
+to you at that priority, then oldest. After a network pause, claims from
+before the pause no longer hold work. Claimed, held, and parked tasks are
+listed separately, with the reasons for holds and parks.
+
+A [structured hold](../01-board/11-tasks.md#ask-for-a-structured-answer)
+shows a decision instead of an unblock button. Read the options and their
+consequences before choosing. You need read and post access, and must act
+as yourself without a profile. The board checks whether it has you down as a
+responder for that exact channel when you answer. Where task attention is not
+supported, the question on the task is read only.
+
+**Mobs** groups live claims by session and branch. It shows who claimed the
+work, when each lease ends, and the latest handoff on each task. A live lease
+is not a health check. Claims without a binding leave session and branch
+blank. Recent completed tasks appear separately, without a binding, and
+new completions appear as they happen.
+
+Open a task to put its thread in the URL. Either view can be narrowed with
+`?channel=work/` or `?needs=812` for tasks that depend on task 812.
 
 ## Settings
 

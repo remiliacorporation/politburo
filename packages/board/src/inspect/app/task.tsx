@@ -60,11 +60,11 @@ export function Lease({ until }: { until: string }) {
 }
 
 /** The tasks one waits for, each a link to its thread, with its state where the page has it. */
-export function Needs({ ids, state }: { ids: string[]; state: State }) {
+export function Needs({ ids, state, readable }: { ids: string[]; state: State; readable?: ReadonlySet<string> }) {
   return (
     <span className="needs">
       {ids.map((id) => {
-        const need = state.messages[id]
+        const need = !readable || readable.has(id) ? state.messages[id] : undefined
         return (
           <Link key={id} to={here({ thread: id })} className="need" title={need ? firstLine(need.text) : `#${id}`}>
             #{id}

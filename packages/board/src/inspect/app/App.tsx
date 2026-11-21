@@ -12,7 +12,8 @@ import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
-import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, profilesOf, recent, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
+import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, profilesOf, recent, threadPane, threadSchedules, type Filter, type ReadFailure, type State, type Viewer } from './store.ts'
+import { Decision, Swarm } from './swarm-views.tsx'
 import { Ask, Header, nativeMenu, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, until } from './words.ts'
 
@@ -172,7 +173,7 @@ export function App() {
   // The tab says which board too, so two inspectors side by side tell apart.
   const named = boardWords(state.discovery).name
   useEffect(() => {
-    document.title = `${current.view === 'channel' ? `#${current.channel}` : current.view === 'settings' ? `${current.section} · settings` : current.view === 'missing' ? 'nothing here' : current.view} · ${named}`
+    document.title = `${current.view === 'channel' ? `#${current.channel}` : current.view === 'settings' ? `${current.section} · settings` : current.view === 'swarm' ? `${current.section} · swarm` : current.view === 'missing' ? 'nothing here' : current.view} · ${named}`
   }, [where.path, named])
 
   const known = useMemo(() => knownLabels(state), [state.messages])
@@ -223,6 +224,7 @@ export function App() {
           <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
         )}
         {current.view === 'tasks' && <Tasks state={state} now={now} lead={expand} where={where} known={known} />}
+        {current.view === 'swarm' && <Swarm section={current.section} state={state} where={where} now={now} lead={expand} />}
         {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
         {current.view === 'missing' && (
           <>
@@ -386,11 +388,11 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
 
 function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels }) {
   const { id, state, viewer } = props
-  const [missing, setMissing] = useState(false)
+  const [refused, setRefused] = useState<ReadFailure | null>(null)
   useEffect(() => {
-    void board.loadThread(id).then(() => setMissing(!board.getState().messages[id]))
+    void board.loadThread(id).then(setRefused)
   }, [id])
-  const t = useMemo(() => threadOf(state, id), [state.messages, state.ops, state.pending, state.actors, id])
+  const { thread: t, task, why } = useMemo(() => threadPane(state, id, refused), [state.messages, state.ops, state.pending, state.actors, state.me, id, refused])
   // Where the thread's copies are, on the platforms it syncs with.
   const [synced, setSynced] = useState<SyncedView['targets']>([])
   useEffect(() => {
@@ -421,7 +423,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           <X size={15} strokeWidth={1.75} />
         </button>
       </Header>
-      {t && isTask(t.root) && <TaskCard root={t.root} state={state} viewer={viewer} />}
+      {task && <TaskCard root={task} state={state} viewer={viewer} />}
       {(synced.length > 0 || scheduled.length > 0) && (
         <dl className="facts thread-facts" {...nativeMenu}>
           {synced.length > 0 && (
@@ -460,10 +462,15 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       )}
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
         {!t ? (
-          <p className="empty">{missing ? 'no such thread' : 'loading…'}</p>
+          <p className={why === null ? 'empty' : 'empty error'}>{why ?? 'loading…'}</p>
         ) : (
           <>
             <Messages messages={[t.root]} now={props.now} options={options} />
+            {isTask(t.root) && !t.root.deleted && t.root.task.attentionId && (
+              <div style={{ padding: '0 20px 10px', overflowWrap: 'anywhere' }} {...nativeMenu}>
+                <Decision root={t.root} state={state} />
+              </div>
+            )}
             <div className="divider">{t.replies.length === 1 ? '1 reply' : `${t.replies.length} replies`}</div>
             <Messages messages={t.replies} now={props.now} options={options} after={t.root} />
             <Pendings posts={t.pending} me={state.me!} after={t.replies.at(-1)} />
