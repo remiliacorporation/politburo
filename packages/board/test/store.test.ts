@@ -456,6 +456,17 @@ describe('the inspector store', () => {
     expect(shownAttention(refreshed, root)).toMatchObject({ disabled: false, error: undefined })
   })
 
+  it('settles a refused write without marking a newer commit as refused', () => {
+    const root = hold(1)
+    const old = request(root)
+    const known = withRead(store.merge(start, [root]), root, here(old))
+    const sending = store.beginAnswer(known, root, old, 'Yes')
+    const current = { ...old, commit: 'b'.repeat(40) }
+    const refreshed = withRead(sending, root, here(current))
+    const failed = store.failAnswer(refreshed, root.id, old, 'no longer current')
+    expect(shownAttention(failed, root)).toMatchObject({ attention: current, answering: null, disabled: false, error: undefined })
+  })
+
   // --- blocks and schemas ---
 
   it("names an actor as the board last showed them, or by what their ID says", () => {

@@ -737,10 +737,13 @@ export function failAnswer(state: State, id: string, request: AttentionView, wor
   const root = state.messages[id]
   const refusal = { id: request.id, commit: request.commit, words, shown: false }
   const read = item?.view?.result
-  // A late write must not mark a replacement as refused or drop its overlay.
+  const answering = item?.answering?.request === request ? undefined : item?.answering
+  // A late write can settle its own overlay, but must not mark a replacement as refused.
   if ((root?.task?.attentionId !== undefined && root.task.attentionId !== request.id) ||
-      (holdsAttention(root) && read?.is === 'here' && read.value !== null && !sameSnapshot(refusal, read.value))) return state
-  return putAttention(state, id, { ...item, refusal, ...(item?.answering?.request === request ? { answering: undefined } : {}) })
+      (holdsAttention(root) && read?.is === 'here' && !sameSnapshot(refusal, read.value))) {
+    return item && answering !== item.answering ? putAttention(state, id, { ...item, answering }) : state
+  }
+  return putAttention(state, id, { ...item, refusal, answering })
 }
 
 function foldAttention(state: State, event: BoardEventView, incoming: MessageView): State {

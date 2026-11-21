@@ -44,7 +44,7 @@ async function hold(team: ReturnType<typeof board>, question = 'Ship the revised
 }
 
 /** Browser transport only. The page's board.ts handle reads and writes a real local authority. */
-async function inspector(local: ReturnType<typeof remote>, user = owner, receive?: (request: Request, response: Response) => Response | void | Promise<Response | void>, options: {
+async function inspector(local: ReturnType<typeof remote>, user = owner, receive?: (request: Request, response: Response) => void | Promise<void>, options: {
   token?: string; scope?: string; writes?: ReturnType<typeof remote>
 } = {}) {
   const controller = new AbortController()
@@ -64,7 +64,8 @@ async function inspector(local: ReturnType<typeof remote>, user = owner, receive
     if (options.scope) headers.set('x-board-can', options.scope)
     const request = new Request(target, { ...init, headers, signal: controller.signal })
     const response = await (answerWrite(request) ? write : authorized)(request)
-    return (await receive?.(request, response)) ?? response
+    await receive?.(request, response)
+    return response
   })
   const page = await import('../src/inspect/app/board.ts')
   await page.boot()
@@ -89,7 +90,8 @@ async function inspector(local: ReturnType<typeof remote>, user = owner, receive
 
 const attentionRead = (request: Request) => request.method === 'GET' && new URL(request.url).pathname.endsWith('/attention')
 const answerWrite = (request: Request) => request.method === 'POST' && new URL(request.url).pathname.endsWith('/answer')
-const disabledChoices = (markup: string) => (markup.match(/<button\b[^>]*attention-choice[^>]* disabled=""/g) ?? []).length
+const choices = (markup: string) => [...markup.matchAll(/<button\b([^>]*)>(?:Ship it|Stop)<\/button>/g)]
+const disabledChoices = (markup: string) => choices(markup).filter(([, attributes]) => attributes?.includes(' disabled=""')).length
 
 it('reads only in the inbox, shows each question as it arrives, and folds a live answer in place', async () => {
   const local = configured()
@@ -172,11 +174,11 @@ it('shows the board’s 501 words on a stored hold when attention is no longer e
   const log = memory()
   const enabled = remote(mount({ store: log, auth: testAuth, attentionResponders: responders }))
   const { task } = await hold(await enabled.as(owner))
-  const { open, shown } = await inspector(remote(mount({ store: log, auth: testAuth })))
+  const { open, view } = await inspector(remote(mount({ store: log, auth: testAuth })))
   await open()
-  await vi.waitFor(() => expect(shown(task.id)).toMatchObject({
-    attention: null, readError: 'this board does not keep task attention requests', reason: store.NO_ATTENTION,
-  }))
+  await vi.waitFor(() => expect(view()).toContain('this board does not keep task attention requests'))
+  expect(view()).toContain(`#${task.id}`)
+  expect(choices(view())).toHaveLength(0)
 })
 
 it('resolves the attention route, counts only held requests, and renders questions as text', async () => {
@@ -191,7 +193,7 @@ it('resolves the attention route, counts only held requests, and renders questio
   await open()
   await vi.waitFor(() => expect(view()).toContain('Use &lt;img src=x onerror=alert(1)&gt; and &lt;b&gt;?'))
   expect(view()).not.toContain('<img src=x')
-  expect(sidebar()).toContain('class="count">2</span>')
+  expect(sidebar()).toContain('>2</span>')
 })
 
 it('clears selection on removal or replacement and scopes shortcuts to enabled choices on the focused list', async () => {
@@ -217,12 +219,17 @@ it('clears selection on removal or replacement and scopes shortcuts to enabled c
   expect(keyAction(event, { ...ctx, choice: { ...ctx.choice, disabled: true } })).toBeNull()
   expect(keyAction(event, { ...ctx, choice: { ...ctx.choice, reason: 'read only' } })).toBeNull()
   expect(keyAction(event, { ...ctx, focused: null })).toBeNull()
-  for (const tag of ['input', 'textarea', 'select', '[contenteditable]', 'outside']) {
-    const target = { closest: () => tag }
-    expect(keyAction({ ...event, target }, ctx)).toBeNull()
-    if (tag !== 'outside') {
-      expect(keyAction({ ...event, target, currentTarget: target }, { ...ctx, focused: target })).toBeNull()
+  for (const key of ['2', 'j']) {
+    const press = { ...event, key }
+    expect(keyAction({ ...press, target: {} }, ctx)).toBeNull()
+    for (const ancestor of ['input', 'textarea', 'select', '[contenteditable]']) {
+      const editableList = { closest: (selectors: string) => selectors.split(',').some((selector) => selector.trim() === ancestor) ? {} : null }
+      expect(keyAction({ ...press, target: editableList, currentTarget: editableList }, { ...ctx, focused: editableList })).toBeNull()
     }
+    for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'defaultPrevented'] as const) {
+      expect(keyAction({ ...press, [modifier]: true }, ctx)).toBeNull()
+    }
+    expect(keyAction({ ...press, nativeEvent: { isComposing: true } }, ctx)).toBeNull()
   }
 })
 
@@ -236,7 +243,7 @@ it.each(['profile', 'deployment', 'read only'] as const)('does not offer or send
   if (identity === 'profile') expect(await page.setProfile({ name: 'reviewer' })).toBe(true)
   await open()
   await vi.waitFor(() => expect(view()).toContain('read only: answering needs a person acting as themselves with post access'))
-  expect(view()).not.toContain('attention-choice')
+  expect(choices(view())).toHaveLength(0)
   await page.answerAttention(task.id, attention.id, 'ship')
   expect(writes).toBe(0)
 })
@@ -250,7 +257,7 @@ it('shows why a cached question is read only when discovery does not advertise a
   const state = page.getState()
   const markup = view({ ...state, discovery: { ...state.discovery!, task_attention: undefined } })
   expect(markup).toContain('read only: this board does not keep task attention requests')
-  expect(markup).not.toContain('attention-choice')
+  expect(choices(markup)).toHaveLength(0)
 })
 
 it.each([404, 501])('shows a late %i write refusal until rendered, without another attention read', async (status) => {
@@ -261,10 +268,12 @@ it.each([404, 501])('shows a late %i write refusal until rendered, without anoth
   const release = Promise.withResolvers<void>()
   cleanup.push(release.resolve)
   let reads = 0
+  let writes = 0
   // Change which real authority serves writes, while the page still has the original snapshot.
   const { page, open, shown, view, sidebar } = await inspector(local, owner, async (request, response) => {
     if (attentionRead(request)) reads++
     if (answerWrite(request)) {
+      writes++
       writing.resolve(response.status)
       await release.promise
     }
@@ -273,14 +282,17 @@ it.each([404, 501])('shows a late %i write refusal until rendered, without anoth
   await vi.waitFor(() => expect(shown(task.id).disabled).toBe(false))
   const answer = page.answerAttention(task.id, attention.id, 'ship')
   expect(await writing.promise).toBe(status)
+  const beforeRefusal = page.getState()
   close()
   release.resolve()
   await answer
   await new Promise(setImmediate)
   expect(reads).toBe(1)
+  page.attentionRendered(beforeRefusal)
   expect(sidebar()).toContain('>refused</span>')
   await open()
   await vi.waitFor(() => expect(reads).toBe(2))
+  await new Promise(setImmediate)
   const rendered = page.getState()
   expect(sidebar()).toContain('>refused</span>')
   expect(view(rendered)).toContain(status === 404 ? `message not found: #${task.id}` : 'this board does not keep task attention requests')
@@ -288,6 +300,8 @@ it.each([404, 501])('shows a late %i write refusal until rendered, without anoth
   page.attentionRendered(rendered)
   expect(sidebar()).not.toContain('>refused</span>')
   expect(disabledChoices(view())).toBe(2)
+  await page.answerAttention(task.id, attention.id, 'ship')
+  expect(writes).toBe(1)
   const { attention: replacement } = await team.tasks.ask(task.id, {
     kind: attention.kind, question: 'Use a new snapshot?', context: attention.context, options: attention.options,
     evidence: attention.evidence, revision: attention.revision, commit, expiresAt: attention.expiresAt, replaces: attention.id,
@@ -295,28 +309,66 @@ it.each([404, 501])('shows a late %i write refusal until rendered, without anoth
   await vi.waitFor(() => expect(shown(task.id)).toMatchObject({ attention: { id: replacement.id }, error: undefined, disabled: false }))
 })
 
-it('uses the newer read when navigation responses arrive out of order', async () => {
+it('does not attach a late refusal to a replacement that arrived while away', async () => {
   const local = configured()
-  const { task, attention } = await hold(await local.as(owner))
-  let reads = 0
-  const first = Promise.withResolvers<void>()
+  const team = await local.as(owner)
+  const { task, attention } = await hold(team)
+  const refused = Promise.withResolvers<number>()
   const release = Promise.withResolvers<void>()
   cleanup.push(release.resolve)
-  const { page, open, shown } = await inspector(local, owner, async (request) => {
-    if (attentionRead(request) && ++reads === 1) {
-      first.resolve()
+  const { page, open, shown, sidebar } = await inspector(local, owner, async (request, response) => {
+    if (answerWrite(request)) {
+      refused.resolve(response.status)
       await release.promise
     }
+  }, { writes: configured() })
+  const close = await open()
+  await vi.waitFor(() => expect(shown(task.id).disabled).toBe(false))
+  const answer = page.answerAttention(task.id, attention.id, 'ship')
+  expect(await refused.promise).toBe(404)
+  close()
+  const { attention: replacement } = await team.tasks.ask(task.id, {
+    kind: attention.kind, question: 'Use a new snapshot?', context: attention.context, options: attention.options,
+    evidence: attention.evidence, revision: attention.revision, commit, expiresAt: attention.expiresAt, replaces: attention.id,
+  })
+  await vi.waitFor(() => expect(page.getState().messages[task.id]?.task?.attentionId).toBe(replacement.id))
+  release.resolve()
+  await answer
+  expect(sidebar()).not.toContain('>refused</span>')
+  await open()
+  await vi.waitFor(() => expect(shown(task.id)).toMatchObject({ attention: { id: replacement.id }, error: undefined, disabled: false }))
+})
+
+it.each(['before', 'after'] as const)('ignores a superseded read that resolves %s the newer response', async (order) => {
+  const local = configured()
+  const { task, attention } = await hold(await local.as(owner))
+  const gate = () => ({ arrived: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() })
+  const first = gate(), second = gate()
+  const gates = [first, second]
+  cleanup.push(first.release.resolve, second.release.resolve)
+  let reads = 0
+  const { page, open, shown } = await inspector(local, owner, async (request) => {
+    if (!attentionRead(request)) return
+    const gate = gates[reads++]
+    gate?.arrived.resolve()
+    await gate?.release.promise
   })
   await vi.waitFor(() => expect(page.getState().tasksCounted).toBe(true))
   const close = await open()
-  await first.promise
+  await first.arrived.promise
   close()
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(Date.parse(attention.expiresAt) + 1)
   await open()
+  await second.arrived.promise
+  if (order === 'before') {
+    first.release.resolve()
+    await new Promise(setImmediate)
+    expect(shown(task.id).attention).toBeNull()
+  }
+  second.release.resolve()
   await vi.waitFor(() => expect(shown(task.id).attention?.status).toBe('stale'))
-  release.resolve()
+  first.release.resolve()
   await new Promise(setImmediate)
   expect(shown(task.id).attention?.status).toBe('stale')
 })
@@ -334,7 +386,7 @@ it('keeps the disabled answering overlay after HTTP success until the real feed 
   })
   await open()
   await vi.waitFor(() => expect(shown(task.id)).toMatchObject({ reason: null, disabled: false }))
-  expect(sidebar()).toContain('class="count">1</span>')
+  expect(sidebar()).toContain('>1</span>')
   pause = true
   await page.answerAttention(task.id, attention.id, 'ship')
   expect(view()).toContain('answering Ship it')
@@ -342,5 +394,5 @@ it('keeps the disabled answering overlay after HTTP success until the real feed 
   delivery.resolve()
   await vi.waitFor(() => expect(view()).toContain('answered · Ship it'))
   expect(sidebar()).toBeDefined()
-  expect(sidebar()).not.toContain('class="count"')
+  expect(sidebar()).not.toMatch(/>\d+<\/span>/)
 })
