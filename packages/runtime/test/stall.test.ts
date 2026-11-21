@@ -635,6 +635,18 @@ test('send errors are bounded and free of control and format characters', async 
   assert.ok(failure.error.length <= 256, 'the error is too long')
 })
 
+test('sanitizing send errors cannot join lone surrogates into format characters', async (t) => {
+  const f = fixture(t)
+  f.clock.advance(30 * minute)
+  for (const message of ['\uDB40\n\uDC01', '\uDB40\u202E\uDC20', 'inbox \uDB40\u2028\uDC7F unavailable']) {
+    f.state.sendError = new Error(message)
+    const result = await f.check()
+    assert.equal(result.kind, 'quiet')
+    assert.equal(result.errors?.length, 1)
+    assert.doesNotMatch(result.errors![0]!.error, /[\p{Cc}\p{Cf}]/u)
+  }
+})
+
 test('a non-Error rejection with a message reports that message', async (t) => {
   const f = fixture(t)
   const rejection = { message: 'inbox is temporarily unavailable' }

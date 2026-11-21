@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { cp, mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import type { AttentionDraft, AttentionView, GrantView, Me, MessageView, SendOperationalMessageInput } from '../src/api/routes.ts'
 import { mount } from './harness.ts'
 import { serve } from './http.ts'
+import { hasCredential, watchServe, type Output } from './smoke-output.ts'
 import { personToken, testAuth } from './tokens.ts'
 
 const CLI = join(import.meta.dirname, '../src/cli/bin.ts')
@@ -18,16 +19,12 @@ const COMMIT = 'a'.repeat(40)
 const OWNER = 'vercel:user:u_owner'
 const UUID = /[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/
 const ISO = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/
-const CREDENTIAL = /vb[ij]_[\w-]{43}|\beyJ[\w-]+\.[\w-]+\.[\w-]+\b|"(?:secret|token)"\s*:|(?<![\w-])[\w-]{43}(?![\w-])/
-const LOOPBACK_BOARD_URL = /http:\/\/127\.0\.0\.1:\d+\/api\/board\b/
-
-type Output = { stdout: string; stderr: string }
 
 let dir: string
 let url: string
 let adminEnv: ReturnType<typeof homeEnv>
 let memberEnv: ReturnType<typeof homeEnv>
-let server: { child: ChildProcess; closed: Promise<string | number | null>; output: Output } | undefined
+let server: ReturnType<typeof watchServe> | undefined
 
 function homeEnv(home: string) {
   const { PATH, NODE_NO_WARNINGS } = process.env
@@ -41,18 +38,9 @@ function homeEnv(home: string) {
   }
 }
 
-function hasCredential({ stdout, stderr }: Output) {
-  return CREDENTIAL.test(stdout) || CREDENTIAL.test(stderr)
-}
-
 function expectNoCredential(output: Output, command: string) {
   // Test a predicate so a failed assertion cannot print the leaked credential.
   expect(hasCredential(output), `${command} printed a credential`).toBe(false)
-}
-
-function serverDiagnostics(output: Output) {
-  if (hasCredential(output)) return '(output withheld: possible credential)'
-  return [output.stdout.trim(), output.stderr.trim()].filter(Boolean).join('\n') || '(no output)'
 }
 
 beforeAll(async () => {
@@ -64,33 +52,8 @@ beforeAll(async () => {
   const child = spawn(process.execPath, [CLI, 'serve', '--agent-ops', '--no-inspect', '--port', '0', '--dir', join(dir, 'data')], {
     cwd: dir, env: adminEnv, stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const output = { stdout: '', stderr: '' }
-  let spawnError: string | undefined
-  child.once('error', (error: NodeJS.ErrnoException) => { spawnError = error.code ?? 'spawn failed' })
-  const closed = new Promise<string | number | null>((resolve) => child.once('close', (code, signal) => {
-    resolve(spawnError ?? signal ?? code)
-  }))
-  server = { child, closed, output }
-  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { output.stderr += chunk })
-  const announced = new Promise<string>((resolve) => {
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
-      output.stdout += chunk
-      const at = LOOPBACK_BOARD_URL.exec(output.stdout)?.[0]
-      if (at) resolve(at)
-    })
-  })
-  const startup = new AbortController()
-  try {
-    url = await Promise.race([
-      announced,
-      closed.then((exit) => { throw new Error(`vb serve exited (${exit}) before announcing its URL:\n${serverDiagnostics(output)}`) }),
-      delay(CALL_TIMEOUT, undefined, { signal: startup.signal }).then(() => {
-        throw new Error(`vb serve did not announce its URL:\n${serverDiagnostics(output)}`)
-      }),
-    ])
-  } finally {
-    startup.abort()
-  }
+  server = watchServe(child)
+  url = await server.waitForUrl(CALL_TIMEOUT)
 }, 20_000)
 
 afterAll(async () => {

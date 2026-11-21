@@ -126,10 +126,14 @@ function sendErrorMessage(error: unknown): string {
   const fallback = 'operational inbox send failed'
   try {
     const message = typeof error === 'object' && error !== null && 'message' in error ? error.message : undefined
+    const unsafe = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
+    // Removing separators must not join lone surrogates into a format character.
     const clean = String(typeof message === 'string' ? message : error)
-      .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
+      .toWellFormed()
+      .replace(unsafe, '')
       .slice(0, 256)
       .toWellFormed()
+    if (clean.search(unsafe) !== -1) return fallback
     return clean.trim() && clean !== '[object Object]' ? clean : fallback
   } catch {
     return fallback
