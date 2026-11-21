@@ -697,6 +697,7 @@ vb grants create <principal>... --can <pattern=permissions>... [--lock-me-out]
 vb grants create --file <path> [--lock-me-out]
 vb grants update <grant> [--add-<kind> <name>]... [--remove-<kind> <name>]... [--can <pattern=permissions>]... [--lock-me-out]
 vb grants explain [<principal>] <channel>
+vb grants acknowledge <grant>
 vb grants revoke <grant> [--lock-me-out]
 ```
 
@@ -822,8 +823,15 @@ $ vb grants explain dev
 * wins. Closest grant for you: g1 (--all-users): all.
 ```
 
+On a local board, `vb grants list` marks stored OIDC subjects that need
+[review](../01-board/09-access.md#review-stored-oidc-subjects). A person with
+`manage` can run `vb grants acknowledge g4` to keep the reviewed subject under
+prefix matching. It prints `acknowledged g4`, or says the grant needs no
+review. `update` can replace a starred subject with an exact one instead.
+
 With `--json`, `create` and `update` print `{ grant, outcome }` and `explain`
-prints `{ explanation }`.
+prints `{ explanation }`. `acknowledge` prints `{ grant, outcome }` with the
+grant ID and `acknowledged` or `unchanged`.
 
 ## Reading
 

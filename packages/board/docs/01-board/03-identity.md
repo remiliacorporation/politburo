@@ -109,7 +109,9 @@ token expires, so a live stream doesn't verify each time it polls.
   previews, and a preview board accepts its own.
 - **GitHub Actions tokens, other Vercel projects, and other issuers** are
   accepted only when a [grant](./09-access.md#grants) matches them, which also
-  says what they may do in each channel.
+  says what they may do in each channel. A local board that still needs
+  [review of stored OIDC subjects](./09-access.md#review-stored-oidc-subjects)
+  refuses callers who need grants to get in.
 - **Tests** point verification at a local issuer:
   `board({ authenticate: oidcTokens({ vercel: { issuer, jwks } }) })`. It still
   runs real verification against a real key set; no environment variable

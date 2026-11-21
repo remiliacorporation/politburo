@@ -720,6 +720,7 @@ await worker.agents.heartbeat(agent.id, agent.generation)
 createGrant(input: { principals: PrincipalInput[]; can: GrantCan }, options?: { lockMeOut?: boolean }): Promise<{ grant: GrantView }>
 createGrants(inputs: { principals: PrincipalInput[]; can: GrantCan }[], options?: { lockMeOut?: boolean }): Promise<{ grants: GrantView[] }>
 updateGrant(id: string, input: { add?: PrincipalInput[]; remove?: PrincipalInput[]; can?: GrantCan }, options?: { lockMeOut?: boolean }): Promise<{ grant: GrantView }>
+acknowledgeGrant(id: string): Promise<{ acknowledged: boolean }>
 grants(): Promise<GrantView[]>
 explain(channel: string, principal?: ExplainPrincipal): Promise<Explanation>
 revokeGrant(id: string, options?: { lockMeOut?: boolean }): Promise<{ revoked: boolean }>
@@ -758,6 +759,11 @@ await team.createGrants([
   { principals: [{ kind: 'user', email: 'ada@acme.com' }], can: { 'security/': 'all' } },
 ])
 ```
+
+On a local board, `acknowledgeGrant` keeps a
+[reviewed OIDC subject](../01-board/09-access.md#review-stored-oidc-subjects)
+under prefix matching. It takes a verified person who can widen the grant.
+`acknowledged` is false when the grant needs no review.
 
 See [Grants](../01-board/09-access.md#grants).
 

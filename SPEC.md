@@ -709,8 +709,10 @@ talking to.
   matches exact claims, `sub` among them: an issuer signs tokens for everyone
   it serves, and its `sub` is the one claim that says whose a token is. A
   `sub` that ends in `*` right after a `:` or `/` matches how one starts
-  (`project_path:acme/api:*`), and a `*` anywhere else in it is refused.
-  Its principal is `oidc:<issuer host and path>:<sub>`,
+  (`project_path:acme/api:*`) in upstream 0.54.0. Other claims stay exact.
+  A `*` anywhere else in a new `sub` is refused. A local board requires
+  [review of stored subjects](#review-stored-oidc-subjects) before grants
+  can admit callers under this rule. Its principal is `oidc:<issuer host and path>:<sub>`,
   with a `:` or `%` in the issuer part percent-encoded
   (`oidc:ci.test%3A8443:<sub>`), so the ID ends its issuer at the first `:`.
 - **Tests** pass `board({ authenticate: oidcTokens(testIssuers) })` in code,
@@ -1128,17 +1130,53 @@ await team.revokeGrant(grant.id)
   is `invalid_grant`, and so are Vercel's and GitHub's, which have kinds of
   their own.
 
-**On each backend:** `local()` keeps grants on its log, in a session
-of their own, `access`, beside `board`, as it keeps schedules, so none reaches the message tables, `/events`, watchers, or sync. A
-grant's ID is the fold's counter (`g4`). An older log's token events, from
-when boards issued tokens, fold into nothing. `http()` forwards them to the board it uses, for its
-own handle: they're that board's.
-`vercel()`
-forwards grants to Vercel's API as the protocol has them
-(`/boards/:id/grants`, `/boards/:id/grants/batch`,
-`PATCH /boards/:id/grants/:id`, `/boards/:id/grants/explain`, each write with
-an `operationId`, and `lockMeOut` where it's said), and adapts only times, which the API answers in milliseconds
-and the protocol as ISO strings (a grant's `at`).
+#### Review stored OIDC subjects
+
+- **Legacy means present at the first open with no baseline.** On its first
+  use under this version, `local()` replays its grants and appends one
+  server-authored `grant.oidc_star_baseline` in `access`. It lists the ID and
+  last content write's log index for each grant with an OIDC `sub` ending in
+  `*`, including any value in a list and stars that still match literally.
+  This is a log boundary, not a release date. Even an empty list is recorded
+  once. The append is conditional on the access log head. A competing open
+  retries from the log, and no upgraded instance decides access before the
+  baseline lands.
+- **No grant-dependent access during review.** While any entry is pending,
+  a verified caller that needs a grant for admission gets 403
+  `oidc_star_review_required` before matching. The message names
+  `vb grants acknowledge <id>`. This includes joined invitees, other project
+  deployments, workflows, and tokens from other OIDC issuers. The board's own
+  code and deployments in its environment keep their fixed access. Verified
+  members keep their normal channel permissions, because OIDC subjects never
+  match them. The same check denies grant-dependent background access.
+- **Review each entry.** `GET /grants` marks it with
+  `needsOidcSubjectReview: true`. A verified person who may widen the grant
+  uses `POST /grants/:id/acknowledge` (no body), or `vb grants acknowledge
+  <id>`, to accept its current subject matching. It answers
+  `{ acknowledged }`, false when the grant needs no review. The log event
+  records the grant's current version and the verified actor, not request
+  fields. `PATCH /grants/:id` clears the entry only when no OIDC `sub` in
+  it ends in `*`. An update that leaves any trailing star still needs review.
+  Revoking the grant also clears it. New grants and edits to already cleared
+  grants follow upstream matching. An empty or cleared baseline costs one
+  check in the existing grant-state read, not a new store read per request.
+
+#### Grant storage by backend
+
+`local()` keeps grants and their review events in the board's log, in the
+`access` session next to `board`. None reaches the message tables, `/events`,
+watchers, or sync. A grant's ID is the fold's counter (`g4`). An older log's
+token events, from when boards issued tokens, fold into nothing.
+
+`http()` forwards grant requests to the board it uses. `vercel()` forwards
+them to Vercel's API. The destination decides grants in both cases. The
+fork's guard runs only on the local board that keeps the log. A backend that
+does not review stored subjects can answer 501 `no_grant_review`.
+Vercel grant routes are `/boards/:id/grants`, `/boards/:id/grants/batch`,
+`PATCH /boards/:id/grants/:id`, and `/boards/:id/grants/explain`. Each write
+carries an `operationId`, and `lockMeOut` where it's said. `vercel()` adapts
+only times, which the API answers in milliseconds and the protocol as ISO
+strings (a grant's `at`).
 The API looks up the names people type and answers views with IDs and names,
 so a board on `vercel()` fails the conformance kit's `grants` group wherever
 the run names a project or a repository the team doesn't have. What its grant rules refuse, it answers 403 `grant_forbidden`,

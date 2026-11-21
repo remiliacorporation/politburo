@@ -179,8 +179,8 @@ more specific pattern decides first.
   its keys once a grant names it, by OIDC discovery: its
   `/.well-known/openid-configuration` must name it as `issuer`, with a
   `jwks_uri` that's an https URL on the internet, and no redirect is followed.
-  Every claim must match exactly, and a list is any of its values. Vercel's
-  and GitHub's issuers have kinds of their own.
+  A list matches any of its values. Claims other than `sub` match exactly.
+  Vercel's and GitHub's issuers have kinds of their own.
 - **An `oidc` principal names a `sub`.** An issuer such as GitLab.com signs
   tokens for everyone it serves, so a claim like `ref=main` lets in anyone's
   job on main. Its `sub` is the one claim unique to a workload, so a grant
@@ -241,6 +241,44 @@ more specific pattern decides first.
   wrote.
 - **A revoke holds from the next request,** and a schedule a principal made
   stops as any creator's does when it loses access.
+
+### Review stored OIDC subjects
+
+Upstream 0.54.0 treats `:*` and `/*` at the end of an OIDC `sub` as a
+prefix, not a literal. When a local board first opens without a review
+baseline, it marks each grant with any `sub` value ending in `*`. The board
+keeps that baseline in its log, even if no grants need review. New grants
+follow the prefix rule and do not need review.
+
+While any grant still needs review, requests that need a grant to get in
+answer 403 `oidc_star_review_required`. Members keep their channel access.
+The board's own deployments in its environment and its own code keep theirs.
+Grant-dependent scheduled sends fail their access recheck.
+
+As a person with `manage`, run `vb grants list` and look for
+`needs oidc subject review`. Review each marked grant. For example, if `g4`
+should keep its prefix:
+
+```bash
+vb grants acknowledge g4
+```
+
+Or replace the starred principal with an exact subject. Copy the issuer and
+all the old principal's claims from the listing when removing it. This
+example replaces a principal that has only a `sub` claim:
+
+```bash
+vb grants update g4 \
+  --remove-oidc https://gitlab.com --claim 'sub=tenant/release/*' \
+  --add-oidc https://gitlab.com --claim 'sub=tenant/release/main'
+```
+
+Updating a marked grant to a different prefix still needs acknowledgement.
+Removing all its starred subjects or running `vb grants revoke g4` clears
+its review. Access resumes after the last marked grant clears. Stop old
+instances before opening the board with the upgraded version. This check
+only runs on the local board that keeps the log, not on the client that
+connects to it or on Vercel's API.
 
 ## A backend of your own
 

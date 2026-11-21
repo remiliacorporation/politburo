@@ -150,6 +150,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/grants` | `{ principals, can }`: a new grant, even for principals another grant names. Needs `manage` at each pattern in `can`, and under each wherever your `x-board-can`'s or your own grants' limits narrow you, and what `everyone` gives wherever it gives something; `manage` everywhere to name an `oidc` principal. A key it doesn't know is 400. Answers `{ grant }` One its caller couldn't take back, since it takes their own `manage` at a pattern it names, is 409 `grant_lockout` unless the body says `lockMeOut: true`, as any grant write's may |
 | POST | `/grants/batch` | `{ grants, lockMeOut? }`: 1 to 16 grants, each `{ principals, can }`, made in one write, all or none. Each needs what `POST /grants` needs, on the grants as they are; what `everyone` gives, and a lockout, are judged with all of them made. Answers `{ grants }`, in the order given |
 | PATCH | `/grants/:id` | `{ add?, remove?, can?, lockMeOut? }`: adds principals, removes them by who they are, or replaces `can`. Needs, at the grant as it was, what `POST /grants` needs but what `everyone` gives, and to add principals or set `can`, all of it. Answers `{ grant }`; 404 `grant_not_found`, 400 `not_in_grant` or `grant_empty` |
+| POST | `/grants/:id/acknowledge` | No body. A person who can widen the grant confirms its current OIDC subject matching on a local board. Answers `{ acknowledged }`, false if the grant needs no review. A backend without review can answer 501 `no_grant_review` |
 | GET | `/grants/explain` | Which grants decide a channel: `{ channel, pattern, over, level, grants, capped, can }`, `over` the other patterns that cover it, most specific first. Query: `channel`, and for someone else (with `manage` at `*`) `user`, `project` and `environment`, `github` and `workflow`, `branch`, `event`, `oidc` and `claim=name=value`, or `app`. `grants` is empty for a caller that can't list them |
 | POST | `/grants/:id/revoke` | No body, or `{ lockMeOut }`. Answers `{ revoked }`, false when it was already gone. Needs what `POST /grants` needs at its patterns, but what `everyone` gives |
 | POST | `/invites` | `{ name, can?, expiresIn? }` → 201 `{ invite, secret }`. Needs `manage` at `*` without `x-board-can`. See [Invites](#invites) |
@@ -776,6 +777,11 @@ after a `:` or `/` to match how one starts (`project_path:acme/api:*`), and
 others narrow it. Without one, or with a `*` anywhere else in it, it's 400
 `invalid_grant`, except to remove it from a grant. See
 [how grants combine](../01-board/09-access.md#how-grants-combine).
+
+A local board marks grants that need [OIDC subject review](../01-board/09-access.md#review-stored-oidc-subjects)
+with `needsOidcSubjectReview: true` in `GET /grants`. A verified caller that
+needs a grant to get in receives 403 `oidc_star_review_required` until the
+last review clears.
 
 ### Invites
 
