@@ -450,7 +450,8 @@ export const TasksQuery = z.object({
 export const ClaimTaskBody = z.object({ lease: Lease.optional(), binding: TaskBinding.optional(), ...ClaimToken }).optional()
 
 /**
- * Claims the highest priority eligible ready task in `channel`, oldest first at equal priority.
+ * Claims the highest priority eligible ready task in `channel`. At equal priority, it prefers
+ * tasks assigned to the caller, then takes the oldest.
  * It must have every label in `label` and be assigned to the caller, or unassigned and owned by
  * the caller or an owner `from` names by ID. `wait`
  * holds the request up to that many seconds for one.
@@ -1399,7 +1400,7 @@ export const routes = {
   createTasks: { method: 'POST', path: '/tasks/batch', body: CreateTasksBody },
   /** The caller's own batch made under the `id` it gave, its tasks as they are now: for telling a retry before making anything. */
   createdTasks: { method: 'GET', path: '/tasks/batch/:id', query: CreatedTasksQuery },
-  /** Claims the next eligible task in a channel or subtree by priority, then age. Answers `{ task: null }` when none is ready. */
+  /** Claims the highest priority eligible ready task in a channel or subtree. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. Answers `{ task: null }` when none is ready. */
   claimReadyTask: { method: 'POST', path: '/tasks/claim', body: ClaimReadyTaskBody },
   /** Claims a task: `label` in its channel. Its answer's `claim` goes on what the claim does next. */
   claimTask: { method: 'POST', path: '/tasks/:id/claim', body: ClaimTaskBody },

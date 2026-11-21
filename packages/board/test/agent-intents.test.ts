@@ -200,6 +200,28 @@ it('omits a pending run probe after its claim is released', async () => {
   expect((await worker.agents.intents(agent.id)).intents).toEqual([])
 })
 
+it('omits a pending run probe after its lease expires', async ({ onTestFinished }) => {
+  const advance = clock(onTestFinished)
+  const { worker, agent, issue, take } = await runFixture()
+  advance(5_000)
+  const probe = await issue('before-lease-expiry')
+  expect((await worker.agents.intents(agent.id)).intents.map(({ id }) => id)).toEqual([probe.id])
+
+  advance(26_000)
+  await expect(take(probe)).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+  expect((await worker.agents.intents(agent.id)).intents).toEqual([])
+})
+
+it('omits a pending run probe after its task is deleted', async () => {
+  const { client, worker, agent, task, issue, take } = await runFixture()
+  const probe = await issue('before-delete')
+  expect((await worker.agents.intents(agent.id)).intents.map(({ id }) => id)).toEqual([probe.id])
+
+  await client.delete(task.id)
+  await expect(take(probe)).rejects.toMatchObject({ status: 404, code: 'not_a_task' })
+  expect((await worker.agents.intents(agent.id)).intents).toEqual([])
+})
+
 it.for(['paused', 'resumed'] as const)('does not confirm run health when the board has %s until a new claim is probed', async (phase, { onTestFinished }) => {
   clock(onTestFinished)
   const { client, worker, agent, task, health, issue, take, report } = await runFixture()
@@ -362,6 +384,70 @@ it('does not take a still-pending intent after its issuer credential expires', a
   await expect(worker.agents.takeIntent(intent!.id, 1)).rejects.toMatchObject({ status: 403, code: 'issuer_revoked' })
 })
 
+it('omits a pending run probe after its issuer grant is revoked', async () => {
+  const { team, worker, agent, run, take } = await runFixture()
+  const { grant } = await team.createGrant({ principals: [{ kind: 'github', repository: 'acme/web' }], can: { work: 'all' } })
+  const issuer = via(team.fetch, await workflowToken())
+  const { intents: [probe] } = await issuer.agents.issueIntent(agent.id, {
+    verb: 'status', run, generation: agent.generation, requestId: 'before-revoke', ttlSeconds: 30,
+  })
+  expect((await worker.agents.intents(agent.id)).intents.map(({ id }) => id)).toEqual([probe!.id])
+
+  await team.revokeGrant(grant.id)
+  await expect(take(probe!)).rejects.toMatchObject({ status: 403, code: 'issuer_revoked' })
+  expect((await worker.agents.intents(agent.id)).intents).toEqual([])
+})
+
+it('omits a pending run probe after its issuer credential expires', async ({ onTestFinished }) => {
+  const advance = clock(onTestFinished)
+  const token = await personToken('u_issuer')
+  advance(3_595_000)
+  const { team, worker, agent, run, take } = await runFixture()
+  const issuer = via(team.fetch, token)
+  const { intents: [probe] } = await issuer.agents.issueIntent(agent.id, {
+    verb: 'status', run, generation: agent.generation, requestId: 'before-issuer-expiry', ttlSeconds: 30,
+  })
+  expect((await worker.agents.intents(agent.id)).intents.map(({ id }) => id)).toEqual([probe!.id])
+
+  advance(10_000)
+  await expect(take(probe!)).rejects.toMatchObject({ status: 403, code: 'issuer_revoked' })
+  expect((await worker.agents.intents(agent.id)).intents).toEqual([])
+})
+
+it('omits a delegated pending run probe after its parent is retired', async () => {
+  const { client, worker, agent, run } = await runFixture()
+  const parent = client.as('controller')
+  const controller = await parent.agents.register({ ...config, role: 'controller' })
+  const child = await worker.agents.register({ ...config, parent: controller.id, ifGeneration: agent.generation })
+  const issuer = parent.as('controller', { can: 'work=read,post' })
+  const { intents: [probe] } = await issuer.agents.issueIntent(child.id, {
+    verb: 'status', run, generation: child.generation, requestId: 'before-parent-retirement', ttlSeconds: 30,
+  })
+  expect((await worker.agents.intents(child.id)).intents.map(({ id }) => id)).toEqual([probe!.id])
+
+  await parent.agents.retire(controller.id, controller.generation)
+  await expect(worker.agents.takeIntent(probe!.id, child.generation)).rejects.toMatchObject({ status: 403, code: 'issuer_revoked' })
+  expect((await worker.agents.intents(child.id)).intents).toEqual([])
+})
+
+it('lists a still-authorized run probe when another issuer loses issue authority', async () => {
+  const { team, worker, agent, run, issue } = await runFixture()
+  const principal = { kind: 'github', repository: 'acme/web' } as const
+  const { grant } = await team.createGrant({ principals: [principal], can: { work: 'all' } })
+  await team.createGrant({ principals: [principal], can: { work: ['read', 'post'] } })
+  const issuer = via(team.fetch, await workflowToken())
+  const { intents: [probe] } = await issuer.agents.issueIntent(agent.id, {
+    verb: 'status', run, generation: agent.generation, requestId: 'before-losing-manage', ttlSeconds: 30,
+  })
+  const authorized = await issue('still-authorized')
+  const recipient = worker.as('worker', { can: 'work=read,post' })
+  const listed = async () => (await recipient.agents.intents(agent.id)).intents.map(({ id }) => id)
+  expect(await listed()).toEqual([probe!.id, authorized.id])
+
+  await team.revokeGrant(grant.id)
+  expect(await listed()).toEqual([authorized.id])
+})
+
 it('keeps intent mutations out of all-events reads and out of ordinary task views', async () => {
   const { team, client, agent, task, issue, take, report, health } = await runFixture()
   const start = await client.post('work', 'before probing')
@@ -431,8 +517,12 @@ it('rechecks agent capabilities on the same HTTP handle when the mount changes',
   onTestFinished(() => full.close())
   onTestFinished(() => disabled.close())
   const { fetch: registryFetch, attempted } = registryOnlyMount(full.fetch)
+  const cachedDiscovery = await (await full.fetch(new Request(BOARD_URL))).json()
   let mount = full.fetch
-  const client = via((request) => mount(request), await personToken()).as('worker')
+  const client = via((request) => {
+    if (request.url === BOARD_URL && request.cache !== 'no-store') return Promise.resolve(Response.json(cachedDiscovery))
+    return mount(request)
+  }, await personToken()).as('worker')
   expect(await client.discovery()).toMatchObject({ agent_ops: true, agent_intents: true })
   const agent = await client.agents.register(config)
   const issued = await client.agents.issueIntent(agent.id, command)
@@ -463,11 +553,99 @@ it("never returns an older mount's discovery document as health", async ({ onTes
   expect(attempted).toEqual([])
 })
 
-it('passes registry conformance but skips run health on a registry-only board', async ({ onTestFinished }) => {
-  const { client } = await registryOnly(onTestFinished)
+it('rejects discovery JSON from the health route even when the mount advertises intents', async ({ onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const client = via((request) => new URL(request.url).pathname.startsWith(`${new URL(BOARD_URL).pathname}/ops/health/`)
+    ? team.fetch(new Request(BOARD_URL))
+    : team.fetch(request), await personToken())
+
+  await expect(client.agents.health('missing')).rejects.toMatchObject({ status: 502, code: 'remote_error' })
+})
+
+const runHealthCheck = 'confirms a claimed run only through a taken and reported status probe'
+
+it('skips run-health conformance when the mount becomes registry-only during the run', async ({ onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const { fetch: registryFetch } = registryOnlyMount(team.fetch)
+  let mount = team.fetch
+  const client = via(async (request) => {
+    const response = await mount(request)
+    if (response.ok && request.method === 'POST' && /\/ops\/agents\/[^/]+\/retire$/.test(new URL(request.url).pathname)) mount = registryFetch
+    return response
+  }, await personToken())
+
   const report = await conformance(client)
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({
+    status: 'skipped', detail: 'not kept here: agent intents are not advertised',
+  })
+}, 30_000)
+
+it('passes registry conformance but skips run health on a registry-only board without leaving a probe', async ({ onTestFinished }) => {
+  const { client } = await registryOnly(onTestFinished)
+  const channel = 'conformance'
+  const { cursor: start } = await client.channel(channel).messages()
+  const report = await conformance(client, { channel })
   expect(report.checks.filter(({ group }) => group === 'agents')).toMatchObject([
     { name: 'registers, lists, heartbeats, and retires an agent under its verified binding', status: 'passed' },
-    { name: 'confirms a claimed run only through a taken and reported status probe', status: 'skipped', detail: expect.stringContaining('not kept here') },
+    { name: runHealthCheck, status: 'skipped', detail: expect.stringContaining('not kept here') },
   ])
+  // Only the registry check leaves an entry.
+  expect((await client.agents.list(channel)).agents).toMatchObject([{ status: 'disabled' }])
+  // A tombstone no longer has the task's text. Read the channel's posts from before the run.
+  for (let after = start; ; ) {
+    const { events, cursor } = await client.poll({ channel, after, wait: 0 })
+    expect(events.filter(({ type, message }) => type === 'message.posted' && message?.text === 'conformance: run health')).toEqual([])
+    if (cursor === after) break
+    after = cursor
+  }
+}, 30_000)
+
+// The third POST is the one that would normally be refused with 409 for changed input.
+it.for([1, 3])('skips run-health conformance and cleans up when the mount becomes registry-only on intent POST %i', { timeout: 30_000 }, async (attempt, { onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const { fetch: registryFetch } = registryOnlyMount(team.fetch)
+  const channel = 'conformance'
+  let mount = team.fetch
+  let issued = 0
+  let probe: { agent: string; run: AgentRun } | undefined
+  const client = via(async (request) => {
+    const issuing = request.method === 'POST' && /\/ops\/agents\/([^/]+)\/intents$/.exec(new URL(request.url).pathname)
+    if (issuing && ++issued === attempt) {
+      // Discovery still advertised intents when this request was sent.
+      mount = registryFetch
+      const { run } = await request.json() as { run: AgentRun }
+      probe = { agent: decodeURIComponent(issuing[1]!), run }
+      return Response.json({ error: { code: noOps.code, message: 'this board does not advertise agent intents or run health' } }, { status: noOps.status })
+    }
+    return mount(request)
+  }, await personToken())
+
+  const report = await conformance(client, { channel })
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({
+    status: 'skipped', detail: 'not kept here: agent intents are not advertised',
+  })
+  expect(probe).toBeDefined()
+  const { agent, run } = probe!
+  expect((await client.agents.list(channel)).agents.find(({ id }) => id === agent)).toMatchObject({ status: 'disabled' })
+  const { events } = await client.poll({ re: run.task, after: run.task, wait: 0 })
+  expect(events.map(({ type }) => type)).toContain('task.released')
+})
+
+it('skips run-health conformance without registering a probe agent on a board that keeps no tasks', async ({ onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const channel = 'conformance'
+  const client = via(async (request) => {
+    if (!/\/tasks(?:\/|$)/.test(new URL(request.url).pathname)) return team.fetch(request)
+    return Response.json({ error: { code: 'no_tasks', message: 'this board keeps no tasks' } }, { status: 501 })
+  }, await personToken())
+
+  const report = await conformance(client, { channel })
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({
+    status: 'skipped', detail: 'not kept here: this board keeps no tasks',
+  })
+  expect((await client.agents.list(channel)).agents).toMatchObject([{ status: 'disabled' }])
 }, 30_000)

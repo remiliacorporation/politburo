@@ -3121,15 +3121,17 @@ function namedTask(): string | undefined {
   return command === 'tasks' && verb !== undefined && TASK_VERBS.has(verb) && target !== undefined && isMessageRef(target) ? messageId(target) : undefined
 }
 
-type TaskHold = 'parked' | 'held' | 'unknown'
+type TaskHold = 'parked' | 'held' | 'cleared' | 'unknown'
 
-/** A hold and a park share one code. Read the task to tell them apart without losing the original failure. */
+/** A hold and a park share one code. Read the task to see what still holds it, if anything. */
 async function taskHold(): Promise<TaskHold> {
   if (!taskBoard || flags.ready) return 'unknown'
   const id = namedTask()
   if (id === undefined) return 'unknown'
   try {
-    return (await taskBoard.thread(id, { limit: 1 })).message.task?.parked ? 'parked' : 'held'
+    const { message } = await taskBoard.thread(id, { limit: 1 })
+    if (message.task?.state !== 'blocked') return 'cleared'
+    return message.task.parked ? 'parked' : 'held'
   } catch {
     return 'unknown'
   }
@@ -3150,6 +3152,17 @@ function taskFailure(code: string, status: number, hold: TaskHold): { class: Fai
       return { class: 'conflict', message: `Can't ${doing()}. It waits for other tasks.`, next: read('See what it waits for') }
     case 'task_blocked': {
       const board = onSameBoard()
+      if (hold === 'cleared') {
+        const skipRetry = command === 'tasks' &&
+          (args[0] === 'cancel' || args[0] === 'unblock')
+        const message = `Can't ${doing()}. ` +
+          'It was held, and the hold is lifted now.'
+        return {
+          class: 'conflict',
+          message: skipRetry ? message : `${message} Try again.`,
+          next: read('See where it stands', ...board, ...asTyped()),
+        }
+      }
       const see = read("See what it's held for", ...board, ...asTyped())
       if (hold === 'unknown') return { class: 'conflict', message: `Can't ${doing()}. It's held, but the CLI couldn't read the task to see why.`, next: see }
       // An operator acts without a profile, even if the failed command named one.

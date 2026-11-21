@@ -98,6 +98,15 @@ describe('task priority', () => {
     expect(schema('/tasks/{id}/priority').properties.priority.enum).toEqual(levels)
   })
 
+  it('documents the ready task claim order in OpenAPI', async () => {
+    const { ada } = setup()
+    const api = await ada('GET', '/openapi.json')
+    expect(api.status).toBe(200)
+    expect(api.body.paths['/tasks/claim'].post.description).toBe(
+      'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest.',
+    )
+  })
+
   it('lets a manager raise priority without disturbing a different holder', async () => {
     const { ada, bo, board } = setup()
     const agent = web(board)

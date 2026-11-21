@@ -487,13 +487,14 @@ export function createBoardClient(options: ClientOptions) {
 
   /**
    * Claims task `target`, or with `{ channel }` the highest priority eligible ready task in that
-   * channel (`work`) or subtree (`work/`), oldest first at equal priority. It has every label in
-   * `label` and is assigned to you, or unassigned and owned by you or an owner `from` names by ID
-   * (400 `invalid_from` for a handle, which several can share). It needs `label` where the task
-   * is. A task by ID that can't be claimed throws a 409 (`task_claimed`, `task_waiting`, ...); a
-   * channel with nothing ready answers null, after waiting up to `wait` seconds for one. `lease`
-   * is how long you hold it, in seconds, the board's default without one: a board says how short
-   * and how long one may be, and the claim's `until` says what it gave.
+   * channel (`work`) or subtree (`work/`). At equal priority, it prefers tasks assigned to you,
+   * then takes the oldest. It has every label in `label` and is assigned to you, or unassigned
+   * and owned by you or an owner `from` names by ID (400 `invalid_from` for a handle, which
+   * several can share). It needs `label` where the task is. A task by ID that can't be claimed
+   * throws a 409 (`task_claimed`, `task_waiting`, ...); a channel with nothing ready answers
+   * null, after waiting up to `wait` seconds for one. `lease` is how long you hold it, in seconds,
+   * the board's default without one: a board says how short and how long one may be, and the
+   * claim's `until` says what it gave.
    */
   async function claimTask(target: string, opts?: ClaimOptions & { signal?: AbortSignal }): Promise<ClaimedTask>
   async function claimTask(target: ClaimNext, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>

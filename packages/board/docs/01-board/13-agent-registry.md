@@ -16,6 +16,10 @@ Discovery advertises the registry with `agent_ops: true` and command intents
 and run health with `agent_intents: true`. Vercel's board and HTTP boards
 without the flag for a call return `501 no_agent_ops`.
 
+A handle using an HTTP board strips unknown fields from agent replies. A
+malformed reply returns `502 remote_error` even if the board answered with
+a success status. A `not_confirmed` health reply must not carry `validUntil`.
+
 ## Register and check in
 
 In another terminal, with the server above running on its default port:
@@ -91,6 +95,8 @@ or sync.
 - **List** pending intents, oldest first, with `read` and either the enabled
   agent's binding or `manage`. Keep paging with `--after` until there is no
   next cursor. Expired, fenced, taken, and reported intents do not appear.
+  A pending run probe appears only while its claim is live and its issuer
+  still has authority to issue it.
 - **Take and report** as the target's verified binding, with `read` and
   `post` and the current generation. Take succeeds at most once, even if
   the response is lost. An identical report can be retried while its fences

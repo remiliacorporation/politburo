@@ -422,8 +422,12 @@ The backend picks them; the protocol only says their shape:
   501 in `schedules`, `tasks`, or `attachments` is `skipped`, with the detail `not kept
   here: <the board's message>`; one that would replace the caller's own
   registration is skipped too. The kit skips the registry check without
-  `agent_ops` and the run health check without `agent_intents`. The run health
-  probe also needs a verified credential. The `operational-inbox` check sends to the
+  `agent_ops`. The run health check needs a verified credential and reads
+  health before writing. If the board lacks `agent_intents`, it skips without
+  creating a probe task or registering a probe agent. If task creation answers
+  501 `no_tasks`, it skips without registering a probe agent. If intents
+  become unavailable during the probe, it skips and still tries to release
+  the claim and retire the agent. The `operational-inbox` check sends to the
   run's principal, tests replacement, receipts, and privacy, and archives the
   remaining message. It skips a board that answers 501 `no_operational_inbox`.
   `vb conformance` runs it as the CLI's identity,

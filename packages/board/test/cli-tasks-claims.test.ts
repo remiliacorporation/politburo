@@ -2,9 +2,11 @@ import { cp, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { MessageView } from '../src/api/routes.ts'
+import { http } from '../src/backend-http/index.ts'
+import { vb as vbInProcess } from '../src/cli/embedded.ts'
 import { env, tmp, url, useBoard, vb } from './cli-harness.ts'
 import { asProfile, bo, claimOn, claimsDir, create, deployment, events, failure, ok, start, state, task, until } from './cli-tasks-harness.ts'
-import { localBoard, personToken } from './harness.ts'
+import { bearer, board, localBoard, personToken } from './harness.ts'
 import { serve } from './http.ts'
 
 useBoard()
@@ -118,14 +120,23 @@ describe("vb tasks, with the claim it keeps", () => {
   }, 60_000)
 
   it('suggests unpark for a parked task and unblock for a plain hold', async () => {
-    const id = await create('parked', 'deploy to prod')
-    await ok(['tasks', 'block', id, 'waiting for approval'])
+    const id = await create('parked', 'deploy to prod', ['--as', 'worker'])
+    await ok(['tasks', 'block', id, 'waiting for approval', '--as', 'worker'])
     const held = await vb(['tasks', 'claim', id])
     expect(held.code).toBe(1)
     expect(held.stderr).toContain(`error: Can't claim task #${id}. It's held for a person.\n`)
     expect(held.stderr).toContain(`    vb tasks unblock ${id}\n`)
     expect(held.stderr).not.toContain('vb tasks unpark')
-    await ok(['tasks', 'unblock', id])
+
+    const elsewhere = { BOARD_URL: 'http://env.invalid/api/board' }
+    const heldWithFlags = await vb(['tasks', 'claim', id, '--url', url, '--as', 'worker', '--json'], elsewhere)
+    expect(heldWithFlags).toMatchObject({ code: 1, stdout: '' })
+    const hold = failure(heldWithFlags)
+    expect(hold).toMatchObject({ reason: 'task_blocked', next: [
+      { argv: ['vb', 'read', id, '--url', url, '--as', 'worker'] },
+      { argv: ['vb', 'tasks', 'unblock', id, '--url', url, '--as', 'worker'] },
+    ] })
+    expect(await ok(hold.next![1]!.argv.slice(1), elsewhere)).toBe(`unblocked ${id}\n`)
 
     await ok(['tasks', 'park', id, 'deployment freeze'])
     const parked = await vb(['tasks', 'claim', id])
@@ -141,7 +152,6 @@ describe("vb tasks, with the claim it keeps", () => {
       '',
     ])
 
-    const elsewhere = { BOARD_URL: 'http://env.invalid/api/board' }
     const refused = failure(await vb(['tasks', 'claim', id, '--url', url, '--as', 'worker', '--json'], elsewhere))
     expect(refused).toMatchObject({ reason: 'task_blocked', next: [
       { argv: ['vb', 'read', id, '--url', url, '--as', 'worker'] },
@@ -150,6 +160,140 @@ describe("vb tasks, with the claim it keeps", () => {
     // The suggested write still reaches the selected board, but unpark must act as a person, without --as.
     expect(await ok(refused.next![1]!.argv.slice(1), elsewhere)).toBe(`unparked ${id}\n`)
   }, 60_000)
+
+  it('keeps --scope in the unpark suggestion', async () => {
+    const id = await create('parked', 'deploy to prod')
+    await ok(['tasks', 'park', id, 'deployment freeze'])
+
+    // --scope selects a Vercel board in the standalone CLI. Use the local board handle for the refusal.
+    const team = board({ backend: http(url, { fetch: bearer(fetch, env.BOARD_TOKEN!) }) })
+    const refused = await vbInProcess(team, ['tasks', 'claim', id, '--scope', 'acme', '--as', 'worker', '--json'])
+    expect(refused).toMatchObject({ code: 1, stdout: '' })
+    expect(failure(refused)).toMatchObject({ reason: 'task_blocked', next: [
+      { argv: ['vb', 'read', id, '--scope', 'acme', '--as', 'worker'] },
+      { argv: ['vb', 'tasks', 'unpark', id, 'resume work', '--scope', 'acme'] },
+    ] })
+  })
+
+  it('suggests only a read when a hold is lifted after the claim refusal', async ({ onTestFinished }) => {
+    const team = localBoard({ url: undefined })
+    let id: string
+    const server = await serve(async (request) => {
+      if (request.method === 'GET' && new URL(request.url).pathname === `/api/board/messages/${id}`) {
+        // Lift the hold before the board answers the CLI's follow-up read.
+        const lifted = await team.fetch(new Request(new URL(`/api/board/tasks/${id}/unblock`, request.url), { method: 'POST', headers: request.headers }))
+        if (!lifted.ok) return lifted
+      }
+      return team.fetch(request)
+    })
+    onTestFinished(async () => {
+      await server.close()
+      await team.close()
+    })
+    const board = `${server.origin}/api/board`
+    const as = { BOARD_URL: board, BOARD_TOKEN: await personToken('u_julian', board) }
+    id = await create('held', 'deploy to prod', ['--as', 'worker'], as)
+    await ok(['tasks', 'block', id, 'waiting for approval', '--as', 'worker'], as)
+
+    const refused = await vb(['tasks', 'claim', id, '--url', board, '--as', 'worker', '--json'], as)
+    expect(refused).toMatchObject({ code: 1, stdout: '' })
+    const error = failure(refused)
+    expect({ reason: error.reason, message: error.message, next: error.next?.map(({ when, argv }) => ({ when, argv })) }).toEqual({
+      reason: 'task_blocked',
+      message: `Can't claim task #${id}. It was held, and the hold is lifted now. Try again.`,
+      next: [{ when: 'See where it stands', argv: ['vb', 'read', id, '--url', board, '--as', 'worker'] }],
+    })
+  })
+
+  it(
+    'does not suggest retrying unblock when the park is lifted',
+    async ({ onTestFinished }) => {
+      const team = localBoard({ url: undefined })
+      let id: string
+      let unblockRefused = false
+      const server = await serve(async (request) => {
+        const { method } = request
+        const path = new URL(request.url).pathname
+        if (method === 'POST' && path === `/api/board/tasks/${id}/unblock`) {
+          const response = await team.fetch(request)
+          unblockRefused = response.status === 409
+          return response
+        }
+        // Unblock reads the task before the write too. Lift only after refusal.
+        if (unblockRefused && method === 'GET' &&
+            path === `/api/board/messages/${id}`) {
+          const headers = new Headers(request.headers)
+          headers.set('content-type', 'application/json')
+          const unpark = new Request(
+            new URL(`/api/board/tasks/${id}/unpark`, request.url),
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ reason: 'maintenance ended' }),
+            },
+          )
+          const lifted = await team.fetch(unpark)
+          if (!lifted.ok) return lifted
+        }
+        return team.fetch(request)
+      })
+      onTestFinished(async () => {
+        await server.close()
+        await team.close()
+      })
+      const board = `${server.origin}/api/board`
+      const as = {
+        BOARD_URL: board,
+        BOARD_TOKEN: await personToken('u_julian', board),
+      }
+      id = await create('parked', 'deploy to prod', [], as)
+      await ok(['tasks', 'park', id, 'deployment freeze'], as)
+
+      const refused = await vb(
+        ['tasks', 'unblock', id, '--url', board, '--json'], as,
+      )
+      expect(refused).toMatchObject({ code: 1, stdout: '' })
+      const { reason, message, next } = failure(refused)
+      expect({ reason, message }).toEqual({
+        reason: 'task_blocked',
+        message: `Can't unblock task #${id}. ` +
+          'It was held, and the hold is lifted now.',
+      })
+      expect(next?.map(({ when, argv }) => ({ when, argv }))).toEqual([
+        {
+          when: 'See where it stands',
+          argv: ['vb', 'read', id, '--url', board],
+        },
+      ])
+    },
+  )
+
+  it('does not suggest retrying a cancel the board refused for a hold now lifted', async ({ onTestFinished }) => {
+    const team = localBoard({ url: undefined })
+    let id: string
+    // A board that still holds the task when it cancels: the one here cancels a held task.
+    const server = await serve((request) => {
+      if (request.method === 'POST' && new URL(request.url).pathname === `/api/board/tasks/${id}/cancel`)
+        return Promise.resolve(Response.json({ error: { code: 'task_blocked', message: 'the task is held' } }, { status: 409 }))
+      return team.fetch(request)
+    })
+    onTestFinished(async () => {
+      await server.close()
+      await team.close()
+    })
+    const board = `${server.origin}/api/board`
+    const as = { BOARD_URL: board, BOARD_TOKEN: await personToken('u_julian', board) }
+    id = await create('cancel', 'deploy to prod', [], as)
+
+    const refused = await vb(['tasks', 'cancel', id, 'not needed', '--url', board, '--json'], as)
+    expect(refused).toMatchObject({ code: 1, stdout: '' })
+    const { reason, message, next } = failure(refused)
+    expect({ reason, message }).toEqual({
+      reason: 'task_blocked',
+      message: `Can't cancel task #${id}. It was held, and the hold is lifted now.`,
+    })
+    expect(next?.map(({ when, argv }) => ({ when, argv }))).toEqual([{ when: 'See where it stands', argv: ['vb', 'read', id, '--url', board] }])
+  })
 
   it('keeps the claim refusal when reading the held task fails', async ({ onTestFinished }) => {
     const team = localBoard({ url: undefined })

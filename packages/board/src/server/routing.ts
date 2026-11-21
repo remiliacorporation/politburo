@@ -181,7 +181,7 @@ export function openapi() {
   for (const { name, definition, bound } of definitions) {
     const path = definition.path.replace(/:(\w+)/g, '{$1}')
     const operation: Record<string, unknown> = { operationId: bound ? `${name}Bound` : name }
-    if (name === 'claimReadyTask') operation.description = 'Claims the highest priority eligible ready task, oldest first at equal priority.'
+    if (name === 'claimReadyTask') operation.description = 'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest.'
     if ('query' in definition) operation['x-query-schema'] = z.toJSONSchema(definition.query, { io: 'input' })
     if ('body' in definition) {
       const schema = z.toJSONSchema(definition.body, { io: 'input' })

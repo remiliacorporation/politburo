@@ -1419,6 +1419,10 @@ What can go wrong, by `reason`:
 | `no_task_authority` | the board doesn't support parking, bound claims, or handoffs | 1 |
 | `no_tasks` | the board keeps no tasks | 1 |
 
+If the CLI reads the task after `task_blocked` and the hold is already gone,
+it suggests `vb read`. It does not say to retry `tasks cancel` or
+`tasks unblock`.
+
 ```text
 $ vb tasks claim 832
 error: Can't claim task #832. Someone holds it.

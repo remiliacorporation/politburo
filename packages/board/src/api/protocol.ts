@@ -178,7 +178,7 @@ export type Protocol = {
    * there's none. With `request`, 409 `duplicate_id` when the batch was made for another one.
    */
   createdTasks: { input: Id & Input<typeof CreatedTasksQuery>; output: { tasks: MessageView[] } }
-  /** The highest priority eligible ready task (oldest first on ties), claimed, or `{ task: null }` when there's none, after waiting up to `wait` seconds. */
+  /** The highest priority eligible ready task (preferring tasks assigned to the caller at equal priority, then the oldest), claimed, or `{ task: null }` when there's none, after waiting up to `wait` seconds. */
   claimReadyTask: { input: Input<typeof ClaimReadyTaskBody>; output: { task: MessageView; claim: TaskClaim } | { task: null } }
   /** 409 `task_claimed` while someone holds it, and of claims that race, for all but one. */
   claimTask: { input: Id & Input<typeof ClaimTaskBody>; output: { task: MessageView; claim: TaskClaim } }
