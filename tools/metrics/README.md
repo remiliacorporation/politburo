@@ -108,3 +108,22 @@ raw child logs.
 Run `pnpm test:metrics` from the repository root. This suite is separate from
 `pnpm check`. The offline real-board tests reuse the
 built `packages/board/dist/cli.mjs` and skip if it is missing.
+
+## Swarm lines
+
+```sh
+tools/metrics/swarm-lines.sh [--repo PATH] [--head REF]
+```
+
+Counts newline-terminated lines in committed `.ts` files under
+`packages/swarm/src` and `packages/swarm/test`, including subdirectories.
+`value` equals `lines_src`; `lines_test` is separate. A head without swarm
+files reports zero. Requires Bash and Git. Defaults: the repository containing
+the script and `HEAD`. No network or upstream is needed. The same exit codes
+apply.
+
+```json
+{"metric":"swarm_lines","value":7,"unit":"lines of TypeScript in packages/swarm/src (tests counted separately)","lines_src":7,"lines_test":3,"head":"<sha>"}
+```
+
+Run its test with `node --test tools/metrics/test/swarm-lines.test.mjs`.

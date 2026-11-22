@@ -142,6 +142,12 @@ importers:
       '@remilia/politburo-runtime':
         specifier: workspace:^
         version: link:../runtime
+      ajv:
+        specifier: ^8.17.1
+        version: 8.17.1
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
     devDependencies:
       '@types/node':
         specifier: ^26.6.3

@@ -2,14 +2,21 @@
   "name": "@remilia/politburo-swarm",
   "version": "0.0.0",
   "private": true,
-  "description": "The swarm layer: party spend ledger and the processes that host runtime functions.",
+  "description": "Party configuration, tag registry, spend ledger and the swarm CLI.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=22.18"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "registry"
+  ],
+  "bin": {
+    "swarm": "./dist/cli.js"
+  },
   "exports": {
+    ".": "./dist/index.js",
     "./ledger": "./dist/ledger/index.js"
   },
   "scripts": {
@@ -17,11 +24,13 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm run build && node --test test/*.test.ts"
   },
-  "dependencies": {
-    "@remilia/politburo-runtime": "workspace:^"
-  },
   "devDependencies": {
     "@types/node": "^26.6.3",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@remilia/politburo-runtime": "workspace:^",
+    "ajv": "^8.17.1",
+    "yaml": "^2.9.1"
   }
 }
