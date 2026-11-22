@@ -93,4 +93,4 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = process.argv[2] === 'cutover' ? await (await import('./cutover/cli.ts')).run(process.argv.slice(3)) : main(process.argv.slice(2))
+process.exitCode = ['cutover', 'mail'].includes(process.argv[2] ?? '') ? await (await import('./cutover/cli.ts')).run(process.argv.slice(3), process.argv[2]) : main(process.argv.slice(2))

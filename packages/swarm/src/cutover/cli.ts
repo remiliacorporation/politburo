@@ -3,11 +3,16 @@ import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { CommandPorts } from './commands.ts'
 import { apply, plan, rollback, type Context } from './cutover.ts'
+import { runMail } from './mail-send.ts'
 import { currentTag, CutoverError, newTag } from './ports.ts'
+import { runQuery } from './queries.ts'
 
-const usage = 'usage: swarm cutover <plan|apply|rollback> <tag> [flags]'
+const usage = 'usage: swarm cutover <plan|apply|rollback|soak|acks> <tag> [flags]'
 
-export async function run([action, tag, ...args]: string[]): Promise<number> {
+export async function run([action, ...rest]: string[], command = 'cutover'): Promise<number> {
+  if (command === 'mail') return runMail(action, rest)
+  const [tag, ...args] = rest
+  if (action === 'soak' || action === 'acks') return runQuery(action, tag, args)
   if (action === '--help' && tag === undefined) { console.log(usage); return 0 }
   const string = { type: 'string' } as const, boolean = { type: 'boolean' } as const
   const options = { execute: boolean, gate: string, 'rename-to': string, rollback: boolean,
