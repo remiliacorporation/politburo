@@ -4,7 +4,9 @@ import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
+  '       swarm mirror sync --repo owner/name [--json]\n' +
+  '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]'
 
 class ReadError extends Error {}
 
@@ -32,8 +34,11 @@ function misuse(message: string): number {
   return 2
 }
 
-function main(args: string[]): number {
+async function main(args: string[]): Promise<number> {
   const [command, action, ...flags] = args
+  if (command === 'mirror' || command === 'overlap') {
+    return (await import('./mirror/command.ts')).runMirrorCommand(args)
+  }
   if (
     (args.length === 1 && command === '--help') ||
     (args.length === 2 && command === 'config' && action === '--help')
@@ -93,4 +98,4 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+process.exitCode = await main(process.argv.slice(2))
