@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { validTimestamp } from './guard.ts'
 
 export type WakeState = { resetAt: number; firedAt?: number }
+
+function wakeTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
 
 export function readWakeState(path: string): WakeState | undefined {
   let text: string
@@ -14,10 +17,11 @@ export function readWakeState(path: string): WakeState | undefined {
     throw error
   }
   const state: unknown = JSON.parse(text)
-  if (state && typeof state === 'object' && 'resetAt' in state && validTimestamp(state.resetAt)) {
+  if (state && typeof state === 'object' && 'resetAt' in state && wakeTimestamp(state.resetAt) &&
+      Object.keys(state).every(key => key === 'resetAt' || key === 'firedAt')) {
     const { resetAt } = state
     if (!('firedAt' in state)) return { resetAt }
-    if (validTimestamp(state.firedAt) && state.firedAt >= resetAt) return { resetAt, firedAt: state.firedAt }
+    if (wakeTimestamp(state.firedAt)) return { resetAt, firedAt: state.firedAt }
   }
   throw new TypeError('invalid reset wake state')
 }
@@ -56,15 +60,20 @@ export function resetWake({ statePath, now = Date.now, setTimer = startTimer, on
   async function schedule(resetAt: number): Promise<void> {
     if (pending?.resetAt === resetAt) return
     pending?.cancel?.()
-    pending = undefined
-    const time = now()
-    if (time >= resetAt) {
-      writeState(statePath, { resetAt, firedAt: time })
-      await onWake()
-      return
-    }
     const entry: Pending = { resetAt }
     pending = entry
+    const time = now()
+    if (time >= resetAt) {
+      try {
+        // A crash between callback and mark redelivers. The wake only requests a
+        // fresh read and a dispatch attempt, so replay is safe (idempotent).
+        await onWake()
+        if (pending === entry) writeState(statePath, { resetAt, firedAt: now() })
+      } finally {
+        if (pending === entry) pending = undefined
+      }
+      return
+    }
     try {
       const cancel = setTimer(async () => {
         if (pending !== entry) return
@@ -81,7 +90,7 @@ export function resetWake({ statePath, now = Date.now, setTimer = startTimer, on
 
   return {
     async arm(resetAt: number) {
-      if (!validTimestamp(resetAt)) throw new RangeError('invalid reset timestamp')
+      if (!wakeTimestamp(resetAt)) throw new RangeError('invalid reset timestamp')
       const state = readState(statePath)
       if (state && state.resetAt >= resetAt) return
       writeState(statePath, { resetAt })

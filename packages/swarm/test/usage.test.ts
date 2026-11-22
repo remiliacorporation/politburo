@@ -2,7 +2,7 @@ import { spawnSync as spawnSwarm } from 'node:child_process'
 import { test as routingTest } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -10,7 +10,7 @@ import { capacity } from '@remilia/politburo-runtime'
 import { admit } from '../src/usage/admission.ts'
 import { stopGuard } from '../src/usage/guard.ts'
 import { memoryLedger, type BudgetRule } from '../src/usage/ledger-port.ts'
-import { resetWake } from '../src/usage/wake.ts'
+import { readWakeState, resetWake } from '../src/usage/wake.ts'
 
 function tempDir(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-usage-'))
@@ -62,17 +62,40 @@ test('usage stop: dispatch stops early, misses the threshold, or stays blocked a
   const time = clock()
   const window = { usedFraction: 0, resetAt: 100 }
   const source = { read: () => window }
-  for (const [stopPercent, below, at] of [[undefined, 0.999, 1], [90, 0.89, 0.9]] as const) {
+  for (const [stopPercent, below, at] of [
+    [undefined, 0.999, 1], [100, 0.9999999999999999, 1], [90, 0.8999999999999999, 0.9],
+    [95, 0.9499999999999998, 0.95],
+  ] as const) {
     const guard = stopGuard({ source, now: time.now, ...(stopPercent === undefined ? {} : { stopPercent }) })
     window.usedFraction = below
-    assert.deepEqual(await guard.check(), { allowed: true })
+    assert.deepEqual(await guard.check(), { allowed: true }, `below ${stopPercent ?? 100}%`)
     window.usedFraction = at
-    assert.deepEqual(await guard.check(), { allowed: false, resetAt: window.resetAt })
+    assert.deepEqual(await guard.check(), { allowed: false, resetAt: 100 })
   }
-  for (const stopPercent of [0, 101]) assert.throws(() => stopGuard({ source, stopPercent }), RangeError)
-  window.usedFraction = 1
-  await time.tick(101)
+  await time.tick(100)
   assert.deepEqual(await stopGuard({ source, now: time.now }).check(), { allowed: true })
+})
+
+test('stop percent validation: zero and fractions stop in an active window; invalid numbers throw', async () => {
+  for (const [stopPercent, usedFraction] of [[0, 0], [0.5, 0.005]] as const) {
+    const source = { read: () => ({ usedFraction, resetAt: 100 }) }
+    assert.deepEqual(await stopGuard({ source, stopPercent, now: () => 0 }).check(),
+      { allowed: false, resetAt: 100 })
+  }
+  for (const stopPercent of [-0.001, 100.01, NaN, Infinity])
+    assert.throws(() => stopGuard({ source: { read: () => ({ usedFraction: 0, resetAt: 100 }) }, stopPercent }), RangeError)
+})
+
+test('fractional cutoffs: floating-point division rounds early or late', async () => {
+  const check = (stopPercent: number, usedFraction: number) => stopGuard({
+    source: { read: () => ({ usedFraction, resetAt: 100 }) }, stopPercent, now: () => 0,
+  }).check()
+  const refused = { allowed: false, resetAt: 100 }
+  assert.deepEqual(await Promise.all([check(1.00001, 0.0100001), check(1.00002, 0.010000199999999999)]),
+    [refused, { allowed: true }], 'exact cutoff and adjacent below')
+  assert.deepEqual(await check(1.00002, 0.0100002), refused)
+  assert.deepEqual(await check(1e-8, 9.999999999999999e-11), { allowed: true })
+  assert.deepEqual(await check(1e-8, 1e-10), refused)
 })
 
 test('reset wake after repeated refusals: wake is early, missing, or replayed after restart', async (t) => {
@@ -88,13 +111,48 @@ test('reset wake after repeated refusals: wake is early, missing, or replayed af
   assert.deepEqual(wakes, [100])
 })
 
-test('reset wake after downtime: an unfired, overdue wake is lost or replayed', async (t) => {
-  const { wake, makeWake, wakes } = fixture(t)
-  await wake.arm(100)
-  const restarted = makeWake(clock(101)) // The old process and its timer are gone.
+test('reset wake after downtime: rejection must not mark the wake fired or prevent retry', async (t) => {
+  const statePath = join(tempDir(t), 'wake.json')
+  const now = () => 101
+  let fail = true
+  const onWake = async () => {
+    await Promise.resolve()
+    assert.deepEqual(readWakeState(statePath), { resetAt: 100 })
+    if (fail) throw new Error('dispatcher unavailable')
+  }
+  await resetWake({ statePath, ...clock(), onWake }).arm(100)
+  const restarted = resetWake({ statePath, now, onWake }) // The old timer is gone.
+  await assert.rejects(restarted.resume(), /dispatcher unavailable/)
+  assert.deepEqual(readWakeState(statePath), { resetAt: 100 })
+  fail = false
   await restarted.resume()
-  await restarted.resume()
-  assert.deepEqual(wakes, [101])
+  assert.deepEqual(readWakeState(statePath), { resetAt: 100, firedAt: 101 })
+  await resetWake({ statePath, now, onWake }).resume() // Replaying would fail the callback's assertion.
+})
+
+test('corrupt wake state throws without rewriting the file or waking dispatch', async (t) => {
+  const statePath = join(tempDir(t), 'wake.json')
+  let woke = false
+  const wake = resetWake({ statePath, ...clock(101), onWake: () => { woke = true } })
+  for (const state of [null, [], {}, { resetAt: 100, firedAT: 101 }, { resetAt: 100, firedAt: 101, extra: 0 },
+    { resetAt: -1 }, { resetAt: 1.5 }, { resetAt: 2 ** 53 }, { resetAt: '100' },
+    ...[null, -1, 1.5, 2 ** 53, '101'].map(firedAt => ({ resetAt: 100, firedAt }))]) {
+    const text = JSON.stringify(state)
+    writeFileSync(statePath, text)
+    await assert.rejects(wake.resume(), /invalid reset wake state/, text)
+    await assert.rejects(wake.arm(200), /invalid reset wake state/, text)
+    assert.equal(readFileSync(statePath, 'utf8'), text)
+    assert.equal(woke, false)
+  }
+  const valid = { resetAt: Number.MAX_SAFE_INTEGER, firedAt: 0 }
+  writeFileSync(statePath, JSON.stringify(valid))
+  assert.deepEqual(readWakeState(statePath), valid)
+  writeFileSync(statePath, JSON.stringify({ resetAt: valid.resetAt }))
+  const result = spawnSwarm(process.execPath, ['src/cli.ts', 'usage', 'wake', '--state', statePath], {
+    cwd: new URL('../', import.meta.url), encoding: 'utf8', env: {},
+  })
+  assert.equal(result.status, 0)
+  assert.equal(result.stdout.trim(), `armed for ${valid.resetAt}`)
 })
 
 test('reset wake replacement: a superseded window still wakes the dispatcher', async (t) => {
@@ -132,6 +190,16 @@ test('unknown spend: strict admits or admit_warn silently treats missing spend a
   await result.release()
 })
 
+test('missing request amount: strict bypasses an applicable rule or admit_warn is silent', async (t) => {
+  const { launch } = fixture(t)
+  const missing = { ...rule, dimension: 'cost', missing_data_policy: 'strict' } as const
+  assert.deepEqual(await launch('strict', 3, missing), { admitted: false, reason: 'budget_unknown' })
+  const result = await launch('warn', 3, { ...missing, missing_data_policy: 'admit_warn' })
+  assert.equal(result.admitted, true)
+  assert.deepEqual(result.warnings, ['budget party/cost/day: request amount unknown'])
+  await result.release()
+})
+
 test('capacity and release: a refused launch leaks budget or stale release frees a new hold', async (t) => {
   const { launch, ledger } = fixture(t)
   const first = await launch('first')
@@ -148,6 +216,29 @@ test('capacity and release: a refused launch leaks budget or stale release frees
   await next.release()
 })
 
+test('failed release can be retried and failed refusal cleanup stays visible', async (t) => {
+  const { launch, ledger } = fixture(t)
+  // The external ledger fails once before dropping each hold; use real accounting underneath.
+  const reserve = ledger.reserve
+  ledger.reserve = async (...args) => {
+    const hold = await reserve(...args)
+    if (!hold.ok) return hold
+    let transient = true
+    return { ok: true, async release() {
+      if (transient) { transient = false; throw new Error('ledger unavailable') }
+      await hold.release()
+    } }
+  }
+  const first = await launch('first')
+  assert.equal(first.admitted, true)
+  assert.deepEqual(await launch('blocked'), { admitted: false, reason: 'capacity', cleanup_failed: true })
+  assert.equal(await ledger.outstanding(rule), 6)
+  await assert.rejects(first.release(), /reservation release failed/)
+  assert.equal(await ledger.outstanding(rule), 6)
+  await first.release()
+  assert.equal(await ledger.outstanding(rule), 3) // Only the failed compensation's hold remains.
+})
+
 test('reservation retry: the same key consumes budget twice', async (t) => {
   const { ledger } = fixture(t)
   for (let retry = 0; retry < 2; retry++) assert.equal((await ledger.reserve(rule, 4, 'same')).ok, true)
@@ -159,8 +250,9 @@ test('usage check CLI: exit codes conflate allow, refusal, and misuse or output 
   // Fake only the clock and child environment. No ambient env values enter the child.
   const script = `import { run } from './src/usage/cli.ts'; Date.now = () => 0;
     process.exitCode = await run(process.argv.slice(1));`
-  const canary = 'usage-check-fixture-canary'
-  for (const [fraction, status, flags] of [[0.999, 0, []], [1, 1, []], [1, 2, ['--stop-percent', '0']]] as const) {
+  const canary = `usage-check-fixture-${process.pid}`
+  for (const [fraction, status, flags] of [[0.999, 0, []], [1, 1, []], [0, 1, ['--stop-percent', '0']],
+    [1, 2, ['--stop-percent', '101']], [1, 2, ['--stop-percent', '']]] as const) {
     writeFileSync(file, JSON.stringify({ usedFraction: fraction, resetAt: 100 }))
     const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script, '--',
       'check', '--usage', file, '--json', ...flags], {

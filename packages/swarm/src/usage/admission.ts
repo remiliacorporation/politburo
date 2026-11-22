@@ -1,11 +1,14 @@
 import type { CapacityKind, CapacityPolicy, Reservation, UsageGuard } from '@remilia/politburo-runtime'
 import { admitsUnknown, type BudgetRule, type LedgerPort } from './ledger-port.ts'
 
+type Refusal = { admitted: false; cleanup_failed?: true } & (
+  | { reason: 'budget_hard'; rule: BudgetRule }
+  | { reason: 'budget_unknown' | 'capacity' }
+)
 export type Admission =
   | { admitted: true; warnings: string[]; release(): Promise<void> }
   | { admitted: false; reason: 'usage_stop'; resetAt: number }
-  | { admitted: false; reason: 'budget_hard'; rule: BudgetRule }
-  | { admitted: false; reason: 'budget_unknown' | 'capacity' }
+  | Refusal
 
 export async function admit({ guard, wake, ledger, capacity, rules, request }: {
   guard: UsageGuard
@@ -26,27 +29,37 @@ export async function admit({ guard, wake, ledger, capacity, rules, request }: {
   let released: Promise<void> | undefined
   const release = () => released ??= (async () => {
     const errors: unknown[] = []
-    while (held.length) {
-      try { await held.pop()!.release() } catch (error) { errors.push(error) }
+    for (let i = held.length - 1; i >= 0; i--) {
+      try {
+        await held[i]!.release()
+        held.splice(i, 1)
+      } catch (error) { errors.push(error) }
     }
     if (errors.length) throw new AggregateError(errors, 'reservation release failed')
-  })()
+  })().catch(error => { released = undefined; throw error })
 
-  let admitted = false
+  async function refuse(result: Refusal): Promise<Refusal> {
+    try { await release() } catch { return { ...result, cleanup_failed: true } }
+    return result
+  }
+
   try {
-    // The caller selects scopes; the request selects the metered dimensions.
     for (const rule of rules) {
-      if (!Object.hasOwn(request.amounts, rule.dimension)) continue
+      const name = `${rule.scope}/${rule.dimension}/${rule.window}`
+      if (!Object.hasOwn(request.amounts, rule.dimension)) {
+        if (!admitsUnknown(rule)) return refuse({ admitted: false, reason: 'budget_unknown' })
+        warnings.push(`budget ${name}: request amount unknown`)
+        continue
+      }
       const amount = request.amounts[rule.dimension]!
       if (!Number.isFinite(amount) || amount < 0) throw new RangeError('invalid budget amount')
-      const name = `${rule.scope}/${rule.dimension}/${rule.window}`
       const spent = await ledger.committed(rule)
       if (spent === 'unknown') {
-        if (!admitsUnknown(rule)) return { admitted: false, reason: 'budget_unknown' }
+        if (!admitsUnknown(rule)) return refuse({ admitted: false, reason: 'budget_unknown' })
         warnings.push(`budget ${name}: committed spend unknown`)
       }
       const reservation = await ledger.reserve(rule, amount, request.key)
-      if (!reservation.ok) return { admitted: false, reason: 'budget_hard', rule }
+      if (!reservation.ok) return refuse({ admitted: false, reason: 'budget_hard', rule })
       held.push(reservation)
       const outstanding = await ledger.outstanding(rule)
       if ((spent === 'unknown' ? outstanding : spent + outstanding) > rule.warn) {
@@ -55,11 +68,11 @@ export async function admit({ guard, wake, ledger, capacity, rules, request }: {
     }
     const { kind, heavy } = request
     const slot = await capacity.tryReserve(heavy === undefined ? { kind } : { kind, heavy })
-    if (!slot) return { admitted: false, reason: 'capacity' }
+    if (!slot) return refuse({ admitted: false, reason: 'capacity' })
     held.push(slot)
-    admitted = true
     return { admitted: true, warnings, release }
-  } finally {
-    if (!admitted) await release()
+  } catch (error) {
+    await release()
+    throw error
   }
 }

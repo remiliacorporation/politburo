@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util'
 import { localUsage } from '@remilia/politburo-runtime'
-import { stopGuard } from './guard.ts'
+import { stopGuard, validTimestamp } from './guard.ts'
 import { readWakeState } from './wake.ts'
 
 function misuse(message: string): number {
@@ -21,7 +21,7 @@ export async function run(argv: string[]): Promise<number> {
     try {
       const state = readWakeState(path)
       console.log(!state ? 'none' : state.firedAt !== undefined ? 'fired'
-        : `armed for ${new Date(state.resetAt).toISOString()}`)
+        : `armed for ${validTimestamp(state.resetAt) ? new Date(state.resetAt).toISOString() : state.resetAt}`)
       return 0
     } catch {
       console.error('error: cannot read reset wake state')
@@ -39,6 +39,7 @@ export async function run(argv: string[]): Promise<number> {
     if (!values.usage) return misuse('missing --usage file')
     json = values.json
     const percent = values['stop-percent']
+    if (percent?.trim() === '') return misuse('missing stop percent')
     guard = stopGuard({ source: localUsage({ file: values.usage }),
       stopPercent: percent === undefined ? 100 : Number(percent) })
   } catch (error) {
