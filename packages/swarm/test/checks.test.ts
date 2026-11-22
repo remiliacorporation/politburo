@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, fork, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { chownSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, chownSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -15,7 +15,7 @@ process.env.GIT_CONFIG_NOSYSTEM = '1'
 process.env.GIT_ALLOW_PROTOCOL = 'file'
 
 function tempDir(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), 'swarm-checks-'))
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), 'swarm-checks-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
@@ -152,6 +152,20 @@ test('hard-linked or foreign owner file is not truncated and prevents the check 
   }
   assert.equal(ran, false)
   f.expectRemote()
+})
+
+test('status directory records a passing check below a search-only ancestor', async (t) => {
+  if (process.getuid?.() === 0) return t.skip('root can bypass directory read permissions')
+  const f = fixture(t), sha = f.commit(), ancestor = join(f.dir, 'search-only')
+  f.options.statusDir = join(ancestor, 'statuses')
+  mkdirSync(ancestor)
+  mkdirSync(f.options.statusDir, { mode: 0o700 })
+  chmodSync(ancestor, 0o111)
+  try {
+    assert.deepEqual(await checkAndPush(f.options), { status: 'pushed', sha })
+    assert.equal(f.state(sha), 'pass')
+    f.expectRemote(sha)
+  } finally { chmodSync(ancestor, 0o700) }
 })
 
 test('status directory refuses symlinked ancestors, even when swapped in during the check', async (t) => {
@@ -375,7 +389,7 @@ test('both preflights refuse a merged side root even when log.showRoot is false'
   f.expectRemote()
 })
 
-test('findings use stable file indices, never paths that can disclose a cross-file password', async (t) => {
+test('findings use stable file indices across commits, never paths that can disclose a cross-file password', async (t) => {
   const f = fixture(t), value = ['cross', 'file', 'fixture'].join('-')
   const gh = fakeToken(), npm = ['npm', 'Q'.repeat(36)].join('_')
   // The password basename is not a token pattern. The two token basenames self-redact.
@@ -384,12 +398,15 @@ test('findings use stable file indices, never paths that can disclose a cross-fi
   }
   git(f.repo, 'add', '.')
   f.commit(`password=${value}`)
+  appendFileSync(join(f.repo, value), `${npm}\n`)
+  git(f.repo, 'commit', '-am', 'add a finding in the same file')
   const noPaths = (output: string) => assert.ok(![value, gh, npm, 'sample.txt'].some((path) => output.includes(path)),
     'refusal exposed a file path')
   const result = await checkAndPush(f.options)
   noPaths(JSON.stringify(result))
   assert.equal(result.status, 'refused_privacy')
   const findings = [
+    ['npm-token', 'file#1', 4],
     ['github-token', 'file#1', 2], ['github-token', 'file#1', 3], ['github-token', 'file#2', 1],
     ['npm-token', 'file#3', 1], ['secret-assignment', 'file#4', 1],
   ].map(([rule, file, line]) => ({ rule, file, line, match: '[redacted]' }))

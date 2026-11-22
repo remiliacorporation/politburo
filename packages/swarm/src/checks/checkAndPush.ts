@@ -1,6 +1,7 @@
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants as fs } from 'node:fs'
-import { lstat, mkdir, open, realpath, rename, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, realpath, type FileHandle } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import type { PrivacyOptions } from '@remilia/politburo-runtime'
 import { exec, GitError, gitAt, isClean, readHead, type Exec } from './exec.ts'
@@ -30,40 +31,53 @@ export type CheckOptions = {
 const json = (data: object) => `${JSON.stringify(data)}\n`
 const invalidDir = () => new LockError('check status directory must be a real directory owned by the current user')
 
-async function withStatusDir<T>(dir: string, create: boolean, use: (anchor: string) => T | Promise<T>) {
-  const flags = fs.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW
-  let handle = await open(sep, flags)
-  try {
-    // Each lookup is relative to an open parent, not a pathname that can be redirected.
-    for (const component of dir.split(sep).filter(Boolean)) {
-      const child = `/proc/self/fd/${handle.fd}/${component}`
-      let info = await lstat(child).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error
+async function withStatusDir<T>(dir: string, create: boolean, use: (anchor: FileHandle) => T | Promise<T>) {
+  let child: string = sep
+  for (const component of dir.split(sep).filter(Boolean)) {
+    child = join(child, component)
+    let info = await lstat(child).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    if (!info) {
+      if (!create) return
+      await mkdir(child, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error
       })
-      if (!info) {
-        if (!create) return
-        await mkdir(child, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'EEXIST') throw error
-        })
-        info = await lstat(child)
-      }
-      if (!info.isDirectory()) throw invalidDir()
-      const parent = handle
-      handle = await open(child, flags)
-      await parent.close()
+      info = await lstat(child)
     }
-    if ((await handle.stat()).uid !== process.getuid?.()) throw invalidDir()
-    return await use(`/proc/self/fd/${handle.fd}`)
+    if (!info.isDirectory()) throw invalidDir()
+  }
+  if (await realpath(dir) !== dir) throw invalidDir()
+  const handle = await open(dir, fs.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
+  try {
+    const info = await handle.stat(), named = await lstat(dir)
+    if (info.uid !== process.getuid?.() || info.dev !== named.dev || info.ino !== named.ino ||
+      await realpath(dir) !== dir) throw invalidDir()
+    return await use(handle)
   } finally { await handle.close() }
 }
 
+// Perl is already required for the lock. Use fchdir in the child so both writes
+// stay relative to the open leaf, without /proc or changing Node's cwd.
+const statusScript = `
+open(my $dir, '<&=3') or exit 1;
+chdir($dir) or exit 1;
+my ($temp, $target, $json) = @ARGV;
+sysopen(my $file, $temp, O_WRONLY|O_CREAT|O_EXCL, 0600) or exit 1;
+my $ok = print {$file} $json;
+if (close($file) && $ok && rename($temp, $target)) { exit 0; }
+unlink($temp);
+exit 1;
+`
+
 async function writeStatus<T extends CommitStatus>(dir: string, data: T) {
-  await withStatusDir(dir, true, async (anchor) => {
-    const temp = join(anchor, `.${randomUUID()}.tmp.json`)
-    await writeFile(temp, json(data), { flag: 'wx', mode: 0o600 })
-    try { await rename(temp, join(anchor, `${data.sha}.json`)) }
-    finally { await unlink(temp).catch(() => {}) }
-  })
+  // Revalidate the path after running the check, before handing off the leaf.
+  await withStatusDir(dir, true, (anchor) => new Promise<void>((done, reject) => {
+    const child = spawn('perl', ['-MFcntl=:DEFAULT', '-e', statusScript,
+      `.${randomUUID()}.tmp.json`, `${data.sha}.json`, json(data)], { stdio: ['ignore', 'ignore', 'ignore', anchor.fd] })
+    child.once('error', reject)
+    child.once('close', (code) => code === 0 ? done() : reject(new LockError('cannot write check status')))
+  }))
 }
 
 async function writeOwner(path: string, data: object) {
