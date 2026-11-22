@@ -93,4 +93,6 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+if (process.argv[2] === 'secretary') {
+  process.exitCode = await (await import('./secretary/cli.ts')).secretaryMain(process.argv.slice(3))
+} else process.exitCode = main(process.argv.slice(2))
