@@ -9,7 +9,7 @@ sections 3 and 4.
 and maps registered emails to board people. No Access domain is configured.
 Revoke the all-person grant (g1) and install explicit user grants before use.
 The host must refuse to start if a registered member's ID suffix matches the
-suffix of an existing board user grant. `swarm serve` enforces this check.
+suffix of an existing board user grant.
 
 ```bash
 pnpm --filter @remilia/politburo-swarm build
