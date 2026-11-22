@@ -1,7 +1,7 @@
 // Usage: node tools/host/board-backup.mjs --dir <board> --out <backups> [--keep N]
 // One --out directory per board. Backups serialize on its .publish.lock.
-// --keep N prunes older backups only when their manifest token matches the
-// local .backup-index.json. An unreadable index is left intact and disables pruning.
+// --keep N prunes older backups only when their token and directory identity
+// match the local .backup-index.json. An unreadable index disables pruning.
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
@@ -71,6 +71,8 @@ export async function integrityCheck(path, name) {
   }
 }
 
+class BoardChangedError extends Error {}
+
 async function snapshot(source, dest) {
   const { DatabaseSync, backup } = await import('node:sqlite')
   const uri = pathToFileURL(source)
@@ -78,20 +80,36 @@ async function snapshot(source, dest) {
   // With no WAL or rollback journal, use an immutable read to avoid creating
   // sidecars in a stopped board. Reject a checkpoint or startup during the copy.
   const before = await lstat(source, { bigint: true })
-  const wal = await statIfPresent(`${source}-wal`)
   const journal = await statIfPresent(`${source}-journal`)
-  if (wal && !(await statIfPresent(`${source}-shm`))?.isFile()) {
+  const sidecars = () => Promise.all(['wal', 'shm'].map((suffix) =>
+    statIfPresent(`${source}-${suffix}`, { bigint: true })))
+  const sidecarsBefore = await sidecars()
+  const [wal, shm] = sidecarsBefore
+  if (wal && !shm?.isFile()) {
     throw new Error('wal has no shared-memory file; open and cleanly stop the board first')
   }
   const immutable = !wal && !journal
   uri.searchParams.set(immutable ? 'immutable' : 'readonly_shm', '1')
-  const db = new DatabaseSync(uri, { readOnly: true })
   try {
-    db.exec(`pragma busy_timeout = ${busyTimeout}; begin; select count(*) from sqlite_schema`)
-    // The read transaction pins this database's snapshot even if writes continue.
-    await backup(db, dest)
+    const db = new DatabaseSync(uri, { readOnly: true })
+    try {
+      db.exec(`pragma busy_timeout = ${busyTimeout}; begin; select count(*) from sqlite_schema`)
+      // The read transaction pins this database's snapshot even if writes continue.
+      await backup(db, dest)
+    } finally {
+      db.close()
+    }
   } finally {
-    db.close()
+    const sidecarsAfter = await sidecars()
+    if (sidecarsBefore.some((prior, i) => {
+      const now = sidecarsAfter[i]
+      if (!prior) return !!now
+      return !now || now.dev !== prior.dev || now.ino !== prior.ino || (prior.size > 0n && now.size === 0n)
+    })) {
+      // Never remove a sidecar: a restarting board may already be using it.
+      const leftover = sidecarsAfter[0]?.size === 0n ? ' (an empty -wal was left in place)' : ''
+      throw new BoardChangedError(`board stopped or restarted during the backup; retry${leftover}`)
+    }
   }
   if (immutable) {
     const after = await lstat(source, { bigint: true })
@@ -166,10 +184,10 @@ async function readIndex(out) {
     const { version, backups } = JSON.parse(await readFile(path, 'utf8'))
     if (version !== 1 || !Array.isArray(backups)) throw new Error('invalid index')
     const index = new Map()
-    for (const { name, token } of backups) {
+    for (const { name, token, dev, ino } of backups) {
       if (typeof name !== 'string' || !BACKUP_NAME.test(name) ||
           typeof token !== 'string' || !token || index.has(name)) throw new Error('invalid entry')
-      index.set(name, token)
+      index.set(name, { name, token, dev, ino })
     }
     return index
   } catch {
@@ -178,8 +196,27 @@ async function readIndex(out) {
   }
 }
 
+async function syncPath(path, tree = false) {
+  try {
+    if (tree) {
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        if (!await syncPath(join(path, entry.name), entry.isDirectory())) return false
+      }
+    }
+    const handle = await open(path, 'r')
+    try {
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function writeIndex(out, index) {
-  const backups = [...index].map(([name, token]) => ({ name, token }))
+  const backups = [...index.values()]
   const temp = join(out, `.backup-index-${randomUUID()}.tmp`)
   const file = await open(temp, 'wx', 0o600)
   try {
@@ -188,16 +225,23 @@ async function writeIndex(out, index) {
     } finally {
       await file.close()
     }
+    if (!await syncPath(temp)) {
+      await unlink(temp).catch(() => {})
+      return false
+    }
     await rename(temp, join(out, INDEX_NAME))
+    return true
   } catch (error) {
     await unlink(temp).catch(() => {})
     throw error
   }
 }
 
-async function matchesBackup(dir, token) {
+async function matchesBackup(dir, { token, dev, ino }) {
+  if (dev == null || ino == null) return false
   try {
-    if (!(await lstat(dir)).isDirectory()) return false
+    const stat = await lstat(dir, { bigint: true })
+    if (!stat.isDirectory() || dev !== String(stat.dev) || ino !== String(stat.ino)) return false
     const path = join(dir, 'MANIFEST.json')
     if (!(await lstat(path)).isFile()) return false
     return JSON.parse(await readFile(path, 'utf8'))?.token === token
@@ -206,26 +250,19 @@ async function matchesBackup(dir, token) {
   }
 }
 
-async function removeOlderBackup(out, source, index, name, current) {
-  if (name === current || !BACKUP_NAME.test(name) || !index.has(name)) return false
-  const dir = join(out, name)
-  if (contains(dir, source) || !await matchesBackup(dir, index.get(name))) return false
-  await rm(dir, { recursive: true })
-  index.delete(name)
-  return true
-}
-
 async function prune(out, keep, source, index, current) {
   const backups = [current]
-  for (const [name, token] of index) {
+  for (const [name, entry] of index) {
     const dir = join(out, name)
-    if (name !== current && !contains(dir, source) && await matchesBackup(dir, token)) backups.push(name)
+    if (name !== current && !contains(dir, source) && await matchesBackup(dir, entry)) backups.push(name)
   }
-  let changed = false
+  // The next publish drops entries for deleted directories. All syncs precede deletion.
   for (const name of backups.sort().reverse().slice(keep)) {
-    if (await removeOlderBackup(out, source, index, name, current)) changed = true
+    const dir = join(out, name)
+    if (name !== current && await matchesBackup(dir, index.get(name))) {
+      await rm(dir, { recursive: true })
+    }
   }
-  if (changed) await writeIndex(out, index)
 }
 
 async function publishBackup(source, out, keep) {
@@ -258,6 +295,7 @@ async function publishBackup(source, out, keep) {
   const partial = join(out, `.partial-${token}`)
   await mkdir(partial)
   let files
+  let synced
   try {
     const dest = join(partial, 'files')
     await mkdir(dest)
@@ -266,6 +304,7 @@ async function publishBackup(source, out, keep) {
         await snapshot(join(source, path), join(dest, path))
         await integrityCheck(join(dest, path), path)
       } catch (error) {
+        if (error instanceof BoardChangedError) throw error
         throw new Error(`snapshot ${path}: ${error.message}`)
       }
     }
@@ -277,18 +316,22 @@ async function publishBackup(source, out, keep) {
       version: 1, token, created: created.toISOString(), files,
       databases: [...databases].map((path) => ({ path, integrity: 'ok' })),
     }, null, 2) + '\n')
-    if (index) {
-      // Record ownership before publishing so a crash cannot leave an unindexed backup.
-      index.set(name, token)
-      await writeIndex(out, index)
-    }
+    synced = await syncPath(partial, true)
     await rename(partial, complete)
   } catch (error) {
     await rm(partial, { recursive: true, force: true })
     throw error
   }
   console.log(`backup  ${complete}\ndatabases  ${databases.size}  files  ${files.length}`)
-  if (index && keep !== undefined) await prune(out, keep, source, index, name)
+  if (synced && index) {
+    // A crash between rename and indexing leaves a backup that cannot be pruned.
+    const { dev, ino } = await lstat(complete, { bigint: true })
+    index.set(name, { name, token, dev: String(dev), ino: String(ino) })
+    synced = await writeIndex(out, index)
+  }
+  if (synced) synced = await syncPath(out)
+  if (!synced) console.error('warning: backup not synced; nothing pruned')
+  else if (index && keep !== undefined) await prune(out, keep, source, index, name)
 }
 
 async function makeBackup(dir, out, keep) {

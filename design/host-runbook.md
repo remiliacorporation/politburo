@@ -230,9 +230,10 @@ the same user on the VM, not across macOS users.
 The script snapshots each SQLite file first with the online backup API. Then
 it copies attachments, writes `MANIFEST.json` with SHA-256 hashes and a random
 backup token, and atomically renames `.partial-...` to `backup-...`. The per-board
-index `<out>/.backup-index.json` records each published backup's name and token
-for retention. A blob is written before its referencing message, so the later
-blob copy covers references in the earlier DB snapshot.
+index `<out>/.backup-index.json` records each published backup's name, token,
+and directory device and inode for retention. A blob is written before its
+referencing message, so the later blob copy covers references in the earlier
+DB snapshot.
 
 Ordering, checked in the code: the CLI awaits an upload before it posts. The
 upload awaits the blob and its metadata, and `fsBlob.put` awaits each file and
@@ -249,12 +250,17 @@ process dies. Never delete the file. Overlapping backups of the same board take
 turns. A second run waits up to 10 minutes, then fails with
 `another backup of this board is running` if the lock is still held.
 
-Do not start or stop a board while its backup runs:
-a read-only open can still create an empty `-wal` file beside the database if
-the board shuts down between the script's checks and its open. The backup then
-fails without publishing; SQLite should reuse or discard the empty file, which
-is unverified on macOS. And an upload in flight is copied wherever it is. Such
-a partial blob is not in the snapshot's messages, so nothing references it.
+Do not start or stop a board while its backup runs. The script compares the
+`-wal` and `-shm` files before and after the snapshot. If either disappears,
+is replaced, or appears during the snapshot, the backup fails without
+publishing. Although the script does not write to the live directory directly,
+a read-only SQLite open can leave an empty `-wal` beside the database if the
+board shuts down between the script's checks and its open. The script leaves
+sidecars alone. SQLite reuses or discards the empty `-wal`; this race has not
+been verified on macOS.
+
+An upload in flight is copied wherever it is. Such a partial blob is not in
+the snapshot's messages, so nothing references it.
 
 A backup contains database snapshots, attachments, and the manifest, not
 `.lock`, live WAL sidecars, env files, or separate access configuration. It is
@@ -274,13 +280,15 @@ succeed. Monitor time since the last successful published backup, not merely
 the last job start.
 
 `--keep N` keeps the newest N eligible backups. It deletes only indexed backups
-whose directory still exists and whose manifest token matches the index.
-Hand-made directories, copies, and older unindexed backups stay, even if they
-look like backups. A person must remove older unindexed backups. Without
+whose manifest token and directory device and inode match the index. A copied
+or recreated directory stays even at the original name. Unindexed backups and
+older entries without directory identity require manual removal. Without
 `--keep`, nothing is pruned.
 
-If the index is unreadable, the run prunes nothing. It warns on stderr,
-publishes the backup, exits 0, and leaves the index for a person to inspect.
+The script syncs the new backup tree, index, and `<out>` before pruning older
+backups. If a sync fails, the backup is published, the script warns on stderr
+and exits 0, and nothing is pruned. If the index is unreadable, the script also
+publishes without pruning and leaves the index for a person to inspect.
 See `tools/host/test/backup-retention.test.mjs` for test coverage.
 
 Choose an independent disk or existing NAS for encrypted copies, plus an

@@ -12,19 +12,27 @@ node tools/host/board-restore.mjs --backup <backup-dir> --dir <target-dir> [--re
 `board-backup` takes a point-in-time SQLite snapshot of each database, then
 copies attachments. The board can keep running. Writes after a database's
 snapshot starts may not be included, and databases have separate cutoffs.
-Avoid starting or stopping the board during backup. If a crash leaves a WAL
-without its shared-memory file, start and cleanly stop the board before retrying.
+Avoid starting or stopping the board during backup. If `-wal` or `-shm` appears,
+disappears, or is replaced during a snapshot, backup fails without publishing.
+A read-only SQLite open can leave an empty `-wal` if the board stops just before
+that open. Backup leaves it in place for SQLite to reuse or discard. If a crash
+leaves a WAL without its shared-memory file, start and cleanly stop the board
+before retrying.
 Completed `backup-*` directories contain database snapshots, `files/`, and a
 versioned `MANIFEST.json` with sizes, SHA-256 checksums, and a random backup token.
 The per-board index `<out>/.backup-index.json` records each published backup's
-name and token.
+name, token, and directory device and inode.
 
 `--keep N` keeps the newest N eligible backups, where N is positive. It deletes
-only indexed backups whose directory still exists and whose manifest token
-matches the index. It never deletes hand-made directories, copies, or unindexed
-backups from older versions, even if they look like backups. No pruning happens
-without `--keep`. If the index is unreadable, backup warns on stderr, publishes
-without pruning, leaves the index for a person to inspect, and exits 0.
+only indexed backups whose manifest token and directory device and inode match
+the index. Copied or recreated directories stay even at the original name.
+Unindexed backups and older entries without directory identity also stay.
+No pruning happens without `--keep`.
+
+Backup syncs the new backup tree, index, and `<out>` before pruning older
+backups. If a sync fails, backup publishes, warns on stderr, exits 0, and prunes
+nothing. If the index is unreadable, backup also publishes without pruning and
+leaves the index for a person to inspect.
 
 Backup holds an exclusive lock on `<out>/.publish.lock`, a separate SQLite file,
 for the whole run. The OS releases the lock if the process dies. Never delete

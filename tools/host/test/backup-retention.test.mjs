@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -94,10 +94,46 @@ test('--keep prunes only older backups registered at their own names', { timeout
   assert.equal(await readFile(join(f.out, 'backup-note'), 'utf8'), 'keep me')
   const { token } = JSON.parse(await readFile(manifestPath(newest), 'utf8'))
   assert.notEqual(token, JSON.parse(manifest).token)
-  assert.deepEqual(JSON.parse(await readFile(f.index, 'utf8')), {
-    version: 1, backups: [{ name: basename(newest), token }],
+  const { dev, ino } = await lstat(newest, { bigint: true })
+  const index = JSON.parse(await readFile(f.index, 'utf8'))
+  assert.equal(index.version, 1)
+  assert.deepEqual(index.backups.find(({ name }) => name === basename(newest)), {
+    name: basename(newest), token, dev: String(dev), ino: String(ino),
   })
   assert.equal((await lstat(f.index)).mode & 0o777, 0o600)
+})
+
+// Catches pruning a copied backup at its original name based on the name and token alone.
+test('--keep preserves a copied backup put back at its original name', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: original } = await f.save()
+  const { path: genuine } = await f.save()
+  const copy = join(f.out, 'copy')
+  const manifest = await readFile(manifestPath(original))
+  await cp(original, copy, { recursive: true })
+  await rm(original, { recursive: true })
+  await rename(copy, original)
+
+  await f.save('--keep', '1')
+  assert.deepEqual(await readFile(manifestPath(original)), manifest, 'copy should survive at its original name')
+  await assert.rejects(lstat(genuine), { code: 'ENOENT' })
+})
+
+// Catches pruning a legacy index entry with a matching token but no verifiable directory identity.
+test('--keep preserves a backup indexed without directory identity', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: older } = await f.save()
+  const { path: genuine } = await f.save()
+  const index = JSON.parse(await readFile(f.index, 'utf8'))
+  const entry = index.backups.find(({ name }) => name === basename(older))
+  delete entry.dev
+  delete entry.ino
+  await writeFile(f.index, JSON.stringify(index))
+  const manifest = await readFile(manifestPath(older))
+
+  await f.save('--keep', '1')
+  assert.deepEqual(await readFile(manifestPath(older)), manifest, 'legacy backup should survive')
+  await assert.rejects(lstat(genuine), { code: 'ENOENT' })
 })
 
 // Catches pruning an indexed directory whose current manifest does not match its registered token.
