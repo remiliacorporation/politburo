@@ -1,6 +1,9 @@
 // Stub until WP-103's ledger store lands; same interface.
+import { lstatSync, unlinkSync } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { mkdir, open, readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 import { copyEnvelope } from './types.ts'
 import type { Envelope, SpendRecord } from './types.ts'
@@ -10,7 +13,7 @@ export interface CaptureLedger {
   append(r: SpendRecord): Promise<{ written: boolean }>
 }
 
-// Serialize the check and append across handles in the single writer process.
+// Queue handles in this process before competing for the on-disk lock.
 const pending = new Map<string, Promise<unknown>>()
 const qualities = new Set([
   'unknown', 'provider_reported', 'provider_reported_partial',
@@ -94,6 +97,73 @@ async function serialized<T>(path: string, action: () => Promise<T>): Promise<T>
   }
 }
 
+function unlinkLock(path: string, owner: Stats): void {
+  // A waiter may have already replaced the stale lock, or our own lease may have expired.
+  // Keep the identity check and unlink in the same turn.
+  try {
+    const current = lstatSync(path, { throwIfNoEntry: false })
+    if (current?.dev === owner.dev && current.ino === owner.ino) unlinkSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
+function pidIsDead(raw: string): boolean {
+  const pid = Number(raw)
+  if (!Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return false
+    throw error
+  }
+}
+
+async function reapStaleLock(path: string): Promise<void> {
+  const file = await open(path, 'r').catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+  })
+  if (!file) return
+  try {
+    const owner = await file.stat()
+    if (Date.now() - owner.mtimeMs > 60_000 || pidIsDead(await file.readFile('utf8'))) unlinkLock(path, owner)
+  } finally {
+    await file.close()
+  }
+}
+
+async function withLock<T>(root: string, action: () => Promise<T>): Promise<T> {
+  const path = join(root, '.lock')
+  return serialized(path, async () => {
+    await mkdir(root, { recursive: true })
+    const deadline = performance.now() + 5000
+    while (true) {
+      const file = await open(path, 'wx', 0o600).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error
+      })
+      if (file) {
+        try {
+          const owner = await file.stat()
+          try {
+            await file.writeFile(`${process.pid}\n`)
+            return await action()
+          } finally {
+            unlinkLock(path, owner)
+          }
+        } finally {
+          await file.close()
+        }
+      }
+      await reapStaleLock(path)
+      const remaining = deadline - performance.now()
+      if (remaining <= 0) throw new Error('capture ledger lock timed out')
+      await sleep(Math.min(25, remaining))
+    }
+  })
+}
+
 export function jsonlLedger(dir: string): CaptureLedger {
   const root = resolve(dir)
   const spend = join(root, 'spend.jsonl')
@@ -101,8 +171,7 @@ export function jsonlLedger(dir: string): CaptureLedger {
   return {
     async registerEnvelope(e) {
       const envelope = copyEnvelope(e)
-      await serialized(envelopes, async () => {
-        await mkdir(root, { recursive: true })
+      await withLock(root, async () => {
         const { rows, truncateAt } = await readRows<Envelope>(envelopes)
         const registered = rows.filter(row => row.trace.execution_id === envelope.trace.execution_id)
         if (registered.some(row => !isDeepStrictEqual(row, envelope))) throw new Error('execution_id conflict')
@@ -113,14 +182,16 @@ export function jsonlLedger(dir: string): CaptureLedger {
     async append(r) {
       const line = spendLine(r)
       const record = JSON.parse(line) as SpendRecord
-      return serialized(spend, async () => {
-        await mkdir(root, { recursive: true })
+      return withLock(root, async () => {
         const { rows, truncateAt } = await readRows<SpendRecord>(spend)
         if (rows.some(row => row.record_id === record.record_id && row.dedupe_key !== record.dedupe_key)) {
           throw new Error('record_id conflict')
         }
         const duplicates = rows.filter(row => row.dedupe_key === record.dedupe_key)
-        if (duplicates.some(row => !isDeepStrictEqual(row, record))) throw new Error('dedupe_key conflict')
+        // A pi log can be collected again later; keep its first receipt timestamp.
+        if (duplicates.some(row => !isDeepStrictEqual(
+          row, record.source === 'pi_json' ? { ...record, received: row.received } : record,
+        ))) throw new Error('dedupe_key conflict')
         if (duplicates.length > 0) return { written: false }
         await appendLine(spend, line, truncateAt)
         return { written: true }

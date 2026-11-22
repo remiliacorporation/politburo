@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, open, readFile, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { once } from 'node:events'
+import { appendFile, mkdtemp, open, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { promisify } from 'node:util'
 import { jsonlLedger } from '../src/capture/ledger.ts'
 import type { Envelope, SpendRecord } from '../src/capture/types.ts'
 
@@ -34,6 +38,69 @@ async function fixture(t: TestContext) {
   const dir = await mkdtemp(join(tmpdir(), 'swarm-ledger-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   return { dir, spend: join(dir, 'spend.jsonl'), envelopes: join(dir, 'envelopes.jsonl') }
+}
+
+const exec = promisify(execFile)
+
+for (const kind of ['spend', 'envelopes'] as const) {
+  test(`two processes cannot write a duplicate ${kind} row or bypass a live ledger lock`, async t => {
+    const { dir, [kind]: path } = await fixture(t)
+    const lock = join(dir, '.lock')
+    await writeFile(lock, `${process.pid}\n`, { flag: 'wx' })
+    const code = `
+      import { jsonlLedger } from ${JSON.stringify(new URL('../src/capture/ledger.ts', import.meta.url).href)}
+      const ledger = jsonlLedger(process.argv[1])
+      const row = JSON.parse(process.argv[2])
+      console.log('ready')
+      ${kind === 'spend' ? 'console.log((await ledger.append(row)).written)' : 'await ledger.registerEnvelope(row)'}
+    `
+    const row = kind === 'spend' ? record : envelope
+    const children = [0, 1].map(() => exec(process.execPath, ['--input-type=module', '-e', code, dir, JSON.stringify(row)], {
+      timeout: 10_000,
+    }))
+    const done = Promise.all(children)
+    // Always release the fixture lock and wait for the children, even on assertion failure.
+    const before = await (async () => {
+      try {
+        await Promise.race([Promise.all(children.map(({ child }) => once(child.stdout!, 'data'))), done])
+        await sleep(100)
+        return await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+      } finally {
+        await unlink(lock)
+        await done
+      }
+    })()
+    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n')
+    assert.equal(lines.length, 1, 'duplicate row on disk')
+    assert.deepEqual(JSON.parse(lines[0]!), row)
+    assert.equal(before, undefined, 'a writer bypassed a live lock')
+    if (kind === 'spend') assert.deepEqual((await done).map(result => result.stdout.trim().split('\n').at(-1)).sort(), ['false', 'true'])
+    await assert.rejects(readFile(lock), { code: 'ENOENT' })
+  })
+}
+
+for (const stale of ['dead PID', 'older than 60 seconds'] as const) {
+  test(`a lock with ${stale} does not block a ledger append`, async t => {
+    const { dir, spend } = await fixture(t)
+    const lock = join(dir, '.lock')
+    let pid = process.pid
+    if (stale === 'dead PID') {
+      const child = exec(process.execPath, ['-e', ''])
+      pid = child.child.pid!
+      await child
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+    }
+    await writeFile(lock, `${pid}\n`)
+    if (stale === 'older than 60 seconds') {
+      const old = new Date(Date.now() - 61_000)
+      await utimes(lock, old, old)
+    }
+    assert.deepEqual(await jsonlLedger(dir).append(record), { written: true })
+    assert.deepEqual(JSON.parse(await readFile(spend, 'utf8')), record)
+    await assert.rejects(readFile(lock), { code: 'ENOENT' })
+  })
 }
 
 test('a replay after reopening the ledger does not write a second line', async t => {
@@ -122,6 +189,7 @@ for (const kind of ['spend', 'envelopes'] as const) {
     const ledger = jsonlLedger(dir)
     const append = kind === 'spend' ? ledger.append(record) : ledger.registerEnvelope(envelope)
     await assert.rejects(append, error => error === failure)
+    await assert.rejects(readFile(join(dir, '.lock')), { code: 'ENOENT' })
   })
 }
 

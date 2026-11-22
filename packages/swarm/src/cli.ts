@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm capture <run|collect>'
 
 class ReadError extends Error {}
 
@@ -93,4 +93,7 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+const args = process.argv.slice(2)
+process.exitCode = args[0] === 'capture'
+  ? await (await import('./capture/cli.ts')).captureMain(args.slice(1))
+  : main(args)
