@@ -60,6 +60,17 @@ test('the board refuses a ticket with no valid contract and accepts a claim afte
   assert.equal(task.task?.claim?.actor, claimantIdentity.actor)
 })
 
+test('a fixed work id must replay its reservation without stealing another reservation', async t => {
+  const { team } = await fixture(t)
+  const reserved = { ...input, id: 'web-42', reservation: 'first-request' }
+  const first = await createWorkItem(team, reserved)
+  assert.equal(first.workId, 'web-42')
+  assert.equal((await createWorkItem(team, reserved)).taskId, first.taskId)
+  await assert.rejects(createWorkItem(team, { ...reserved, reservation: 'second-request' }), /already reserved/)
+  const { tasks } = await team.tasks.list({ state: 'all', label: ['work.id'] })
+  assert.deepEqual(tasks.map(({ message }) => message.id), [first.taskId])
+})
+
 test('a claimant at the first publication write cannot take an unvalidated task root', async (t) => {
   let refusedDuringPublication = false
   const { team, claimant } = await fixture(t, [async ({ write, next }) => {

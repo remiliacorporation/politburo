@@ -11,6 +11,7 @@ type Publication = { claimable: boolean; problems: string[] }
 export type NewWorkItem = {
   channel: string; tag: string; tags: readonly string[]; title: string
   kind: WorkKind; repo: string; description: string; links: readonly Link[]
+  id?: string; reservation?: string
 }
 
 const isError = (error: unknown, code: string) => error instanceof BoardError && error.code === code
@@ -91,7 +92,7 @@ async function ownsOutcomesHold(board: Board, root: WorkTask, actor: string): Pr
 const heldProblem = (root: WorkTask) =>
   root.task.parked?.reason ?? root.task.blocked?.reason ?? 'The outcomes hold changed during publication.'
 
-async function highWater(board: Board, tag: string) {
+export async function workIdHighWater(board: Board, tag: string) {
   let max = 0
   let after: string | undefined
   for (;;) {
@@ -110,17 +111,22 @@ export async function createWorkItem(board: Board, input: NewWorkItem) {
   const tag = input.tag.toLowerCase()
   if (!/^[a-z]{3}$/.test(tag) || !tags.includes(tag)) throw new RangeError('Unknown work tag.')
   if (!title.trim() || /[\r\n]/.test(title)) throw new TypeError('A work item needs a single-line title.')
+  const fixed = input.id
+  const parsed = fixed === undefined ? null : parseWorkId(fixed)
+  if (fixed !== undefined && (parsed?.tag !== tag || fixed !== `${tag}-${parsed.number}`)) {
+    throw new RangeError('Invalid fixed work id.')
+  }
   const text = `${title}\n\n${description}`
   const prerequisite = await gate(board, channel)
-  let max = await highWater(board, tag)
-  for (let retry = 0; retry < 5; retry++) {
-    const { id, highWater: next } = allocateWorkId(tags, tag, max)
-    max = next
+  let max = fixed === undefined ? await workIdHighWater(board, tag) : 0
+  for (let retry = 0; retry < (fixed === undefined ? 5 : 1); retry++) {
+    const id = fixed ?? allocateWorkId(tags, tag, max++).id
     const metadata = { work_id: id, repo, kind, links }
     workItemBlock({ ...metadata, contract_revision: null })
     // Board label keys allow dots outside the reserved board.* prefix. work.id, work.kind
-    // and work.repo are filterable. A nonce distinguishes a same-author replay from our own post.
-    const nonce = randomUUID()
+    // and work.repo are filterable. A fixed reservation distinguishes retries of
+    // this operation from someone else's use of the same work id.
+    const nonce = (fixed === undefined ? undefined : input.reservation) ?? randomUUID()
     let root: Root
     try {
       const made = await board.tasks.create(channel, {
@@ -129,12 +135,20 @@ export async function createWorkItem(board: Board, input: NewWorkItem) {
       })
       root = made.task
     } catch (error) {
-      if (isError(error, 'duplicate_id')) continue
+      if (fixed === undefined && isError(error, 'duplicate_id')) continue
       throw error
     }
-    if (root.labels['work.reservation'] !== nonce) continue
+    if (root.labels['work.reservation'] !== nonce) {
+      if (fixed !== undefined) throw new Error(`Work id ${fixed} is already reserved.`)
+      continue
+    }
+    if (fixed !== undefined && (root.deleted || !root.task || root.channel !== channel ||
+      root.labels['work.id'] !== id || root.labels['work.repo'] !== repo || root.labels['work.kind'] !== kind)) {
+      throw new Error(`Work id ${fixed} does not match the reservation.`)
+    }
     // The work-item block's contract_revision is creation-time metadata.
     await board.reply(root.id, {
+      ...(fixed === undefined ? {} : { id: `work-item:${fixed}` }),
       text: workItemBlock({ ...metadata, contract_revision: parseOutcomesContract(root.text).valid ? String(root.revision) : null }),
       noSync: true,
     })

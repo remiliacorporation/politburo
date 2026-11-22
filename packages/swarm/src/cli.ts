@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { workCommand, workUsage } from './work/cli.ts'
 
 const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
 
@@ -32,12 +33,14 @@ function misuse(message: string): number {
   return 2
 }
 
-function main(args: string[]): number {
+async function main(args: string[]): Promise<number> {
   const [command, action, ...flags] = args
-  if (
-    (args.length === 1 && command === '--help') ||
-    (args.length === 2 && command === 'config' && action === '--help')
-  ) {
+  if (command === 'work') return workCommand(args.slice(1))
+  if (args.length === 1 && command === '--help') {
+    console.log(`${usage}\n${workUsage}`)
+    return 0
+  }
+  if (args.length === 2 && command === 'config' && action === '--help') {
     console.log(usage)
     return 0
   }
@@ -93,4 +96,4 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+process.exitCode = await main(process.argv.slice(2))
