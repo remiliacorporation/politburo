@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { rolloutMain } from './rollout/rollout-cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = `usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]
+       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]`
 
 class ReadError extends Error {}
 
@@ -42,6 +44,7 @@ function main(args: string[]): number {
     return 0
   }
   if (command === undefined) return misuse('missing command')
+  if (command === 'rollout') return rolloutMain(args.slice(1))
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {
