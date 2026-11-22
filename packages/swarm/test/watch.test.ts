@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { jsonlSink, type ShadowAlert } from '../src/watch/alerts.ts'
 import { diffAlerts, parseScriptLog, parseShadowLog } from '../src/watch/diff.ts'
 import { prLog, type PrSource } from '../src/watch/prlog.ts'
@@ -186,6 +190,45 @@ test('hung watch parts time out independently, and shutdown interrupts an in-fli
   assert.equal(signals[3]?.reason, stop.signal.reason)
 })
 
+for (const reason of ['deadline', 'SIGTERM']) {
+  test(`configured watch CLI closes a hung board socket on ${reason} and exits cleanly`, async (t) => {
+    const home = tempDir(t)
+    let accepted!: (request: { closed: Promise<unknown> }) => void
+    const requested = new Promise<{ closed: Promise<unknown> }>((resolve) => { accepted = resolve })
+    const server = createServer((req, res) => {
+      if (req.url === '/') return res.end(JSON.stringify({ audience: url }))
+      if (req.url !== '/control') return res.writeHead(404).end()
+      // The real SDK has connected; never answer this request.
+      accepted({ closed: once(req.socket, 'close') })
+    }).listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    // Shorten only the child CLI's 30s deadline; don't mock the SDK or its network.
+    const clock = reason === 'deadline' ? `const timer = globalThis.setTimeout;
+      globalThis.setTimeout = (fn, ms, ...args) => timer(fn, ms === 30_000 ? 400 : ms, ...args);` : ''
+    const child = spawn(process.execPath, ['--input-type=module', '--eval', `${clock}
+      const { run } = await import('./dist/watch/cli.js');
+      process.exitCode = await run(['run', '--shadow', '--out', process.argv[1]]);`, join(home, 'watch.jsonl')], {
+      cwd: new URL('../', import.meta.url), env: { BOARD_URL: url, HOME: home }, stdio: 'ignore',
+    })
+    const exited = once(child, 'exit')
+    try {
+      const request = await Promise.race([requested, exited.then(() => null), delay(3000, null, { ref: false })])
+      assert.ok(request, 'CLI did not reach the board control request')
+      const closed = Promise.race([request.closed.then(() => true), delay(1500, false, { ref: false })])
+      if (reason === 'deadline') assert.equal(await closed, true, 'part deadline left the board socket open')
+      child.kill('SIGTERM')
+      assert.deepEqual(await Promise.race([exited, delay(1500, 'still running', { ref: false })]), [0, null])
+      assert.equal(await closed, true, 'shutdown left the board socket open')
+    } finally {
+      child.kill('SIGKILL')
+      server.closeAllConnections()
+      server.close()
+      await exited
+    }
+  })
+}
+
 test('JSONL sink: appending an alert overwrites history or writes unreadable lines', async (t) => {
   const path = join(tempDir(t), 'logs', 'watch.jsonl')
   const sink = jsonlSink(path)
@@ -216,13 +259,17 @@ test('paused board: silence or a stale heartbeat raises a stall alert during a p
     [['stall:missed:work:worker', iso(70)], ['stall:quiet:work', iso(70)]])
 })
 
-test('stall replay replaces unsafe board agent ids and roles with opaque tokens', async () => {
-  const id = `agent/${randomUUID()}`, role = `${randomUUID()} ${randomUUID()}`
+test('stall replay redacts unsafe agent fields without losing the alert for an ID equal to the alias', async () => {
+  const id = `agent/${randomUUID()}`, role = `${randomUUID().slice(0, 8)} ) ${randomUUID().slice(0, 8)}`
   const opaque = (value: string) => `agent-${createHash('sha256').update(value).digest('hex').slice(0, 12)}`
-  const alerts = await replay([{ t: time(65), paused: false, events: [], agents: [{ ...agent(id, 0), role }] }])
+  const alias = opaque(id)
+  const alerts = await replay([{ t: time(65), paused: false, events: [],
+    agents: [{ ...agent(id, 0), role }, { ...agent(alias, 0), role: 'checker' }],
+  }])
   assert.equal([id, role].some((value) => JSON.stringify(alerts).includes(value)), false)
-  assert.deepEqual(alerts.map(({ key }) => key === `stall:missed:work:${opaque(id)}`), [true])
-  assert.ok(alerts[0]?.text.includes(`Agent ${opaque(id)} (${opaque(role)})`))
+  assert.deepEqual(alerts.map(({ key, text }) => [key, text]), [opaque(role), 'checker'].map((role) => [
+    `stall:missed:work:${alias}`, `Agent ${alias} (${role}) last sent a heartbeat 3900000 ms ago. The limit is 3600000 ms.`,
+  ]))
 })
 
 test('slowdown episodes: sustained low activity spams alerts or recovery never re-arms them', () => {

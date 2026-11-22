@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
@@ -10,13 +11,40 @@ import { replay } from './replay.ts'
 import { watchService } from './service.ts'
 import type { WatchBoard } from './stall.ts'
 
+const boardSignal = new AsyncLocalStorage<AbortSignal | undefined>()
+let readers = 0
+let restoreFetch: () => void
+
+async function readBoard<T>(signal: AbortSignal | undefined, read: () => Promise<T>) {
+  // The Node SDK ignores board({ fetch }) for BOARD_URL and replaces default auth for named boards.
+  // Bind its final transport instead, only in the async scope of a configured board read.
+  if (readers++ === 0) {
+    const fetch = globalThis.fetch
+    globalThis.fetch = (input, init) => {
+      const signal = boardSignal.getStore()
+      if (!signal) return fetch(input, init)
+      const request = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+      return fetch(input, { ...init, signal: request ? AbortSignal.any([request, signal]) : signal })
+    }
+    restoreFetch = () => { globalThis.fetch = fetch }
+  }
+  // Keep the binding until the SDK settles, even if the service has stopped waiting.
+  try { return await boardSignal.run(signal, read) }
+  finally { if (--readers === 0) restoreFetch() }
+}
+
 async function configuredBoard(): Promise<WatchBoard | undefined> {
   const name = process.env.BOARD_NAME || undefined
   if (!name && !process.env.BOARD_URL?.trim() && !process.env.VERCEL_ORG_ID) return undefined
   // Resolve the board SDK that runtime already depends on.
   const sdk = createRequire(import.meta.resolve('@remilia/politburo-runtime')).resolve('@vercel/board')
   const { board } = await import(pathToFileURL(sdk).href) as { board(options?: { name?: string }): WatchBoard }
-  return board(name ? { name } : undefined)
+  const handle = board(name ? { name } : undefined)
+  return {
+    status: (signal) => readBoard(signal, () => handle.status()),
+    poll: (query, signal) => readBoard(signal, () => handle.poll(query)),
+    agents: { list: (channel, signal) => readBoard(signal, () => handle.agents.list(channel)) },
+  }
 }
 
 const str = { type: 'string' } as const

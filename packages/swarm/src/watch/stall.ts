@@ -26,13 +26,20 @@ export function shadowStall(board: WatchBoard, sink: AlertSink, now: () => numbe
   const watcher = stallWatcher({
     poll: (query) => read((signal) => board.poll(query, signal)),
     status: () => read((signal) => board.status(signal)),
-    agents: { async list(channel) {
-      const { agents } = await read((signal) => board.agents.list(channel, signal))
-      return { agents: agents.map((agent) => ({ ...agent, id: token(agent.id), role: token(agent.role) })) }
-    } },
+    agents: { list: (channel) => read((signal) => board.agents.list(channel, signal)) },
     operationalInbox: {
-      async send({ topic, text }) {
-        try { await read(() => sink({ at: new Date(now()).toISOString(), kind: 'stall', key: topic, text })) }
+      async send({ topic: key, text }) {
+        // Runtime escapes colons in topic fields. Redact only its rendered ID and role;
+        // the original fields must remain distinct in runtime's tracking and dedupe.
+        if (key.startsWith('stall:missed:')) {
+          const split = key.lastIndexOf(':') + 1
+          const id = key.slice(split), prefix = `Agent ${id} (`
+          const fields = text.startsWith(prefix) && /^(.*)\) ((?:has no heartbeat after [\d.e+-]+ ms of watching|last sent a heartbeat [\d.e+-]+ ms ago)\. The limit is [\d.e+-]+ ms\.)$/.exec(text.slice(prefix.length))
+          if (!fields) throw new WatchError('invalid shadow stall alert')
+          key = key.slice(0, split) + token(id)
+          text = `Agent ${token(id)} (${token(fields[1]!)}) ${fields[2]}`
+        }
+        try { await read(() => sink({ at: new Date(now()).toISOString(), kind: 'stall', key, text })) }
         catch { throw new WatchError('shadow stall append failed') }
       },
     },
