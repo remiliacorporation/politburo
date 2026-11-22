@@ -187,21 +187,62 @@ test('plan-mob does not reuse live species or lose the serial in the ID and titl
   }
 })
 
-test('plan-mob does not duplicate sprite names or silently accept an unknown sprite job', (t) => {
+test('plan-mob does not suffix sprite items before their pool is exhausted or accept an unknown sprite job', (t) => {
   const dir = tempDir(t)
   install(dir)
-  const { status, stdout, stderr } = plan(dir, {}, '--sprite', 'review', '--sprite', 'review', '--json')
+  const flags = Array.from({ length: 4 }, () => ['--sprite', 'review']).flat()
+  const { status, stdout, stderr } = plan(dir, {}, ...flags, '--json')
   assert.equal(status, 0, stderr)
   const { mob, sprites } = JSON.parse(stdout)
-  assert.deepEqual(sprites, [`${mob}.SWORD`, `${mob}.SWORD2`])
+  assert.deepEqual(sprites, ['SWORD', 'BOW', 'TRIDENT', 'SWORD2'].map((item) => `${mob}.${item}`))
   const unknown = plan(dir, {}, '--sprite', 'unknown-job')
   assert.equal(unknown.status, 1)
   assert.equal(unknown.stdout, '')
 })
 
-test('plan-mob does not emit an unusable brief or wrong digest for any registered tag', (t) => {
+test('plan-mob does not miss live species with whitespace or numeric suffixes', (t) => {
   const dir = tempDir(t)
   install(dir)
+  for (const [live, mob] of [['BEE, DOLPHIN', 'BEE2'], ['BEE2', 'DOLPHIN'], ['BEE2,DOLPHIN', 'BEE3']] as const) {
+    const { status, stdout, stderr } = plan(dir, {}, '--live', live, '--json')
+    assert.equal(status, 0, stderr)
+    assert.equal(JSON.parse(stdout).mob, `280-${mob}`, live)
+  }
+})
+
+test('plan-mob refuses species with embedded newlines or lowercase letters', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  for (const name of ['BE\nE', 'bee']) {
+    const { status, stdout, stderr } = plan(dir, {}, ...party(dir, species([name])))
+    assert.equal(status, 1)
+    assert.equal(stdout, '')
+    assert.equal(stderr, 'error: invalid name in names.mob_species.neutral.build\n')
+  }
+})
+
+for (const [label, text] of [
+  ['a carriage return', '\r'], ['an escape', '\x1b'], ['a C1 control', '\x85'],
+  ['a protected repo reference', 'TiGeRyArD'],
+]) {
+  test(`plan-mob refuses a template containing ${label} without echoing it`, (t) => {
+    const dir = tempDir(t)
+    install(dir)
+    const path = join(dir, 'mob-creation/brief-template.md')
+    writeFileSync(path, `${readFileSync(path, 'utf8')}${text}\n`)
+    const { status, stdout, stderr } = plan(dir)
+    assert.equal(status, 1)
+    assert.equal(stdout, '')
+    assert.match(stderr, /^error: (control character in brief template|protected repo reference in brief)\n$/)
+    assert.doesNotMatch(stderr, /tigeryard/i)
+  })
+}
+
+test('plan-mob does not emit an unusable brief or hash different bytes from what it prints', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const path = join(dir, 'mob-creation/brief-template.md')
+  writeFileSync(path, `${readFileSync(path, 'utf8')}\tindented\n`)
   const { tags } = JSON.parse(readFileSync(new URL('../registry/tags.json', import.meta.url), 'utf8'))
   for (const { tag } of tags) {
     const { status, stdout, stderr } = plan(dir, { tag })

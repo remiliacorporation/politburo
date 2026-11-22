@@ -8,9 +8,9 @@ const usage = 'usage: swarm skills sync --dir DIR [--party FILE] [--repo FILE] [
 const planUsage = 'usage: swarm skills plan-mob --skills DIR --tag TAG --job JOB --serial N\n' +
   '       [--live A,B] [--sprite JOB]... [--party FILE] [--repo FILE] [--json]'
 
-function escapeControls(text: string, multiline = false) {
+function escapeControls(text: string) {
   return text.replace(/[\x00-\x1f\x7f-\x9f]/g, (char) =>
-    multiline && char === '\n' ? char : `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
   )
 }
 
@@ -79,7 +79,7 @@ function planMobMain(flags: string[]): number {
       for (const sprite of plan.sprites) console.log(`sprite  ${escapeControls(sprite)}`)
       console.log(`brief  sha256:${plan.brief_sha256}`)
       console.log(`open  ${plan.open_placeholders} placeholders left for the spawner\n`)
-      process.stdout.write(escapeControls(plan.brief, true))
+      process.stdout.write(plan.brief)
     }
     return 0
   } catch (error) {
