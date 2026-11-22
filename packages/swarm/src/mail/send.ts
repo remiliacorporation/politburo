@@ -10,17 +10,21 @@ export async function sendMail(board: Pick<Board, 'post'>, channel: string, mess
 
   // Scope namespaces sender IDs when mailboxes share a board; reserve ':' as its delimiter.
   const id = `mail:${scope}:${message.id}`
-  const landed = await board.post(channel, { id, text: block(MAIL_SCHEMA, message) }).catch((error: unknown) => {
+  const landed = await board.post(channel, { id, text: block(MAIL_SCHEMA, message), noSync: true }).catch((error: unknown) => {
     if (boardConflict(error, 'duplicate_id')) throw new MailError('id_collision')
     throw error
   })
   const [entry] = landed.blocks
-  const entries = Object.entries(message)
   if (landed.blocks.length !== 1 || entry?.schema !== 'swarm-message' || entry.version !== 1 ||
-      Object.keys(entry.data).length !== entries.length || !entries.every(([key, value]) => entry.data[key] === value)) {
+      !samePayload(message, entry.data)) {
     throw new MailError('id_collision')
   }
   return landed
+}
+
+export function samePayload(message: MailMessage, data: Record<string, unknown>) {
+  const entries = Object.entries(message)
+  return Object.keys(data).length === entries.length && entries.every(([key, value]) => data[key] === value)
 }
 
 export function boardConflict(error: unknown, code: string) {
