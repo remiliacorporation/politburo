@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import fs, { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fs, { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +10,7 @@ import { block, board } from '@vercel/board'
 import { local } from '@vercel/board/backend-local'
 import { parse, stringify } from 'yaml'
 import {
-  createBridge, createInbox, MAIL_SCHEMA, registerMailSchema, sendMail, type MailMessage,
+  createBridge, createInbox, createRelay, MAIL_SCHEMA, registerMailSchema, sendMail, type MailMessage,
 } from '../src/mail/index.ts'
 
 const tag = 'plb'
@@ -65,7 +65,7 @@ test('the file-board-file gate does not lose fields or drift in canonical refs',
   const exporter = createBridge({ ...options, inbox: delivery })
   const stringRef = mail('string-ref')
   const mappingRef = { ...mail('mapping-ref'), ref: '{"kind":"issue","work":{"number":482,"repo":"acme/web"}}' }
-  await write('string-ref.md', stringRef)
+  await write('string-ref.md', { ...stringRef, at: '2026-11-20T21:14Z', expires: '2026-11-22T00:00Z' })
   await write('mapping-ref.md', { ...mappingRef, ref: { work: { repo: 'acme/web', number: 482 }, kind: 'issue' } })
   assert.equal((await bridge.importOnce()).imported, 2)
 
@@ -113,6 +113,32 @@ test('a file-originated message does not echo back to files on repeated scans', 
   assert.deepEqual(await readdir(outgoing), ['from-file.md'])
 })
 
+test('file-originated mail relayed to another board does not echo after a retry', async (t) => {
+  const source = await setup(t)
+  const dest = await setup(t)
+  const message = { ...mail('routed-file'), to: 'dest/inbox' }
+  await source.write('routed-file.md', message)
+  assert.equal((await source.bridge.importOnce()).imported, 1)
+  const options = { source: { name: 'source', board: source.team, outbox: source.options.outbox }, now }
+  const interrupted = createRelay({ ...options, boards: { dest: {
+    ...dest.team,
+    async post(...args) {
+      await dest.team.post(...args)
+      throw new Error('destination response lost')
+    },
+  } } })
+  assert.deepEqual((await interrupted.deliverOnce()).down, ['dest'])
+
+  // Check the first landed post, before any retry could repair its labels.
+  await dest.admit()
+  assert.deepEqual((await dest.roots()).map((root) => root.blocks[0]?.data), [message])
+  assert.equal((await dest.bridge.exportOnce()).exported, 0)
+  assert.deepEqual(await readdir(dest.incoming), [])
+  const relay = createRelay({ ...options, boards: { dest: dest.team } })
+  assert.equal((await relay.deliverOnce()).delivered, 1)
+  assert.equal((await dest.roots()).length, 1)
+})
+
 test('an exported board file does not get re-imported from out', async (t) => {
   const { send, admit, roots, bridge, incoming, outgoing } = await setup(t)
   const original = await send(mail('from-board'))
@@ -126,6 +152,72 @@ test('an exported board file does not get re-imported from out', async (t) => {
   assert.deepEqual(report, { imported: 0, skipped: 1, rejected: [] })
   assert.equal((await bridge.exportOnce()).exported, 0)
   assert.deepEqual(await readdir(incoming), ['from-board.md'])
+})
+
+test('a fresh exporter does not recreate a consumed file for handled mail', async (t) => {
+  const { options, dir, send, admit, bridge, incoming } = await setup(t)
+  const message = mail('consumed')
+  const root = await send(message)
+  await admit()
+  assert.equal((await bridge.exportOnce()).exported, 1)
+  assert.equal(await createInbox({ board: options.board, channel: inbox, now }).take(root.id), true)
+  await rm(join(incoming, 'consumed.md'))
+
+  assert.equal((await createBridge(options).exportOnce()).exported, 0)
+  assert.deepEqual(await readdir(incoming), [])
+  assert.deepEqual(JSON.parse(await readFile(join(dir, tag, '.bridge-exported.json'), 'utf8')), [message.id])
+})
+
+test('a failed record rename leaves the file for the next export to reconcile', async (t) => {
+  const { options, dir, send, admit, bridge, incoming } = await setup(t)
+  const message = mail('unrecorded')
+  const target = join(incoming, 'unrecorded.md')
+  const record = join(dir, tag, '.bridge-exported.json')
+  await send(message)
+  await admit()
+  const interrupted = new Error('record rename failed')
+  const rename = fs.rename
+  const renamer = t.mock.method(fs, 'rename', async (from: string, to: string) => {
+    if (to === record) throw interrupted
+    await rename(from, to)
+  })
+  try {
+    syncBuiltinESMExports()
+    await assert.rejects(bridge.exportOnce(), (error) => error === interrupted)
+    checkFile(await readFile(target, 'utf8'), message)
+    assert.deepEqual((await readdir(join(dir, tag))).sort(), ['in', 'out'])
+  } finally {
+    renamer.mock.restore()
+    syncBuiltinESMExports()
+  }
+  assert.deepEqual(await createBridge(options).exportOnce(), { exported: 0, skipped: 1, conflicts: [], rejected: [] })
+  await rm(target)
+  assert.equal((await createBridge(options).exportOnce()).exported, 0)
+  assert.deepEqual(await readdir(incoming), [])
+})
+
+test('export creates private files and directories regardless of umask', async (t) => {
+  const { options, dir, send, admit } = await setup(t)
+  await send(mail('private'))
+  await admit()
+  for (const mask of [0, 0o777]) {
+    const parent = join(dir, `mask-${mask}`)
+    const base = join(parent, 'mail')
+    const mailbox = join(base, tag)
+    const incoming = join(mailbox, 'in')
+    const previous = process.umask(mask)
+    try {
+      assert.equal((await createBridge({ ...options, dir: base }).exportOnce()).exported, 1)
+    } finally {
+      process.umask(previous)
+    }
+    for (const path of [parent, base, mailbox, incoming]) {
+      assert.equal((await stat(path)).mode & 0o777, 0o700, path)
+    }
+    for (const path of [join(incoming, 'private.md'), join(mailbox, '.bridge-exported.json')]) {
+      assert.equal((await stat(path)).mode & 0o777, 0o600, path)
+    }
+  }
 })
 
 test('a lost import response causes neither a duplicate root nor a file echo', async (t) => {

@@ -1,16 +1,17 @@
-// fileFormat is the design-doc stand-in for the exact Tigeryard format from WP-104.
+// WP-104 supplies the exact Tigeryard codec. This stand-in always exports seconds,
+// so legacy minute-only timestamps round-trip in their normalised form.
 // A ref mapping round-trips as canonical JSON; a string round-trips unchanged.
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, lstat, mkdir, open, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, link, lstat, mkdir, open, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { Board } from '@vercel/board'
 import { parseDocument, stringify } from 'yaml'
 import { createInbox } from './inbox.ts'
 import { MAIL_LABELS, MAIL_SCHEMA, MAIL_STATES, MailError, validateMessage, type MailMessage } from './message.ts'
 import { sendMail } from './send.ts'
 
-const originLabel = 'swarm.origin'
+const { origin: originLabel } = MAIL_LABELS
 const schema = { schema: 'core' } as const
 const mapping = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype
@@ -34,6 +35,12 @@ const fileFormat = {
     const data: unknown = doc.toJS({ maxAliasCount: 0 })
     if (!mapping(data)) throw new MailError('invalid_message')
     if (mapping(data.ref)) data.ref = canonical(data.ref)
+    for (const field of ['at', 'expires']) {
+      const value = data[field]
+      if (typeof value === 'string' && value.length === 17 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/.test(value)) {
+        data[field] = `${value.slice(0, -1)}:00Z`
+      }
+    }
     return data
   },
   render(message: MailMessage) {
@@ -78,6 +85,51 @@ async function readRegular(path: string) {
   }
 }
 
+async function mkdirPrivate(path: string) {
+  try {
+    await mkdir(path, { mode: 0o700 })
+  } catch (error) {
+    if (hasCode(error, 'EEXIST')) return
+    if (!hasCode(error, 'ENOENT') || dirname(path) === path) throw error
+    await mkdirPrivate(dirname(path))
+    return mkdirPrivate(path)
+  }
+  await chmod(path, 0o700)
+}
+
+async function writePrivate(path: string, content: Buffer | string) {
+  await writeFile(path, content, { flag: 'wx', mode: 0o600 })
+  await chmod(path, 0o600)
+}
+
+async function removeTemp(path: string) {
+  await unlink(path).catch((error: unknown) => {
+    if (!hasCode(error, 'ENOENT')) throw error
+  })
+}
+
+async function readExported(path: string) {
+  const bytes = await readRegular(path).catch((error: unknown) => {
+    if (!hasCode(error, 'ENOENT')) throw error
+  })
+  if (!bytes) return new Set<string>()
+  const ids: unknown = JSON.parse(bytes.toString('utf8'))
+  if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string' && isSafeMailSegment(id))) {
+    throw new MailError('invalid_export_record')
+  }
+  return new Set<string>(ids)
+}
+
+async function recordExport(path: string, ids: Set<string>) {
+  const temp = `${path}.${randomUUID()}`
+  try {
+    await writePrivate(temp, JSON.stringify([...ids]))
+    await rename(temp, path)
+  } finally {
+    await removeTemp(temp)
+  }
+}
+
 async function publish(dir: string, file: string, content: string) {
   const path = join(dir, file)
   const bytes = Buffer.from(content)
@@ -98,7 +150,7 @@ async function publish(dir: string, file: string, content: string) {
   const temp = join(dir, `.mail-${randomUUID()}`)
   const ready = `${temp}.ready`
   try {
-    await writeFile(temp, bytes, { flag: 'wx' })
+    await writePrivate(temp, bytes)
     await rename(temp, ready)
     // Node's rename replaces the destination. Publish the complete staged file
     // with an atomic no-clobber link instead, even if another writer just won.
@@ -113,11 +165,7 @@ async function publish(dir: string, file: string, content: string) {
       }
     }
   } finally {
-    for (const dotfile of [temp, ready]) {
-      await unlink(dotfile).catch((error: unknown) => {
-        if (!hasCode(error, 'ENOENT')) throw error
-      })
-    }
+    for (const dotfile of [temp, ready]) await removeTemp(dotfile)
   }
 }
 
@@ -134,15 +182,11 @@ export function createBridge({ board, inbox, outbox, dir, tag, now }: BridgeOpti
   }
 
   async function directory(side: 'in' | 'out') {
-    if (side === 'in') await mkdir(dir, { recursive: true })
+    if (side === 'in') await mkdirPrivate(dir)
     let path = await realpath(dir)
     for (const segment of [tag, side]) {
       path = join(path, segment)
-      if (side === 'in') {
-        await mkdir(path).catch((error: unknown) => {
-          if (!hasCode(error, 'EEXIST')) throw error
-        })
-      }
+      if (side === 'in') await mkdirPrivate(path)
       // Never follow a symlink from the configured base to a mailbox.
       if (!(await lstat(path)).isDirectory()) throw new MailError('invalid_mail_directory')
     }
@@ -195,6 +239,8 @@ export function createBridge({ board, inbox, outbox, dir, tag, now }: BridgeOpti
       const active = await service.readOpen({ limit: Infinity })
       const openIds = new Set(active.map(({ messageId }) => messageId))
       const path = await directory('in')
+      const record = join(dirname(path), '.bridge-exported.json')
+      const exported = await readExported(record)
       const clock = now()
       for (const status of [MAIL_STATES.open, MAIL_STATES.handled]) {
         let before: string | undefined
@@ -217,10 +263,20 @@ export function createBridge({ board, inbox, outbox, dir, tag, now }: BridgeOpti
               report.rejected.push({ file: message.id, problems: ['unsafe_id'] })
               continue
             }
+            if (exported.has(message.id)) {
+              report.skipped++
+              continue
+            }
             const file = `${message.id}${fileFormat.extension}`
             const result = await publish(path, file, fileFormat.render(message))
-            if (result === 'conflict') report.conflicts.push(file)
-            else report[result]++
+            if (result === 'conflict') {
+              report.conflicts.push(file)
+            } else {
+              // A retry after publication records the already identical file.
+              exported.add(message.id)
+              await recordExport(record, exported)
+              report[result]++
+            }
           }
           if (!page.older || page.older === before) break
           before = page.older
