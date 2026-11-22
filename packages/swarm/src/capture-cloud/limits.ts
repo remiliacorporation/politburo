@@ -3,7 +3,7 @@ export const tokenCap = 100_000_000
 
 export function tokenBucket(rate: number, burst: number, now: () => number = Date.now) {
   const buckets = new Map<string, { tokens: number; at: number }>()
-  return (key: string): number => {
+  function take(key: string): number {
     const at = now()
     const old = buckets.get(key)
     const tokens = old ? Math.min(burst, old.tokens + Math.max(0, at - old.at) * rate / 1000) : burst
@@ -16,4 +16,8 @@ export function tokenBucket(rate: number, burst: number, now: () => number = Dat
     buckets.set(key, { tokens: tokens >= 1 ? tokens - 1 : tokens, at: Math.max(at, old?.at ?? at) })
     return tokens >= 1 ? 0 : Math.ceil((1 - tokens) / rate)
   }
+  return Object.assign(take, { refund(key: string) {
+    const bucket = buckets.get(key)
+    if (bucket) bucket.tokens = Math.min(burst, bucket.tokens + 1)
+  } })
 }

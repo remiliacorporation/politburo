@@ -10,8 +10,9 @@ const envelope: Envelope = { party: 'default', repo: 'plb', work_id: 'plb-111', 
 const session = 'canary-session', api = 'claude_code.api_request', email = 'private@example.test'
 const attributes = (fields: Record<string, string | number | object>) => Object.entries(fields).map(([key, value]) =>
   ({ key, value: typeof value === 'string' ? { stringValue: value } : typeof value === 'number' ? { intValue: value } : value }))
-const log = (id: string, overrides = {}, event = api, body = event) => ({ timeUnixNano: '1795348802345999999',
-  body: { stringValue: body }, attributes: attributes({ 'event.name': event, request_id: id, model: 'claude-sonnet-4-6', ...overrides }) })
+const log = (id: string, overrides = {}, event: string | null = api, body = event) => ({ timeUnixNano: '1795348802345999999',
+  body: { stringValue: body }, attributes: attributes({ ...(event === null ? {} : { 'event.name': event }),
+    request_id: id, model: 'claude-sonnet-4-6', ...overrides }) })
 const payload = (logs = [log('r1')], sessionId = session) => ({ envelope: { ...envelope, work_id: 'payload-work' }, resourceLogs: [{
   resource: { attributes: attributes({ 'ccr.session.id': sessionId, 'user.email': email, model: 'not-claude' }) },
   scopeLogs: [{ scope: { name: 'com.anthropic.claude_code' }, logRecords: logs }],
@@ -21,9 +22,13 @@ const canary = payload([
   log('tool-r1', {}, 'claude_code.tool_result', 'private-tool'),
   log('r1', { input_tokens: { intValue: '10' }, output_tokens: { intValue: '3' }, cache_read_tokens: { intValue: '2' },
     cache_creation_tokens: { intValue: '0' }, duration_ms: { doubleValue: 345 }, extra: 'private-extra' }),
-  log('r2', { input_tokens: { intValue: '7' }, output_tokens: { intValue: '4' }, 'ccr.session.id': session }, '', api),
+  log('r2', { input_tokens: { intValue: '7' }, output_tokens: { intValue: '4' }, 'ccr.session.id': session }, null, api),
 ])
 const ok = { status: 200, body: '{}', retry: null }
+const partial = (rejectedLogRecords: number) => ({ ...ok,
+  body: JSON.stringify({ partialSuccess: { rejectedLogRecords, errorMessage: 'rejected' } }) })
+const error = (status: number, message: string) => ({ ...ok, status, body: JSON.stringify({ error: message }) })
+const batch = (offset: number, n = 20) => Array.from({ length: n }, (_, i) => log(`r${offset + i}`))
 
 function fixture(t: TestContext, tick = 0) {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-otlp-')), file = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
@@ -94,12 +99,21 @@ test('OTLP unusable sessions give the same 404; other events are ignored', async
   for (const id of ['unbound-session', 'expired-session', 'revoked-session']) {
     assert.deepEqual(await post(payload(undefined, id)), { ...ok, status: 404, body: '{"error":"unknown_envelope"}' }, id)
   }
-  assert.deepEqual(await post(payload([log('tool', {}, 'claude_code.tool_result')], 'unbound-session')), ok)
+  assert.deepEqual(await post(payload(batch(0, 25), 'unbound-session')), error(404, 'unknown_envelope'))
+  const ignored = payload([log('tool', {}, 'claude_code.tool_result')], 'unbound-session')
+  for (let i = 0; i < 16; i++) assert.deepEqual(await post(ignored), ok)
+  assert.equal((await post(ignored)).status, 429, 'address allowance is charged once per request')
   assert.deepEqual(f.rows(), [])
 })
 
-// Catches invalid claims or transport being accepted, and fractional tokens becoming reported zeros.
-test('OTLP validates input and keeps missing token counts null', async (t) => {
+test('OTLP event.name takes precedence over an API body marker', async (t) => {
+  const f = fixture(t), post = await f.listen()
+  assert.deepEqual(await post(payload([log('prompt', {}, 'claude_code.user_prompt', api)])), ok)
+  assert.deepEqual(f.rows(), [])
+})
+
+// Catches invalid claims or transport being accepted.
+test('OTLP validates claims and transport', async (t) => {
   const f = fixture(t), post = await f.listen()
   const invalid = [log('', { request_id: {} }), log('bad-model', { model: 'other' }), log('negative', { output_tokens: -1 })]
   for (const row of invalid) assert.equal((await post(payload([row]))).status, 400)
@@ -109,16 +123,60 @@ test('OTLP validates input and keeps missing token counts null', async (t) => {
   const body = JSON.stringify(payload()).padEnd(256 * 1024 + 1)
   assert.equal((await post(null, { body })).status, 413, 'OTLP Content-Length over 256 KiB')
   assert.equal((await post(null, { body: new Blob([body]).stream(), duplex: 'half' })).status, 413, 'OTLP streamed body over 256 KiB')
-  assert.equal((await post(payload([log('cap', { output_tokens: 100_000_001 })]))).status, 422)
-  assert.deepEqual(await post(payload([...invalid, log('fraction', { output_tokens: { doubleValue: 1.5 } })])), ok)
-  assert.equal(f.rows().length, 1)
-  assert.equal(f.rows()[0]?.tokens.output, null, 'fractional token count must be null')
+  assert.deepEqual(f.rows(), [])
 })
 
-// Catches booking past the session burst, ignoring an envelope cap, or continuing after a stop.
-test('OTLP stops sequential booking at rate and record caps', async (t) => {
+test('OTLP rejects present invalid numeric attributes', async (t) => {
   const f = fixture(t), post = await f.listen()
-  const batch = (offset: number, n = 20) => Array.from({ length: n }, (_, i) => log(`r${offset + i}`))
+  const invalid = [log('long', { input_tokens: { intValue: '9'.repeat(309) } }),
+    log('negative-duration', { duration_ms: -1 }), log('long-duration', { duration_ms: 86_400_001 }),
+    log('fraction', { output_tokens: { doubleValue: 1.5 } }), log('over-max', { output_tokens: 100_000_001 }),
+    log('exponent', { input_tokens: { intValue: '1e3' } }), log('missing-value', { input_tokens: {} })]
+  for (const [i, row] of invalid.entries()) assert.deepEqual(await post(payload([row])), error(400, 'invalid'), `numeric case ${i + 1}`)
+  assert.deepEqual(f.rows(), [])
+  assert.deepEqual(await post(payload([...invalid, log('valid')])), partial(invalid.length))
+  assert.equal(f.rows().length, 1)
+  assert.equal(f.rows()[0]?.tokens.input_uncached, null)
+})
+
+test('OTLP duplicate session attributes book to neither envelope', async (t) => {
+  const f = fixture(t), post = await f.listen()
+  f.bind('other-session', 3_600_000, 'exec-other')
+  const row = log('duplicate-session', { 'ccr.session.id': session })
+  row.attributes.push(...attributes({ 'ccr.session.id': 'other-session' }))
+  assert.deepEqual(await post(payload([row])), error(400, 'invalid'))
+  assert.deepEqual(f.rows(), [])
+})
+
+test('OTLP throttled batch makes progress on retry without charging replays', async (t) => {
+  const f = fixture(t), post = await f.listen(), data = payload(batch(0, 25))
+  const limited = await post(data)
+  assert.equal(limited.status, 429)
+  assert.match(limited.retry ?? '', /^[1-9]\d*$/)
+  assert.equal(f.rows().length, 20)
+  f.advance(4_000)
+  assert.deepEqual(await post(data), ok, 'in-memory duplicates must not exhaust the burst')
+  assert.equal(f.rows().length, 25)
+  assert.deepEqual(await (await f.listen())(data), ok, 'ledger duplicates must refund the burst after restart')
+  assert.equal(f.rows().length, 25)
+})
+
+test('OTLP mixed batches report permanent rejects without losing valid records', async (t) => {
+  const f = fixture(t), post = await f.listen()
+  const capped = log('cap', { input_tokens: 100_000_000, output_tokens: 1 })
+  const conflict = log('r0', { input_tokens: 1 })
+  for (const [i, rejected] of [log('unknown', { 'ccr.session.id': 'unbound' }), conflict, capped].entries()) {
+    assert.deepEqual(await post(payload([log(`r${i}`), rejected])), partial(1))
+    assert.equal(f.rows().length, i + 1)
+  }
+  assert.deepEqual(await post(payload([log('r0'), conflict])), partial(1), 'duplicates count as success')
+  assert.deepEqual(await post(payload([conflict, capped])), error(400, 'invalid'))
+  assert.deepEqual(await post(payload([capped, conflict])), error(422, 'count_cap'))
+  assert.equal(f.rows().length, 3)
+})
+
+test('OTLP stops on rate limit but continues past a record-capped session', async (t) => {
+  const f = fixture(t), post = await f.listen()
   f.bind('other-session', 3_600_000, 'exec-other')
   const other = log('other', { 'ccr.session.id': 'other-session' })
   const limited = await post(payload([...batch(0, 21), other]))
@@ -127,16 +185,20 @@ test('OTLP stops sequential booking at rate and record caps', async (t) => {
   assert.equal(f.rows().length, 20)
   for (let i = 20; i < 5_000; i += 20) { f.advance(4_000); assert.deepEqual(await post(payload(batch(i))), ok) }
   f.advance(4_000)
-  assert.deepEqual(await post(payload([...batch(5_000, 1), other])), { ...ok, status: 422, body: '{"error":"record_cap"}' })
+  assert.deepEqual(await post(payload(batch(5_000, 1))), error(422, 'record_cap'))
   assert.equal(f.rows().length, 5_000)
+  assert.deepEqual(await post(payload([...batch(5_000, 1), other])), partial(1))
+  assert.equal(f.rows().length, 5_001)
+  assert.equal(f.rows().at(-1)?.envelope?.trace.execution_id, 'exec-other')
 })
 
-// Catches processing a 501st API request or counting ignored events toward the bound.
-test('OTLP processes at most 500 API requests per batch', async (t) => {
+test('OTLP rejects over 500 API requests before booking any', async (t) => {
   const f = fixture(t, 200), post = await f.listen()
-  const logs = [log('ignored', {}, 'claude_code.tool_result'), ...Array.from({ length: 501 }, (_, i) => log(`r${i}`))]
+  const logs = [log('ignored', {}, 'claude_code.tool_result'), ...batch(0, 500)]
+  const over = await post(payload([...logs, log('excess')]))
+  assert.deepEqual({ response: over, booked: f.rows().length }, { response: error(413, 'too_many_records'), booked: 0 })
   assert.deepEqual(await post(payload(logs)), ok)
-  assert.equal(f.rows().length, 500, 'API request at position 501 must not be booked')
+  assert.equal(f.rows().length, 500, 'ignored events do not count toward the limit')
 })
 
 // Catches acknowledging failed appends instead of asking the exporter to retry.

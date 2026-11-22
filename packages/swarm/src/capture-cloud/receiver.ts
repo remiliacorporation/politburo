@@ -6,7 +6,7 @@ import { acceptOtlp, otlpBodyBytes } from './otlp.ts'
 import type { LedgerSink } from './record.ts'
 
 type Event = 'accepted' | 'duplicate' | 'conflict' | 'rejected'
-export type Outcome = [code: number, message: string, event?: Event]
+export type Outcome = [code: number, message: string, event?: Event, rejectedLogRecords?: number]
 export interface ReceiverOptions {
   book: Book
   ledger: LedgerSink
@@ -29,10 +29,12 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
   // A flood brake, not accounting: starts at zero on restart, ledger dedupe still applies.
   const counts = new Map<string, number>()
 
-  function respond(req: IncomingMessage, res: ServerResponse, [code, message, event]: Outcome, otlp = false) {
+  function respond(req: IncomingMessage, res: ServerResponse, [code, message, event, rejectedLogRecords]: Outcome, otlp = false) {
     if (!req.complete || code === 413) res.setHeader('Connection', 'close')
     res.writeHead(otlp && code < 300 ? 200 : code, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(code < 300 ? (otlp ? {} : { status: message }) : { error: message }))
+    const success = !otlp ? { status: message } : rejectedLogRecords
+      ? { partialSuccess: { rejectedLogRecords, errorMessage: 'rejected' } } : {}
+    res.end(JSON.stringify(code < 300 ? success : { error: message }))
     if (event || code >= 400) {
       try { onEvent?.(event ?? 'rejected') } catch { /* Counters do not affect delivery. */ }
     }
@@ -81,16 +83,17 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     let body: unknown
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return send(400, 'invalid') }
     if (entry) return respond(req, res, await accept(body, entry, received))
+    const addressRetry = addressLimit(address)
+    if (addressRetry) return respond(req, res, limited(addressRetry), true)
     const result = await acceptOtlp(body, async (sessionId, claim) => {
       const match = book.bySession(sessionId, now())
-      const retry = match ? capabilityLimit(`session:${sessionId}`) : addressLimit(address)
-      if (retry) return limited(retry)
-      return match ? accept(claim, match, received) : [404, 'unknown_envelope']
+      return match ? accept(claim, match, received, `session:${sessionId}`, limited) : [404, 'unknown_envelope']
     })
     respond(req, res, result, true)
   }
 
-  async function accept(claim: unknown, entry: Pick<BookEntry, 'envelope'>, received: number): Promise<Outcome> {
+  async function accept(claim: unknown, entry: Pick<BookEntry, 'envelope'>, received: number,
+    sessionKey?: string, limited?: (retry: number) => Outcome): Promise<Outcome> {
     const replay = (hash: string, first: string): Outcome => hash === first
       ? [200, 'duplicate', 'duplicate'] : [409, 'conflict', 'conflict']
     if (!validateClaim(claim)) {
@@ -113,6 +116,10 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     const budget = entry.envelope.trace.execution_id
     const count = counts.get(budget) ?? 0
     if (count >= recordCap) return [422, 'record_cap']
+    if (sessionKey && limited) {
+      const retry = capabilityLimit(sessionKey)
+      if (retry) return limited(retry)
+    }
     counts.set(budget, count + 1)
     let appended = false
     try {
@@ -120,7 +127,10 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
       pending.set(key, { hash, write })
       appended = await write === 'appended'
       // After restart or eviction the ledger can dedupe, but cannot tell us which hash won.
-      if (!appended) return [200, 'duplicate', 'duplicate']
+      if (!appended) {
+        if (sessionKey) capabilityLimit.refund(sessionKey)
+        return [200, 'duplicate', 'duplicate']
+      }
       hashes.set(key, hash)
       const oldest = hashes.keys().next().value
       if (hashes.size > 20_000 && oldest !== undefined) hashes.delete(oldest)
