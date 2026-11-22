@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { Book } from './book.ts'
+import type { Book, BookEntry } from './book.ts'
 import { contentHash, toRecord, validateClaim } from './claim.ts'
 import { recordCap, tokenBucket, tokenCap } from './limits.ts'
+import { acceptOtlp, otlpBodyBytes } from './otlp.ts'
 import type { LedgerSink } from './record.ts'
 
 type Event = 'accepted' | 'duplicate' | 'conflict' | 'rejected'
+export type Outcome = [code: number, message: string, event?: Event]
 export interface ReceiverOptions {
   book: Book
   ledger: LedgerSink
@@ -27,63 +29,76 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
   // A flood brake, not accounting: starts at zero on restart, ledger dedupe still applies.
   const counts = new Map<string, number>()
 
-  function respond(req: IncomingMessage, res: ServerResponse, code: number, message: string, event: Event) {
+  function respond(req: IncomingMessage, res: ServerResponse, [code, message, event]: Outcome, otlp = false) {
     if (!req.complete || code === 413) res.setHeader('Connection', 'close')
-    res.writeHead(code, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(code < 300 ? { status: message } : { error: message }))
-    try { onEvent?.(event) } catch { /* Counters do not affect delivery. */ }
+    res.writeHead(otlp && code < 300 ? 200 : code, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(code < 300 ? (otlp ? {} : { status: message }) : { error: message }))
+    if (event || code >= 400) {
+      try { onEvent?.(event ?? 'rejected') } catch { /* Counters do not affect delivery. */ }
+    }
   }
 
   async function receive(req: IncomingMessage, res: ServerResponse) {
-    const send = (code: number, message: string, event: Event = 'rejected') =>
-      respond(req, res, code, message, event)
+    const cap = req.method === 'POST' && /^\/v1\/claims\/([^/?#]+)$/.exec(req.url ?? '')?.[1]
+    const otlp = req.method === 'POST' && req.url === '/v1/logs'
+    const send = (code: number, message: string) => respond(req, res, [code, message], otlp)
+    const address = req.socket.remoteAddress ?? ''
+    function limited(retry: number): Outcome {
+      res.setHeader('Retry-After', retry)
+      return [429, 'rate_limited']
+    }
+    if (!cap && !otlp) return send(404, 'not_found')
+    const globalRetry = globalLimit('global')
+    if (globalRetry) return respond(req, res, limited(globalRetry))
+    if (cap) {
+      // Charge probes before lookup, without sharing a valid capability's allowance.
+      const addressRetry = addressLimit(address)
+      const live = book.byCapability(cap, now())
+      const retry = live ? capabilityLimit(cap) : addressRetry
+      if (retry) return respond(req, res, limited(retry))
+      if (!live) return send(404, 'unknown_envelope')
+    }
+    if (req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') {
+      return send(415, 'unsupported_media_type')
+    }
     function tooLarge() {
       // Flush the 413 before destroying the request's socket.
       res.once('finish', () => req.destroy())
       send(413, 'body_too_large')
     }
-    function replay(hash: string, first: string) {
-      if (hash === first) send(200, 'duplicate', 'duplicate')
-      else send(409, 'conflict', 'conflict')
-    }
-    const cap = req.method === 'POST' && /^\/v1\/claims\/([^/?#]+)$/.exec(req.url ?? '')?.[1]
-    if (!cap) return send(404, 'not_found')
-    const globalRetry = globalLimit('global')
-    if (globalRetry) {
-      res.setHeader('Retry-After', globalRetry)
-      return send(429, 'rate_limited')
-    }
-    // Charge probes before lookup, without sharing a valid capability's allowance.
-    const addressRetry = addressLimit(req.socket.remoteAddress ?? '')
-    const live = book.byCapability(cap, now())
-    const retry = live ? capabilityLimit(cap) : addressRetry
-    if (retry) {
-      res.setHeader('Retry-After', retry)
-      return send(429, 'rate_limited')
-    }
-    if (!live) return send(404, 'unknown_envelope')
-    if (req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== 'application/json') {
-      return send(415, 'unsupported_media_type')
-    }
-    if (Number(req.headers['content-length']) > maxBodyBytes) return tooLarge()
+    const bodyCap = otlp ? otlpBodyBytes : maxBodyBytes
+    if (Number(req.headers['content-length']) > bodyCap) return tooLarge()
     const chunks: Buffer[] = []
     let bytes = 0
     for await (const chunk of req.iterator({ destroyOnReturn: false })) {
       bytes += chunk.length
-      if (bytes > maxBodyBytes) return tooLarge()
+      if (bytes > bodyCap) return tooLarge()
       chunks.push(chunk)
     }
     const received = now()
-    const entry = book.byCapability(cap, received)
-    if (!entry) return send(404, 'unknown_envelope')
-    let claim: unknown
-    try { claim = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return send(400, 'invalid') }
+    const entry = cap ? book.byCapability(cap, received) : undefined
+    if (cap && !entry) return send(404, 'unknown_envelope')
+    let body: unknown
+    try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return send(400, 'invalid') }
+    if (entry) return respond(req, res, await accept(body, entry, received))
+    const result = await acceptOtlp(body, async (sessionId, claim) => {
+      const match = book.bySession(sessionId, now())
+      const retry = match ? capabilityLimit(`session:${sessionId}`) : addressLimit(address)
+      if (retry) return limited(retry)
+      return match ? accept(claim, match, received) : [404, 'unknown_envelope']
+    })
+    respond(req, res, result, true)
+  }
+
+  async function accept(claim: unknown, entry: Pick<BookEntry, 'envelope'>, received: number): Promise<Outcome> {
+    const replay = (hash: string, first: string): Outcome => hash === first
+      ? [200, 'duplicate', 'duplicate'] : [409, 'conflict', 'conflict']
     if (!validateClaim(claim)) {
-      if (validateClaim.errors?.every(error => error.keyword === 'maximum')) return send(422, 'count_cap')
-      return send(400, 'invalid')
+      if (validateClaim.errors?.every(error => error.keyword === 'maximum')) return [422, 'count_cap']
+      return [400, 'invalid']
     }
     if (Object.values(claim.tokens).reduce<number>((sum, count) => sum + (count ?? 0), 0) > tokenCap) {
-      return send(422, 'count_cap')
+      return [422, 'count_cap']
     }
     const record = toRecord(claim, entry, new Date(received).toISOString())
     const key = record.dedupe_key
@@ -93,11 +108,11 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     const active = pending.get(key)
     if (active) {
       if (await active.write === 'appended') return replay(hash, active.hash)
-      return send(200, 'duplicate', 'duplicate')
+      return [200, 'duplicate', 'duplicate']
     }
     const budget = entry.envelope.trace.execution_id
     const count = counts.get(budget) ?? 0
-    if (count >= recordCap) return send(422, 'record_cap')
+    if (count >= recordCap) return [422, 'record_cap']
     counts.set(budget, count + 1)
     let appended = false
     try {
@@ -105,11 +120,11 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
       pending.set(key, { hash, write })
       appended = await write === 'appended'
       // After restart or eviction the ledger can dedupe, but cannot tell us which hash won.
-      if (!appended) return send(200, 'duplicate', 'duplicate')
+      if (!appended) return [200, 'duplicate', 'duplicate']
       hashes.set(key, hash)
       const oldest = hashes.keys().next().value
       if (hashes.size > 20_000 && oldest !== undefined) hashes.delete(oldest)
-      send(202, 'accepted', 'accepted')
+      return [202, 'accepted', 'accepted']
     } finally {
       pending.delete(key)
       if (!appended) {
@@ -123,7 +138,7 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
   function handle(req: IncomingMessage, res: ServerResponse): void {
     void receive(req, res).catch(() => {
       if (res.headersSent || res.destroyed) return
-      respond(req, res, 503, 'unavailable', 'rejected')
+      respond(req, res, [503, 'unavailable'])
     })
   }
   async function listen(port: number) {
