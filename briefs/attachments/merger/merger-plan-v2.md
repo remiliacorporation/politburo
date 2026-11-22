@@ -280,6 +280,8 @@ Owner: **plb** = Politburo spawner (mail tag `pb` until its cutover). **ty** = T
 
 ### Phase 1. Foundations (no live change). Start now.
 
+Dependency note (added 2026-11-22 after pb-0041): a dependency on WP-101 means its **draft**, not its merge. WP-102 and WP-112 start at once beside WP-101; WP-103 starts when WP-101's envelope and spend record section is drafted. Do not serialise Phase 1 behind the design PR.
+
 | WP | Owner | Work | Inputs | Check | Needs |
 | --- | --- | --- | --- | --- | --- |
 | 101 | plb | Design PR [PANDA]: this architecture in `design/`, the corrected mail transport, the party config schema, the dispatch envelope and spend record, the work item and outcomes contract, and **one list of every board addition `packages/swarm` needs**. Mark `TIGERYARD-PARITY.md` and the old `design/swarm-*.md` as replaced. | this plan; all research | Core reads it against section 1; no decision contradicted | — |
@@ -452,3 +454,17 @@ Core files each as an ask in `mail/bonklek/` and proceeds.
 10. Scoring is Phase 7, but party id and outcome records are in every schema from Phase 1.
 11. The Jev thresholds in section 4 are placeholders; real values come from shadow data.
 12. Cloud mob telemetry is unproven; if WP-111 fails, mob spend is recorded as unknown and the ledger says so.
+
+## 13. Addendum: setup distribution findings (2026-11-22, from `research/swarm-config-distribution.md`)
+
+Read from current public documentation; nothing was tested. These change four work packages.
+
+| Finding | Effect |
+| --- | --- |
+| A cloud environment's setup script runs before Claude Code starts and its result is **cached as a snapshot**. It reruns only when the script text or the allowed hosts change, or after about seven days. A remote file changing does not rerun it. | **WP-305:** a stub that fetches "the current bundle" at setup time is not a reliable update path. Two mechanisms instead: (a) the setup **text** carries the pinned version and hash, so core changing that one line through the browser forces a rebuild; (b) the pi wrapper, at each sprite launch, verifies and applies the runtime config (router settings, default model, thinking, limits) from a signed, pinned bundle, keeping the last good copy for when the office is unreachable. |
+| Model, effort and telemetry settings of Claude Code itself cannot be changed by the setup script or a repository hook. They are set in the environment's Variables form (or organization-managed settings). No documented API edits an environment; the web form is the only path. | **WP-301, 303:** core's browser route (D15) is the mechanism, as planned. The party config records what the form should hold; core applies it and records the change. |
+| Telemetry from cloud sessions is configured with variables in the environment form, and the collector's hostname must be on the environment's network allowlist. **Do not put a collector token in environment variables** (session users can read them), and network secrets are not attached to telemetry requests. | **WP-111:** the receiver cannot rely on a bearer token from the VM. Test a path that authenticates the transport without a secret in the VM (the report suggests mutual TLS or organization-managed settings, both unverified here). If none works, the receiver accepts unauthenticated writes on a dedicated hostname, treats every record as a claim to be matched against a pre-issued envelope, and rejects the rest. Prompt and tool-content logging stay off. |
+| Whether an environment can be renamed, and what a rename breaks, is not documented. | **WP-301:** first record the environment's id and every scheduled task and project that names it. Try the rename in a quiet window and start one new session. If rename is not possible, create `politburo`, make it the default, repoint each reference, then archive `remidarknet` (archiving does not stop running sessions). |
+| A new environment receives no share of sessions by itself. | **WP-303:** canary runs are sessions started in `politburo-canary` on purpose. |
+| Usage limits are shared across the account; an environment has no separate bucket. | Canary mobs spend the same quota. |
+| On Team or Enterprise plans an Owner can make environments organization-shared, read-only to members. | Useful once colleagues run mobs: one `politburo` environment for all parties. For the jockey to decide; not required for Phase 3. |
