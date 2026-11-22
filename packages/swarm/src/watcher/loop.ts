@@ -12,8 +12,8 @@ type Pr = Readonly<{ number: number; state: 'draft' | 'ready' | 'closed' | 'merg
 type Check = 'pass' | 'fail' | 'pending'
 export interface CodeHost {
   findPr(branch: string): Promise<Pr | null>
-  // Reuse by branch identity, including history, even if an earlier open may have landed.
-  openDraftPr(input: Draft): Promise<Pr>
+  // Create at sha, not the moving branch tip; reuse by branch identity, including history.
+  openDraftPr(input: Draft & { readonly sha: string }): Promise<Pr>
   headSha(prOrBranch: number | string): Promise<string>
   runChecks(sha: string): Promise<{ sha: string; state: Check }> // Read only, even while paused.
   convertToDraft(pr: number, expectedHead: string): Promise<void>
@@ -73,9 +73,9 @@ export function createWatcher({ refs, host, control, table, observer, reviewer, 
       status: 'unknown', stale: false,
     }
     async function publish() {
-      event.stale = stale()
+      row.staleReported = stale()
+      event.stale = row.staleReported || event.status === 'stale'
       if (event.stale && (event.status === 'working' || event.status === 'finished')) event.status = 'stale'
-      row.staleReported = event.stale
       await table.set(key, row)
       await observer.observe({ ...event })
     }
@@ -133,6 +133,7 @@ export function createWatcher({ refs, host, control, table, observer, reviewer, 
     event.check = 'unknown'
     async function inspect(code: CodeHost) {
       let pr = await code.findPr(a.branch)
+      const opened = pr === null
       if (!pr) {
         if (!usable) return
         if (row.pr !== undefined || row.retired) { unknown(); return }
@@ -140,16 +141,12 @@ export function createWatcher({ refs, host, control, table, observer, reviewer, 
         if (!isSha(branchHead)) { unknown(); return }
         if (branchHead !== candidate) { event.reason = 'head_changed'; unknown(); return }
         if (!await canWrite(a)) return
-        pr = await code.openDraftPr({ branch: a.branch, title: a.title, body: a.body })
+        pr = await code.openDraftPr({ branch: a.branch, title: a.title, body: a.body, sha: candidate })
       }
       if (row.pr !== undefined && row.pr !== pr.number) { unknown(); return }
       const number = row.pr = event.pr = pr.number
-      if (pr.state === 'closed' || pr.state === 'merged') {
-        event.reason ??= 'pr_history'
-        if (row.retired) event.draftPending = false
-        return
-      }
-      const needsDraft = pr.state !== 'draft'
+      const historical = pr.state === 'closed' || pr.state === 'merged'
+      const needsDraft = pr.state === 'ready'
 
       async function readHead() {
         const head = await code.headSha(number)
@@ -168,9 +165,18 @@ export function createWatcher({ refs, host, control, table, observer, reviewer, 
           event.draftPending = false
         }
       }
-      const head = await readHead()
-      if (row.retired || head !== candidate) { await retire(head); return }
-      if (!usable) return
+      const head = opened || !historical ? await readHead() : undefined
+      if (head !== undefined && (head !== candidate || (!historical && row.retired))) {
+        if (opened) event.status = 'stale'
+        await retire(head)
+        return
+      }
+      if (historical) {
+        event.reason ??= 'pr_history'
+        if (row.retired) event.draftPending = false
+        return
+      }
+      if (!usable || head === undefined) return
       const check = await code.runChecks(head)
       const current = await readHead()
       if (current !== head) { await retire(current); return }
@@ -219,6 +225,7 @@ export function createWatcher({ refs, host, control, table, observer, reviewer, 
 
   let tail = Promise.resolve()
   return {
+    // The caller resolves attempts from trusted configuration.
     tick(attempts: readonly Attempt[]): Promise<void> {
       const ordered = new Map(attempts.map(a => [keyOf(a), a]))
       const run = tail.then(async () => {

@@ -41,17 +41,33 @@ function fixture(epoch = 0, control: Control = { epoch: () => epoch }, jitter = 
     expected: binding, epoch, taskId: 't', round: 1, launchedAt: 0, staleMs: 1_000_000,
     submitter: 'worker', reviewer: 'reviewer' }
   const f = { head: sha(1), text: JSON.stringify(finished(1)), descends: true, now: 0,
-    prHead: commit, checkSha: commit, failRead: false, pr: null as Awaited<ReturnType<CodeHost['findPr']>>,
+    branchHead: commit, prHead: commit, checkSha: commit, failRead: false, failRef: false,
+    pr: null as Awaited<ReturnType<CodeHost['findPr']>>,
+    afterStatusRead: undefined as (() => void) | undefined,
+    duringChecks: undefined as (() => void) | undefined,
+    afterOpen: undefined as (() => void) | undefined,
     observations: [] as Observation[], writes: [] as string[], reviews: [] as string[] }
   let saved: StatusRow | undefined
   const watcher = createWatcher({ control, jitter, pollMs, now: () => f.now,
     table: { get: () => structuredClone(saved), set: (_, row) => { saved = structuredClone(row) } },
-    refs: () => ({ read: async () => ({ head: f.head, text: f.text }), isAncestor: async () => f.descends }),
-    host: () => ({ findPr: async () => f.pr, headSha: async () => f.prHead,
-      openDraftPr: async () => { f.writes.push('open'); return f.pr = { number: 1, state: 'draft' } },
+    refs: () => ({ read: async () => {
+      if (f.failRef) throw new Error('ref unavailable')
+      const snapshot = { head: f.head, text: f.text }
+      f.afterStatusRead?.()
+      return snapshot
+    }, isAncestor: async () => f.descends }),
+    host: () => ({ findPr: async () => f.pr, headSha: async ref => typeof ref === 'string' ? f.branchHead : f.prHead,
+      openDraftPr: async ({ sha }) => {
+        f.writes.push('open')
+        f.prHead = sha ?? f.branchHead
+        f.pr = { number: 1, state: 'draft' }
+        f.afterOpen?.()
+        return f.pr
+      },
       convertToDraft: async (pr, head) => { f.writes.push(`draft:${pr}:${head}`); f.pr = { number: pr, state: 'draft' } },
       runChecks: async () => {
         if (f.failRead) throw new Error('host unavailable')
+        f.duringChecks?.()
         return { sha: f.checkSha, state: 'pass' }
       } }),
     observer: { observe: event => { f.observations.push(event) } },
@@ -123,6 +139,42 @@ test('refused status never advances the cursor or authorizes a PR', () => seeded
   await drive('working after finish', working(cursor!.sequence + 1), 'status_out_of_order')
 }))
 
+for (const [field, lexeme] of [['generation', '1.0000000000000001'], ['sequence', '1e-9999'],
+  ['sequence', '-0'], ['sequence', '1000000000000000']]) {
+  test(`invalid ${field} lexeme ${lexeme} must not advance the cursor or open a draft`, async () => {
+    const f = fixture()
+    f.text = JSON.stringify(finished(0)).replace(new RegExp(`"${field}":\\d+`), `"${field}":${lexeme}`)
+    await f.tick(0)
+    assert.deepEqual([f.last().reason, f.cursor(), f.writes], ['invalid_status', undefined, []])
+  })
+}
+
+test('a branch move during the control read must not open on the new tip', async () => {
+  const f = fixture(0, { epoch: () => { f.branchHead = other; return 0 } })
+  await f.tick(0)
+  assert.deepEqual([f.branchHead, f.writes, f.last().head, f.reviews], [other, ['open'], commit, [commit]])
+})
+
+test('a changed head after draft creation must be flagged stale and redrafted if ready', async () => {
+  const f = fixture()
+  f.afterOpen = () => { f.prHead = other; f.pr = { number: 1, state: 'ready' } }
+  await f.tick(0)
+  const { status, stale, reason, voidedHead, check, draftPending } = f.last()
+  assert.deepEqual([status, stale, reason, voidedHead, check, draftPending, f.writes, f.reviews],
+    ['stale', true, 'head_changed', commit, 'unknown', false, ['open', `draft:1:${other}`], []])
+})
+
+test('a pause after the status read must block draft creation', async () => {
+  let calls = 0
+  const control: Control = { epoch: () => ++calls >= 2 ? 'unknown' : 0 }
+  const f = fixture(0, control)
+  // An independent control read at the snapshot boundary moves the fake toward pause.
+  f.afterStatusRead = () => { control.epoch() }
+  await f.tick(0)
+  assert.equal(f.last().status, 'finished')
+  assert.deepEqual([f.writes, f.reviews], [[], []])
+})
+
 test('paused and old epochs observe without host writes or reviewer starts', async t => {
   const backend = local({ memory: true })
   t.after(() => backend.close())
@@ -184,6 +236,18 @@ test('a mismatched check stays unknown and a push voids review and redrafts once
   assert.deepEqual([f.last().voidedHead, f.last().check, f.last().draftPending, f.reviews], [commit, 'unknown', false, [commit]])
 })
 
+test('a push during checks must not report a pass, even if the retired head returns', async () => {
+  const f = fixture()
+  f.duringChecks = () => { f.prHead = other }
+  await f.tick(0)
+  assert.deepEqual(f.observations.map(e => [e.head, e.check, e.voidedHead]), [[other, 'unknown', commit]])
+  assert.deepEqual(f.reviews, [])
+  f.duringChecks = undefined
+  f.prHead = commit
+  await f.tick(10)
+  assert.deepEqual([f.last().head, f.last().check, f.last().voidedHead, f.reviews], [commit, 'unknown', commit, []])
+})
+
 test('failed reads back off with bounded jitter and never report a pass', () => seeded(async (rng, trace) => {
   let jitter = 0
   const f = fixture(0, undefined, () => jitter, 1000)
@@ -205,6 +269,21 @@ test('failed reads back off with bounded jitter and never report a pass', () => 
   await f.tick(now)
   assert.deepEqual([f.last().check, f.reviews], ['pass', [commit]])
 }))
+
+test('repeated ref-read failures must lengthen the retry interval', async () => {
+  const f = fixture()
+  f.failRef = true
+  for (const [index, now] of [0, 10, 30, 70].entries()) {
+    if (now) {
+      await f.tick(now - 1)
+      assert.equal(f.observations.length, index)
+    }
+    await f.tick(now)
+    assert.equal(f.observations.length, index + 1)
+    assert.equal(f.last().status, 'unknown')
+  }
+  assert.deepEqual([f.cursor(), f.writes, f.reviews], [undefined, [], []])
+})
 
 test('stale commits and contradictory or unknown review levels cannot grant a verdict', () => {
   const clean = { outcome: 'clean', level: 'minor', commit, head: commit }

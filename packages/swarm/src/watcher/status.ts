@@ -13,14 +13,19 @@ const clean = (value: unknown) => typeof value === 'string' && value.length > 0 
 export const isSha = (value: unknown): value is string =>
   typeof value === 'string' && value.length === 40 && /^[0-9a-f]+$/iu.test(value)
 
-function duplicateKey(text: string) {
+function invalidTokens(text: string) {
   const keys = new Set<string>()
-  // The schema is flat. Tokenize whole strings so quotes in values never become keys.
-  for (const match of text.matchAll(/"(?:[^"\\]|\\.)*"/gu)) {
-    if (!/^\s*:/u.test(text.slice(match.index + match[0].length))) continue
-    const key: string = JSON.parse(match[0])
-    if (keys.has(key)) return true
-    keys.add(key)
+  let key: string | undefined
+  // JSON.parse checks syntax; scan the flat record without rounding numeric tokens.
+  for (const [, string, colon, number] of text.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/gu)) {
+    if (string !== undefined && colon) {
+      key = JSON.parse(string) as string
+      if (keys.has(key)) return true
+      keys.add(key)
+    } else if (number !== undefined) {
+      if (key === 'version' ? number !== '1' :
+          (key !== 'sequence' && key !== 'generation') || !/^(?:0|[1-9]\d{0,14})$/u.test(number)) return true
+    }
   }
   return false
 }
@@ -36,7 +41,7 @@ export function parseStatus(text: string): { status: RemoteStatus } | { reason: 
       !clean(value.session) || !clean(value.briefDigest) || !clean(value.attempt) ||
       (value.state !== 'working' && value.state !== 'finished') ||
       (value.state === 'finished' ? !isSha(value.publishedSha) : Object.hasOwn(value, 'publishedSha')) ||
-      duplicateKey(text)) return invalid
+      invalidTokens(text)) return invalid
   if (!Object.hasOwn(value, 'generation')) return { reason: 'generation_mismatch' }
   if (!count(value.generation)) return invalid
   return { status: value as RemoteStatus }
