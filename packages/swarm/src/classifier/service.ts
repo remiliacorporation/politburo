@@ -26,8 +26,27 @@ export function createClassifier({ classifier, dir, config, now = () => new Date
 }) {
   const policies: Record<QuestionKey, Policy> = loadConfig({ party: config }).secretary.questions
   const store = openClassifierStore(dir)
-  const latches = () => activeLatches(store.readSwitches())
   const at = () => now().toISOString()
+
+  function effectiveState(question: QuestionKey): Mode {
+    try {
+      const switches = store.readSwitches(), records = store.readCalls()
+      if (activeLatches(switches).has(question)) return 'shadow'
+      const clear = switches.findLast((s) => s.question === question && s.type === 'clear')
+      // Older clears have no log cursor; timestamps cannot safely establish order.
+      const { calls, outcomes } = callHistory(records, clear?.type === 'clear' ? clear.call_cursor ?? 0 : 0)
+      const policy = policies[question], limit = policy.late_p1_rate_limit
+      const [max, window] = rateLimit(limit)
+      const recent = calls.filter((c) => c.question === question && c.label !== null && outcomes.has(c.id)).slice(-window)
+      const costly = recent.filter((c) => outcomes.get(c.id)?.costly).length
+      if (costly <= max) return policy.state
+      store.appendSwitch({ type: 'breach', question, at: at(), reason: 'costly mistake limit exceeded',
+        costly, classified: recent.length, limit })
+    } catch {
+      // Unreadable history or a failed latch write must never permit a live action.
+    }
+    return 'shadow'
+  }
 
   async function ask(q: Ask): Promise<Decision> {
     try {
@@ -47,7 +66,7 @@ export function createClassifier({ classifier, dir, config, now = () => new Date
       const id = idGen()
       if (!safeId(id)) return wake('guard')
       const record: CallRecord = {
-        id, at: at(), question: key, prompt_version: 1, state: latches().has(key) ? 'shadow' : policy.state,
+        id, at: at(), question: key, prompt_version: 1, state: effectiveState(key),
         label: null, probability: null, action_would: 'wake', action_taken: 'wake', reason: 'unavailable', case_ref: caseRef,
       }
       try {
@@ -61,7 +80,7 @@ export function createClassifier({ classifier, dir, config, now = () => new Date
         }
         record.label = label
         record.probability = probabilities[label]!
-        if (latches().has(key)) record.state = 'shadow'
+        if (record.state === 'live') record.state = effectiveState(key)
         if (record.probability < policy.threshold) record.reason = 'below_threshold'
         else {
           record.action_would = action
@@ -84,24 +103,16 @@ export function createClassifier({ classifier, dir, config, now = () => new Date
     if (!safeId(spawner_did) || !/^(?:wake|hold|drop|(?:route|escalate):.+)$/.test(spawner_did) || typeof costly !== 'boolean') {
       throw new Error('invalid classifier outcome')
     }
-    const entry = { call_id: callId, at: at(), spawner_did, costly }
-    outcomes.set(callId, entry)
-    const { question } = call, limit = policies[question].late_p1_rate_limit
-    const [max, window] = rateLimit(limit)
-    const recent = calls.filter((c) => c.question === question && c.label !== null && outcomes.has(c.id)).slice(-window)
-    const mistakes = recent.filter((c) => outcomes.get(c.id)?.costly).length
-    // Persist the safety stop first so interruption cannot leave a recorded breach live.
-    if (mistakes > max && !latches().has(question)) {
-      store.appendSwitch({ type: 'breach', question, at: entry.at, reason: 'costly mistake limit exceeded',
-        costly: mistakes, classified: recent.length, limit })
-    }
-    store.appendCall(entry)
+    rateLimit(policies[call.question].late_p1_rate_limit)
+    store.appendCall({ call_id: callId, at: at(), spawner_did, costly })
+    effectiveState(call.question)
   }
 
   function clear(question: string, why: string): void {
     const definition = findQuestion(question)
     if (!definition || !why.trim() || unsafeText.test(why)) throw new Error('invalid classifier clear')
-    store.appendSwitch({ type: 'clear', question: definition.key, at: at(), reason: why })
+    store.appendSwitch({ type: 'clear', question: definition.key, at: at(), reason: why,
+      call_cursor: store.readCalls().length })
   }
 
   return { ask, outcome, clear, report: () => summarize(store, (key) => policies[key].state) }

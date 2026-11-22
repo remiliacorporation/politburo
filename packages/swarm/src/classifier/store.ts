@@ -11,7 +11,7 @@ export type CallRecord = {
 export type Outcome = { spawner_did: Action; costly: boolean }
 export type OutcomeRecord = Outcome & { call_id: string; at: string }
 export type SwitchRecord = { question: QuestionKey; at: string; reason: string } & (
-  { type: 'breach'; costly: number; classified: number; limit: string } | { type: 'clear' }
+  { type: 'breach'; costly: number; classified: number; limit: string } | { type: 'clear'; call_cursor: number }
 )
 
 function read<T>(path: string): T[] {
@@ -24,7 +24,7 @@ function read<T>(path: string): T[] {
   return lines.flatMap((line, i) => {
     if (!line) return []
     try { return [JSON.parse(line) as T] } catch {
-      if (i === lines.length - 1 || lines[i + 1] === '') return []
+      if (i === lines.length - 1) return []
       throw new Error('invalid classifier log')
     }
   })
@@ -40,8 +40,7 @@ function tailSeparator(path: string): string {
     const size = fstatSync(fd).size
     const last = Buffer.alloc(1)
     if (size > 0) readSync(fd, last, 0, 1, size - 1)
-    // A blank line marks a recovered tail without rewriting history.
-    return size > 0 && last[0] !== 10 ? '\n\n' : ''
+    return size > 0 && last[0] !== 10 ? '\n' : ''
   } finally { closeSync(fd) }
 }
 
@@ -60,12 +59,12 @@ export function openClassifierStore(dir: string) {
   }
 }
 
-export function callHistory(records: (CallRecord | OutcomeRecord)[]) {
+export function callHistory(records: (CallRecord | OutcomeRecord)[], outcomeStart = 0) {
   const calls: CallRecord[] = []
   const outcomes = new Map<string, OutcomeRecord>()
-  for (const record of records) {
+  for (const [i, record] of records.entries()) {
     if ('id' in record) calls.push(record)
-    else if (!outcomes.has(record.call_id)) outcomes.set(record.call_id, record)
+    else if (i >= outcomeStart && !outcomes.has(record.call_id)) outcomes.set(record.call_id, record)
   }
   return { calls, outcomes }
 }

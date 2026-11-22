@@ -105,6 +105,39 @@ test('a costly breach does not stay latched or a reasoned clear does not release
   assert.equal((await service(dir).ask({ ...mail, case_ref: 'review-4' })).action, 'drop')
 })
 
+test('a missing breach switch lets a high-confidence drop suppress a wake', async (t) => {
+  const dir = tempDir(t)
+  const live = service(dir)
+  for (const case_ref of ['review-1', 'review-2']) {
+    const { call_id } = await live.ask({ ...mail, case_ref })
+    assert.ok(call_id)
+    live.outcome(call_id, { spawner_did: 'wake', costly: true })
+  }
+  rmSync(join(dir, 'switches.jsonl'))
+
+  const reopened = service(dir)
+  const decision = await reopened.ask({ ...mail, case_ref: 'review-3' })
+  assert.equal(decision.action, 'wake')
+  assert.equal(decision.action_would, 'drop')
+  assert.equal(reopened.report().find(({ id }) => id === 'J2')?.latched, true)
+})
+
+test('pre-clear outcomes cause one new costly outcome to breach again', async (t) => {
+  const dir = tempDir(t)
+  const live = service(dir)
+  const ids = []
+  for (const case_ref of ['review-1', 'review-2', 'review-3']) {
+    const { call_id } = await live.ask({ ...mail, case_ref })
+    assert.ok(call_id)
+    ids.push(call_id)
+  }
+  for (const id of ids.slice(0, 2)) live.outcome(id, { spawner_did: 'wake', costly: true })
+  live.clear('J2', 'Core reviewed the missed wakes')
+  live.outcome(ids[2]!, { spawner_did: 'wake', costly: true })
+
+  assert.equal((await service(dir).ask({ ...mail, case_ref: 'review-4' })).action, 'drop')
+})
+
 test('TypeSafe leaks the excerpt or key to logs or errors, or sends the key outside Authorization', async (t) => {
   const dir = tempDir(t)
   let transportFails = false
