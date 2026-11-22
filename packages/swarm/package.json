@@ -1,0 +1,27 @@
+{
+  "name": "@remilia/politburo-swarm",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The swarm layer: party spend ledger and the processes that host runtime functions.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "files": ["dist", "README.md"],
+  "exports": {
+    "./ledger": "./dist/ledger/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm run build && node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@remilia/politburo-runtime": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}
