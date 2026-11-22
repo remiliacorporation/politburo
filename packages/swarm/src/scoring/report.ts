@@ -61,14 +61,14 @@ export function scorecard(input: ScoreInput, rules: ScoreRules, options: PartyAt
 
 export function history(input: ScoreInput, rules: ScoreRules, { party, asOfs }: { party: string; asOfs: string[] }) {
   return asOfs.toSorted((a, b) => Date.parse(a) - Date.parse(b)).map(asOf => {
-    const { total, level } = scoreParty(input, rules, { party, asOf })
-    return { asOf, total, level: level.name }
+    const { total, level, unknown } = scoreParty(input, rules, { party, asOf })
+    return { asOf, total, level: level.name, unknown: unknown.items }
   })
 }
 
 export function drill(
   input: ScoreInput, rules: ScoreRules, { party, asOf, work_id }: PartyAt & { work_id: string | null },
-): { item: ItemScore; records: Resolved[] } {
+): { item: ItemScore; records: Resolved[]; unknown: number } {
   const item = scorecard(input, rules, { party, asOf }).items.find(item => item.work_id === work_id)
   if (!item) throw new ScoringInputError('work_id', `no score contributions for ${work_id ?? 'party overhead'}`)
   const byKind = {
@@ -83,5 +83,5 @@ export function drill(
     if (!record) throw new ScoringInputError(`${ref.kind}/${ref.id}`, 'missing referenced record')
     return { ref, record }
   }))
-  return { item, records }
+  return { item, records, unknown: item.contributions.filter(c => c.rule === 'unknown_spend').length }
 }

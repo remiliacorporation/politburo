@@ -6,7 +6,6 @@ const coverageStates = ['live', 'pending', 'partial', 'unattributed', 'conflict'
 const buckets = ['input_uncached', 'input_total', 'output', 'cache_read', 'cache_write', 'reasoning'] as const
 const results = ['valid', 'invalid', 'unverifiable'] as const
 
-type Json = null | boolean | string | number | Json[] | { [key: string]: Json }
 export type Envelope = {
   party: string
   repo: string | null
@@ -33,7 +32,7 @@ export type OutcomeRecord = {
   contract_revision: string | number
   outcome: { kind: string; index: number } | null
   result: typeof results[number]
-  evidence: Json
+  evidence: string
   checked_at: string
   verifier_version: string
   override: { actor: string; reason: string } | null
@@ -53,6 +52,7 @@ export class ScoringInputError extends Error {
 }
 
 const text = { type: 'string' }
+const id = { ...text, minLength: 1 }
 const count = { type: 'integer', minimum: 0 }
 const timestamp = { type: 'string', format: 'utc' }
 const nullable = (schema: object) => ({ anyOf: [schema, { type: 'null' }] })
@@ -60,12 +60,12 @@ const list = (items: object) => ({ type: 'array', items })
 const strict = (properties: Record<string, object>) => ({
   type: 'object', additionalProperties: false, required: Object.keys(properties), properties,
 })
-const key = { party: text, work_id: text, attempt: text }
+const key = { party: id, work_id: id, attempt: id }
 const envelope = strict({
-  party: text, repo: nullable(text), work_id: nullable(text), attempt: nullable(text),
-  tier: { enum: tiers }, parent: nullable(text), session: text, trace: strict({ id: text, execution_id: text }),
+  party: id, repo: nullable(text), work_id: nullable(id), attempt: nullable(id),
+  tier: { enum: tiers }, parent: nullable(id), session: text, trace: strict({ id: text, execution_id: id }),
 })
-const fact = (kind: Fact['kind'], extra = {}) => strict({ ...key, fact_id: text, at: timestamp, kind: { const: kind }, ...extra })
+const fact = (kind: Fact['kind'], extra = {}) => strict({ ...key, fact_id: id, at: timestamp, kind: { const: kind }, ...extra })
 const ajv = new Ajv.default({ allErrors: true, ownProperties: true, discriminator: true })
 ajv.addFormat('utc', (value: string) => {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)$/.test(value)) return false
@@ -76,13 +76,13 @@ const validate = ajv.compile<ScoreInput>({
   ...strict({
     dispatches: list(envelope),
     spend: list(strict({
-      record_id: text, dedupe_key: text, revises: nullable(text), envelope: nullable(envelope),
+      record_id: id, dedupe_key: text, revises: nullable(id), envelope: nullable(envelope),
       tokens: strict(Object.fromEntries(buckets.map(bucket => [bucket, nullable(count)]))),
       coverage: strict({ state: { enum: coverageStates } }),
     })),
     outcomes: list(strict({
       ...key, contract_revision: { anyOf: [text, count] }, outcome: nullable(strict({ kind: text, index: count })),
-      result: { enum: results }, evidence: { $ref: '#/definitions/json' }, checked_at: timestamp,
+      result: { enum: results }, evidence: text, checked_at: timestamp,
       verifier_version: text, override: nullable(strict({ actor: text, reason: text })),
     })),
     facts: list({ discriminator: { propertyName: 'kind' }, type: 'object', oneOf: [
@@ -90,10 +90,6 @@ const validate = ajv.compile<ScoreInput>({
       fact('human_minutes', { minutes: nullable({ type: 'number', minimum: 0 }) }),
     ] }),
   }),
-  definitions: { json: { anyOf: [
-    ...['string', 'boolean', 'number', 'null'].map(type => ({ type })),
-    list({ $ref: '#/definitions/json' }), { type: 'object', additionalProperties: { $ref: '#/definitions/json' } },
-  ] } },
 })
 
 export function currentHeads(spend: readonly SpendRecord[]): SpendRecord[] {

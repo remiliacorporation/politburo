@@ -39,7 +39,7 @@ function seeded(seed: number, party = 'A'): ScoreInput {
     const at = day(1 + 2 * i)
     input.outcomes.push({ ...key, contract_revision: 1, result: 'valid', outcome: { kind: 'pr', index: 0 },
       checked_at: new Date(Date.parse(at) + (party === 'B' ? 1 : 0)).toISOString(),
-      evidence: null, verifier_version: '1', override: null })
+      evidence: `acme/web#${i + 1}`, verifier_version: '1', override: null })
     input.facts.push({ ...key, fact_id: `merge-${id}`, at, kind: 'merged', pr: `acme/web#${i + 1}` })
   }
   return input
@@ -107,6 +107,51 @@ test('history reorders the given dates or drill loses refs or accepts an empty i
   const refs = output(drill('work-0')).split('\n\n')[1]?.split('\n').map(row => row.split(/ {2,}/).join(' '))
   assert.deepEqual(refs?.sort(), ['dispatch run-A-0', 'fact merge-A-0', `outcome work-0#1@${day(1)}`, 'spend spend-A-0'])
   fails(drill('no-work'), 1, /^error: work_id: no score contributions for no-work\n/)
+})
+
+test('history hides unknown spend from a null-minutes fact', (t) => {
+  const input = seeded(701)
+  input.facts.push({ party: 'A', work_id: 'work-1', attempt: '1', fact_id: 'minutes',
+    at: day(3), kind: 'human_minutes', minutes: null })
+  const args = ['score', 'history', ...flags(t, input), '--party', 'A', '--as-ofs', `${day(2)},${day(20)}`]
+  const { history } = JSON.parse(output(run(...args, '--json')))
+  assert.deepEqual(history.map((row: { unknown: number }) => row.unknown), [0, 1])
+  const [header, ...rows] = output(run(...args)).split('\n').map(row => row.split(/ {2,}/))
+  assert.deepEqual(header, ['as-of', 'score', 'level', 'unknown'])
+  assert.deepEqual(rows.map(row => row[3]), ['0', '1'])
+})
+
+test('drill hides unknown spend on the selected work item', (t) => {
+  const input = seeded(701)
+  for (const spend of input.spend) spend.coverage.state = 'partial'
+  const args = ['score', 'drill', ...flags(t, input), '--party', 'A', '--work', 'work-0']
+  assert.equal(JSON.parse(output(run(...args, '--json'))).unknown, 1)
+  assert.equal(output(run(...args)).split('\n')[1], 'unknown  1')
+})
+
+test('drill JSON prints raw C1 controls or line separators in a fact ID', (t) => {
+  const input = seeded(701)
+  const id = 'merge-\u007f\u009b\u2028\u2029'
+  input.facts[0]!.fact_id = id
+  const json = output(run('score', 'drill', ...flags(t, input), '--party', 'A', '--work', 'work-0', '--json'))
+  assert.doesNotMatch(json, /[\x7f-\x9f\u2028\u2029]/)
+  assert.ok(json.includes(String.raw`merge-\u007f\u009b\u2028\u2029`))
+  const { records } = JSON.parse(json)
+  assert.equal(records.find(({ ref }: { ref: { kind: string } }) => ref.kind === 'fact')?.ref.id, id)
+})
+
+test('drill text conflates a newline with a literal escape in fact IDs', (t) => {
+  const input = seeded(701)
+  const key = { party: 'A', work_id: 'work-0', attempt: '1', at: day(1), kind: 'missed_claim' } as const
+  input.facts.push({ ...key, fact_id: 'missed\n' }, { ...key, fact_id: String.raw`missed\u000a` })
+  const text = output(run('score', 'drill', ...flags(t, input), '--party', 'A', '--work', 'work-0'))
+  const ids = text.split('\n').filter(line => line.startsWith('fact') && line.includes('missed'))
+    .map(line => line.split(/ {2,}/)[1]).sort()
+  assert.deepEqual(ids, [String.raw`missed\\u000a`, String.raw`missed\u000a`])
+})
+
+test('an empty --party value is mistaken for a missing flag', (t) => {
+  fails(run('score', 'card', ...flags(t), '--party', ''), 2, /^error: --party must not be empty\n/)
 })
 
 test('misuse or input failures use the wrong exit code, stream, or diagnostic', (t) => {

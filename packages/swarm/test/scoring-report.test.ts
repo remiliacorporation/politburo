@@ -22,7 +22,7 @@ function merged(party: string, work_id = 'work-0') {
   }
   const outcome = {
     ...key, contract_revision: 1, result: 'valid' as const, outcome: { kind: 'pr', index: 0 },
-    checked_at: day(1), evidence: null, verifier_version: '1', override: null,
+    checked_at: day(1), evidence: 'acme/web#1', verifier_version: '1', override: null,
   }
   const fact = { ...key, fact_id: `merge-${id}`, at: day(1), kind: 'merged' as const, pr: 'acme/web#1' }
   return { dispatch, outcome, fact }

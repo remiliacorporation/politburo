@@ -36,7 +36,7 @@ function seeded(seed: number, party = 'A', size = 3): ScoreInput {
     const at = day(1 + 2 * i)
     input.outcomes.push({
       ...key, contract_revision: 1, result: 'valid', outcome: { kind: 'pr', index: 0 },
-      checked_at: at, evidence: null, verifier_version: '1', override: null,
+      checked_at: at, evidence: `acme/web#${i + 1}`, verifier_version: '1', override: null,
     })
     input.facts.push(
       { ...key, fact_id: `merge-${id}`, at, kind: 'merged', pr: `acme/web#${i + 1}` },
@@ -190,6 +190,38 @@ test('malformed spend is accepted or reported outside the offending field', () =
   for (const [spend, message] of cases) {
     assert.throws(() => parseScoreInput({ ...input, spend }), { name: 'ScoringInputError', message })
   }
+})
+
+test('empty score input IDs are accepted or reported at the wrong path', () => {
+  const input = seeded(701, 'A', 1)
+  const [dispatch] = input.dispatches, [spend] = input.spend, [outcome] = input.outcomes, [fact] = input.facts
+  const cases: [string, Partial<ScoreInput>][] = [
+    ['/spend/0/record_id', { spend: [{ ...spend!, record_id: '' }] }],
+    ['/spend/0/revises', { spend: [{ ...spend!, revises: '' }] }],
+    ['/dispatches/0/parent', { dispatches: [{ ...dispatch!, parent: '' }] }],
+    ['/dispatches/0/trace/execution_id', { dispatches: [{ ...dispatch!, trace: { ...dispatch!.trace, execution_id: '' } }] }],
+    ['/facts/0/fact_id', { facts: [{ ...fact!, fact_id: '' }] }],
+  ]
+  for (const field of ['party', 'work_id', 'attempt'] as const) {
+    cases.push(
+      [`/dispatches/0/${field}`, { dispatches: [{ ...dispatch!, [field]: '' }] }],
+      [`/spend/0/envelope/${field}`, { spend: [{ ...spend!, envelope: { ...dispatch!, [field]: '' } }] }],
+      [`/outcomes/0/${field}`, { outcomes: [{ ...outcome!, [field]: '' }] }],
+      [`/facts/0/${field}`, { facts: [{ ...fact!, [field]: '' }] }],
+    )
+  }
+  for (const [path, patch] of cases) {
+    assert.throws(() => parseScoreInput({ ...input, ...patch }), {
+      name: 'ScoringInputError', message: new RegExp(`^${path}:`),
+    }, path)
+  }
+})
+
+test('an outcome with object evidence is accepted or reported at the wrong path', () => {
+  const input = mergedOnly()
+  assert.throws(() => parseScoreInput({ ...input, outcomes: [{ ...input.outcomes[0], evidence: { uri: 'proof' } }] }), {
+    name: 'ScoringInputError', message: /^\/outcomes\/0\/evidence: must be string/,
+  })
 })
 
 test('two dispatches sharing an execution ID are accepted', () => {
