@@ -701,11 +701,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
      * Makes the thread rooted at `id` a task, as it is: `label` in its channel, and the caller's
      * principal owns it. A reply names no task, and neither does a root that's gone.
      */
-    async adopt(identity: Identity, id: number, input: Start): Promise<{ task: MessageView; claim?: TaskClaim }> {
+    async adopt(identity: Identity, id: number, input: Start, screenedEpoch?: number): Promise<{ task: MessageView; claim?: TaskClaim }> {
       const { principal, actor, author } = identity
       const start = input.claim ? (await writes().work.at()).status : undefined
       await authorizeMessage(writes(), principal.access, 'label', id)
-      const pauseEpoch = start === undefined ? undefined : workOpen(start)
+      const pauseEpoch = start === undefined ? undefined : workOpen(start, screenedEpoch)
       const assigned = ownActor(principal.id, input.for)
       const binding = bindingOf(identity, input.binding)
       const token = input.token ?? newToken()
@@ -792,12 +792,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
      * Claims a task: `label` in its channel, whoever owns it. Of claims that race, one lands. With
      * the token of the claim that holds it now, it answers that claim as it is.
      */
-    async claim(identity: Identity, id: number, input: Protocol['claimTask']['input']): Promise<Protocol['claimTask']['output']> {
+    async claim(identity: Identity, id: number, input: Protocol['claimTask']['input'], screenedEpoch?: number): Promise<Protocol['claimTask']['output']> {
       const { principal } = identity
       const { status: start } = await writes().work.at()
       const { channel } = await taskOf(principal.access, id)
       authorize(principal.access, 'label', channel)
-      const pauseEpoch = workOpen(start)
+      const pauseEpoch = workOpen(start, screenedEpoch)
       const binding = bindingOf(identity, input.binding)
       const token = input.token ?? newToken()
       const made: { claim?: TaskClaim; replay?: boolean } = {}

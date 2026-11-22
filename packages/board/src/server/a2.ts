@@ -31,7 +31,7 @@ import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
 import { createTasks, taskLimits } from './tasks.ts'
 import { createOperationalInbox } from './operational-inbox.ts'
-import { writerFor } from '../store/single-writer.ts'
+import { wallTime, writerFor } from '../store/single-writer.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
 import { ack, pull, pullInbox, type QueueSession } from './registered.ts'
@@ -751,7 +751,7 @@ function build(options: A2Options, binding: BoardBinding) {
       const identity = await boundClaimIdentity(caller, body)
       const { principal } = identity
       const about = { needs: body.needs, for: body.for, priority: body.priority, claim: body.claim, lease: body.lease, token: body.token, binding: body.binding }
-      if (body.re !== undefined) return tasks.adopt(identity, messageAt(body.re), about)
+      if (body.re !== undefined) return tasks.adopt(identity, messageAt(body.re), about, caller.origin.claimEpoch)
       // A new thread, posted as any is: `post` where it lands, and `label` for the labels it carries.
       const proofs = await authorizePost(writes, principal.access, { channel: body.channel, labels: body.labels })
       ownId(caller, principal, body.id)
@@ -806,7 +806,7 @@ function build(options: A2Options, binding: BoardBinding) {
     },
     async claimTask(caller, body) {
       taskLimits.lease(body.lease)
-      return tasks.claim(await boundClaimIdentity(caller, body), messageAt(body.id), body)
+      return tasks.claim(await boundClaimIdentity(caller, body), messageAt(body.id), body, caller.origin.claimEpoch)
     },
     async renewTask(caller, { id, epoch, token, lease }) {
       taskLimits.lease(lease)
@@ -926,17 +926,19 @@ function build(options: A2Options, binding: BoardBinding) {
       ownWatchers(principal)
       if (!(await registry.state()).byOwner[principal.id]) throw notFound('this token has no watchers registered here', 'no_registration')
       const queue = queueOf(principal.id) as unknown as QueueSession
-      const pulling = { access: principal.access, limit: query.limit ?? 10 }
-      const deadline = Date.now() + (query.wait ?? 0) * 1000
+      const deadline = wallTime() + (query.wait ?? 0) * 1000
       for (let pause = 100; ; pause = Math.min(pause * 2, 1000)) {
-        const matches = await pull(queue, { ...pulling, now: Date.now() })
-        if (matches.length > 0) {
+        const matches = await writer.run(async (now) => {
+          const { principal: { access } } = await identityOf(await currentCaller(caller, now))
+          const found = await pull(queue, { access, limit: query.limit ?? 10, now })
+          if (found.length === 0) return found
           // Each was made for what its registrant could read when it matched: its links show what it may read now.
-          const reader = await reads.readerOf(principal.access, matches.flatMap((match) => viewLinkedIds(match.event)))
-          return { matches: matches.map((match) => ({ ...match, event: viewedBy(match.event, reader) })) }
-        }
-        if (Date.now() >= deadline || signal.aborted) return { matches }
-        await new Promise((resolve) => setTimeout(resolve, Math.min(pause, Math.max(0, deadline - Date.now()))))
+          const reader = await reads.readerOf(access, found.flatMap((match) => viewLinkedIds(match.event)))
+          return found.map((match) => ({ ...match, event: viewedBy(match.event, reader) }))
+        })
+        const left = deadline - wallTime()
+        if (matches.length > 0 || left <= 0 || signal.aborted) return { matches }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pause, left)))
       }
     },
     async ack(caller, { id, ...body }) {
@@ -1557,6 +1559,11 @@ export function a2(options: A2Options) {
       const ran = await ready()
       const invoke = ran.methods[name] as (caller: Caller, input: never, signal: AbortSignal) => Promise<unknown>
       if (!serialized.has(name)) return invoke(caller, input, signal)
+      // A queued claim must not acquire work after a pause/resume that invalidated its request.
+      if (caller.origin.claimEpoch === undefined && (name === 'claimTask' || (name === 'createTask' && (input as Protocol['createTask']['input']).claim))) {
+        const { status } = await ran.work.at()
+        caller = { ...caller, origin: { ...caller.origin, claimEpoch: status.pauseEpoch } }
+      }
       return ran.writer.run(async (now) => invoke(await ran.currentCaller(caller, now), input, signal))
     }]),
   ) as unknown as ProtocolMethods
