@@ -10,7 +10,7 @@ import { Home } from './home.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { here, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { here, isTypingTarget, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Presidium } from './presidium.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
@@ -231,8 +231,9 @@ export function App() {
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if ((event.target as HTMLElement).closest('textarea, input, [role="menu"], [role="dialog"]')) return
+      if (event.key !== 'Escape' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"]')) return
       if (nav) setNav(false)
       else if (where.thread !== null) navigate(here({ thread: null }))
     }
@@ -351,7 +352,8 @@ export function App() {
           <aside className="pane" aria-label="Thread" inert={nav}>
             <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
             <HeaderActions.Provider value={paneIsFront ? headerActions : null}>
-              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} lead={narrow ? headerLead : null} />
+              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known}
+                lead={narrow ? headerLead : null} focusComposer={current.view !== 'work' || narrow} />
             </HeaderActions.Provider>
           </aside>
         )}
@@ -478,9 +480,9 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
   )
 }
 
-function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
+function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode; focusComposer: boolean }) {
   const { id, state, viewer } = props
-  useTypeToFocus('thread')
+  useTypeToFocus('thread', props.focusComposer)
   const identity = board.getIdentity()
   useEffect(() => board.openThreadPane(id), [id, identity])
   const read = state.paneThread?.id === id && state.paneThread.identity === identity ? state.paneThread.result : 'loading'

@@ -118,24 +118,30 @@ export function useNow(roots: State['openTaskRoots']): number {
   return now
 }
 
+export function isTypingTarget(target: Element | null): boolean {
+  return !!(target?.closest('input, textarea, select') ||
+    target?.closest('[contenteditable=""], [contenteditable="true" i], [contenteditable="plaintext-only" i], [contenteditable="false" i]')
+      ?.matches(':not([contenteditable="false" i])'))
+}
+
 /**
  * Typing anywhere that isn't a field focuses a composer, and the keystroke lands in it: the open
  * thread's when there is one, since that's what you're looking at, or else `composer`.
  */
-export function useTypeToFocus(composer: string) {
+export function useTypeToFocus(composer: string, enabled = true) {
   useEffect(() => {
+    if (!enabled) return
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
-      const target = event.target as HTMLElement
-      if (target !== document.body && target.closest('input, textarea, select, [contenteditable], [role="menu"], [role="dialog"], [role="listbox"]'))
-        return
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return
       const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]:not([inert] *)`)
       const area = find('thread') ?? find(composer)
       area?.focus()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [composer])
+  }, [composer, enabled])
 }
 
 /**
