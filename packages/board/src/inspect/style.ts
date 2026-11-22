@@ -516,10 +516,23 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .needs-view li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding-block: 3px; overflow-wrap: anywhere; }
 .needs-view small { color: var(--muted); }
 .work-view > * { max-width: none; }
-.work-view > [tabindex] { overflow-x: auto; overflow-y: hidden; }
+.work-list { min-width: 0; overflow-x: auto; overflow-y: hidden; }
 .work-view li { flex-wrap: nowrap; white-space: nowrap; }
 .work-view li > * { flex: none; }
-.work-view h2 small { margin-inline-start: 4px; font-weight: normal; }
+.work-view li:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.work-list h3, .work-list h4 { font-size: inherit; margin: 4px 0 0; }
+.work-list h3 small { margin-inline-start: 4px; font-weight: normal; }
+.work-queue, .work-peek { margin-block-start: 12px; }
+.work-health { border-spacing: 0; white-space: nowrap; }
+.work-health :is(th, td) { text-align: left; padding: 2px 10px 2px 0; }
+.work-view.with-peek, .work-peek { overflow-anchor: none; }
+.work-peek { min-width: 0; overflow-wrap: anywhere; }
+.work-peek h2 { margin: 0; font-size: 1rem; }
+.work-view button { box-shadow: none; }
+@media (min-width: 64rem) {
+  .with-peek .work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 28%); gap: 16px; align-items: start; }
+  .work-peek { position: sticky; top: 0; max-height: calc(100dvh - 8rem); overflow: auto; margin: 0; }
+}
 .more { display: block; margin: 8px 20px; }
 /* A few facts, each a quiet name and what it is. */
 .facts { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 3px 10px; margin: 0; }

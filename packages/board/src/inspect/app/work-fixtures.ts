@@ -6,8 +6,8 @@ import type { SwarmRecords } from './work.ts'
 export const fixtureRecords: SwarmRecords = {
   source: 'fixtures',
   parties: {
-    default: { name: "The People's Party", colour: '#b3261e' },
-    blue: { name: 'Blue Party', colour: '#1f6feb' },
+    default: { name: "The People's Party", colour: '#b3261e', openClaimLimit: 4 },
+    blue: { name: 'Blue Party', colour: '#1f6feb', openClaimLimit: 2 },
   },
   observations: {
     'plb-1': { contract: 'missing', humanRequest: true, spend: { tokens: null, coverage: 'unknown' } },

@@ -51,6 +51,9 @@ Read and operate the board in your browser:
   needs you, repair or reconcile, ready to review, running, ready to pull, and
   waiting or parked. Each row says why the task is in its group. The row you
   are reading stays where it is when live updates change the rows above it.
+  Above the queue, four short sections answer what needs you, what is ready to
+  review, what is running, and what the work costs. Peek (the button on a row,
+  or Space) opens a task's details beside the list and puts it in the URL.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what
