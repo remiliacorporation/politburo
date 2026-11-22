@@ -18,7 +18,7 @@ export function reviewerAllowed({ declared, actor, claimant, jockeys }: Reviewer
 
 type CompletionInput = ReviewerPolicy & {
   workId: string
-  validation: Pick<EvidenceValidation, 'result' | 'sha256'>
+  validation: Pick<EvidenceValidation, 'workId' | 'result' | 'sha256'>
   reviews: readonly ReviewRecord[]
 }
 
@@ -28,11 +28,14 @@ export function decideCompletion({ workId, validation, reviews, declared, claima
 } {
   const incomplete = (...reasons: string[]) => ({ complete: false, reasons })
   if (validation.result !== 'valid' || !validation.sha256) return incomplete('evidence is not valid')
+  const ticket = workId.toLowerCase()
+  if (validation.workId?.toLowerCase() !== ticket) return incomplete('evidence is for a different work id')
 
   let latest: ReviewRecord | undefined
   let latestAt = -Infinity
   for (const review of reviews) {
-    if (review.work_id !== workId || review.evidence_sha256 !== validation.sha256) continue
+    if (typeof review.work_id !== 'string' || review.work_id.toLowerCase() !== ticket ||
+        review.evidence_sha256 !== validation.sha256) continue
     const at = Date.parse(review.at)
     if (!Number.isFinite(at)) return incomplete('review has an invalid timestamp')
     // When timestamps tie, the last record in the supplied history wins.

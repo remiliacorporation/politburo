@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, realpath } from 'node:fs/promises'
+import { lstat, open, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path'
 import { isOutcomeKind, OUTCOME_KINDS } from './kinds.ts'
 
@@ -8,6 +8,7 @@ export type DeclaredOutcome = { kind: string; location?: string; required_sectio
 export type EvidenceObject = { work_id: string; kind: string; path: string; sha256: string }
 export type OutcomeResult = 'valid' | 'invalid' | 'unverifiable'
 export type EvidenceValidation = {
+  workId: string | null
   result: OutcomeResult
   reasons: string[]
   path: string | null
@@ -41,7 +42,7 @@ function frontMatter(lines: string[]) {
   if (end < 0) return { workId: undefined, body: lines }
 
   // Only a single top-level, scalar work_id binds the artifact to a ticket.
-  const ids = lines.slice(1, end).filter((line) => /^work_id[ \t]*:/.test(line))
+  const ids = lines.slice(1, end).filter((line) => /^[ \t]*(?:work_id|"work_id"|'work_id')[ \t]*:/.test(line))
   const match = ids.length === 1
     ? /^work_id[ \t]*:[ \t]*(?:"([^"\s]+)"|'([^'\s]+)'|([^\s'"#]+))(?:[ \t]+#.*)?[ \t]*$/.exec(ids[0]!)
     : null
@@ -94,10 +95,12 @@ export async function validateEvidence(input: EvidenceInput): Promise<EvidenceVa
   const reasons: string[] = []
   let path: string | null = null
   let sha256: string | null = null
-  const finish = (result: OutcomeResult): EvidenceValidation => ({ result, reasons, path, sha256 })
+  let workId: string | null = null
+  const finish = (result: OutcomeResult): EvidenceValidation => ({ workId, result, reasons, path, sha256 })
 
   try {
-    const { workId, outcome, evidence, root } = input
+    const { workId: inputWorkId, outcome, evidence, root } = input
+    workId = nonblank(inputWorkId) ? inputWorkId.toLowerCase() : null
     const submittedPath = evidence?.path
     path = typeof submittedPath === 'string' ? submittedPath : null
     const kind = outcome?.kind
@@ -121,7 +124,7 @@ export async function validateEvidence(input: EvidenceInput): Promise<EvidenceVa
       if (!Array.isArray(sections) || !Array.from(sections).every(nonblank)) {
         reasons.push('required_sections must be an array of non-empty strings')
       } else {
-        required = [...sections]
+        required = [...required, ...sections]
       }
     }
 
@@ -153,6 +156,13 @@ export async function validateEvidence(input: EvidenceInput): Promise<EvidenceVa
           return finish('invalid')
         }
         bytes = await handle.readFile()
+        const submitted = resolve(root, submittedPath)
+        const current = await realpath(submitted).catch(() => null)
+        const linked = current === file && inside(directory, current) ? await stat(submitted).catch(() => null) : null
+        if (!linked || linked.dev !== opened.dev || linked.ino !== opened.ino) {
+          reasons.push('evidence path changed during validation')
+          return finish('invalid')
+        }
       } finally {
         await handle.close()
       }
@@ -176,8 +186,12 @@ export async function validateEvidence(input: EvidenceInput): Promise<EvidenceVa
     const { workId: fileWorkId, body } = frontMatter(text.split(/\r\n?|\n/))
     if (!ticketMatches(fileWorkId, workId)) reasons.push('front matter work_id does not match work id')
     const filled = filledSections(body)
+    const checked = new Set<string>()
     for (const section of required) {
-      if (!filled.has(section.trim().toLowerCase())) reasons.push(`missing or empty section: ${section}`)
+      const name = section.trim().toLowerCase()
+      if (checked.has(name)) continue
+      checked.add(name)
+      if (!filled.has(name)) reasons.push(`missing or empty section: ${section}`)
     }
     return finish(reasons.length ? 'invalid' : 'valid')
   } catch {
