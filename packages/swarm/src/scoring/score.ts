@@ -43,6 +43,7 @@ export function scoreParty(input: ScoreInput, rules: ScoreRules, { party, asOf }
   if (!Number.isFinite(now)) throw new ScoringInputError('asOf', 'invalid timestamp')
   const contributions: Contribution[] = []
   const add = (rule: Contribution['rule'], points: number, work_id: string | null, refs: Ref[]) => {
+    if (!Number.isSafeInteger(points)) throw new RangeError(`score contribution for ${rule} is not a safe integer`)
     contributions.push({ rule, points: points || 0, work_id, refs })
   }
   const spendByWork = new Map<string | null, WorkSpend>()
@@ -156,6 +157,7 @@ export function scoreParty(input: ScoreInput, rules: ScoreRules, { party, asOf }
 
   contributions.sort(contributionOrder)
   const total = contributions.reduce((sum, c) => sum + c.points, 0)
+  if (!Number.isSafeInteger(total)) throw new RangeError('score total is not a safe integer')
   return {
     party, asOf, total, level: levelFor(rules, total), milestones: milestonesFor(rules, stable),
     contributions, unknown: { items }, unmatched: { spend_records }, state: rules.state,

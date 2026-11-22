@@ -122,6 +122,13 @@ export function parseScoreInput(value: unknown): ScoreInput {
     const path = error.instancePath + (field === undefined ? '' : `/${field}`)
     throw new ScoringInputError(path || '/', error.message ?? 'invalid input')
   }
+  const executionIds = new Set<string>()
+  for (const [i, { trace }] of value.dispatches.entries()) {
+    if (executionIds.has(trace.execution_id)) {
+      throw new ScoringInputError(`dispatches/${i}/trace/execution_id`, 'duplicate dispatch execution id')
+    }
+    executionIds.add(trace.execution_id)
+  }
   const spendById = unique(value.spend, 'spend', 'record_id')
   unique(value.facts, 'facts', 'fact_id')
   for (const [i, record] of value.spend.entries()) {

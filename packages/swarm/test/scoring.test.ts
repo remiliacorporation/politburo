@@ -192,6 +192,18 @@ test('malformed spend is accepted or reported outside the offending field', () =
   }
 })
 
+test('two dispatches sharing an execution ID are accepted', () => {
+  const input = seeded(701, 'A', 2)
+  const [first, second] = input.dispatches
+  parseScoreInput(input)
+  for (const party of ['A', 'B']) {
+    const duplicate = { ...second!, party, trace: { ...second!.trace, execution_id: first!.trace.execution_id } }
+    assert.throws(() => parseScoreInput({ ...input, dispatches: [first, duplicate] }), {
+      name: 'ScoringInputError', message: /dispatches\/1\/trace\/execution_id:.*duplicate/,
+    }, `duplicate dispatch from party ${party} was accepted`)
+  }
+})
+
 test('two outcome records sharing an emitted ref are accepted', () => {
   const input = mergedOnly()
   const outcome = input.outcomes[0]!
@@ -219,6 +231,31 @@ test('a misspelled score setting is accepted or reported at the wrong path', () 
 test('a score point value too large for exact integer arithmetic is accepted and hides the unknown-spend deduction', () => {
   assert.throws(() => loadConfig({ party: { score: { merged_work: 1e20 } } }), {
     name: 'ConfigError', field: 'score.merged_work',
+  })
+})
+
+test('a token penalty cap above 1000000 is accepted or reported at the wrong path', () => {
+  const config = (max_penalty: number) => loadConfig({ party: { score: { tokens_per_merged_pr: { max_penalty } } } })
+  config(1_000_000)
+  assert.throws(() => config(1_000_001), {
+    name: 'ConfigError', field: 'score.tokens_per_merged_pr.max_penalty',
+  })
+})
+
+test('an unsafe score contribution is accepted even when the total is safe', () => {
+  const input = mergedOnly()
+  const { party, work_id, attempt, at } = input.facts[0]!
+  input.facts.push({ kind: 'missed_claim', fact_id: 'miss', party, work_id, attempt, at })
+  const unsafe = { ...rules, merged_work: 1, missed_claim: Number.MAX_SAFE_INTEGER + 1 }
+  assert.throws(() => scoreParty(input, unsafe, { party, asOf: day(20) }), {
+    name: 'RangeError', message: /missed_claim.*not a safe integer/,
+  })
+})
+
+test('an unsafe score total is accepted when each contribution is safe', () => {
+  const unsafe = { ...rules, merged_work: Number.MAX_SAFE_INTEGER }
+  assert.throws(() => scoreParty(mergedOnly(2), unsafe, { party: 'A', asOf: day(20) }), {
+    name: 'RangeError', message: /score total.*not a safe integer/,
   })
 })
 
