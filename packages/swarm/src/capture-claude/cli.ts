@@ -3,9 +3,10 @@ import { join } from 'node:path'
 import { parseArgs, type ParseArgsConfig } from 'node:util'
 import {
   buildRecord, createReceiver, fileRegistry, jsonlWriter, parseTranscript, readJsonl, reconcile,
-  releaseQuarantine, type Envelope, type RequestFact, type SpendRecord,
+  releaseQuarantine, sessionFromEvidenceRef, type Envelope, type RequestFact, type SpendRecord,
 } from './index.ts'
-import { evidencePrefix } from './record.ts'
+import { buckets as tokenBuckets, identifier } from './facts.ts'
+import { tokenFingerprint } from './record.ts'
 
 const usage = `usage: swarm capture-claude serve --dir DIR [--port N]
        swarm capture-claude bind --dir DIR --session NATIVE_ID --party P
@@ -98,7 +99,7 @@ function bind(paths: State, session: string, envelope: Envelope, json: boolean) 
     throw error
   }
   const { released } = releaseQuarantine({
-    records: readJsonl(paths.quarantine), existing: readJsonl(paths.ledger),
+    records: readJsonl(paths.quarantine),
     registry: { lookup: (id) => id === session ? envelope : null }, ledger: jsonlWriter(paths.ledger),
     actor: 'swarm capture-claude bind', reason: 'session bound',
   })
@@ -114,28 +115,48 @@ function totals(facts: RequestFact[]) {
       if (value === null) unknown++
       else sum += value
     }
-    return [bucket, unknown ? { unknown } : sum]
+    return [bucket, unknown === 0 ? sum : unknown === facts.length ? { unknown } : { known: sum, unknown }]
   }))
+}
+
+function display(value: number | { unknown: number; known?: number }) {
+  if (typeof value === 'number') return `${value}`
+  return value.known === undefined ? `unknown (${value.unknown})` : `${value.known} known, ${value.unknown} unknown`
+}
+
+function revisionHistory(history: SpendRecord[]) {
+  // A released row and its retained quarantine copy are one logical revision.
+  const byKey = new Map(history.map((row) => [row.dedupe_key, row]))
+  const canonical = new Map(history.map((row) => [row.record_id, byKey.get(row.dedupe_key)!.record_id]))
+  const children = new Map<string, SpendRecord>()
+  for (const row of byKey.values()) {
+    if (row.revises === null) continue
+    const parent = canonical.get(row.revises)
+    if (parent && parent !== row.record_id) children.set(parent, row)
+  }
+  const head = (row: SpendRecord): SpendRecord => {
+    let child: SpendRecord | undefined
+    while ((child = children.get(row.record_id))) row = child
+    return row
+  }
+  return { byKey, head }
 }
 
 function check(paths: State, session: string, file: string, write: boolean, json: boolean) {
   let text: string
   try { text = readFileSync(file, 'utf8') } catch { throw new Failure(`cannot read transcript ${file}`) }
-  const { facts: transcript, badLines } = parseTranscript(text, session)
+  const { facts: transcript, badLines, foreign, noId } = parseTranscript(text, session)
   const requestIds = new Set(transcript.map((fact) => fact.requestId))
   const responseIds = new Set(transcript.map((fact) => fact.responseId))
   const originals = new Map<RequestFact, SpendRecord>()
-  const seen = new Set<string>()
-  const prefix = evidencePrefix(session)
-  // Prefer a released ledger record to its retained quarantine copy. Ignore check's successors.
-  for (const record of [...readJsonl(paths.ledger), ...readJsonl(paths.quarantine)]) {
-    if (record.source !== 'claude_local_request' || !record.evidence_ref.startsWith(prefix) ||
-      record.coverage.state === 'closed_reconciled' || record.coverage.state === 'conflict' ||
-      seen.has(record.dedupe_key)) continue
-    seen.add(record.dedupe_key)
-    const key = record.evidence_ref.slice(prefix.length)
-    const id = key === 'null' ? null : key
-    // The receiver stores one ID: request ID when present, otherwise response ID.
+  const { byKey, head } = revisionHistory([...readJsonl(paths.quarantine), ...readJsonl(paths.ledger)])
+  // Compare the transcript with the original OTLP observation, not with a prior check.
+  for (const record of byKey.values()) {
+    if (record.source !== 'claude_local_request' || sessionFromEvidenceRef(record.evidence_ref) !== session ||
+      record.coverage.state === 'closed_reconciled' || record.coverage.state === 'conflict') continue
+    const [request, response] = record.evidence_ref.split('/')[2]!.split(':')
+    const id = identifier(decodeURIComponent(request || response || ''))
+    // Check uses the preferred ID (request first) to pair with transcript rows.
     const responseOnly = responseIds.has(id) && !requestIds.has(id)
     originals.set({
       source: 'otlp', nativeSession: session, requestId: responseOnly ? null : id,
@@ -144,40 +165,73 @@ function check(paths: State, session: string, file: string, write: boolean, json
     }, record)
   }
   const otlp = [...originals.keys()]
-  const { counters, records } = reconcile(otlp, transcript, { exactCounts: true })
-  const result = badLines || counters.mismatched || counters.transcriptOnly || counters.otlpOnly ? 'differs' : 'match'
+  const { counters, records, counterparts } = reconcile(otlp, transcript, { exactCounts: true })
+  const differs = badLines || foreign || noId || counters.mismatched || counters.transcriptOnly || counters.otlpOnly
+  const result = differs ? 'differs' : 'match'
 
   if (write) {
     const envelope = paths.registry.lookup(session)
     const writer = jsonlWriter(envelope ? paths.ledger : paths.quarantine)
+    const append = (record: SpendRecord) => {
+      if (writer.append(record) === 'differs') throw new Failure('check record differs from stored record')
+    }
     const now = new Date()
+    const actor = 'swarm capture-claude check'
     for (const item of records) {
       if (item.state === 'otlp_only') continue
       const record = buildRecord(item, envelope, now)
       const original = originals.get(item.fact)
       if (original) {
         const matched = item.state === 'matched'
-        writer.append({
-          ...record, evidence_ref: original.evidence_ref, revises: original.record_id,
-          actor: 'swarm capture-claude check', reason: matched ? 'transcript match' : 'transcript mismatch',
-          dedupe_key: matched ? `${original.dedupe_key}:reconciled` : record.dedupe_key,
-          coverage: matched ? { ...record.coverage, state: 'closed_reconciled' } : record.coverage,
-        })
+        const current = head(original)
+        const other = counterparts.get(item.fact)
+        const state = matched ? 'closed_reconciled' : 'conflict'
+        const event = !matched && other
+          ? `${record.source_event_key}:${tokenFingerprint(other.tokens)}` : record.source_event_key
+        if (current.coverage.state !== state || current.source_event_key !== event) {
+          // The parent is part of the transition key: a later check can return to this state.
+          append({
+            ...record, evidence_ref: original.evidence_ref, revises: current.record_id,
+            actor, reason: matched ? 'transcript match' : 'transcript mismatch',
+            dedupe_key: `${record.dedupe_key}:check:${current.record_id}`, source_event_key: event,
+            coverage: { ...record.coverage, state },
+          })
+        }
+        if (matched && other) {
+          const backfill = buildRecord({ ...item, fact: other, state: 'transcript_only' }, envelope, now)
+          const prior = byKey.get(`${backfill.dedupe_key}:transcript`)
+          if (prior && head(prior).status !== 'superseded') {
+            const current = head(prior)
+            const tokens = { ...current.tokens }
+            const field_quality = { ...current.coverage.field_quality }
+            for (const bucket of tokenBuckets) {
+              tokens[bucket] = null
+              field_quality[`tokens.${bucket}`] = 'unknown'
+            }
+            append({
+              ...backfill, dedupe_key: `${current.dedupe_key}:superseded`, revises: current.record_id,
+              actor, reason: 'matched late telemetry', status: 'superseded', tokens,
+              coverage: { state: 'closed_reconciled', field_quality },
+            })
+          }
+        }
       } else if (item.state === 'transcript_only') {
-        writer.append({ ...record, dedupe_key: `${record.dedupe_key}:transcript` })
+        const dedupe_key = `${record.dedupe_key}:transcript`
+        if (!byKey.has(dedupe_key)) append({ ...record, dedupe_key })
       } else {
-        writer.append(record)
+        append(record)
       }
     }
   }
 
   const sums = { otlp: totals(otlp), transcript: totals(transcript) }
-  if (json) console.log(JSON.stringify({ counters, totals: sums, badTranscriptLines: badLines, result }))
+  if (json) console.log(JSON.stringify({ counters, totals: sums, badTranscriptLines: badLines, foreign, noId, result }))
   else {
     const { matched, mismatched, transcriptOnly, otlpOnly } = counters
-    const display = (value: number | { unknown: number }) => typeof value === 'number' ? `${value}` : `unknown (${value.unknown})`
     console.log(`matched          ${matched}\nmismatched       ${mismatched}\ntranscript only  ${transcriptOnly}\notlp only        ${otlpOnly}`)
     if (badLines) console.log(`bad transcript lines  ${badLines}`)
+    if (foreign) console.log(`foreign rows  ${foreign}`)
+    if (noId) console.log(`rows without id  ${noId}`)
     const width = Math.max(4, ...buckets.map((key) => display(sums.otlp[key]!).length))
     console.log(`\n${' '.repeat(16)}${'otlp'.padEnd(width)}  transcript`)
     for (const key of buckets) {
@@ -212,6 +266,7 @@ export async function runCaptureClaude(args: string[]): Promise<number> {
       return await serve(state(dir), Number(port))
     }
     const session = required(values.session, 'session')
+    if (identifier(session) === null) throw new Misuse('invalid --session')
     if (command === 'check') {
       const file = required(values.transcript, 'transcript')
       return check(state(dir), session, file, values.write ?? false, json)

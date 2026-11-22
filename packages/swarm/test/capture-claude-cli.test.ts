@@ -9,7 +9,7 @@ import { readJsonl } from '../src/capture-claude/index.ts'
 
 const cwd = new URL('../', import.meta.url)
 const cli = ['src/cli.ts', 'capture-claude']
-const session = 'native/%2F:session'
+const session = 'native:session-1'
 const secret = 'private-transcript-content-5cf27'
 
 function run(...args: string[]) {
@@ -27,9 +27,9 @@ function fixture(t: TestContext) {
     bind: (...flags: string[]) => run('bind', '--dir', dir, '--session', session, '--party', 'local',
       '--tier', 'mob', '--trace', 'trace-1', '--execution', 'exec-1', ...flags),
     check: (...flags: string[]) => run('check', '--dir', dir, '--session', session, '--transcript', file, ...flags),
-    transcript: (...rows: { id?: string; output?: number; cacheWrite?: number }[]) => writeFileSync(file,
-      rows.map(({ id = 'req:1', output = 91, cacheWrite }) => JSON.stringify({
-        type: 'assistant', requestId: id, message: {
+    transcript: (...rows: { id?: string; output?: number; cacheWrite?: number; sessionId?: string }[]) => writeFileSync(file,
+      rows.map(({ id = 'req:1', output = 91, cacheWrite, sessionId = session }) => JSON.stringify({
+        type: 'assistant', sessionId, requestId: id, message: {
           id: `msg-${id}`, content: [{ type: 'text', text: secret }],
           usage: { input_tokens: 240, output_tokens: output, cache_read_input_tokens: 0,
             cache_creation_input_tokens: cacheWrite },
@@ -127,6 +127,45 @@ test('bind releases only the named session and refuses to change its envelope', 
   assert.deepEqual(readJsonl(f.ledger), rows)
 })
 
+test('a POST replay across live bind leaves the released ledger and quarantine unchanged', async (t) => {
+  const f = fixture(t)
+  const server = await start(t, f.dir)
+  const request = log(session, 'req:1')
+  await server.post(request)
+  const [original, ...extra] = readJsonl(f.quarantine)
+  assert.ok(original)
+  assert.deepEqual(extra, [])
+  assert.deepEqual(readJsonl(f.ledger), [])
+  const bind = f.bind('--json')
+  assert.equal(bind.status, 0, bind.stderr)
+  assert.equal(JSON.parse(bind.stdout).released, 1)
+  assert.deepEqual(readJsonl(f.ledger).map((row) => row.revises), [original.record_id])
+  const before = [f.ledger, f.quarantine].map((path) => readFileSync(path, 'utf8'))
+  await server.post(request)
+  assert.deepEqual([f.ledger, f.quarantine].map((path) => readFileSync(path, 'utf8')), before)
+  await server.stop()
+})
+
+test('check --write excludes and reports foreign transcript rows even when all local rows match', async (t) => {
+  const f = fixture(t)
+  assert.equal(f.bind().status, 0)
+  const server = await start(t, f.dir)
+  await server.post(log(session, 'req:1'))
+  await server.stop()
+  f.transcript({}, { id: 'req-foreign', sessionId: 'another-session' })
+  const check = f.check('--write')
+  assert.equal(check.status, 1, check.stdout)
+  assert.match(check.stdout, /^foreign rows  1$/m)
+  assert.match(check.stdout, /^matched +1$/m)
+  assert.match(check.stdout, /\ndiffers\n$/)
+  assert.deepEqual(readJsonl(f.ledger).map((row) => row.source), ['claude_local_request', 'claude_local_request'])
+  assert.deepEqual(readJsonl(f.quarantine), [])
+  const replay = f.check('--write', '--json')
+  assert.equal(replay.status, 1)
+  assert.equal(JSON.parse(replay.stdout).foreign, 1)
+  assert.equal(readJsonl(f.ledger).length, 2)
+})
+
 test('check distinguishes a match from changed or missing counts without summing unknown buckets', async (t) => {
   const f = fixture(t)
   const server = await start(t, f.dir)
@@ -164,6 +203,11 @@ test('check --write never prints or stores transcript content, even on a malform
   assert.equal(malformed.status, 1)
   assert.equal(JSON.parse(malformed.stdout).badTranscriptLines, 1)
   assert.ok(!(malformed.stdout + malformed.stderr + readFileSync(f.ledger, 'utf8')).includes(secret))
+  writeFileSync(f.file, JSON.stringify({ type: 'assistant', requestId: '../unsafe' }))
+  const noId = f.check('--write', '--json')
+  assert.equal(noId.status, 1)
+  assert.equal(JSON.parse(noId.stdout).noId, 1)
+  assert.equal(readJsonl(f.ledger).length, 1)
 })
 
 test('check --write appends one reconciled successor and replay leaves the ledger byte-for-byte unchanged', async (t) => {
@@ -179,10 +223,71 @@ test('check --write appends one reconciled successor and replay leaves the ledge
   assert.deepEqual(extra, [])
   assert.equal(successor.revises, original.record_id)
   assert.equal(successor.coverage.state, 'closed_reconciled')
-  assert.equal(successor.dedupe_key, `${original.dedupe_key}:reconciled`)
   const persisted = readFileSync(f.ledger, 'utf8')
   assert.equal(f.check('--write').status, 0)
   assert.equal(readFileSync(f.ledger, 'utf8'), persisted)
+})
+
+test('check --write supersedes transcript backfill after matching late OTLP without counting twice', async (t) => {
+  const f = fixture(t)
+  assert.equal(f.bind().status, 0)
+  f.transcript({ cacheWrite: 17 })
+  assert.equal(f.check('--write').status, 1)
+  const [backfill, ...extra] = readJsonl(f.ledger)
+  assert.ok(backfill)
+  assert.deepEqual(extra, [])
+  assert.equal(backfill.source, 'claude_local_transcript')
+  assert.equal(backfill.tokens.output, 91)
+  const server = await start(t, f.dir)
+  const request = log(session, 'req:1', 17)
+  await server.post(request)
+  assert.equal(f.check('--write').status, 0)
+  const rows = readJsonl(f.ledger)
+  const superseded = rows.find((row) => row.revises === backfill.record_id)
+  assert.ok(superseded, 'the prior transcript row must have a successor')
+  assert.equal(superseded.status, 'superseded')
+  assert.equal(superseded.coverage.state, 'closed_reconciled')
+  assert.deepEqual(superseded.tokens, {
+    input_uncached: null, input_total: null, output: null, cache_read: null, cache_write: null, reasoning: null,
+  })
+  for (const bucket of Object.keys(superseded.tokens)) {
+    assert.equal(superseded.coverage.field_quality[`tokens.${bucket}`], 'unknown')
+  }
+  const heads = rows.filter((row) => !rows.some((next) => next.revises === row.record_id))
+  assert.deepEqual(heads.filter((row) => row.status !== 'superseded').map((row) => row.tokens.output), [91])
+  const before = readFileSync(f.ledger, 'utf8')
+  await server.post(request)
+  assert.equal(f.check('--write').status, 0)
+  assert.equal(readFileSync(f.ledger, 'utf8'), before)
+  await server.stop()
+})
+
+test('check --write revises the current request head across bind and does not fork or rewrite on replay', async (t) => {
+  const f = fixture(t)
+  const server = await start(t, f.dir)
+  await server.post(log(session, 'req:1'))
+  await server.stop()
+  f.transcript({})
+  assert.equal(f.check('--write').status, 0)
+  assert.equal(f.bind().status, 0)
+  const heads = () => readJsonl(f.ledger).filter((row) => row.source === 'claude_local_request')
+  let head = heads().at(-1)
+  assert.equal(head?.coverage.state, 'closed_reconciled')
+  for (const output of [92, 93, 91, 92]) {
+    f.transcript({ output })
+    const count = heads().length
+    const matched = output === 91
+    assert.equal(f.check('--write').status, matched ? 0 : 1)
+    const rows = heads()
+    assert.equal(rows.length, count + 1)
+    const next = rows.at(-1)
+    assert.equal(next?.revises, head?.record_id)
+    assert.equal(next?.coverage.state, matched ? 'closed_reconciled' : 'conflict')
+    head = next
+    const before = readFileSync(f.ledger, 'utf8')
+    assert.equal(f.check('--write').status, matched ? 0 : 1)
+    assert.equal(readFileSync(f.ledger, 'utf8'), before)
+  }
 })
 
 test('check --write quarantines both unbound conflict sides and transcript-only requests until bind', async (t) => {
@@ -268,7 +373,7 @@ test('check reports differs when the transcript has requests but capture has non
   assert.deepEqual(report.counters, { matched: 0, mismatched: 0, transcriptOnly: 1, otlpOnly: 0 })
 })
 
-test('check reports a partial match as differs and does not sum mixed known and unknown counts', async (t) => {
+test('check reports a partial match as differs and keeps known subtotals beside unknowns', async (t) => {
   const f = fixture(t)
   const server = await start(t, f.dir)
   await server.post(log(session, 'req:1'), log(session, 'captured-only', 17))
@@ -279,9 +384,13 @@ test('check reports a partial match as differs and does not sum mixed known and 
   const report = JSON.parse(result.stdout)
   assert.equal(report.result, 'differs')
   assert.deepEqual(report.counters, { matched: 1, mismatched: 0, transcriptOnly: 1, otlpOnly: 1 })
-  assert.deepEqual([report.totals.otlp.cache_write, report.totals.transcript.cache_write], [{ unknown: 1 }, { unknown: 1 }])
   const human = f.check()
-  assert.match(human.stdout, /^cache_write +unknown \(1\) +unknown \(1\)$/m)
+  assert.match(human.stdout, /^cache_write +17 known, 1 unknown +23 known, 1 unknown$/m)
+  assert.deepEqual([report.totals.otlp.cache_write, report.totals.transcript.cache_write], [
+    { known: 17, unknown: 1 }, { known: 23, unknown: 1 },
+  ])
+  f.transcript({}, { id: 'transcript-only', cacheWrite: 0 })
+  assert.match(f.check().stdout, /^cache_write +17 known, 1 unknown +0 known, 1 unknown$/m)
   f.transcript({})
   const missing = f.check()
   assert.equal(missing.status, 1)
@@ -317,26 +426,15 @@ test('check --write quarantines a matched successor until bind then attributes i
   assert.equal(readFileSync(f.ledger, 'utf8'), persisted)
 })
 
-test('bind and check reject a bare flag as a session value but accept explicitly assigned opaque IDs', async (t) => {
+test('bind and check reject unsafe native session identifiers even with explicit assignment', (t) => {
   const f = fixture(t)
-  const opaque = '--write/../native%2F'
   for (const command of [f.bind, f.check]) {
-    for (const value of ['--write', opaque]) {
-      const result = command('--session', value)
+    for (const flags of [['--session', '--write'], ['--session=../native%2F'], ['--session=--write']]) {
+      const result = command(...flags)
       assert.equal(result.status, 2)
       assert.match(result.stderr, /^error: .*--session/)
     }
   }
-  const server = await start(t, f.dir)
-  await server.post(log(opaque, 'req:1'), log('--write%2F..%2Fnative%252F', 'req:1', 17))
-  await server.stop()
-  f.transcript({})
-  const bound = f.bind(`--session=${opaque}`, '--json')
-  assert.equal(bound.status, 0, bound.stderr)
-  assert.deepEqual(JSON.parse(bound.stdout), { bound: opaque, released: 1 })
-  const checked = f.check(`--session=${opaque}`)
-  assert.equal(checked.status, 0, checked.stderr)
-  assert.match(checked.stdout, /^matched +1$/m)
 })
 
 test('bind rejects empty and whitespace-only session, party and internal session IDs without releasing spend', async (t) => {

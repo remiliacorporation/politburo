@@ -36,23 +36,28 @@ interface ReleaseOptions {
 }
 
 export function releaseQuarantine({ records, registry, ledger, actor, reason, now = () => new Date() }: ReleaseOptions) {
+  const attributed = new Map<string, string>()
   let released = 0
   let stillUnbound = 0
   for (const record of records) {
-    if (record.envelope !== null || record.coverage.state !== 'unattributed') continue
+    if (record.envelope !== null) continue
     const session = sessionFromEvidenceRef(record.evidence_ref)
     const envelope = session === null ? null : registry.lookup(session)
     if (envelope === null) {
       stillUnbound++
       continue
     }
-    ledger.append({
-      ...record, record_id: randomUUID(), revises: record.record_id, envelope, actor, reason,
+    const id = randomUUID()
+    const parent = record.revises === null ? undefined : attributed.get(record.revises)
+    const result = ledger.append({
+      ...record, record_id: id, revises: parent ?? record.record_id, envelope, actor, reason,
       received: (typeof now === 'function' ? now() : now).toISOString(),
-      coverage: { ...record.coverage, state: 'partial' },
+      coverage: record.coverage.state === 'unattributed' ? { ...record.coverage, state: 'partial' } : record.coverage,
     })
-    // Count release submissions, including deduped replays.
-    released++
+    if (result === 'differs') throw new Error('quarantine release differs from ledger')
+    const copy = result === 'written' ? id : ledger.existing(record.dedupe_key)?.record_id
+    if (copy !== undefined) attributed.set(record.record_id, copy)
+    if (result === 'written') released++
   }
   return { released, stillUnbound }
 }

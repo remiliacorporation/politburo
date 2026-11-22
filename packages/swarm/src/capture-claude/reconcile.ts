@@ -28,6 +28,7 @@ export function reconcile(otlp: RequestFact[], transcript: RequestFact[], { exac
   }
 
   const records: Resolved[] = []
+  const counterparts = new Map<RequestFact, RequestFact>()
   const counters = { matched: 0, mismatched: 0, transcriptOnly: 0, otlpOnly: 0 }
   const used = new Set<number>()
   const add = (fact: RequestFact, state: Resolved['state']) => records.push({ fact, state, quality: 'provider_reported' })
@@ -35,7 +36,10 @@ export function reconcile(otlp: RequestFact[], transcript: RequestFact[], { exac
     const fact = group[0]!
     const index = transcript.findIndex((row, i) => !used.has(i) && group.some((a) => matches(a, row)))
     const other = transcript[index]
-    if (other) used.add(index)
+    if (other) {
+      used.add(index)
+      for (const row of group) counterparts.set(row, other)
+    }
     const disagrees = other !== undefined && group.some((a) => exactCounts
       ? buckets.some((key) => a.tokens[key] !== other.tokens[key]) : conflict(a, other))
     // Count a disputed request once, but return its evidence for separate handling.
@@ -56,5 +60,5 @@ export function reconcile(otlp: RequestFact[], transcript: RequestFact[], { exac
     counters.transcriptOnly++
     add(fact, 'transcript_only')
   }
-  return { records, counters }
+  return { records, counters, counterparts }
 }
