@@ -1,4 +1,4 @@
-import { count, list, object, text, utc, type RequestFact } from './facts.ts'
+import { count, identifier, list, object, utc, type RequestFact } from './facts.ts'
 
 const keys = new Set([
   'event.name', 'session.id', 'model', 'input_tokens', 'output_tokens',
@@ -36,19 +36,18 @@ export function parseOtlpLogs(body: unknown): { facts: RequestFact[]; rejected: 
           const key = entry?.key
           if (typeof key === 'string' && keys.has(key)) attrs.set(key, object(entry?.value))
         }
-        const stringAttr = (key: string) => text(attrs.get(key)?.stringValue)
-        if (!isRequest(stringAttr('event.name')) && !isRequest(row?.body) &&
+        if (!isRequest(attrs.get('event.name')?.stringValue) && !isRequest(row?.body) &&
           !isRequest(object(row?.body)?.stringValue)) continue
-        const nativeSession = stringAttr('session.id')
-        if (nativeSession === null) {
+        const id = (key: string) => identifier(attrs.get(key)?.stringValue)
+        const nativeSession = id('session.id')
+        const requestId = id('request_id')
+        const responseId = id('message.id') ?? id('response_id')
+        if (nativeSession === null || (requestId === null && responseId === null)) {
           rejected++
           continue
         }
         facts.push({
-          source: 'otlp', nativeSession,
-          requestId: stringAttr('request_id'),
-          responseId: stringAttr('message.id') ?? stringAttr('response_id'),
-          model: stringAttr('model'),
+          source: 'otlp', nativeSession, requestId, responseId, model: id('model'),
           tokens: {
             input_uncached: token(attrs.get('input_tokens')),
             input_total: null,

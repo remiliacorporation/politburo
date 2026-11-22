@@ -1,11 +1,11 @@
-import { count, object, text, utc, type RequestFact } from './facts.ts'
+import { count, identifier, object, text, utc, type RequestFact } from './facts.ts'
 
-export function parseTranscript(jsonl: string, nativeSession: string): { facts: RequestFact[]; badLines: number } {
+export function parseTranscript(jsonl: string, nativeSession: string) {
   const facts: RequestFact[] = []
   const responses = new Map<string, number>()
   const lines = jsonl.split('\n')
   if (lines.at(-1) === '') lines.pop()
-  let badLines = 0
+  let badLines = 0, foreign = 0, noId = 0
   for (const line of lines) {
     let parsed: unknown
     try {
@@ -15,14 +15,21 @@ export function parseTranscript(jsonl: string, nativeSession: string): { facts: 
       continue
     }
     const row = object(parsed)
+    if (row && Object.hasOwn(row, 'sessionId') && row.sessionId !== nativeSession) {
+      foreign++
+      continue
+    }
     if (row?.type !== 'assistant') continue
     const message = object(row.message)
-    const model = text(message?.model)
-    if (model === '<synthetic>') continue
-    const requestId = text(row.requestId)
-    const responseId = text(message?.id)
+    if (message?.model === '<synthetic>') continue
+    const model = identifier(message?.model)
+    const requestId = identifier(row.requestId)
+    const responseId = identifier(message?.id)
     const usage = object(message?.usage)
-    if (!usage && requestId === null && responseId === null) continue
+    if (requestId === null && responseId === null) {
+      noId++
+      continue
+    }
     const timestamp = text(row.timestamp)
     const fact: RequestFact = {
       source: 'transcript', nativeSession, requestId, responseId, model,
@@ -36,16 +43,14 @@ export function parseTranscript(jsonl: string, nativeSession: string): { facts: 
       },
       occurred: timestamp === null ? null : utc(new Date(timestamp)),
     }
-    if (requestId !== null || responseId !== null) {
-      const key = JSON.stringify([requestId, responseId])
-      const index = responses.get(key)
-      if (index !== undefined) {
-        if ((fact.tokens.output ?? -1) >= (facts[index]!.tokens.output ?? -1)) facts[index] = fact
-        continue
-      }
-      responses.set(key, facts.length)
+    const key = JSON.stringify([requestId, responseId])
+    const index = responses.get(key)
+    if (index !== undefined) {
+      if ((fact.tokens.output ?? -1) >= (facts[index]!.tokens.output ?? -1)) facts[index] = fact
+      continue
     }
+    responses.set(key, facts.length)
     facts.push(fact)
   }
-  return { facts, badLines }
+  return { facts, badLines, foreign, noId }
 }
