@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { runTrackers } from './trackers/beads/cli.ts'
 
 const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
 
@@ -93,4 +94,5 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+const argv = process.argv.slice(2)
+process.exitCode = argv[0] === 'trackers' ? await runTrackers(argv.slice(1)) : main(argv)
