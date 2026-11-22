@@ -17,8 +17,8 @@ export interface Context {
 
 function session(tag: string, ctx: Context) {
   const { ports, clock } = ctx
-  const elapsed = () => clock.now() - started
   const started = clock.now(), budget = ctx.budgetMs ?? 300_000
+  const elapsed = () => clock.now() - started
   const exceeded = () => new CutoverError('budget_exceeded', 'cutover time budget exceeded')
   async function call<T>(run: () => Promise<T>): Promise<T> {
     const remaining = budget - elapsed()
@@ -128,10 +128,8 @@ export async function rollback(tag: string, ctx: Context) {
   if (!s.pending && s.mode === 'files' && health === 'stopped' && old === 'running') return op.report('already rolled back')
   s.pending = 'rolling_back'
   await writeState(ctx.stateDir, s)
-  if (health !== 'stopped') {
-    if (!(health === 'running' && old === 'running')) await op.sync()
-    await op.stop(service)
-  }
+  if (health !== 'stopped' && !(health === 'running' && old === 'running')) await op.sync()
+  if (health !== 'stopped') await op.stop(service)
   await op.sync('files_stale', `files are stale; fix the bridge, then re-run swarm cutover rollback ${tag} --execute`)
   if (old !== 'running') await op.start(oldLoop)
   return op.report('rolled back', await op.finish(s, 'files', 'rolled_back'))

@@ -5,7 +5,7 @@ import { CutoverError, type Ports, type ProcessPort } from './ports.ts'
 type Action = 'start' | 'stop' | 'status' | 'sync'
 type Commands = Partial<Record<'service' | 'oldLoop' | 'bridge', Partial<Record<Action, string[]>>>>
 
-export async function commandPorts(tag: string, file?: string, signal?: AbortSignal): Promise<Ports> {
+export async function CommandPorts(tag: string, file?: string, signal?: AbortSignal): Promise<Ports> {
   let config: Commands | undefined
   const invalid = () => new CutoverError('commands_invalid', 'invalid or missing commands for tag')
   if (file !== undefined) {

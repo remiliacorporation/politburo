@@ -24,6 +24,5 @@ export class CutoverError extends Error {
 export const currentTag = /^[a-z]{2,3}$/
 export const newTag = /^[a-z]{3}$/
 export function hasOnly(value: unknown, keys: string): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value) &&
-    Object.keys(value).every((key) => keys.split(' ').includes(key))
+  return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every((key) => keys.split(' ').includes(key))
 }

@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
-import { commandPorts } from './commands.ts'
+import { CommandPorts } from './commands.ts'
 import { apply, plan, rollback, type Context } from './cutover.ts'
 import { currentTag, CutoverError, newTag } from './ports.ts'
 
@@ -35,7 +35,7 @@ export async function run([action, tag, ...args]: string[]): Promise<number> {
     const execute = action !== 'plan' && v.execute
     if (execute && action === 'apply' && !v.gate) throw new CutoverError('gate_missing', 'a gate decision file is required (--gate)')
     if (execute && v.commands === undefined) throw new CutoverError('no_commands', 'execution requires --commands')
-    const ctx: Context = { ports: await commandPorts(tag, v.commands, controller.signal), clock: Date,
+    const ctx: Context = { ports: await CommandPorts(tag, v.commands, controller.signal), clock: Date,
       stateDir: v['state-dir'] ?? join(homedir(), '.swarm', 'cutover'), budgetMs, gateMaxAgeDays,
       gateFile: v.gate, renameTo: v['rename-to'], rollback: action === 'rollback' || v.rollback }
     if (execute) {
@@ -52,9 +52,8 @@ export async function run([action, tag, ...args]: string[]): Promise<number> {
     return 0
   } catch (error) {
     if (error instanceof CutoverError) return fail(error, 1)
-    if (error instanceof TypeError && (error as NodeJS.ErrnoException).code?.startsWith('ERR_PARSE_ARGS')) {
-      return fail(new CutoverError('usage', 'invalid cutover flags'), 2)
-    }
-    return fail(new CutoverError('cutover_failed', 'cutover failed'), 1)
+    return (error as NodeJS.ErrnoException)?.code?.startsWith('ERR_PARSE_ARGS')
+      ? fail(new CutoverError('usage', 'invalid cutover flags'), 2)
+      : fail(new CutoverError('cutover_failed', 'cutover failed'), 1)
   } finally { controller.abort() }
 }

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { currentTag, CutoverError, hasOnly, newTag } from './ports.ts'
 import type { Gate } from './gate.ts'
+import { currentTag, CutoverError, hasOnly, newTag } from './ports.ts'
 
 export interface State {
   tag: string
@@ -21,9 +21,7 @@ function statePath(stateDir: string, tag: string) {
 export async function readState(stateDir: string, tag: string): Promise<State> {
   const file = statePath(stateDir, tag)
   let text: string
-  try {
-    text = await readFile(file, 'utf8')
-  } catch (error) {
+  try { text = await readFile(file, 'utf8') } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { tag, mode: 'files', history: [] }
     throw new CutoverError('state_invalid', 'cannot read cutover state')
   }
