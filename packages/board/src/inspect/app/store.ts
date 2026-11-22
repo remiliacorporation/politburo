@@ -2,7 +2,7 @@ import type { ActorView, BoardStatus, BlockView, BoardEventView, ChannelView, Di
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
-import { DEFAULT_TASK_PRIORITY, priorityRank, TaskPriority } from '../../contract/schemas.ts'
+import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../../contract/schemas.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { confirmAttention, needsAttentionAnswer, reconcileAttention, type AttentionState } from './attention-store.ts'
 import { ago, shownName } from './words.ts'
@@ -192,10 +192,10 @@ export function merge(state: State, views: MessageView[]): State {
 export function forgetThread(state: State, id: string): State {
   const messages = Object.fromEntries(Object.entries(state.messages).filter(([key, m]) => key !== id && m.re !== id))
   const list = state.taskList
-  if (!list?.ids.has(id)) return { ...state, messages }
-  const ids = new Set(list.ids)
-  ids.delete(id)
-  return { ...state, messages, taskList: { ...list, ids } }
+  if (!list?.read?.roots.has(id)) return { ...state, messages }
+  const roots = new Map(list.read.roots)
+  roots.delete(id)
+  return { ...state, messages, taskList: { ...list, read: { ...list.read, roots } } }
 }
 
 // #region guide inspector/pending.ts
@@ -372,9 +372,13 @@ export function dropOp(state: State, message: string, id: string): State {
 /** A message as this page shows it: the board's view, your pending changes, and fresh author details. */
 export function shown(state: State, id: string, now = new Date().toISOString()): MessageView | undefined {
   const message = state.messages[id]
-  if (!message) return undefined
+  return message ? shownMessage(state, message, now) : undefined
+}
+
+/** Apply the same overlays to a view that has its own read membership. */
+export function shownMessage(state: State, message: MessageView, now: string): MessageView {
   let out = message
-  for (const { op } of state.ops[id] ?? []) out = apply(out, op, state.me?.actor ?? '', now)
+  for (const { op } of state.ops[message.id] ?? []) out = apply(out, op, state.me?.actor ?? '', now)
   const actor = state.actors[message.by.actor]
   // Who it acts through, and its platform, stay as the board showed them when what it records now doesn't say.
   const via = actor?.via ?? out.author?.via
@@ -632,12 +636,26 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
 /** Which tasks a list shows. `channel` can name a tree with a trailing `/`; `priority` is filtered locally. */
 export type TaskFilter = { channel?: string; state: 'open' | 'all' | TaskState; label: string[]; owner?: string; for?: string; priority?: TaskPriority }
 
-/** Membership of the current Tasks read, not the shared message cache. Live roots can join it. */
+/** The latest complete read of the Tasks view's loaded pages. Its roots are the membership. */
 export type TaskList = {
   scope: symbol
-  ids: ReadonlySet<string>
-  page?: { cursor: string; through?: MessageView | undefined } | undefined
-  refused?: { text: string; tooWide: boolean } | undefined
+  read?: { roots: ReadonlyMap<string, TaskRoot>; viewer: Viewer; more: boolean }
+  refused?: { text: string; tooWide: boolean }
+}
+
+/** Live views can update members, but never confer membership. */
+export function updateTaskList(state: State, views: MessageView[]): State {
+  const list = state.taskList
+  if (!list?.read) return state
+  const { roots } = list.read
+  let updated: Map<string, TaskRoot> | undefined
+  for (const view of views) {
+    const current = (updated ?? roots).get(view.id)
+    if (!current || current.version >= view.version) continue
+    if (view.deleted) (updated ??= new Map(roots)).delete(view.id)
+    else if (isTask(view)) (updated ??= new Map(roots)).set(view.id, view)
+  }
+  return updated ? { ...state, taskList: { ...list, read: { ...list.read, roots: updated } } } : state
 }
 
 export const TASK_FILTER_STATES = ['open', 'waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled', 'all'] as const
@@ -705,33 +723,6 @@ export function tasks(state: State, filter: TaskFilter, now: number, through?: M
     .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, now, state.status))
     .filter((root) => !through || byWritten(root, through) <= 0)
     .map((root) => shown(state, root.id) as TaskRoot).sort(byWritten)
-}
-
-/** Tasks from the current read or the authorized feed, with default claim-next candidates first. */
-export function taskListRows(state: State, list: TaskList, filter: TaskFilter, now: number, viewer: Viewer): TaskRoot[] {
-  // Claim-next scans roots in the board's log order; the page has createdAt (then ID), so
-  // equal-priority, equally assigned tasks match it while the board's clock is monotone.
-  const byAge = byWritten
-  const through = list.page?.through
-  const found: TaskRoot[] = []
-  for (const id of list.ids) {
-    const root = shown(state, id)
-    if (!isTask(root) || !taskMatches(root, filter, now, state.status)) continue
-    if (through && byAge(root, through) > 0) continue
-    found.push(root)
-  }
-  const group = ({ task, channel }: TaskRoot) => {
-    // The inspector knows the viewer's own pool, not the explicit `from` owners of a claim.
-    if (state.status?.paused || task.parked || taskState(task, now, state.status) !== 'ready'
-      || task.owner !== viewer.principal || !viewer.may('label', channel)) return 0
-    return task.for === viewer.actor ? 2 : task.for === null ? 1 : 0
-  }
-  return found.sort((a, b) => {
-    const left = group(a), right = group(b)
-    return Number(right > 0) - Number(left > 0)
-      || priorityRank(b.task.priority) - priorityRank(a.task.priority)
-      || right - left || byAge(a, b)
-  })
 }
 
 /** How many loaded tasks are in each state, treating a lapsed claim as ready. */

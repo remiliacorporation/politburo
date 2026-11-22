@@ -146,12 +146,12 @@ and its `claim`: who holds it, and `until` when.
 The example lists tasks oldest first. That is list order, not claim order.
 Claim-next takes the highest priority eligible ready task. At equal priority,
 it prefers tasks assigned to the caller, then takes the first root in board
-order. The inspector puts the viewer's default claim-next candidates first
-among the rows its read and live feed returned. It cannot know the extra
-owners an agent might pass to a claim. It uses timestamps for age, so ties
-match claim-next while the board's clock moves forward, and a claim fenced by a
-pause shows as claimed. State, channel, and priority filters are in the URL. Priority filters the loaded
-rows because the API does not accept it as a list filter.
+order. Among the loaded rows, the inspector puts tasks in the viewer's default
+claim-next order first, then sorts the rest by priority and age. Ties use
+`createdAt` then ID, matching claim-next while the board's clock moves forward.
+A claim fenced by a pause still shows as claimed because the API does not expose
+the fence. State, channel, and priority filters are in the URL. Priority filters
+the loaded rows because the API does not accept it as a list filter.
 
 ```ts inspector/tasks.ts
 import { board, type TaskView } from '@vercel/board'

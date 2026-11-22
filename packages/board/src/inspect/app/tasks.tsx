@@ -1,13 +1,14 @@
 import { ListFilter, X } from 'lucide-react'
-import { Component, createRef, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, createRef, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../../contract/schemas.ts'
 import { compileAccess } from '../../server/access.ts'
 import * as board from './board.ts'
+import { claimFirst } from './claim-order.ts'
 import { Composer } from './composer.tsx'
 import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
-import { isTask, nameOf, placesUnder, readFilter, taskState, TASK_FILTER_STATES, taskListRows, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
+import { isTask, nameOf, placesUnder, readFilter, shownMessage, taskMatches, taskState, TASK_FILTER_STATES, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark, useLapse } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
 import { firstLine } from './words.ts'
@@ -23,18 +24,24 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   useTypeToFocus('main')
   const query = where.params.toString()
   const filter = useMemo(() => readFilter(where.params), [query])
-  // A priority change filters the loaded pages, without starting the board's list over.
+  // Priority filters the loaded pages; it does not change the board's query or pagination.
   const { priority, ...boardFilter } = filter
   const key = JSON.stringify(boardFilter)
   const scope = useMemo(() => Symbol(), [key])
-  useEffect(() => {
-    void board.readTaskList(scope, boardFilter)
-    return () => board.closeTaskList(scope)
-  }, [scope])
+  useEffect(() => board.openTaskList(scope, boardFilter), [scope])
+  useEffect(() => { board.refreshTaskList() }, [where])
   const list = state.taskList?.scope === scope ? state.taskList : undefined
   const refused = list?.refused
-  const latest = list?.page ? taskListRows(state, list, filter, props.now, viewer) : []
-  const [frozen, setFrozen] = useState<{ query: string; rows: TaskRoot[] } | null>(null)
+  const read = list?.read
+  const latest = useMemo(() => {
+    if (!read) return []
+    const now = new Date(props.now).toISOString()
+    const roots = [...read.roots.values()].map((root) => shownMessage(state, root, now))
+      .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, props.now, state.status))
+    const eligible = state.status?.paused ? { ...read.viewer, may: () => false } : read.viewer
+    return claimFirst(roots, eligible, props.now)
+  }, [read, filter, props.now, state])
+  const [frozen, setFrozen] = useState<{ query: string; ids: string[] } | null>(null)
   const rowList = useRef<HTMLDivElement>(null)
   const hovered = useRef(false)
   const selecting = () => {
@@ -49,9 +56,23 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
     document.addEventListener('selectionchange', releaseRows)
     return () => document.removeEventListener('selectionchange', releaseRows)
   }, [])
-  const freezeRows = () => setFrozen((prior) => prior?.query === query ? prior : { query, rows: latest })
-  // Reading holds the sort/filter in place, never access: a refused read still removes a row.
-  const rows = frozen?.query === query ? frozen.rows.filter((row) => list?.ids.has(row.id)) : latest
+  const freezeRows = () => setFrozen((prior) => prior?.query === query ? prior : { query, ids: latest.map(({ id }) => id) })
+  // Only the order is held: use current content and membership, appending newly visible rows.
+  const rows = useMemo(() => {
+    if (frozen?.query !== query) return latest
+    const current = new Map(latest.map((row) => [row.id, row]))
+    const ordered = frozen.ids.flatMap((id) => {
+      const row = current.get(id)
+      current.delete(id)
+      return row ? [row] : []
+    })
+    return [...ordered, ...current.values()]
+  }, [frozen, latest, query])
+  useLayoutEffect(() => {
+    if (frozen?.query === query && (frozen.ids.length !== rows.length || rows.some((row, i) => row.id !== frozen.ids[i]))) {
+      setFrozen({ query, ids: rows.map(({ id }) => id) })
+    }
+  }, [frozen, query, rows])
 
   // A task can wait for one this list doesn't hold (a completed one, say): its thread says its state.
   const missing = [...new Set(rows.flatMap((row) => row.task.needs))].filter((id) => !state.messages[id]).slice(0, 30)
@@ -69,12 +90,11 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
     ...(filter.owner ? [{ key: 'owner', text: `owner ${nameOf(state, filter.owner)}`, drop: { owner: null } }] : []),
     ...(filter.for ? [{ key: 'for', text: `for ${nameOf(state, filter.for)}`, drop: { for: null } }] : []),
   ]
-  const more = list?.page?.through ? list.page.cursor : undefined
   // Tasks on their way, and any the board refused, with why.
   const pending = state.pending.filter((post) => post.task !== undefined && post.re === null)
   return (
     <>
-      <Header title="tasks" meta="claimable first · by priority, then age" live={state.live} lead={props.lead}>
+      <Header title="tasks" meta="claimable first, then by priority and age" live={state.live} lead={props.lead}>
         <TaskFilterButton filter={filter} channels={Object.keys(state.channels).sort()} owners={owners} assignees={assignees} state={state} known={props.known} count={chips.length} />
       </Header>
       <div className="view-body">
@@ -99,28 +119,28 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
         ) : refused ? (
           <p className="empty error">{refused.text}</p>
         ) : rows.length === 0 && pending.length === 0 ? (
-          <p className="empty">{!list?.page ? 'loading…' : chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
-        ) : (
-          <div
-            className="task-rows"
-            ref={rowList}
-            onFocusCapture={freezeRows}
-            onBlurCapture={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget) && !hovered.current && !selecting()) setFrozen(null)
-            }}
-            onMouseEnter={() => { hovered.current = true; freezeRows() }}
-            onMouseLeave={() => { hovered.current = false; releaseRows() }}
-          >
-            {rows.map((row) => (
-              <TaskRow key={row.id} root={row} state={state} open={where.thread === row.id} />
-            ))}
-          </div>
-        )}
+          <p className="empty">{!read ? 'loading…' : chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
+        ) : null}
+        <div
+          className="task-rows"
+          ref={rowList}
+          tabIndex={-1}
+          onFocusCapture={(event) => { if (event.target !== event.currentTarget) freezeRows() }}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget) && !hovered.current && !selecting()) setFrozen(null)
+          }}
+          onMouseEnter={() => { hovered.current = true; freezeRows() }}
+          onMouseLeave={() => { hovered.current = false; releaseRows() }}
+        >
+          {rows.map((row) => (
+            <TaskRow key={row.id} root={row} state={state} open={where.thread === row.id} />
+          ))}
+        </div>
         <Pendings posts={pending} me={state.me!} />
-        {more && (
+        {read?.more && (
           <button
             className="clear more"
-            onClick={() => void board.readTaskList(scope, boardFilter, more)}
+            onClick={() => board.extendTaskList(scope)}
           >
             load more
           </button>
@@ -145,28 +165,43 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
 }
 
 type TaskPageProps = { rows: TaskRoot[]; query: string; children: ReactNode }
+type TaskPageSnapshot = { anchor?: { row: HTMLElement; offset: number }; focus?: HTMLElement }
 
-/** Keep the first visible surviving row in place when a live change reorders the list. */
+/** Keep the visible anchor, and hand off focus if the row being read goes away. */
 class TaskPage extends Component<TaskPageProps> {
   private page = createRef<HTMLDivElement>()
 
-  getSnapshotBeforeUpdate(previous: TaskPageProps): { row: HTMLElement; offset: number } | null {
+  getSnapshotBeforeUpdate(previous: TaskPageProps): TaskPageSnapshot | null {
     const page = this.page.current
     if (!page || previous.query !== this.props.query || previous.rows === this.props.rows) return null
     const frame = page.getBoundingClientRect()
     const next = new Set(this.props.rows.map((row) => row.id))
-    for (const row of page.querySelectorAll<HTMLElement>('[data-task-row]')) {
-      const id = row.dataset.taskRow!
+    const before = [...page.querySelectorAll<HTMLElement>('[data-task-row]')]
+    const survives = (row: HTMLElement) => next.has(row.dataset.taskRow!)
+    const focused = before.findIndex((row) => row.contains(document.activeElement))
+    const snapshot: TaskPageSnapshot = {}
+    if (focused !== -1 && !survives(before[focused]!)) {
+      const neighbor = before.slice(focused + 1).find(survives) ?? before.slice(0, focused).findLast(survives)
+      const focus = neighbor ?? page.querySelector<HTMLElement>('.task-rows')
+      if (focus) snapshot.focus = focus
+    }
+    for (const row of before) {
       const box = row.getBoundingClientRect()
       if (box.top >= frame.bottom) break
-      if (box.bottom > frame.top && next.has(id)) return { row, offset: box.top - frame.top }
+      if (box.bottom > frame.top && survives(row)) {
+        snapshot.anchor = { row, offset: box.top - frame.top }
+        break
+      }
     }
-    return null
+    return snapshot
   }
 
-  componentDidUpdate(_previous: TaskPageProps, _state: unknown, anchor: { row: HTMLElement; offset: number } | null) {
+  componentDidUpdate(_previous: TaskPageProps, _state: unknown, snapshot: TaskPageSnapshot | null) {
     const page = this.page.current
-    if (!page || !anchor || !page.contains(anchor.row)) return
+    if (!page || !snapshot) return
+    const { anchor, focus } = snapshot
+    if (focus && page.contains(focus)) focus.focus({ preventScroll: true })
+    if (!anchor || !page.contains(anchor.row)) return
     const shift = anchor.row.getBoundingClientRect().top - page.getBoundingClientRect().top - anchor.offset
     if (shift) page.scrollTop += shift
   }

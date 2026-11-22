@@ -147,6 +147,18 @@ const taskRows = () => [...document.querySelectorAll<HTMLElement>('main [data-ta
 const taskRowIds = () => taskRows().map((row) => row.dataset.taskRow)
 const taskRead = { timeout: 5000 }
 
+// Observe a real event leaving the proxy before releasing a held animation frame.
+function seeTaskEvent(type: string, seen: () => void) {
+  return async (request: Request, forward: (request: Request) => Promise<Response>) => {
+    const response = await forward(request)
+    if (routePath(request) === '/events' && response.ok) {
+      const page = await response.clone().json() as { events: { type: string }[] }
+      if (page.events.some((event) => event.type === type)) seen()
+    }
+    return response
+  }
+}
+
 it('orders rendered Ready rows by default claim-next eligibility, priority, assignment and age', async () => {
   const { api, as, client, open } = await workbench()
   const worker = as('worker')
@@ -161,11 +173,17 @@ it('orders rendered Ready rows by default claim-next eligibility, priority, assi
   const first = await make('First', 'high')
   const second = await make('Second', 'high')
   const assigned = await make('For this profile', 'high', me.actor)
+  const urgent = await make('Urgent unassigned', 'urgent')
+  const lapsed = await make('Urgent, lease ended', 'urgent')
+  const lease = await worker.tasks.claim(lapsed.id, { lease: 30 })
   const held = await make('Held, lease running', 'urgent')
   await worker.tasks.claim(held.id, { lease: 600 })
+  // The local board has no scheduler: the expired lease still wears `claimed` in the open list.
+  vi.setSystemTime(Date.parse(lease.until) + 1)
+  expect((await worker.tasks.list({ channel: 'work', state: 'open' })).tasks.find(({ message }) => message.id === lapsed.id)?.message.task?.state).toBe('claimed')
 
   await open('/tasks?state=ready&channel=work', { profile: 'worker' })
-  const expected = [assigned.id, first.id, second.id, other.id, foreign.id]
+  const expected = [urgent.id, lapsed.id, assigned.id, first.id, second.id, other.id, foreign.id]
   await vi.waitFor(() => expect(taskRowIds()).toEqual(expected), taskRead)
   const rendered = taskRowIds()
   const claimed: string[] = []
@@ -185,26 +203,185 @@ async function revocableTasks() {
   const { task: secret } = await admin.tasks.create('secret', { text: 'Private task' })
   const { task: publicTask } = await client.tasks.create('work', { text: 'Shared task' })
   await admin.createGrant({ principals: [{ kind: 'everyone' }], can: { secret: [] } })
-  const { grant } = await admin.createGrant({ principals: [{ kind: 'user', userId: 'u_reader' }], can: { secret: ['read'] } })
-  return { ...bench, secret, publicTask, revoke: () => admin.revokeGrant(grant.id) }
+  const { grant } = await admin.createGrant({ principals: [{ kind: 'user', userId: 'u_reader' }], can: { secret: ['read', 'react'] } })
+  return { ...bench, admin, secret, publicTask, revoke: () => admin.revokeGrant(grant.id) }
 }
 
 it('drops a cached Ready row when a fresh task read omits it after revocation', async () => {
   const { client, open, secret, publicTask, revoke } = await revocableTasks()
-  await open('/tasks?state=ready')
+  await open('/tasks?state=ready&priority=normal')
   await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
   await revoke()
   expect((await client.tasks.list({ state: 'ready' })).tasks.map(({ message }) => message.id)).toEqual([publicTask.id])
-  link('open', document.querySelector('main .tabs')!).click()
-  await vi.waitFor(() => expect(location.search).toBe(''), taskRead)
-  link('ready', document.querySelector('main .tabs')!).click()
+  // Navigation with the same board query must revalidate, not just apply the local chip filter.
+  document.querySelector<HTMLButtonElement>('button[title="remove priority normal"]')!.click()
   await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id]), taskRead)
+}, 30_000)
+
+it('does not accept an older task response when focus requested a newer read', async () => {
+  const { open, revoke, publicTask } = await revocableTasks()
+  const reads = Array.from({ length: 2 }, () => ({ sampled: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() }))
+  releaseGates.push(...reads.map(({ release }) => release.resolve))
+  let page = 0
+  await open('/tasks?state=all', { proxy: async (request, forward) => {
+    const response = await forward(request)
+    const read = routePath(request) === '/tasks' && new URL(request.url).searchParams.get('state') === 'all' ? reads[page++] : undefined
+    if (read) {
+      read.sampled.resolve()
+      await read.release.promise
+    }
+    return response
+  } })
+  await reads[0]!.sampled.promise
+  await revoke()
+  window.dispatchEvent(new Event('focus'))
+  reads[0]!.release.resolve()
+  await reads[1]!.sampled.promise
+  // Let the first response paint if accepted, while the newer response is still held.
+  await act(async () => {})
+  expect(taskRowIds()).toEqual([])
+  reads[1]!.release.resolve()
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id]), taskRead)
+}, 30_000)
+
+it('drops a row whose read grant was revoked between the task page and permission snapshots', async () => {
+  const { open, revoke, publicTask } = await revocableTasks()
+  await open('/tasks?state=all', { proxy: async (request, forward) => {
+    const response = await forward(request)
+    if (routePath(request) === '/tasks' && new URL(request.url).searchParams.get('state') === 'all') await revoke()
+    return response
+  } })
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id]), taskRead)
+}, 30_000)
+
+it('clears loaded rows when the board refuses a revalidation', async () => {
+  const { open, publicTask, secret } = await revocableTasks()
+  let refused = false
+  await open('/tasks?state=all', { transport: async (request, send) => {
+    if (refused && routePath(request) === '/tasks') {
+      return Response.json({ error: { code: 'forbidden', message: 'Task list refused' } }, { status: 403 })
+    }
+    return send()
+  } })
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
+  refused = true
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(mainText()).toContain('Task list refused'), taskRead)
+  expect(taskRowIds()).toEqual([])
+}, 30_000)
+
+it('does not bring back a revoked task from a feed frame delayed past a focus revalidation', async () => {
+  const { client, open, secret, publicTask, revoke } = await revocableTasks()
+  const seen = Promise.withResolvers<void>()
+  await open('/tasks?state=ready', { proxy: seeTaskEvent('reaction.added', seen.resolve) })
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
+  await vi.waitFor(() => expect(document.querySelector('.live')?.textContent).toBe('live'), taskRead)
+  const frames: FrameRequestCallback[] = []
+  const frame = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((run) => frames.push(run))
+  try {
+    await client.react(secret.id, 'eyes')
+    await seen.promise
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0), taskRead)
+    taskRows()[1]!.focus()
+    await revoke()
+    window.dispatchEvent(new Event('focus'))
+    await vi.waitFor(() => {
+      expect(taskRowIds()).toEqual([publicTask.id])
+      expect(document.activeElement).toBe(taskRows()[0])
+    }, taskRead)
+    frame.mockRestore()
+    flushSync(() => { for (const flush of frames) flush(performance.now()) })
+    expect(taskRowIds()).toEqual([publicTask.id])
+  } finally {
+    frame.mockRestore()
+  }
+}, 30_000)
+
+it('revalidates task access when the feed reconnects after a failed poll', async () => {
+  const { client, open, secret, publicTask, revoke } = await revocableTasks()
+  let dropNext = false
+  await open('/tasks?state=ready', { transport: async (request, send) => {
+    if (routePath(request) === '/events' && dropNext) {
+      dropNext = false
+      return Response.json({ error: { code: 'unavailable', message: 'connection lost' } }, { status: 503 })
+    }
+    return send()
+  } })
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
+  await vi.waitFor(() => expect(document.querySelector('.live')?.textContent).toBe('live'), taskRead)
+  await revoke()
+  dropNext = true
+  await client.post('work', 'Wake the current poll')
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id]), taskRead)
+}, 30_000)
+
+it('refreshes label permission with the loaded rows even when read access remains', async () => {
+  const { admin, client, open, publicTask } = await revocableTasks()
+  const urgent = (await client.tasks.create('limited', { text: 'Urgent but needs label permission', priority: 'urgent' })).task
+  await admin.createGrant({ principals: [{ kind: 'everyone' }], can: { limited: ['read'] } })
+  const { grant } = await admin.createGrant({ principals: [{ kind: 'user', userId: 'u_reader' }], can: { limited: ['label'] } })
+  await open('/tasks?state=ready')
+  await vi.waitFor(() => expect(taskRowIds().slice(0, 2)).toEqual([urgent.id, publicTask.id]), taskRead)
+  await admin.revokeGrant(grant.id)
+  await expect(client.tasks.claim({ channel: 'limited' })).rejects.toMatchObject({ status: 403 })
+  expect((await client.tasks.list({ channel: 'limited' })).tasks.map(({ message }) => message.id)).toEqual([urgent.id])
+  document.dispatchEvent(new Event('visibilitychange'))
+  await vi.waitFor(() => expect(taskRowIds().slice(0, 2)).toEqual([publicTask.id, urgent.id]), taskRead)
+}, 30_000)
+
+it('re-reads for a task announced while the first page snapshot is held, and for later tasks', async () => {
+  const { client, open } = await workbench()
+  const { task: first } = await client.tasks.create('work', { text: 'In the snapshot' })
+  const sampled = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  releaseGates.push(release.resolve)
+  let hold = true
+  let watchingCreate = false
+  const seen = Promise.withResolvers<void>()
+  const watch = seeTaskEvent('task.created', () => { if (watchingCreate) seen.resolve() })
+  await open('/tasks?channel=work', { proxy: async (request, forward) => {
+    const response = await watch(request, forward)
+    if (hold && routePath(request) === '/tasks' && new URL(request.url).searchParams.get('channel') === 'work') {
+      hold = false
+      sampled.resolve()
+      await release.promise
+    }
+    return response
+  } })
+  await sampled.promise
+  await vi.waitFor(() => expect(document.querySelector('.live')?.textContent).toBe('live'), taskRead)
+  const frames: FrameRequestCallback[] = []
+  const frame = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((run) => frames.push(run))
+  let second: string
+  try {
+    watchingCreate = true
+    second = (await client.tasks.create('work', { text: 'During the read' })).task.id
+    await seen.promise
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0), taskRead)
+    expect(taskRowIds()).toEqual([])
+    release.resolve()
+    await vi.waitFor(() => expect(taskRowIds()).toContain(first.id), taskRead)
+    frame.mockRestore()
+    await act(async () => { for (const flush of frames) flush(performance.now()) })
+  } finally {
+    frame.mockRestore()
+  }
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([first.id, second]), taskRead)
+  const { task: third } = await client.tasks.create('work', { text: 'After the read' })
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([first.id, second, third.id]), taskRead)
 }, 30_000)
 
 it('drops a cached row when opening its thread is refused after revocation', async () => {
   const { client, open, secret, publicTask, revoke } = await revocableTasks()
-  await open('/tasks?state=ready')
+  const release = Promise.withResolvers<void>()
+  releaseGates.push(release.resolve)
+  let hold = false
+  await open('/tasks?state=ready', { proxy: async (request, forward) => {
+    if (hold && routePath(request) === '/tasks') await release.promise
+    return forward(request)
+  } })
   await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
+  hold = true
   await revoke()
   await expect(client.thread(secret.id)).rejects.toMatchObject({ status: 404 })
   taskRows()[1]!.click()
@@ -222,13 +399,38 @@ it('keeps the same focused Ready row in place during a live promotion until blur
   reading.focus()
   expect(document.activeElement).toBe(reading)
   await client.tasks.priority(second.id, 'urgent')
-  // The thread pane updates independently, proving the live change arrived before blur.
-  await vi.waitFor(() => expect([...document.querySelectorAll('dt')].find((el) => el.textContent === 'priority')?.nextElementSibling?.textContent).toBe('urgent'), taskRead)
+  await vi.waitFor(() => expect(reading.querySelector('.task-priority')?.textContent).toBe('urgent'), taskRead)
   expect(taskRowIds()).toEqual([first.id, second.id])
   expect(taskRows()[1]).toBe(reading)
   expect(document.activeElement).toBe(reading)
   reading.blur()
   await vi.waitFor(() => expect(taskRowIds()).toEqual([second.id, first.id]), taskRead)
+}, 30_000)
+
+it('removes a focused task deleted by another client and passes focus to the next, previous, then list', async () => {
+  const { client, as, open } = await workbench()
+  const { task: first } = await client.tasks.create('work', { text: 'First' })
+  const { task: second } = await client.tasks.create('work', { text: 'Second' })
+  const { task: third } = await client.tasks.create('work', { text: 'Third' })
+  await open('/tasks?state=all')
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([first.id, second.id, third.id]), taskRead)
+  taskRows()[1]!.focus()
+  const other = as()
+  await other.delete(second.id)
+  await vi.waitFor(() => {
+    expect(taskRowIds()).toEqual([first.id, third.id])
+    expect(document.activeElement).toBe(taskRows()[1])
+  }, taskRead)
+  await other.delete(third.id)
+  await vi.waitFor(() => {
+    expect(taskRowIds()).toEqual([first.id])
+    expect(document.activeElement).toBe(taskRows()[0])
+  }, taskRead)
+  await other.delete(first.id)
+  await vi.waitFor(() => {
+    expect(taskRowIds()).toEqual([])
+    expect(document.activeElement).toBe(document.querySelector('.task-rows'))
+  }, taskRead)
 }, 30_000)
 
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {

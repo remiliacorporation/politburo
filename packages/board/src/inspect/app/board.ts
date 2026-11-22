@@ -211,13 +211,15 @@ export async function boot(): Promise<void> {
   set((s) => ({ ...s, me, discovery, channels: Object.fromEntries(channels.map((c) => [c.path, c])) }))
   const controller = feedFollow = new AbortController()
   // A burst of events is one render: they're folded in a frame at a time.
-  let queue: BoardEventView[] = []
+  let queue: { event: BoardEventView; taskEpoch: number }[] = []
+  let retrying = false
   const flush = () => {
-    const events = queue
+    const batch = queue
     queue = []
     if (!current()) return
+    const events = batch.map(({ event }) => event)
     listed.apply(events)
-    addLiveTasks(events)
+    updateLiveTasks(batch.flatMap(({ event, taskEpoch }) => taskEpoch === taskListEpoch && event.message ? [event.message] : []))
     if (attentionVisit) refreshAttentionEvents(events)
     // A schedule's own state isn't in the feed, but its sends are: one that landed means the list moved.
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
@@ -232,9 +234,17 @@ export async function boot(): Promise<void> {
         // Apply the transition immediately so the store can reject older status snapshots.
         set((s) => store.applyEvent(s, event))
         void loadStatus()
-      } else if (queue.push(event) === 1) requestAnimationFrame(flush)
+      } else {
+        noteTaskListEvent(event.message)
+        if (queue.push({ event, taskEpoch: taskListEpoch }) === 1) requestAnimationFrame(flush)
+      }
     },
-    (feed) => { if (current()) set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' })) },
+    (feed) => {
+      if (!current()) return
+      set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' }))
+      if (feed === 'live' && retrying) refreshTaskList()
+      retrying = feed === 'retrying'
+    },
   ).catch((error) => { if (current()) toast(`live updates stopped: ${said(error)}`) })
   // Read after the feed's cursor is fixed: a pause is either in this snapshot or in the feed.
   void loadStatus()
@@ -590,49 +600,120 @@ export async function loadTasks(filter: store.TaskFilter, after?: string) {
   return { cursor: page.cursor, more: page.more }
 }
 
-// Only the active table read vouches for membership. Neither sidebar reads nor old threads do.
+// Only a complete read vouches for membership. The shared message cache is not a task list.
+type TaskListVisit = {
+  scope: symbol; as: number; filter: store.TaskFilter; pages: number
+  revision: number; running: boolean; queued: boolean
+}
+let taskListVisit: TaskListVisit | undefined
+let taskListEpoch = 0
 
-function addLiveTasks(events: BoardEventView[]) {
+function noteTaskListEvent(view: MessageView | undefined) {
+  const visit = taskListVisit
+  if (!view || !visit?.running || visit.as !== identity) return
+  // A read in flight may not include this change. Queue a new read now, because the
+  // frame carrying the event may run after acceptance and be discarded by the epoch check.
+  if (store.isTask(view) || state.taskList?.read?.roots.has(view.id)) visit.queued = true
+}
+
+function updateLiveTasks(views: MessageView[]) {
+  const visit = taskListVisit
   const list = state.taskList
-  if (!list || list.refused) return
-  let ids: Set<string> | undefined
-  for (const event of events) {
-    const root = event.message
-    if (!store.isTask(root)) continue
-    if (!list.page) {
-      continue
+  if (!visit || visit.as !== identity || list?.scope !== visit.scope) return
+  const unknown = views.some((view) => !view.deleted && store.isTask(view) && !list.read?.roots.has(view.id))
+  set((s) => store.updateTaskList(s, views))
+  if (unknown) requestTaskList(visit)
+}
+
+export function openTaskList(scope: symbol, filter: store.TaskFilter) {
+  const visit = taskListVisit = { scope, as: identity, filter, pages: 1, revision: 0, running: false, queued: false }
+  taskListEpoch++
+  set((s) => ({ ...s, taskList: { scope } }))
+  const visible = () => { if (document.visibilityState === 'visible') refreshTaskList() }
+  addEventListener('focus', refreshTaskList)
+  document.addEventListener('visibilitychange', visible)
+  return () => {
+    removeEventListener('focus', refreshTaskList)
+    document.removeEventListener('visibilitychange', visible)
+    if (taskListVisit !== visit) return
+    taskListVisit = undefined
+    taskListEpoch++
+    set((s) => ({ ...s, taskList: undefined }))
+  }
+}
+
+export function refreshTaskList() {
+  const visit = taskListVisit
+  if (!visit || visit.as !== identity) return
+  // A request already on the wire cannot answer a later revalidation.
+  visit.revision++
+  requestTaskList(visit)
+}
+
+export function extendTaskList(scope: symbol) {
+  const visit = taskListVisit
+  if (!visit || visit.scope !== scope || visit.as !== identity || visit.running || !state.taskList?.read?.more) return
+  visit.pages++
+  requestTaskList(visit)
+}
+
+function requestTaskList(visit: TaskListVisit) {
+  visit.queued = true
+  if (visit.running) return
+  visit.running = true
+  void (async () => {
+    try {
+      while (visit.queued && taskListVisit === visit && visit.as === identity) {
+        visit.queued = false
+        await readTaskList(visit)
+      }
+    } finally {
+      visit.running = false
     }
-    if (list.ids.has(root.id)) continue
-    ;(ids ??= new Set(list.ids)).add(root.id)
-  }
-  if (ids) set((s) => ({ ...s, taskList: { ...list, ids } }))
+  })()
 }
 
-export async function readTaskList(scope: symbol, filter: store.TaskFilter, after?: string) {
-  const as = identity
+async function readTaskList(visit: TaskListVisit) {
+  const { scope, as, revision, pages, filter } = visit
   const denials = threadDenials
-  if (!after) {
-    set((s) => ({ ...s, taskList: { scope, ids: new Set() } }))
-  } else if (state.taskList?.scope !== scope || state.taskList.page?.cursor !== after) return
-  // Read the open pool for Ready and Claimed so leases and pause fences can move rows between
-  // those states without another request. A new visit still starts a fresh authorized read.
-  const page = await fetchTaskPage(filter.state === 'ready' || filter.state === 'claimed' ? { ...filter, state: 'open' } : filter, after)
-  if (!page || as !== identity) return
-  const list = state.taskList
-  if (list?.scope !== scope || (after && list.page?.cursor !== after)) return
-  if ('refused' in page) {
-    set((s) => ({ ...s, taskList: { scope, ids: new Set(), refused: { text: page.refused, tooWide: page.tooWide } } }))
-    return
+  const current = () => taskListVisit === visit && identity === as && visit.revision === revision
+  // Ready and Claimed share the open pool, so a lease can end without another request.
+  const query = filter.state === 'ready' || filter.state === 'claimed' ? { ...filter, state: 'open' as const } : filter
+  const fetched: MessageView[] = []
+  let after: string | undefined
+  let more = false
+  const refuse = (text: string, tooWide = false) => {
+    if (!current()) return
+    taskListEpoch++
+    set((s) => ({ ...s, taskList: { scope, refused: { text, tooWide } } }))
   }
-  const roots = page.roots.filter((root) => (deniedThreads.get(root.id) ?? 0) <= denials)
-  const ids = new Set(list.ids)
-  for (const root of roots) ids.add(root.id)
-  set((s) => ({ ...store.merge(s, roots), taskList: { scope, ids, page: { cursor: page.cursor, through: page.more ? page.roots.at(-1) : undefined } } }))
-}
-
-export function closeTaskList(scope: symbol) {
-  if (state.taskList?.scope !== scope) return
-  set((s) => ({ ...s, taskList: undefined }))
+  try {
+    // Re-read from the beginning even for Load more: retaining an old page would retain its old access.
+    for (let n = 0; n < pages; n++) {
+      const page = await fetchTaskPage(query, after)
+      if (!page || !current()) return
+      if ('refused' in page) return refuse(page.refused, page.tooWide)
+      fetched.push(...page.roots)
+      more = page.more && page.cursor !== after
+      if (!more) break
+      after = page.cursor
+    }
+    const viewer = viewerOf(await team.me())
+    if (!current()) return
+    const previous = state.taskList?.read?.roots
+    const roots = new Map<string, store.TaskRoot>()
+    for (const root of fetched) {
+      // The permission read follows the pages: it can already know of a revocation they missed.
+      if (!store.isTask(root) || !viewer.may('read', root.channel) || root.deleted || state.messages[root.id]?.deleted || (deniedThreads.get(root.id) ?? 0) > denials) continue
+      // A newer live view can survive only if this complete read still includes its root.
+      const live = previous?.get(root.id)
+      roots.set(root.id, live && live.version > root.version ? live : root)
+    }
+    taskListEpoch++
+    set((s) => ({ ...store.merge(s, [...roots.values()]), taskList: { scope, read: { roots, more, viewer } } }))
+  } catch (error) {
+    refuse(refusal(error))
+  }
 }
 
 /** The shared open-task index also supplies the sidebar counts. */
