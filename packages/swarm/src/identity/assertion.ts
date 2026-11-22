@@ -76,8 +76,9 @@ export async function verifyAssertion(token: string | null | undefined, options:
     algorithms: ['RS256'], issuer, audience: options.audience, currentDate, clockTolerance,
     requiredClaims: ['exp', 'iat'],
   }).catch((error: unknown) => { throw new AssertionError(reasonFor(error)) })
-  const { sub, email, common_name: commonName, exp, iat } = payload
-  if (typeof sub !== 'string' || !sub || typeof exp !== 'number' || typeof iat !== 'number' ||
+  const { aud, sub, email, common_name: commonName, exp, iat } = payload
+  if (Array.isArray(aud) && aud.some((entry) => typeof entry !== 'string')) throw new AssertionError('audience')
+  if (typeof sub !== 'string' || typeof exp !== 'number' || typeof iat !== 'number' ||
       !Number.isFinite(new Date(exp * 1000).getTime()) ||
       (email !== undefined && typeof email !== 'string') ||
       (commonName !== undefined && typeof commonName !== 'string')) throw new AssertionError('claims')
