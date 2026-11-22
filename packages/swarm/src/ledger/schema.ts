@@ -1,11 +1,17 @@
 // The ledger's tables. Append-only is enforced here, in the database: every table
-// refuses UPDATE and DELETE, so no code path (ours or a later one) can rewrite history.
+// refuses UPDATE and DELETE. Duplicate identity inserts are blocked before
+// conflict resolution, since REPLACE need not fire a delete trigger.
 
 const sealed = (table: string) => `
 CREATE TRIGGER ${table}_no_update BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
 CREATE TRIGGER ${table}_no_delete BEFORE DELETE ON ${table} BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;`
 
-export const SCHEMA_VERSION = 1
+const noReplace = (table: string, ...keys: string[]) => `
+CREATE TRIGGER ${table}_no_replace BEFORE INSERT ON ${table}
+WHEN EXISTS (SELECT 1 FROM ${table} WHERE ${keys.map((key) => `${key} = NEW.${key}`).join(' OR ')})
+BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;`
+
+export const SCHEMA_VERSION = 2
 
 export const schema = `
 CREATE TABLE dispatches (
@@ -22,10 +28,11 @@ CREATE TABLE dispatches (
   created TEXT NOT NULL
 ) STRICT;
 ${sealed('dispatches')}
+${noReplace('dispatches', 'execution_id')}
 
 CREATE TABLE intents (
   intent_id TEXT PRIMARY KEY,
-  execution_id TEXT NOT NULL REFERENCES dispatches(execution_id),
+  execution_id TEXT NOT NULL UNIQUE REFERENCES dispatches(execution_id),
   board_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   claim_epoch INTEGER NOT NULL CHECK (claim_epoch >= 0),
@@ -34,11 +41,12 @@ CREATE TABLE intents (
   created TEXT NOT NULL
 ) STRICT;
 ${sealed('intents')}
+${noReplace('intents', 'intent_id')}
 
 CREATE TABLE intent_events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   intent_id TEXT NOT NULL REFERENCES intents(intent_id),
-  event TEXT NOT NULL CHECK (event IN ('reservation_confirmed','claim_confirmed','ambiguous','reconciled_launched','reconciled_not_launched','launched','compensated')),
+  event TEXT NOT NULL CHECK (event IN ('reservation_confirmed','claim_confirmed','launch_started','ambiguous','reconciled_launched','reconciled_not_launched','launched','compensated')),
   at TEXT NOT NULL,
   detail TEXT
 ) STRICT;
@@ -88,6 +96,7 @@ CREATE TABLE records (
 ) STRICT;
 CREATE INDEX records_execution ON records(execution_id);
 ${sealed('records')}
+${noReplace('records', 'record_id', 'dedupe_key')}
 
 -- A correction keeps the charge where it was booked: it may bind an unbound
 -- observation, and otherwise stays on the same dispatch. Reassignment moves nothing.

@@ -4,7 +4,7 @@ import { schema, SCHEMA_VERSION } from './schema.ts'
 import type {
   AppendOutcome, Dispatch, Envelope, Intent, IntentView, SpendRecord,
 } from './types.ts'
-import { validateDispatch, validateIntent, validateRecord } from './validate.ts'
+import { validateCode, validateDispatch, validateId, validateIntent, validateRecord, validateTime } from './validate.ts'
 
 export type Ledger = {
   createDispatch(d: Dispatch): { outcome: 'created' | 'existing' }
@@ -14,7 +14,9 @@ export type Ledger = {
   intent(id: string): IntentView | null
   confirmReservation(id: string, fence: string, at: string): IntentView
   confirmClaim(id: string, fence: string, at: string): IntentView
-  markAmbiguous(id: string, at: string, detail?: string): IntentView
+  /** Persist before sending a launch request. Reconcile if the outcome is uncertain. */
+  startLaunch(id: string, fence: string, at: string): IntentView
+  markAmbiguous(id: string, at: string): IntentView
   reconcile(id: string, observed: 'launched' | 'not_launched', at: string): IntentView
   markLaunched(id: string, at: string): IntentView
   compensate(id: string, at: string, reason: string): IntentView
@@ -29,10 +31,6 @@ function fail(code: LedgerErrorCode, message: string): never {
   throw new LedgerError(code, message)
 }
 
-// Arguments that do not pass through a record validator.
-function text(value: unknown, field: string): void {
-  if (typeof value !== 'string' || /\0|[\uD800-\uDFFF]/u.test(value)) fail('invalid', `${field} must be text`)
-}
 const choice = (values: readonly string[]) => (v: unknown, f: string): void => {
   if (typeof v !== 'string' || !values.includes(v)) fail('invalid', `${f} has an invalid value`)
 }
@@ -56,7 +54,7 @@ type RecordRow = Omit<SpendRecord, 'envelope' | 'tokens' | 'amount' | 'coverage'
     actor: string | null; reason: string | null; exit_reason: string | null
     coverage_state: SpendRecord['coverage']['state']; field_quality: string
   }
-type IntentEvent = 'reservation_confirmed' | 'claim_confirmed' | 'ambiguous' | 'reconciled_launched'
+type IntentEvent = 'reservation_confirmed' | 'claim_confirmed' | 'launch_started' | 'ambiguous' | 'reconciled_launched'
   | 'reconciled_not_launched' | 'launched' | 'compensated'
 
 function sqliteCode(error: unknown): number {
@@ -121,11 +119,12 @@ export function openLedger(path: string): Ledger {
     const row = get<Intent>('SELECT * FROM intents WHERE intent_id=?', id)
     if (!row) return null
     let reservation = false, claim = false
-    let phase: 'ambiguous' | 'launched' | 'compensated' | null = null
+    let phase: 'launching' | 'ambiguous' | 'launched' | 'compensated' | null = null
     for (const { event } of all<{ event: IntentEvent }>('SELECT event FROM intent_events WHERE intent_id=? ORDER BY seq', id)) {
       switch (event) {
         case 'reservation_confirmed': reservation = true; break
         case 'claim_confirmed': claim = true; break
+        case 'launch_started': phase = 'launching'; break
         case 'ambiguous': phase = 'ambiguous'; break
         // A definitive no-launch keeps both confirmations, so a ready intent can retry.
         case 'reconciled_not_launched': phase = null; break
@@ -136,23 +135,30 @@ export function openLedger(path: string): Ledger {
     return { intent: { ...row }, state: phase ?? (reservation && claim ? 'ready' : 'pending'),
       reservation_confirmed: reservation, claim_confirmed: claim }
   }
-  function active(view: IntentView): void {
-    if (view.state === 'ambiguous') fail('intent_ambiguous', 'reconcile the intent first')
+  function notClosed(view: IntentView): void {
     if (view.state === 'launched' || view.state === 'compensated') fail('intent_closed', 'the intent is closed')
   }
-  function change(id: string, at: string, next: (view: IntentView) => IntentEvent | null, detail?: string): IntentView {
-    text(id, 'intent_id'); text(at, 'at')
-    if (detail !== undefined) text(detail, 'detail')
+  function active(view: IntentView): void {
+    notClosed(view)
+    if (view.state === 'launching' || view.state === 'ambiguous') fail('intent_ambiguous', 'reconcile the intent first')
+  }
+  function launchResult(view: IntentView, event: 'launched' | 'ambiguous'): IntentEvent {
+    notClosed(view)
+    if (view.state !== 'launching') fail('not_ready', 'the intent has no launch in progress')
+    return event
+  }
+  function change(id: string, at: string, next: (view: IntentView) => IntentEvent | null, reason?: string): IntentView {
+    validateId(id, 'intent_id'); validateTime(at, 'at')
     return write(() => {
       const view = intent(id) ?? fail('unknown_intent', 'the intent does not exist')
       const event = next(view)
       if (event === null) return view
-      insert('intent_events', { intent_id: id, event, at, detail: detail ?? null })
+      insert('intent_events', { intent_id: id, event, at, detail: reason ?? null })
       return intent(id)!
     })
   }
   function confirm(id: string, fence: string, at: string, which: 'reservation_confirmed' | 'claim_confirmed') {
-    text(fence, 'fence')
+    validateId(fence, 'fence')
     return change(id, at, view => {
       if (view.intent.fence !== fence) fail('stale_fence', 'the fence does not match the intent')
       active(view)
@@ -194,10 +200,17 @@ export function openLedger(path: string): Ledger {
       const d = validateDispatch(input)
       return write(() => {
         const { trace, ...envelope } = d.envelope
+        const links = [envelope.parent, d.sponsor]
+        if (links.includes(trace.execution_id)) fail('invalid', 'a dispatch cannot link to itself')
         const existing = dispatch(trace.execution_id)
         if (existing) {
           if (!equal(existing, d)) fail('dispatch_conflict', 'the execution id has a different dispatch')
           return { outcome: 'existing' }
+        }
+        for (const link of links) {
+          if (link === null) continue
+          const linked = dispatch(link) ?? fail('unknown_dispatch', 'the linked dispatch does not exist')
+          if (linked.envelope.party !== envelope.party) fail('cross_party_link', 'the linked dispatch belongs to another party')
         }
         insert('dispatches', { ...envelope, execution_id: trace.execution_id, trace_id: trace.id,
           sponsor: d.sponsor, created: d.created })
@@ -215,31 +228,41 @@ export function openLedger(path: string): Ledger {
           if (!equal(existing.intent, i)) fail('intent_exists', 'the intent id has different content')
           return existing
         }
-        insert('intents', i)
+        try {
+          insert('intents', i)
+        } catch (error) {
+          if (sqliteCode(error) === 2067) fail('intent_exists', 'the execution already has an intent')
+          throw error
+        }
         return { intent: { ...i }, state: 'pending', reservation_confirmed: false, claim_confirmed: false }
       })
     },
     intent,
     confirmReservation: (id, fence, at) => confirm(id, fence, at, 'reservation_confirmed'),
     confirmClaim: (id, fence, at) => confirm(id, fence, at, 'claim_confirmed'),
-    markAmbiguous: (id, at, detail) => change(id, at, view => { active(view); return 'ambiguous' }, detail),
+    startLaunch(id, fence, at) {
+      validateId(fence, 'fence')
+      return change(id, at, view => {
+        active(view)
+        if (view.state !== 'ready') fail('not_ready', 'only a ready intent can start a launch')
+        if (view.intent.fence !== fence) fail('stale_fence', 'the fence does not match the intent')
+        return 'launch_started'
+      })
+    },
+    markAmbiguous: (id, at) => change(id, at, view => launchResult(view, 'ambiguous')),
     reconcile(id, observed, at) {
       choice(['launched', 'not_launched'])(observed, 'observed')
       return change(id, at, view => {
-        if (view.state !== 'ambiguous') {
-          active(view)
-          fail('not_ready', 'only an ambiguous intent can be reconciled')
+        notClosed(view)
+        if (view.state !== 'launching' && view.state !== 'ambiguous') {
+          fail('not_ready', 'only an uncertain launch can be reconciled')
         }
         return observed === 'launched' ? 'reconciled_launched' : 'reconciled_not_launched'
       })
     },
-    markLaunched: (id, at) => change(id, at, view => {
-      active(view)
-      if (view.state !== 'ready') fail('not_ready', 'only a ready intent can be launched')
-      return 'launched'
-    }),
+    markLaunched: (id, at) => change(id, at, view => launchResult(view, 'launched')),
     compensate(id, at, reason) {
-      text(reason, 'reason')
+      validateCode(reason, 'reason')
       return change(id, at, view => {
         if (view.state === 'compensated') return null
         active(view)

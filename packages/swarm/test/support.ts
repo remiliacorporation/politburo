@@ -45,6 +45,7 @@ export function seedHierarchy(ledger: Ledger) {
     [dispatch('mob', { tier: 'mob', parent: 'old-spawner' }, 'old-spawner'), 7],
     [dispatch('submob', { tier: 'mob', parent: 'mob' }, 'old-spawner'), 11],
     [dispatch('sprite', { parent: 'submob' }, 'old-spawner'), 13],
+    [dispatch('child-secretary', { tier: 'secretary', parent: 'mob' }, 'old-spawner'), 17],
   ] as const
   for (const [d, output] of facts) {
     ledger.createDispatch(d)

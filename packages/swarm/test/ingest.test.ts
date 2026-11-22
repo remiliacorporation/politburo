@@ -65,7 +65,7 @@ test('a correction counts only its head, preserves history and refuses branching
   assert.throws(() => ingest(ledger, { ...unaudited, actor }), { code: 'invalid' }, 'reason is required')
 })
 
-test('unbound spend stays out of party and repo totals until bound exactly once', (t) => {
+test('unbound spend keeps unknowns visible and stays out of party and repo totals until bound once', (t) => {
   const ledger = memory(t)
   const d = dispatch()
   const original = record('unbound', null, 37)
@@ -101,6 +101,9 @@ test('unbound spend stays out of party and repo totals until bound exactly once'
     assert.equal(row!.inclusive.records, 1)
     assert.equal(row!.inclusive.tokens.output.known, 37)
   }
+  ingest(ledger, record('unbound-unknown', null, null))
+  assert.deepEqual(unmatched(ledger).tokens.output, { known: 0, known_records: 0, unknown_records: 1 },
+    'unmatched totals must retain unknown-only output')
 })
 
 test('validation and ingest refuse extra payload fields and free-text evidence references', (t) => {

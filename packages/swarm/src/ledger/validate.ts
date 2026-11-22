@@ -73,6 +73,8 @@ const time: Check<string> = (value, path) => {
   if (!Number.isFinite(Date.parse(s)) || new Date(s).toISOString() !== canonical) invalid(path, 'invalid UTC timestamp')
   return s
 }
+export { id as validateId, code as validateCode, time as validateTime }
+
 const maybeTime = nullable(time)
 const count: Check<number> = (value, path) => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) invalid(path, 'expected a non-negative safe integer')
@@ -137,6 +139,7 @@ export function validateRecord(input: unknown): SpendRecord {
   const { field_quality } = r.coverage
   for (const bucket of BUCKETS) {
     const key = `tokens.${bucket}` as const
+    if (field_quality[key] === 'quota_snapshot') invalid(`coverage.field_quality.${key}`, 'a quota percentage is not a token count')
     const missing = field_quality[key] === 'unknown' || field_quality[key] === 'not_applicable'
     if ((r.tokens[bucket] === null) !== missing) invalid(`coverage.field_quality.${key}`, 'does not match the token count')
   }

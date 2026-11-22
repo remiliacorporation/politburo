@@ -64,6 +64,13 @@ function aggregate(executions: readonly Execution[], unbound: readonly SpendReco
   function add(r: SpendRecord) {
     records++
     coverage[r.coverage.state]++
+    if (r.coverage.state === 'conflict') {
+      for (const tally of buckets) {
+        if (r.coverage.field_quality[`tokens.${tally.bucket}`] !== 'not_applicable') tally.unknown_records++
+      }
+      amountUnknown++
+      return
+    }
     for (const tally of buckets) {
       const value = r.tokens[tally.bucket]
       if (value !== null) {
@@ -129,12 +136,13 @@ export function rollupBy(
 
 export function rollupLevel(ledger: LedgerRead, level: Level, scope: LevelScope = {}): LevelRow[] {
   const all = byExecution(ledger)
-  const scoped = [...all.values()].filter((execution) => matches(execution, scope))
   // Never add inclusive totals across adjacent levels: each fact is counted once per row, as its current head.
   if (level === 'sprite' || level === 'mob' || level === 'spawner') {
     const roots = new Map<string, { own: Execution; inclusive: Execution[] }>()
-    for (const execution of scoped) {
-      if (execution.fields.tier === level) roots.set(execution.fields.execution_id!, { own: execution, inclusive: [execution] })
+    for (const execution of all.values()) {
+      if (execution.fields.tier === level && matches(execution, scope)) {
+        roots.set(execution.fields.execution_id!, { own: execution, inclusive: [execution] })
+      }
     }
     // The scope picks the rows; what a row includes is found among every execution.
     for (const execution of all.values()) {
@@ -156,19 +164,18 @@ export function rollupLevel(ledger: LedgerRead, level: Level, scope: LevelScope 
       return { level, key: { execution_id }, own, inclusive: row.inclusive.length === 1 ? own : aggregate(row.inclusive) }
     })
   }
-  if (level === 'work_item') {
-    return group(scoped.filter((e) => e.fields.work_id !== null), ['party', 'repo', 'work_id']).map(({ key, members }) => ({
-      level, key, inclusive: aggregate(members),
-      own: aggregate(members.filter(({ fields: { tier } }) => tier !== 'mob' && tier !== 'sprite')),
-    }))
-  }
-  if (level === 'repo') {
-    return group(scoped.filter((e) => e.fields.repo !== null), ['party', 'repo']).map(({ key, members }) => ({
-      level, key, inclusive: aggregate(members), own: aggregate(members.filter((e) => e.fields.work_id === null)),
-    }))
-  }
-  return group(scoped, ['party']).map(({ key, members }) => ({
-    level, key, inclusive: aggregate(members), own: aggregate(members.filter((e) => e.fields.repo === null)),
+  const executions = [...all.values()]
+  const groups = level === 'work_item'
+    ? group(executions.filter((e) => e.fields.work_id !== null), ['party', 'repo', 'work_id'])
+    : level === 'repo'
+      ? group(executions.filter((e) => e.fields.repo !== null), ['party', 'repo'])
+      : group(executions, ['party'])
+  // A scope selects groups, not a subset of each group's spend.
+  return groups.filter(({ members }) => members.some((e) => matches(e, scope))).map(({ key, members }) => ({
+    level, key, inclusive: aggregate(members),
+    own: aggregate(members.filter(({ fields: { tier, parent, work_id, repo } }) =>
+      level === 'work_item' ? tier !== 'mob' && tier !== 'sprite' && parent === null
+        : level === 'repo' ? work_id === null : repo === null)),
   }))
 }
 

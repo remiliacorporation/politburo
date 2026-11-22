@@ -78,7 +78,7 @@ export type SpendRecord = Readonly<{
   coverage: Coverage
 }>
 
-export const INTENT_STATES = ['pending', 'ready', 'ambiguous', 'launched', 'compensated'] as const
+export const INTENT_STATES = ['pending', 'ready', 'launching', 'ambiguous', 'launched', 'compensated'] as const
 export type IntentState = (typeof INTENT_STATES)[number]
 /** What a fenced pending-dispatch record binds: the board claim and the ledger reservation share one intent. */
 export type Intent = Readonly<{
