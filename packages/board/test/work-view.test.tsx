@@ -44,7 +44,7 @@ async function workBoard() {
     },
     client,
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
-    async open(params = '') {
+    async open(params = '', openTasksResponse?: () => Promise<Response>) {
       browser.setViewport({ width: 1280, height: 900 })
       browser.setURL(`http://work-${++visit}.test/work${params}`)
       const html = new DOMParser().parseFromString(shell({ token: 'inspector-test', base: '', profile: null, named: false }), 'text/html')
@@ -59,6 +59,10 @@ async function workBoard() {
           return Response.json({ error: { code: 'closed', message: 'page closed' } }, { status: 403 })
         }
         if (isStream) streaming = true
+        const url = new URL(request.url)
+        if (openTasksResponse && request.method === 'GET' && `${url.origin}${url.pathname}` === `${proxy}/tasks` && url.searchParams.get('state') === 'open') {
+          return openTasksResponse()
+        }
         const headers = new Headers(request.headers)
         headers.set('authorization', `Bearer ${token}`)
         return api.fetch(new Request(`${BOARD_URL}${request.url.slice(proxy.length)}`, {
@@ -132,6 +136,36 @@ it('opens peek from the URL with absolute claim time, tracker badges and overlap
     expect(new URL(location.href).searchParams.has('peek')).toBe(false)
     expect(peek()).toBeNull()
   })
+})
+
+it('shows loading then the task-list refusal in Queue and peek without presenting an empty Home', async () => {
+  const { create, open } = await workBoard()
+  const { task } = await create(1, 'Task the reader cannot load')
+  const respond = Promise.withResolvers<void>()
+  const refusal = 'This board cannot list open tasks'
+  const expectNoEmptyBoard = () => {
+    const text = document.querySelector('main')?.textContent
+    expect(text).not.toMatch(/no longer on the board|nothing on the board|nothing needs you/)
+    expect(text).not.toMatch(/0 (need you|ready to review|running|expiring in 30 min)/)
+  }
+
+  await open(`?peek=${task.id}`, async () => {
+    await respond.promise
+    return Response.json({ error: { code: 'forbidden', message: refusal } }, { status: 403 })
+  })
+  try {
+    await vi.waitFor(() => {
+      expect(queue().querySelector('[role="status"]')?.textContent).toBe('loading…')
+      expect(peek()?.textContent).toBe('loading…')
+    })
+    expectNoEmptyBoard()
+  } finally {
+    respond.resolve()
+  }
+
+  await vi.waitFor(() => expect(queue().querySelector('[role="status"]')?.textContent).toBe(refusal))
+  expect(peek()?.textContent).toBe(refusal)
+  expectNoEmptyBoard()
 })
 
 it('replaces a peeked task deleted live with only the no-longer-on-board message', async () => {
@@ -237,4 +271,48 @@ it('/work holds a focused row at the same viewport offset during live regrouping
   await vi.waitFor(() => expect(headings()).toEqual(['Ready to pull']))
   expect(scroll.scrollTop).toBe(20 + blockHeight)
   expect(row.getBoundingClientRect().top).toBe(top - blockHeight)
+})
+
+it('holds the focused queue row at its viewport offset when Running now gains a task with peek open', async () => {
+  const { create, actor, open } = await workBoard()
+  const worker = await actor('u_worker')
+  const { task: first } = await create(1, 'First ready task')
+  const { task: second } = await create(2, 'Reading this task')
+  await open(`?peek=${second.id}`)
+  const running = () => [...document.querySelectorAll('main section h2')]
+    .find((heading) => heading.textContent === 'Running now')?.closest('section')
+  await vi.waitFor(() => {
+    expect(running()?.textContent).toContain('nothing running')
+    expect(titles()).toEqual(['First ready task', 'Reading this task'])
+    expect(peek()?.querySelector('h2')?.textContent).toBe('Reading this task')
+  })
+
+  const list = document.querySelector<HTMLElement>('[aria-label="Work board tasks"]')!
+  let scroll = queue()
+  while (scroll.parentElement && getComputedStyle(scroll).overflowY !== 'auto') scroll = scroll.parentElement
+  scroll.scrollTop = 20
+  const blockHeight = 40
+  const getRect = Element.prototype.getBoundingClientRect
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (!this.matches('li') || !queue().contains(this)) return getRect.call(this)
+    // happy-dom has no layout: include Home above the queue in the stubbed geometry.
+    const blocks = [...list.querySelectorAll('h2, h3, h4, li')]
+    return new DOMRect(0, blocks.indexOf(this) * blockHeight - scroll.scrollTop, 100, blockHeight)
+  })
+  const reading = taskLinks()[1]!
+  const row = reading.closest('li')!
+  flushSync(() => reading.focus())
+  expect(document.activeElement).toBe(reading)
+  const top = row.getBoundingClientRect().top
+
+  await worker.tasks.claim(first.id)
+  await vi.waitFor(() => {
+    expect(running()?.querySelector('li a')?.textContent).toBe('First ready task')
+    expect(headings()).toEqual(['Running', 'Ready to pull'])
+  })
+  // Running now adds a party, claimant and row; the queue adds a group heading.
+  expect(scroll.scrollTop).toBe(20 + 4 * blockHeight)
+  expect(row.getBoundingClientRect().top).toBe(top)
+  expect(document.activeElement).toBe(reading)
+  expect(peek()?.querySelector('h2')?.textContent).toBe('Reading this task')
 })

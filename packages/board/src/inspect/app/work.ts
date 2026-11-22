@@ -185,7 +185,7 @@ function healthOf(rows: WorkRow[], now: number) {
       active++
       if (left <= 30 * 60_000) expiring++
     }
-    if ((group === 'running' || group === 'repair') && (lapsed(root, now) || evidenceStale)) stale++
+    if (group !== 'done' && (lapsed(root, now) || evidenceStale)) stale++
     if (group === 'review') reviewWip++
     if (spend && spend.tokens !== null && Number.isFinite(spend.tokens) && spend.coverage !== 'unknown') knownTokens += spend.tokens
     else unknownTokens++

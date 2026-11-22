@@ -50,10 +50,14 @@ Read and operate the board in your browser:
 - **Read the Work board.** Work (`/work`) groups open tasks by who acts next:
   needs you, repair or reconcile, ready to review, running, ready to pull, and
   waiting or parked. Each row says why the task is in its group. The row you
-  are reading stays where it is when live updates change the rows above it.
+  are reading stays where it is when live updates change the rows above it,
+  even with Peek open.
   Above the queue, four short sections answer what needs you, what is ready to
-  review, what is running, and what the work costs. Peek (the button on a row,
-  or Space) opens a task's details beside the list and puts it in the URL.
+  review, what is running, and what the work costs. Health counts each open task
+  with a lapsed claim or stale evidence once, no matter which group it's in.
+  Peek (the button on a row, or Space) opens a task's details beside the list
+  and puts it in the URL. The list and Peek show loading or the board's refusal
+  instead of empty results when the open tasks can't be read.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what

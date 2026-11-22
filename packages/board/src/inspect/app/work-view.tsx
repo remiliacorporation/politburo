@@ -47,7 +47,8 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   const viewer = useMemo(() => state.openTaskMe && board.viewerOf(state.openTaskMe), [state.openTaskMe])
   const latest = useMemo(() => projectWork(state, records, viewer, now), [state, records, viewer, now])
   const errors = new Set(viewer ? Object.values(state.openTaskAttentionRefusals) : [])
-  if (state.tasksRefused !== null) errors.add(state.tasksRefused)
+  const readStatus = state.tasksRefused ?? (state.tasksCounted ? null : 'loading…')
+  const statusClass = state.tasksRefused === null ? undefined : 'error'
   for (const { root } of latest.rows) {
     const { readError } = attentionFor(state, root, viewer)
     if (readError !== null) errors.add(readError)
@@ -69,9 +70,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   }
   const selected = selectionInList()
   const anchor = rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean)
-  // Keep the slice-1 visual anchor when reading the list alone. With a peek open,
-  // leave the shared scroll position (and the independently scrollable pane) alone.
-  useHoldPosition(list, peekId === null ? anchor : undefined, 'data-work-row')
+  useHoldPosition(list, anchor, 'data-work-row')
   const release = (target: EventTarget | null) => {
     if (hovered.current || (target instanceof Node && list.current?.contains(target))) return
     if (!selectionInList().length) setFrozen(false)
@@ -133,10 +132,12 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
     <>
       <Header title="Work" live={state.live} lead={lead} />
       <div className={`page home-view needs-view work-view${peekId === null ? '' : ' with-peek'}`}>
-        <p className="work-counts">
-          <a href="#work-needs">{counts.needs} need you</a> · <a href="#work-review">{counts.review} ready to review</a> ·{' '}
-          <a href="#work-running">{counts.running} running</a> · <a href="#work-health">{counts.expiring} expiring in 30 min</a>
-        </p>
+        {readStatus === null && (
+          <p className="work-counts">
+            <a href="#work-needs">{counts.needs} need you</a> · <a href="#work-review">{counts.review} ready to review</a> ·{' '}
+            <a href="#work-running">{counts.running} running</a> · <a href="#work-health">{counts.expiring} expiring in 30 min</a>
+          </p>
+        )}
         <p role="status">{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
         <div className="work-layout">
           <div ref={list} tabIndex={-1} aria-label="Work board tasks" className="work-list"
@@ -155,43 +156,53 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
               hoveredKey.current = undefined
               release(document.activeElement)
             }}>
-            <HomeSection id="work-needs" title="Needs you" empty="nothing needs you" present={!!home.needs.length}>
-              <ul role="list">{home.needs.map((row) => showRow(row, 'home'))}</ul>
-            </HomeSection>
-            <HomeSection id="work-review" title="Ready to review" empty="nothing to review" present={!!home.review.length}>
-              <ul role="list">{home.review.map((row) => showRow(row, 'home', <Ago iso={row.root.createdAt} now={now} prefix="open " />))}</ul>
-            </HomeSection>
-            <HomeSection id="work-running" title="Running now" empty="nothing running" present={!!home.running.length}>
-              {home.running.map(({ party, cells }) => (
-                <div key={party.id}>
-                  <h3><PartyName party={party} /></h3>
-                  {cells.map(({ claimant, rows }) => (
-                    <div key={claimant}>
-                      <h4>{claimant ? nameOf(state, claimant) : 'unclaimed'}</h4>
-                      <ul role="list">{rows.map(({ row, liveness }) => showRow(row, 'home', liveness))}</ul>
+            {readStatus === null && (
+              <>
+                <HomeSection id="work-needs" title="Needs you" empty="nothing needs you" present={!!home.needs.length}>
+                  <ul role="list">{home.needs.map((row) => showRow(row, 'home'))}</ul>
+                </HomeSection>
+                <HomeSection id="work-review" title="Ready to review" empty="nothing to review" present={!!home.review.length}>
+                  <ul role="list">{home.review.map((row) => showRow(row, 'home', <Ago iso={row.root.createdAt} now={now} prefix="open " />))}</ul>
+                </HomeSection>
+                <HomeSection id="work-running" title="Running now" empty="nothing running" present={!!home.running.length}>
+                  {home.running.map(({ party, cells }) => (
+                    <div key={party.id}>
+                      <h3><PartyName party={party} /></h3>
+                      {cells.map(({ claimant, rows }) => (
+                        <div key={claimant}>
+                          <h4>{claimant ? nameOf(state, claimant) : 'unclaimed'}</h4>
+                          <ul role="list">{rows.map(({ row, liveness }) => showRow(row, 'home', liveness))}</ul>
+                        </div>
+                      ))}
                     </div>
                   ))}
-                </div>
-              ))}
-            </HomeSection>
-            <HomeSection id="work-health" title="Health and spend" empty="no health data" present={!!home.health.perParty.length}>
-              <Health health={home.health} />
-            </HomeSection>
+                </HomeSection>
+                <HomeSection id="work-health" title="Health and spend" empty="no health data" present={!!home.health.perParty.length}>
+                  <Health health={home.health} />
+                </HomeSection>
+              </>
+            )}
             <div className="home-queue work-queue">
               <h2>Queue</h2>
-              {groups.map(({ group, title, rows }) => (
-                <section key={group}>
-                  <h3>{title} ({rows.length}) <small>{RULES[group]}</small></h3>
-                  <ul role="list">{rows.map((row) => showRow(row, 'queue'))}</ul>
-                </section>
-              ))}
-              {ids.length === 0 && errors.size === 0 && <p role="status">{state.tasksCounted ? 'nothing on the board' : 'loading…'}</p>}
-              {[...errors].map((error) => <p key={error} role="status" className="error">{error}</p>)}
+              {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p> : (
+                <>
+                  {groups.map(({ group, title, rows }) => (
+                    <section key={group}>
+                      <h3>{title} ({rows.length}) <small>{RULES[group]}</small></h3>
+                      <ul role="list">{rows.map((row) => showRow(row, 'queue'))}</ul>
+                    </section>
+                  ))}
+                  {ids.length === 0 && errors.size === 0 && <p role="status">nothing on the board</p>}
+                  {[...errors].map((error) => <p key={error} role="status" className="error">{error}</p>)}
+                </>
+              )}
             </div>
           </div>
           {peekId !== null && (
             <aside ref={pane} id="work-peek" className="work-peek" aria-label="Work peek">
-              {peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} /> : <p role="status">no longer on the board</p>}
+              {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p>
+                : peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} />
+                : <p role="status">no longer on the board</p>}
             </aside>
           )}
         </div>
