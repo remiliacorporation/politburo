@@ -204,6 +204,23 @@ test('missing request amount: strict bypasses the rule or admit_warn skips a war
   await result.release()
 })
 
+test('missing amount under admit_warn: a reused key bypasses the hard ceiling after spend rises', async () => {
+  let spent = 4
+  const usage = { usedFraction: 0, resetAt: 100 }
+  const ledger = memoryLedger({ usage, committed: () => spent })
+  const guard = stopGuard({ source: { read: () => usage }, now: () => 0 })
+  const limits = capacity({ limits: { worker: 2, build: 1, qa: 1, review: 1 } })
+  const budget = { ...rule, dimension: 'cost', hard: 10, missing_data_policy: 'admit_warn' } as const
+  const launch = () => admit({ guard, wake: { arm() {} }, ledger, capacity: limits,
+    rules: [budget], request: { key: 'same', kind: 'worker', amounts: {} } })
+  assert.equal((await ledger.reserve(budget, 6, 'other')).ok, true)
+  const first = await launch()
+  assert.equal(first.admitted, true)
+  spent = 5
+  assert.deepEqual(await launch(), { admitted: false, reason: 'budget_hard', rule: budget })
+  await first.release()
+})
+
 test('capacity and release: a refused launch leaks budget or stale release frees a new hold', async (t) => {
   const { launch, ledger } = fixture(t)
   const first = await launch('first')
@@ -245,8 +262,8 @@ test('failed release can be retried and failed refusal cleanup stays visible', a
 
 test('reservation retry: the same key consumes budget twice', async (t) => {
   const { ledger } = fixture(t)
-  for (let retry = 0; retry < 2; retry++) assert.equal((await ledger.reserve(rule, 4, 'same')).ok, true)
-  assert.equal(await ledger.outstanding(rule), 4)
+  for (let retry = 0; retry < 2; retry++) assert.equal((await ledger.reserve(rule, rule.hard, 'same')).ok, true)
+  assert.equal(await ledger.outstanding(rule), rule.hard)
 })
 
 test('usage check CLI: exit codes conflate allow, refusal, and misuse or output leaks env', (t) => {

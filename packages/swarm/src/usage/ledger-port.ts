@@ -50,15 +50,13 @@ export function memoryLedger({ usage, committed = () => 'unknown' }: {
       const id = bucket(rule)
       const entries = holds.get(id) ?? new Map()
       const existing = entries.get(key)
-      if (existing) {
-        if (existing.amount !== amount) throw new Error('reservation key reused with a different amount')
-        return existing.reservation
-      }
+      if (existing && existing.amount !== amount) throw new Error('reservation key reused with a different amount')
       const spent = committed(rule)
-      const pending = outstanding(id) + amount
+      const pending = outstanding(id) + (existing ? 0 : amount)
       // With explicit admit-with-warning, enforce only the known lower bound.
       if (spent === 'unknown' ? !admitsUnknown(rule) || !(pending <= rule.hard)
         : !(spent + pending <= rule.hard)) return { ok: false }
+      if (existing) return existing.reservation
       const reservation: Held = {
         ok: true,
         async release() {
