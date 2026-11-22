@@ -1,0 +1,13 @@
+#!/bin/sh
+[ -n "$PI_CODEX_AUTH$PI_CURSOR$PI_CODEX_PERSONAL_AUTH" ] || exit 0
+node -e '
+const fs=require("fs"),path=require("path"),p=path.join(require("os").homedir(),".pi/agent/auth.json");
+let cur={};try{cur=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}
+if(!cur||typeof cur!=="object"||Array.isArray(cur))cur={};
+let changed=false;
+for(const v of ["PI_CODEX_AUTH","PI_CURSOR","PI_CODEX_PERSONAL_AUTH"]){const s=process.env[v];if(!s)continue;let o;try{o=JSON.parse(Buffer.from(s,"base64").toString())}catch{continue}
+ if(v==="PI_CODEX_PERSONAL_AUTH"&&o&&o["openai-codex"]&&!o["openai-codex-personal"]){o={"openai-codex-personal":o["openai-codex"]}}
+ for(const k of Object.keys(o)){const c=cur[k],n=o[k];const stale=c&&typeof c==="object"&&n&&typeof n.expires==="number"&&!(typeof c.expires==="number"&&c.expires>=n.expires);if(!c||typeof c!=="object"||!Object.keys(c).length||stale){cur[k]=n;changed=true}}}
+if(changed){fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p+".tmp",JSON.stringify(cur),{mode:0o600});fs.renameSync(p+".tmp",p)}
+try{fs.chmodSync(p,0o600)}catch{}' >/dev/null 2>&1
+exit 0
