@@ -4,7 +4,8 @@ export type Section = (typeof SECTIONS)[number]
 
 /** The view a path names. Settings includes its section and what's open in it. */
 export type Route =
-  | { view: 'home' }
+  | { view: 'needs' }
+  | { view: 'handoffs' }
   | { view: 'presidium' }
   | { view: 'tasks' }
   | { view: 'attention' }
@@ -19,7 +20,8 @@ export function route(path: string): Route {
   } catch {
     return { view: 'missing' }
   }
-  if (decoded === '/') return { view: 'home' }
+  if (decoded === '/') return { view: 'needs' }
+  if (decoded === '/handoffs') return { view: 'handoffs' }
   if (decoded === '/presidium') return { view: 'presidium' }
   if (decoded === '/tasks') return { view: 'tasks' }
   if (decoded === '/attention') return { view: 'attention' }

@@ -25,8 +25,8 @@ The top of the sidebar says which board it is, and so does the tab's title. A
 team's board in Vercel's API shows its name over its host. Any other board
 shows its host over where it's mounted.
 
-Select the top-left Politburo emblem, beside the `politburo` wordmark, to return to Handoffs. On narrow screens,
-use **Show sidebar** to open the navigation.
+Select the top-left Politburo emblem, beside the POLITBURO wordmark, to return
+to Needs action. On narrow screens, use **Show sidebar** to open the navigation.
 
 | Flag | Does |
 | --- | --- |
@@ -40,20 +40,23 @@ use **Show sidebar** to open the navigation.
 
 Read and operate the board in your browser:
 
-- **Follow handoffs.** The landing page, Handoffs, groups tasks by state
+- **See what needs action.** The landing page lists open decisions, overdue
+  claims you cannot take, and work you can claim. Ready work includes expired
+  claims you can take and follows claim-next order: priority, assignment to you,
+  then creation time (`createdAt`) and ID. Ties match claim-next's log order
+  while the board's clock moves forward. A claim fenced by a pause still shows
+  as claimed until its lease ends because the API does not expose the fence.
+  Select a task to open its thread.
+- **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what
   the task waits for, and how it ended. Delivery is not approval: open the
   thread for the brief and the evidence. A live update changes the task's
   status in place. Come back to Handoffs or reload to regroup the tasks.
   Channels group by path prefix, and threads open in a side pane.
-- **Browse boards.** Select **presidium** in the sidebar for a list of boards, with a
+- **Browse boards.** PRESIDIUM lists the boards this inspector reaches, with a
   count per task state for each. The inspector reaches one board, the one it
   inspects, so the list has one row.
-- **Read times and commits.** Message times, claim leases, and attention deadlines
-  are relative, like `12m left`. Hover for the local date and time. Full commit IDs
-  show seven characters; hover to see the whole ID. Schedule cutoffs, send-at
-  summaries, and schedule confirmations show local dates inline.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for
@@ -73,10 +76,7 @@ Read and operate the board in your browser:
   for, what it waits for, and how it ended. The Tasks view lists open tasks
   oldest first, by state, channel, label, owner, and who they're for
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
-  full, with what you can do to it now. Task details scroll with the thread.
-  When a live update resizes those details, the thread keeps the reply you're
-  reading in place as far as the scroll range allows. If you're already at the
-  bottom, it stays pinned there.
+  full, with what you can do to it now.
 - **Answer requests.** Attention (`/attention`) lists tasks held for a
   decision, oldest first. The sidebar counts open requests and marks refusals
   you haven't seen.

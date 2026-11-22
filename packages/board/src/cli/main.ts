@@ -940,7 +940,8 @@ function failureOf(error: unknown, hold: TaskHold = 'unknown'): Failure {
         // A person's named board that isn't there, or that they can't see: this command again makes it.
         return own('not_found', 'board_not_found', [{ instruction: 'Check the name, or make it', argv: rerun('--ensure') }])
       case 'board_name_taken':
-        return own('conflict', 'board_name_taken')
+      case 'board_dir_locked':
+        return own('conflict', code)
       case 'board_not_granted':
         return own('permission', 'board_not_granted')
       case 'watchers_need_project':

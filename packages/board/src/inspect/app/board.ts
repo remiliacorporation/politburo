@@ -15,7 +15,7 @@ import type { TaskPriority } from '../../contract/schemas.ts'
 import * as attentionStore from './attention-store.ts'
 import { toast } from './chrome.ts'
 import { listing } from './listing.ts'
-import { base } from './nav.tsx'
+import { base, currentPath, route } from './nav.tsx'
 import * as store from './store.ts'
 import { refusal, said } from './words.ts'
 
@@ -108,7 +108,6 @@ export async function setProfile(next: Profile | null | undefined): Promise<bool
     if (choice !== profileChoice) return false
     feedFollow?.abort()
     feedFollow = undefined
-    openTaskPages = undefined
     // Publish the new handle and its acting-as label in the same turn.
     flushSync(() => {
       team = handle
@@ -117,7 +116,8 @@ export async function setProfile(next: Profile | null | undefined): Promise<bool
       loaded.clear()
       listed = listingForCurrentHandle()
       set((s) => ({ ...s, me, schedules: { is: 'loading' }, live: bootStarted ? 'reconnecting' : s.live,
-        tasksCounted: false, tasksRefused: null, attention: {}, attentionUnsupported: false }))
+        tasksCounted: false, openTaskRoots: {}, openTaskMe: null, openTaskAttentionRefusals: {}, paneThread: null,
+        tasksRefused: null, attention: {}, attentionUnsupported: false }))
     })
     if (bootStarted) void boot().catch((error) => toast(said(error)))
     else void loadSchedules()
@@ -212,11 +212,15 @@ export async function boot(): Promise<void> {
   const controller = feedFollow = new AbortController()
   // A burst of events is one render: they're folded in a frame at a time.
   let queue: BoardEventView[] = []
+  let taskUpdates: { root: MessageView; epoch: number }[] = []
   const flush = () => {
     const events = queue
+    const updates = taskUpdates
     queue = []
+    taskUpdates = []
     if (!current()) return
     listed.apply(events)
+    mergeOpenTaskEvents(updates)
     if (attentionVisit) refreshAttentionEvents(events)
     // A schedule's own state isn't in the feed, but its sends are: one that landed means the list moved.
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
@@ -231,9 +235,18 @@ export async function boot(): Promise<void> {
         // Apply the transition immediately so the store can reject older status snapshots.
         set((s) => store.applyEvent(s, event))
         void loadStatus()
-      } else if (queue.push(event) === 1) requestAnimationFrame(flush)
+      } else {
+        if (event.message && observeOpenTaskEvent(event.message))
+          taskUpdates.push({ root: event.message, epoch: openTaskEpoch })
+        if (queue.push(event) === 1) requestAnimationFrame(flush)
+      }
     },
-    (feed) => { if (current()) set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' })) },
+    (feed) => {
+      if (!current()) return
+      const reconnected = feed === 'live' && state.live === 'reconnecting'
+      set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' }))
+      if (reconnected && needsVisit) refreshOpenTasks(true)
+    },
   ).catch((error) => { if (current()) toast(`live updates stopped: ${said(error)}`) })
   // Read after the feed's cursor is fixed: a pause is either in this snapshot or in the feed.
   void loadStatus()
@@ -243,8 +256,7 @@ export async function boot(): Promise<void> {
   }, () => {})
   void loadSchemas()
   void loadSchedules()
-  openTaskPages = loadOpenTasks()
-  if (attentionVisit) refreshAttentionAfterPages(attentionVisit)
+  if (route(currentPath()).view !== 'needs' && openTaskRead?.identity !== identity) refreshOpenTasks()
 }
 
 // #region guide inspector/live.ts
@@ -300,9 +312,46 @@ export async function loadOlder(channel: string): Promise<boolean> {
 export const loadThread = (id: string) =>
   once(`thread:${id}`, async () => {
     const as = identity
-    const { message: root, replies } = await readThread(id)
-    if (as === identity) set((s) => store.merge(s, [root, ...replies]))
+    try {
+      const { message: root, replies } = await readThread(id)
+      if (as !== identity) return
+      set((s) => store.merge(s, [root, ...replies]))
+    } catch (error) {
+      if (as === identity && inaccessible(error)) {
+        forgetThread(id, said(error))
+        refreshThreadPane(id)
+      }
+      throw error
+    } finally {
+      // Share in-flight reads, not the access decision from a prior visit to the thread.
+      if (as === identity) loaded.delete(`thread:${id}`)
+    }
   })
+
+let pane: { id: string; identity: number; read: number } | undefined
+
+export function openThreadPane(id: string) {
+  const visit = pane = { id, identity, read: 0 }
+  set((s) => ({ ...s, paneThread: { id, identity, result: 'loading' } }))
+  refreshThreadPane()
+  return () => { if (pane === visit) pane = undefined }
+}
+
+function refreshThreadPane(only?: string) {
+  const visit = pane
+  if (!visit || visit.identity !== identity || (only !== undefined && only !== visit.id)) return
+  const { id } = visit
+  const read = ++visit.read
+  const current = () => pane === visit && visit.identity === identity && read === visit.read
+  void readThread(id).then(({ message, replies }) => {
+    if (!current()) return
+    set((s) => ({ ...store.merge(s, [message, ...replies]), paneThread: { id, identity, result: 'readable' } }))
+  }, (error: unknown) => {
+    if (!current()) return
+    if (inaccessible(error)) forgetThread(id, said(error))
+    else set((s) => ({ ...s, paneThread: { id, identity, result: { refused: said(error) } } }))
+  })
+}
 
 /** Threads a filtered view asks the board for, and how many of them it reads whole. */
 const FILTERED = 50
@@ -544,7 +593,7 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
  * now, or what the board refused it for: `tooWide` when the filter's tree holds more channels than
  * one list reads, as Vercel's board says for a caller who doesn't read every channel.
  */
-export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<{ cursor: string; last: MessageView | undefined; more: boolean } | { refused: string; tooWide: boolean } | undefined> {
+export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<{ cursor: string; last: MessageView | undefined; more: boolean; roots: MessageView[] } | { refused: string; tooWide: boolean; inaccessible: boolean } | undefined> {
   const as = identity
   try {
     const page = await listTasks({
@@ -558,47 +607,137 @@ export async function loadTasks(filter: store.TaskFilter, after?: string): Promi
     if (as !== identity) return
     const roots = page.tasks.map((task) => task.message)
     set((s) => store.merge(s, roots))
-    return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE }
+    return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE, roots }
   } catch (error) {
     if (as !== identity) return
-    return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large' }
+    return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large', inaccessible: inaccessible(error) }
   }
 }
 
-/** The shared open-task index also supplies the sidebar counts. */
-async function loadOpenTasks() {
-  const as = identity
-  let after: string | undefined
-  for (;;) {
-    const page = await loadTasks({ state: 'open', label: [] }, after)
-    if (!page || as !== identity) return
-    if ('refused' in page) {
-      set((s) => ({ ...s, tasksRefused: page.refused }))
-      return
-    }
-    if (!page.more || page.cursor === after) break
-    after = page.cursor
-  }
-  set((s) => ({ ...s, tasksCounted: true }))
-}
+const inaccessible = (error: unknown) => error instanceof BoardError && (error.status === 403 || error.status === 404)
 
-let openTaskPages: Promise<void> | undefined
+let openTaskEpoch = 0
+let openTaskRead: {
+  identity: number; again: boolean; superseded: boolean; refused: Set<string>; observed: Map<string, MessageView>
+} | undefined
 let attentionVisit: symbol | undefined
+let needsVisit: symbol | undefined
 
-function refreshAttentionAfterPages(visit: symbol) {
-  const as = identity
-  // A direct visit can start before boot has even requested the first page.
-  void openTaskPages?.then(() => {
-    if (attentionVisit !== visit || as !== identity) return
-    for (const root of attentionStore.attentionTasks(state))
-      if (state.attention[root.id]?.latest?.id !== root.task.attentionId) void readAttention(root)
+/** The feed updates members, but only a complete list may admit a new member. */
+function observeOpenTaskEvent(root: MessageView): boolean {
+  if (root.re !== null) return false
+  const member = Object.hasOwn(state.openTaskRoots, root.id)
+  if (!member && store.isTask(root) && !root.deleted && store.OPEN_STATES.includes(root.task.state)) refreshOpenTasks()
+  const read = openTaskRead
+  // A root can be in the in-flight snapshot even if it has never been a member here.
+  if (read?.identity === identity && (read.observed.get(root.id)?.version ?? -1) <= root.version)
+    read.observed.set(root.id, root)
+  return member
+}
+
+function mergeOpenTaskEvents(updates: { root: MessageView; epoch: number }[]) {
+  const members = updates.flatMap(({ root, epoch }) =>
+    epoch === openTaskEpoch && Object.hasOwn(state.openTaskRoots, root.id) ? [root] : [])
+  if (members.length) set((s) => ({ ...s, openTaskRoots: store.newest(s.openTaskRoots, members) }))
+}
+
+function forgetThread(id: string, reason: string, fromNeedsAttention = false) {
+  if (openTaskRead?.identity === identity) openTaskRead.refused.add(id)
+  const inPane = pane?.identity === identity && pane.id === id ? pane : undefined
+  // An older pane snapshot must not replace the refusal.
+  if (inPane) inPane.read++
+  set((s) => {
+    const { [id]: _, ...openTaskRoots } = s.openTaskRoots
+    return { ...s, openTaskRoots,
+      openTaskAttentionRefusals: fromNeedsAttention ? { ...s.openTaskAttentionRefusals, [id]: reason } : s.openTaskAttentionRefusals,
+      paneThread: inPane ? { id, identity, result: { refused: reason } } : s.paneThread }
   })
+}
+
+/** Publish the full membership and its permissions together. Never publish a partial page. */
+function refreshOpenTasks(revalidate = false) {
+  if (openTaskRead?.identity === identity) {
+    openTaskRead.again = true
+    openTaskRead.superseded ||= revalidate
+    return
+  }
+  const read = openTaskRead = { identity, again: false, superseded: false, refused: new Set<string>(), observed: new Map<string, MessageView>() }
+  const handle = team
+  const current = () => read.identity === identity && !read.superseded
+  const roots = async () => {
+    const found: MessageView[] = []
+    let after: string | undefined
+    while (current()) {
+      const page = await handle.tasks.list({ state: 'open', limit: PAGE, ...(after ? { after } : {}) })
+      found.push(...page.tasks.map(({ message }) => message))
+      if (page.tasks.length < PAGE || page.cursor === after) break
+      after = page.cursor
+    }
+    return found
+  }
+  const requests = [roots(), handle.me()] as const
+  void Promise.all(requests).then(([tasks, me]) => {
+    if (!current()) return
+    openTaskEpoch++
+    const accepted = tasks.filter(({ id }) => !read.refused.has(id)).map((root) => {
+      let latest = root
+      for (const view of [state.openTaskRoots[root.id], read.observed.get(root.id)])
+        if (view && view.version > latest.version) latest = view
+      return latest
+    })
+    const openTaskRoots = Object.fromEntries(accepted.filter((root) =>
+      store.isTask(root) && !root.deleted && store.OPEN_STATES.includes(root.task.state)).map((root) => [root.id, root]))
+    set((s) => {
+      const next = store.merge(s, accepted)
+      const id = pane?.identity === identity ? pane.id : undefined
+      const root = id === undefined ? undefined : next.messages[id]
+      // Do not keep a possibly revoked task on screen while its thread read is in flight.
+      // A known transition out of open work is not itself a loss of access.
+      const hide = id !== undefined && root && !Object.hasOwn(openTaskRoots, id) &&
+        (!viewerOf(me).may('read', root.channel) || (Object.hasOwn(s.openTaskRoots, id) &&
+          store.isTask(root) && !root.deleted && store.OPEN_STATES.includes(root.task.state)))
+      const paneThread = hide && s.paneThread?.result === 'readable' ? { ...s.paneThread, result: 'loading' as const } : s.paneThread
+      return { ...next, openTaskRoots, openTaskMe: me, tasksCounted: true, tasksRefused: null, openTaskAttentionRefusals: {}, paneThread }
+    })
+    refreshThreadPane()
+    refreshAttentionRoots()
+  }, (error: unknown) => {
+    if (!current()) return
+    openTaskEpoch++
+    set((s) => ({ ...s, openTaskRoots: {}, openTaskMe: null, tasksCounted: false, tasksRefused: refusal(error) }))
+  }).finally(async () => {
+    // Even on refusal, don't start another read until both requests have settled.
+    await Promise.allSettled(requests)
+    if (openTaskRead !== read) return
+    openTaskRead = undefined
+    if (read.identity === identity && read.again) refreshOpenTasks()
+  })
+}
+
+export function openNeeds() {
+  const visit = needsVisit = Symbol()
+  const close = openAttention()
+  const revalidate = () => { if (document.visibilityState === 'visible') refreshOpenTasks(true) }
+  window.addEventListener('focus', revalidate)
+  document.addEventListener('visibilitychange', revalidate)
+  refreshOpenTasks(true)
+  return () => {
+    if (needsVisit === visit) needsVisit = undefined
+    window.removeEventListener('focus', revalidate)
+    document.removeEventListener('visibilitychange', revalidate)
+    close()
+  }
+}
+
+function refreshAttentionRoots() {
+  if (!attentionVisit) return
+  const roots = needsVisit ? Object.values(state.openTaskRoots).filter(attentionStore.holdsAttention) : attentionStore.attentionTasks(state)
+  for (const root of roots) void readAttention(root)
 }
 
 export function openAttention() {
   const visit = attentionVisit = Symbol()
-  for (const root of attentionStore.attentionTasks(state)) void readAttention(root)
-  refreshAttentionAfterPages(visit)
+  refreshAttentionRoots()
   return () => {
     if (attentionVisit !== visit) return
     attentionVisit = undefined
@@ -615,7 +754,7 @@ function refreshAttentionEvents(events: BoardEventView[]) {
     if ((event.type === 'message.edited' || event.type === 'message.deleted') && message?.re) touched.add(message.re)
   }
   for (const id of touched) {
-    const root = state.messages[id]
+    const root = needsVisit ? state.openTaskRoots[id] : state.messages[id]
     if (attentionStore.holdsAttention(root)) void readAttention(root)
   }
 }
@@ -631,13 +770,27 @@ export function attentionRendered(rendered: store.State) {
 
 async function readAttention(root: ReturnType<typeof attentionStore.attentionTasks>[number]) {
   const as = identity
+  const visit = attentionVisit
+  const needs = needsVisit
+  const epoch = openTaskEpoch
+  const { id } = root
   const reading = attentionStore.beginAttentionRead(state, root)
   set(() => reading.state)
-  const result = await team.tasks.attention(root.id).then<attentionStore.AttentionResult, attentionStore.AttentionResult>(
-    ({ attention }) => ({ is: 'here', value: attention }),
-    (error: unknown) => ({ is: 'failed', ...attentionFailure(error) }),
-  )
-  if (as === identity) set((s) => attentionStore.finishAttentionRead(s, root.id, reading.read, result))
+  const current = () => as === identity && visit === attentionVisit &&
+    state.attention[id]?.latest === reading.read &&
+    (!needs || (epoch === openTaskEpoch && Object.hasOwn(state.openTaskRoots, id)))
+  try {
+    const { attention } = await team.tasks.attention(id)
+    if (current()) set((s) => attentionStore.finishAttentionRead(s, id, reading.read, { is: 'here', value: attention }))
+  } catch (error) {
+    if (!current()) return
+    if (inaccessible(error)) {
+      forgetThread(id, said(error), needs !== undefined)
+      refreshThreadPane(id)
+      if (needs) return
+    }
+    set((s) => attentionStore.finishAttentionRead(s, id, reading.read, { is: 'failed', ...attentionFailure(error) }))
+  }
 }
 
 /** Only the feed settles a successful answer. */
@@ -683,11 +836,19 @@ export const unparkTask = (id: string, reason: string) => work(() => team.tasks.
 export const prioritizeTask = (id: string, priority: TaskPriority) => work(() => team.tasks.priority(id, priority))
 export async function loadAttention(id: string) {
   const as = identity
+  const visit = pane
+  const member = Object.hasOwn(state.openTaskRoots, id)
+  const current = () => as === identity && pane === visit && (!member || Object.hasOwn(state.openTaskRoots, id))
   try {
     const result = await team.tasks.attention(id)
-    if (as === identity) return result
+    if (current() && (visit?.id !== id || state.paneThread?.result === 'readable')) return result
   } catch (error) {
-    if (as === identity) throw error
+    if (!current()) return
+    if (inaccessible(error)) {
+      forgetThread(id, said(error))
+      refreshThreadPane(id)
+    }
+    throw error
   }
 }
 export const answerTask = (id: string, request: string, answer: AttentionAnswerBody) => work(async () => (await team.tasks.answer(id, request, answer)).task)
