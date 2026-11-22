@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { readFile, realpath } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { beadsAdapter } from './adapter.ts'
 import { fixtureRunner } from './fixture.ts'
@@ -28,7 +27,7 @@ function help(): number {
 
 async function readFixture(path: string) {
   const text = await readFile(path, 'utf8').catch(() => {
-    throw new Error(`cannot read fixture ${path}`)
+    throw new Error('cannot read the fixture file')
   })
   try {
     return fixtureRunner(JSON.parse(text))
@@ -41,10 +40,10 @@ export async function runTrackers(args: string[]): Promise<number> {
   const [tracker, action, ...flags] = args
   if (tracker === '--help' && action === undefined) return help()
   if (tracker === undefined) return misuse('missing tracker')
-  if (tracker !== 'beads') return misuse(`unknown tracker ${tracker}`)
+  if (tracker !== 'beads') return misuse('unknown tracker')
   if (action === '--help' && flags.length === 0) return help()
   if (action === undefined) return misuse('missing beads command')
-  if (action !== 'queue') return misuse(`unknown beads command ${action}`)
+  if (action !== 'queue') return misuse('unknown beads command')
 
   let values
   try {
@@ -61,21 +60,24 @@ export async function runTrackers(args: string[]): Promise<number> {
         help: { type: 'boolean' },
       },
     }))
-  } catch (error) {
-    if (!(error instanceof Error)) throw error
-    return misuse(error.message.replace(/^./, (letter) => letter.toLowerCase()))
+  } catch {
+    return misuse('invalid arguments')
   }
 
   const { epic, 'store-name': store, dir, fixture, bd } = values
   if (values.help) return help()
   if (!epic) return misuse('missing --epic')
   if (!beadId.test(epic)) return misuse('invalid epic id')
-  if (!store) return misuse('missing --store-name')
+  if (store === undefined) return misuse('missing --store-name')
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(store)) return misuse('invalid store name')
   if ((dir === undefined) === (fixture === undefined)) return misuse('specify exactly one of --dir and --fixture')
   if (dir === '' || fixture === '' || bd === '') return misuse('empty path')
 
   try {
-    const live = dir === undefined ? undefined : bdRunner({ dir: resolve(dir), bin: bd ?? 'bd' })
+    const storeDir = dir === undefined ? undefined : await realpath(dir).catch(() => {
+      throw new Error('cannot open the store directory')
+    })
+    const live = storeDir === undefined ? undefined : bdRunner({ dir: storeDir, bin: bd ?? 'bd' })
     let queue
     try {
       const run = live ?? await readFixture(fixture!)

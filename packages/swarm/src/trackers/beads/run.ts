@@ -42,6 +42,10 @@ export function bdRunner({ dir, bin = 'bd', timeoutMs = 30_000 }: {
       const path = `${dir}${dir.endsWith(sep) ? '' : sep}.beads`
       const store = isAbsolute(dir) && await lstat(path).catch(() => undefined)
       if (!store || !store.isDirectory()) throw new Error('no .beads in the store directory')
+      const redirect = await lstat(`${path}${sep}redirect`).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw new Error('cannot check for a store redirect')
+      })
+      if (redirect) throw new Error('the store directory redirects to another store')
       home ??= await mkdtemp(join(tmpdir(), 'swarm-bd-')).catch(() => {
         throw new Error('cannot create temporary bd home')
       })

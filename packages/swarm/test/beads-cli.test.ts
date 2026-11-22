@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -11,7 +11,7 @@ const fixture = 'test/fixtures/bd-1.3.4.json'
 const usage = 'usage: swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]'
 const command = ['trackers', 'beads', 'queue']
 
-function run(args: string[], env?: NodeJS.ProcessEnv) {
+function run(args: readonly string[], env?: NodeJS.ProcessEnv) {
   const result = spawnSync(process.execPath, ['src/cli.ts', ...args], {
     cwd: new URL('../', import.meta.url), encoding: 'utf8', env, timeout: 30_000,
   })
@@ -77,6 +77,58 @@ test('an unrecorded epic cannot look like an empty fixture queue', () => {
   assert.equal(result.status, 1, result.stderr)
   assert.equal(result.stdout, '')
   assert.match(result.stderr, /^error: unrecorded call: .*--parent rw-nope\n$/)
+})
+
+test('--dir with a symlink followed by .. cannot scan the symlink’s parent store', (t) => {
+  const dir = realpathSync(tempDir(t))
+  const remote = join(dir, 'remote')
+  const child = join(remote, 'child')
+  mkdirSync(child, { recursive: true })
+  mkdirSync(join(remote, '.beads'))
+  mkdirSync(join(dir, '.beads'))
+  symlinkSync(child, join(dir, 'link'))
+  const bin = join(dir, 'bd')
+  writeFileSync(bin, `#!/bin/sh
+pwd -P >> "\${0%/*}/cwd"
+printf '[]\\n'
+`, { mode: 0o700 })
+  const result = run([...command, '--epic', 'rw-cn1', '--store-name', 'rw', '--dir', `${dir}/link/..`, '--bd', bin])
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(new Set(readFileSync(join(dir, 'cwd'), 'utf8').trimEnd().split('\n')), new Set([remote]))
+})
+
+test('an unopenable store directory cannot expose its path or report a missing .beads', (t) => {
+  const dir = join(tempDir(t), 'private@example.test')
+  const result = run([...command, '--epic', 'rw-cn1', '--store-name', 'rw', '--dir', dir])
+  assert.equal(result.status, 1)
+  assert.equal(result.stdout, '')
+  assert.equal(result.stderr, 'error: cannot open the store directory\n')
+})
+
+test('invalid store names cannot be copied to the queue or diagnostics', () => {
+  for (const name of ['private@example.test', `token_${'abc123'.repeat(10)}`]) {
+    const result = run([...command, '--epic', 'rw-cn1', '--store-name', name, '--fixture', fixture])
+    assert.equal(result.status, 2)
+    assert.equal(result.stdout, '')
+    assert.equal(result.stderr, `error: invalid store name\n${usage}\n`)
+  }
+})
+
+test('fixture and argument errors cannot echo email addresses in caller input', (t) => {
+  const email = 'private@example.test'
+  const base = [...command, '--epic', 'rw-cn1', '--store-name', 'rw']
+  for (const [args, status, headline] of [
+    [[...base, '--fixture', join(tempDir(t), email)], 1, 'cannot read the fixture file'],
+    [['trackers', email], 2, 'unknown tracker'],
+    [['trackers', 'beads', email], 2, 'unknown beads command'],
+    [[...base, '--fixture', fixture, `--${email}`], 2, 'invalid arguments'],
+  ] as const) {
+    const result = run(args)
+    assert.equal(result.status, status)
+    assert.equal(result.stdout, '')
+    assert.doesNotMatch(result.stderr, /@/)
+    assert.equal(result.stderr, `error: ${headline}\n${status === 2 ? `${usage}\n` : ''}`)
+  }
 })
 
 function storeHashes(dir: string) {

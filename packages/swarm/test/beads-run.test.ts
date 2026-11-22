@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -31,7 +32,7 @@ printf 'end\\n' >> "$log"
     t.after(() => run.close())
     return run
   }
-  return { dir, runner, log: () => readFileSync(log, 'utf8') }
+  return { dir, bin, runner, log: () => readFileSync(log, 'utf8') }
 }
 
 test('refused verbs, flags and ids cannot spawn bd', async (t) => {
@@ -50,29 +51,42 @@ test('refused verbs, flags and ids cannot spawn bd', async (t) => {
   }
 })
 
-test('bd cannot lose read-only flags, run in the wrong cwd or inherit the parent environment', async (t) => {
-  const fake = fakeBd(t)
-  for (const name of ['BEADS_DOLT_PASSWORD', 'BEADS_DIR', 'GITHUB_TOKEN', 'NODE_V8_COVERAGE']) {
-    const before = process.env[name]
-    t.after(() => { if (before === undefined) delete process.env[name]; else process.env[name] = before })
-    process.env[name] = join(fake.dir, 'not-for-bd')
-  }
-  const run = fake.runner()
+test('bd cannot lose read-only flags, run in the wrong cwd or inherit the parent environment', (t) => {
+  const fake = fakeBd(t, '[ -d "$HOME" ] || exit 4\nprintf "[]\\n"')
   const verbs = ['list', 'ready', 'blocked']
-  for (const verb of verbs) assert.equal(await run([verb, '--json']), '[]\n')
+  const module = new URL('../src/trackers/beads/run.ts', import.meta.url).href
+  const sentinel = join(fake.dir, 'not-for-bd')
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { bdRunner } from ${JSON.stringify(module)}
+    const run = bdRunner({ dir: process.argv[1], bin: process.argv[2] })
+    try {
+      const outputs = []
+      for (const verb of process.argv.slice(3)) outputs.push(await run([verb, '--json']))
+      console.log(JSON.stringify(outputs))
+    } finally {
+      await run.close()
+    }
+  `, fake.dir, fake.bin, ...verbs], {
+    encoding: 'utf8', timeout: 30_000,
+    env: {
+      PATH: '/usr/bin:/bin', HOME: sentinel, BEADS_DOLT_PASSWORD: sentinel,
+      BEADS_DIR: sentinel, GITHUB_TOKEN: sentinel, NODE_V8_COVERAGE: sentinel,
+    },
+  })
+  if (child.error) throw child.error
+  assert.equal(child.status, 0, child.stderr)
+  assert.deepEqual(JSON.parse(child.stdout), ['[]\n', '[]\n', '[]\n'])
   const calls = fake.log().split(/^end\n/m).slice(0, -1)
   assert.equal(calls.length, 3)
-  const homes = calls.map((call, i) => {
+  for (const [i, call] of calls.entries()) {
     assert.deepEqual(call.match(/^arg:.+$/gm), ['arg:--readonly', 'arg:--sandbox', `arg:${verbs[i]}`, 'arg:--json'])
     assert.equal(/^cwd:(.+)$/m.exec(call)?.[1], fake.dir)
     assert.deepEqual(call.match(/^env:.+$/gm)?.sort(), ['env:BD_NON_INTERACTIVE', 'env:HOME', 'env:NO_COLOR', 'env:PATH'])
     const home = /^home:(.+)$/m.exec(call)?.[1]
-    assert.ok(home && existsSync(home), 'bd did not get an existing HOME')
-    assert.notEqual(home, process.env.HOME)
-    return home
-  })
-  await run.close()
-  for (const home of homes) assert.equal(existsSync(home), false, 'close left bd HOME behind')
+    assert.ok(home, 'bd did not get a HOME')
+    assert.notEqual(home, sentinel)
+    assert.equal(existsSync(home), false, 'close left bd HOME behind')
+  }
 })
 
 test('concurrent calls cannot overlap bd processes', async (t) => {
@@ -89,6 +103,13 @@ test('bd cannot discover a parent store or accept a relative store', async (t) =
   for (const dir of [child, relative(process.cwd(), fake.dir)]) {
     await assert.rejects(fake.runner(dir)(['list']), { message: 'no .beads in the store directory' })
   }
+  assert.equal(fake.log(), '')
+})
+
+test('bd cannot spawn when the store redirects to another store', async (t) => {
+  const fake = fakeBd(t)
+  writeFileSync(join(fake.dir, '.beads', 'redirect'), '../other/.beads\n')
+  await assert.rejects(fake.runner()(['list']), { message: 'the store directory redirects to another store' })
   assert.equal(fake.log(), '')
 })
 
