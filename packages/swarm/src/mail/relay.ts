@@ -42,7 +42,7 @@ export function createRelay({ source, boards, now }: RelayOptions) {
 
   async function reject(root: MailRoot, reason: string) {
     // Write the reason before the terminal state so a retry can finish either write.
-    await source.board.reply(root.id, { id: `rejection:${root.id}:${reason}`, text: reason })
+    await source.board.reply(root.id, { id: `rejection:${root.id}:${reason}`, text: reason, noSync: true })
     return await setState(root, rejected) ? 'rejected' : 'pending'
   }
 
@@ -96,7 +96,7 @@ export function createRelay({ source, boards, now }: RelayOptions) {
           const { landed, result } = await reconcile(board, entry, at)
           if (landed) {
             await source.board.reply(root.id, {
-              id: `delivery:${root.id}`, text: `delivered to ${name}/${channel}: ${landed.id}`,
+              id: `delivery:${root.id}`, text: `delivered to ${name}/${channel}: ${landed.id}`, noSync: true,
             })
             report[await setState(root, forwarded) ? 'delivered' : 'pending']++
           } else if (result === 'id_collision') {

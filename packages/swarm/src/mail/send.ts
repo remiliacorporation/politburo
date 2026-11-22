@@ -21,20 +21,25 @@ export function mailBlock({ blocks }: Pick<MailRoot, 'blocks'>) {
 
 export function matchesMailBlock(root: Pick<MailRoot, 'blocks'>, message: MailMessage) {
   const entry = mailBlock(root)
-  const entries = Object.entries(message)
-  return entry !== undefined && Object.keys(entry.data).length === entries.length &&
-    entries.every(([key, value]) => entry.data[key] === value)
+  return entry !== undefined && samePayload(message, entry.data)
 }
 
 export async function postMail(
   board: Pick<Board, 'post'>, channel: string, message: MailMessage, id: string, labels?: Record<string, string>,
 ) {
-  const landed = await board.post(channel, { id, text: block(MAIL_SCHEMA, message), ...(labels && { labels }) }).catch((error: unknown) => {
+  const landed = await board.post(channel, {
+    id, text: block(MAIL_SCHEMA, message), noSync: true, ...(labels && { labels }),
+  }).catch((error: unknown) => {
     if (boardConflict(error, 'duplicate_id')) throw new MailError('id_collision')
     throw error
   })
   if (!matchesMailBlock(landed, message)) throw new MailError('id_collision')
   return landed
+}
+
+export function samePayload(message: MailMessage, data: Record<string, unknown>) {
+  const entries = Object.entries(message)
+  return Object.keys(data).length === entries.length && entries.every(([key, value]) => data[key] === value)
 }
 
 export function boardConflict(error: unknown, code: string) {
