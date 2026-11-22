@@ -127,7 +127,7 @@ export async function serveBoard(options: ServeOptions): Promise<{ tunnelUrl?: s
     }
     const headers = new Headers()
     for (const [key, value] of Object.entries(req.headers)) {
-      if ([assertion, 'authorization', 'cookie', 'tailscale-user-login'].includes(key)) continue
+      if ([assertion, 'authorization', 'cookie', 'tailscale-user-login', 'x-board-profile'].includes(key)) continue
       if (typeof value === 'string') headers.set(key, value)
       else if (value) for (const item of value) headers.append(key, item)
     }
