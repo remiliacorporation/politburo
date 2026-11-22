@@ -54,11 +54,17 @@ export async function checkCaps(
   return atCap('open_claims_per_repo', open) ?? atCap('uncommitted_claims_per_repo', uncommitted)
 }
 
-export async function claimStatus(board: Board, channel: string, party: string, now: () => number, actor?: string): Promise<ClaimStatus[]> {
+export async function claimStatus(board: Board, channel: string, party: string, config: ClaimsConfig, now: () => number, actor?: string): Promise<ClaimStatus[]> {
   const rows: ClaimStatus[] = []
-  for await (const task of recordThreads(board, channel, { 'swarm.party': party })) {
+  const labels = { 'swarm.party': party }
+  const at = now()
+  const openThreads = recordThreads(board, channel, { ...labels, 'swarm.state': 'open' })
+  const dockThreads = recordThreads(board, channel, { ...labels, 'swarm.kind': 'dock' }, at - config.reclaim_cooldown_minutes * 60_000)
+  const seen = new Set<string>()
+  async function scan(task: string) {
+    if (seen.has(task)) return
+    seen.add(task)
     const { message, entries } = await readHistory(board, task, party, actor)
-    const at = now()
     const until = cooldown(entries)
     const cooldownUntil = until !== null && until > at ? until : null
     const open = entries.find((entry) => isOpen(entry) && entry.data.epoch === message.task?.epoch && liveClaim(message, entry.message.by.actor, at))
@@ -69,5 +75,7 @@ export async function claimStatus(board: Board, channel: string, party: string, 
       rows.push({ task, party, state: 'cooling', cooldownUntil })
     }
   }
+  for await (const task of openThreads) await scan(task)
+  for await (const task of dockThreads) await scan(task)
   return rows
 }
