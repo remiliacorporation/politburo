@@ -239,6 +239,9 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
 .feed-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
 .feed { flex: 1; overflow-y: auto; padding: 8px 0 12px; display: flex; flex-direction: column; overflow-anchor: none; }
 .feed > div { margin-top: auto; }
+/* Anchor to messages when thread facts change. Channel feeds restore prepended pages in JS. */
+.feed:has(> .feed-header) { overflow-anchor: auto; }
+.feed > .feed-header { margin-top: 0; flex: none; overflow-anchor: none; }
 .jump {
   position: absolute;
   bottom: 12px;
@@ -598,7 +601,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .need-state.completed { color: var(--muted); }
 .need-state.failed { color: var(--red); }
 
-/* The task in full, under the thread's header: it's part of the header, so the hairline goes under it. */
+/* The task in full, at the top of the thread feed. */
 .task-card { flex-shrink: 0; display: grid; gap: 10px; padding: 12px 20px; font-size: 12px; }
 .task-head { color: var(--dim); }
 .task-head .task-state { font-size: 13px; font-weight: 600; }

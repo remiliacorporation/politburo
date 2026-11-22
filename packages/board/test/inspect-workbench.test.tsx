@@ -175,35 +175,40 @@ it('shows a grouped message time relatively with its local timestamp on hover', 
   })
 })
 
-it('fills reserved task-card commit facts with short hashes on a live handoff', async () => {
+it('shows commit facts in the thread feed only when there is a commit', async () => {
   const { client, open } = await workbench()
   const baseCommit = 'abcdef0123456789abcd'.repeat(2)
   const handoffCommit = 'fedcba9876543210fedc'.repeat(2)
   const actor = { principal: 'vercel:user:u_reader', actor: 'vercel:user:u_reader' }
   const { task } = await client.tasks.create('work', 'Review the packet')
+  await client.reply(task.id, 'Reply to keep in view')
+  await open(`/?thread=${task.id}`)
+  const feed = () => document.querySelector('.pane .feed')
+  const card = () => document.querySelector('.pane .task-card')
+  const fact = (label: string) => [...(card()?.querySelectorAll('dt') ?? [])].find((el) => el.textContent === label)
+  const expectCommit = (label: string, hash: string, short: string) => {
+    const row = fact(label)?.nextElementSibling
+    expect(feed()?.contains(row ?? null), `${label} inside thread feed`).toBe(true)
+    expect(row?.textContent, label).toBe(short)
+    expect(row?.querySelector(`[title="${hash}"]`)?.textContent).toBe(short)
+  }
+  await vi.waitFor(() => {
+    expect(feed()?.textContent).toContain('Reply to keep in view')
+    expect(fact('owner')).toBeDefined()
+    expect(fact('base commit')).toBeUndefined()
+    expect(fact('handoff commit')).toBeUndefined()
+    expect(feed()?.contains(card() ?? null), 'task card inside thread feed').toBe(true)
+  })
   const claim = await client.tasks.claim(task.id, { binding: {
     controller: actor, owner: actor, provider: 'fixture', model: 'fixture', session: 'review',
     branch: 'work/review', worktree: '/fixture/review', baseCommit,
   } })
-  await client.reply(task.id, 'Reply to keep in view')
-  await open(`/?thread=${task.id}`)
-  const facts = () => [...document.querySelectorAll('.pane .task-card dt')]
-  const fact = (label: string) => facts().find((el) => el.textContent === label)?.nextElementSibling
-  const expectCommit = (label: string, hash: string, short: string) => {
-    const row = fact(label)
-    expect(row?.textContent, label).toBe(short)
-    expect(row?.querySelector(`[title="${hash}"]`)?.textContent).toBe(short)
-  }
-  const before = await vi.waitFor(() => {
-    expect(document.querySelector('.pane .feed')?.textContent).toContain('Reply to keep in view')
+  await vi.waitFor(() => {
     expectCommit('base commit', baseCommit, 'abcdef0')
-    return facts().map((el) => el.textContent)
+    expect(fact('handoff commit')).toBeUndefined()
   })
   await claim.handoff({ commit: handoffCommit, packetPath: 'handoffs/review.md', sha256: 'd'.repeat(64) })
-  await vi.waitFor(() => {
-    expectCommit('handoff commit', handoffCommit, 'fedcba9')
-    expect(facts().map((el) => el.textContent)).toEqual(before)
-  })
+  await vi.waitFor(() => expectCommit('handoff commit', handoffCommit, 'fedcba9'))
 })
 
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {

@@ -14,10 +14,14 @@ export function Feed(props: {
   /** The last thing shown, as a key: when it changes, something new came in below. */
   last: string
   older?: () => Promise<boolean>
+  /** Thread facts scroll with the messages but stay at the top of a short feed. */
+  header?: ReactNode
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const header = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
+  const hasHeader = props.header != null
   const pinned = useRef(true)
   const restore = useRef<{ height: number; top: number } | null>(null)
   const loading = useRef(false)
@@ -57,10 +61,10 @@ export function Feed(props: {
       if (pinned.current && !restore.current) ref.current!.scrollTop = ref.current!.scrollHeight
     })
     observer.observe(content.current!)
-    // And the list itself: what sits above a thread comes and goes.
+    if (header.current) observer.observe(header.current)
     observer.observe(ref.current!)
     return () => observer.disconnect()
-  }, [])
+  }, [hasHeader])
 
   return (
     <div className="feed-wrap">
@@ -69,7 +73,9 @@ export function Feed(props: {
         ref={ref}
         onScroll={() => {
           const el = ref.current!
-          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+          const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+          // A thread reader who scrolled up even a little relies on native anchoring, not a jump to the end.
+          pinned.current = hasHeader ? remaining <= 1 : remaining < 48
           el.toggleAttribute('data-pinned', pinned.current)
           if (pinned.current) setBehind(false)
           if (el.scrollTop < 240 && props.older && !loading.current && !done.current) {
@@ -87,6 +93,7 @@ export function Feed(props: {
           }
         }}
       >
+        {hasHeader && <div className="feed-header" ref={header}>{props.header}</div>}
         <div ref={content}>{props.children}</div>
       </div>
       {behind && (

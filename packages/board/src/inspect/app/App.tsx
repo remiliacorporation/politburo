@@ -515,44 +515,50 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
         </button>
       </Header>
       <div className="view-body">
-      {t && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
-      {(synced.length > 0 || scheduled.length > 0) && (
-        <dl className="facts thread-facts" {...nativeMenu}>
-          {synced.length > 0 && (
-            <>
-              <dt>synced</dt>
-              <dd className="copies">
-                {synced.map((copy) => (
-                  <span key={copy.target}>
-                    {copy.url ? (
-                      <a href={copy.url} target="_blank" rel="noreferrer" className="text-link">
-                        {copy.target}
-                      </a>
-                    ) : (
-                      copy.target
+      <Feed
+        scope={`thread:${id}`}
+        first={id}
+        last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}
+        header={<>
+          {t && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
+          {(synced.length > 0 || scheduled.length > 0) && (
+            <dl className="facts thread-facts" {...nativeMenu}>
+              {synced.length > 0 && (
+                <>
+                  <dt>synced</dt>
+                  <dd className="copies">
+                    {synced.map((copy) => (
+                      <span key={copy.target}>
+                        {copy.url ? (
+                          <a href={copy.url} target="_blank" rel="noreferrer" className="text-link">
+                            {copy.target}
+                          </a>
+                        ) : (
+                          copy.target
+                        )}
+                        {copy.undelivered && <span className="error-text"> didn't arrive: {copy.undelivered}</span>}
+                      </span>
+                    ))}
+                  </dd>
+                </>
+              )}
+              {scheduled.map((schedule) => (
+                <div key={schedule.id} className="fact">
+                  <dt>later</dt>
+                  <dd>
+                    {schedule.next && <RelativeTime iso={schedule.next}>{until(schedule.next, props.now)}</RelativeTime>} · {cadence(schedule)} · {firstLine(schedule.text)}{' '}
+                    {mayCancelSchedule(viewer, schedule) && (
+                      <button className="clear" onClick={() => void board.cancelSchedule(schedule.id)}>
+                        cancel
+                      </button>
                     )}
-                    {copy.undelivered && <span className="error-text"> didn't arrive: {copy.undelivered}</span>}
-                  </span>
-                ))}
-              </dd>
-            </>
+                  </dd>
+                </div>
+              ))}
+            </dl>
           )}
-          {scheduled.map((schedule) => (
-            <div key={schedule.id} className="fact">
-              <dt>later</dt>
-              <dd>
-                {schedule.next && <RelativeTime iso={schedule.next}>{until(schedule.next, props.now)}</RelativeTime>} · {cadence(schedule)} · {firstLine(schedule.text)}{' '}
-                {mayCancelSchedule(viewer, schedule) && (
-                  <button className="clear" onClick={() => void board.cancelSchedule(schedule.id)}>
-                    cancel
-                  </button>
-                )}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
+        </>}
+      >
         {!t ? (
           <p className="empty">{missing ? 'no such thread' : 'loading…'}</p>
         ) : (
