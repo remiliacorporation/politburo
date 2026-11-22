@@ -640,11 +640,18 @@ async function appendWhile(ctx: WriteContext, holds: () => Promise<number>, even
  * nothing.
  */
 export async function appendFrom(ctx: WriteContext, look: (now: number) => Promise<{ position: number; events: Events }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+  let retry = false
   return whileHeadMoves(async () => {
     await ctx.reads.ensure()
-    ctx.writer.beginDecision()
+    ctx.writer.beginDecision(retry)
+    retry = true
     const { position, events } = await look(ctx.writer.time())
-    return events.length === 0 ? [] : appendIfLast(ctx.session, position, events).catch((error: unknown) => { throw appendRefusal(error) })
+    if (events.length === 0) return []
+    const append = () => appendIfLast(ctx.session, position, events)
+    // Task decisions and pause can race across transport; the native append
+    // rejoins the FIFO and tests the head before landing either decision.
+    const result = events.some(({ type }) => type.startsWith('task.')) ? ctx.writer.outside(append) : append()
+    return result.catch((error: unknown) => { throw appendRefusal(error) })
   })
 }
 

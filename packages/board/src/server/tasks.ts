@@ -477,10 +477,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   }
 
   /** Every root that wears `board.task` as one of `states` and matches `filter`, oldest first, all as of `position`. */
-  async function* rootsAt(filter: MessageFilter, states: readonly TaskState[], position: number): AsyncGenerator<Root> {
+  async function* rootsAt(filter: MessageFilter, states: readonly TaskState[], position: number, staged = false): AsyncGenerator<Root> {
     const labels = [...(filter.labels ?? []), { key: TASK_LABEL, values: states }]
+    const ctx = writes()
     for (let after = 0; ; ) {
-      const page = await writes().reads.tables.roots({ ...filter, labels }, { after, limit: PAGE })
+      const load = () => ctx.reads.tables.roots({ ...filter, labels }, { after, limit: PAGE })
+      const page = await (staged ? ctx.writer.outside(load) : load())
       // A page that reflects a later index than the write looked at: the board moved on, and it looks again.
       if (page.position !== position) throw movedOn()
       for (const { root } of page.threads) if (root.task) yield root as Root
@@ -555,7 +557,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       let root: Root | null = null
       let best = -1
       let bestAssigned = false
-      for await (const candidate of rootsAt(filter, ['ready', 'claimed'], position)) {
+      for await (const candidate of rootsAt(filter, ['ready', 'claimed'], position, true)) {
         const { task } = candidate
         if (task.parked || stateNow(task, now, pauseEpoch) !== 'ready') continue
         const assigned = assignedTo(task, identity)
@@ -567,6 +569,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         bestAssigned = assigned
         if (bestAssigned && best === TaskPriority.options.length - 1) break
       }
+      // Selection may have waited on a page from before a pause (including a pause and resume).
+      await openAt(undefined, pauseEpoch)
       // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }
       const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding, now)

@@ -31,7 +31,7 @@ import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
 import { createTasks, taskLimits } from './tasks.ts'
 import { createOperationalInbox } from './operational-inbox.ts'
-import { wallTime, writerFor } from '../store/single-writer.ts'
+import { AccessMoved, appendRefusal, wallTime, writerFor } from '../store/single-writer.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
 import { ack, pull, pullInbox, type QueueSession } from './registered.ts'
@@ -230,6 +230,13 @@ const alreadyReceived = (error: unknown) => {
 }
 
 /** Everything behind a board on the engine, built once board() binds it. Nothing in it connects until it's used. */
+function refuseMovedAccess(error: unknown): never {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if (cause instanceof AccessMoved) throw new HttpError(409, 'access_changed', cause.message)
+  }
+  throw appendRefusal(error)
+}
+
 function build(options: A2Options, binding: BoardBinding) {
   const blob = options.blob ?? null
   const { store } = options
@@ -326,7 +333,7 @@ function build(options: A2Options, binding: BoardBinding) {
       const { status, index } = await work.at()
       if (status.paused === paused) return publicStatus(status)
       const pauseEpoch = status.pauseEpoch + (paused ? 1 : 0)
-      const rows = await session.append.ifLastIndex(index, { type: 'work.control', payload: { paused, pauseEpoch, reason, by: author } })
+      const rows = await writer.outside(() => session.append.ifLastIndex(index, { type: 'work.control', payload: { paused, pauseEpoch, reason, by: author } }))
       await untilApplied(writes, rows)
       return { paused, pauseEpoch }
     })
@@ -801,7 +808,7 @@ function build(options: A2Options, binding: BoardBinding) {
       taskLimits.from(body.from)
       const identity = await boundClaimIdentity(caller, body)
       return tasks.claimReady(identity, body, signal, (tryClaim) =>
-        writer.run(async (now) => tryClaim(await identityOf(await currentCaller(caller, now)))),
+        writer.run(async (now) => tryClaim(await identityOf(await currentCaller(caller, now)))).catch(refuseMovedAccess),
       )
     },
     async claimTask(caller, body) {
@@ -1565,6 +1572,7 @@ export function a2(options: A2Options) {
         caller = { ...caller, origin: { ...caller.origin, claimEpoch: status.pauseEpoch } }
       }
       return ran.writer.run(async (now) => invoke(await ran.currentCaller(caller, now), input, signal))
+        .catch(refuseMovedAccess)
     }]),
   ) as unknown as ProtocolMethods
   const backend = {

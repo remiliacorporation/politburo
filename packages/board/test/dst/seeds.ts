@@ -8,9 +8,10 @@ function integer(name: string, value: string, min: number) {
 }
 
 export function seeds(defaultCount = 100) {
-  const { DST_SEED, DST_SEEDS } = process.env
-  return DST_SEED !== undefined ? [integer('DST_SEED', DST_SEED, 0)]
-    : Array.from({ length: integer('DST_SEEDS', DST_SEEDS ?? String(defaultCount), 1) }, (_, seed) => seed)
+  const { DST_SEED, DST_SEEDS, DST_SEED_START } = process.env
+  if (DST_SEED !== undefined) return [integer('DST_SEED', DST_SEED, 0)]
+  const start = integer('DST_SEED_START', DST_SEED_START ?? '0', 0)
+  return Array.from({ length: integer('DST_SEEDS', DST_SEEDS ?? String(defaultCount), 1) }, (_, seed) => start + seed)
 }
 
 export type Run = { violations: string[]; trace: string[] }

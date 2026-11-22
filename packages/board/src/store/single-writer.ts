@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { A2Store, Clock } from 'experimental-a2/server'
+import { accessContract, ACCESS_SESSION } from '../contract/contract.ts'
+
+const accessLog = `${accessContract.name}\u001f${ACCESS_SESSION}`
+
+export class AccessMoved extends Error {}
 
 /** Read through Date at call time, including when the simulation replaces it. */
 export const wallTime = () => Date.now()
@@ -16,43 +21,85 @@ export function appendRefusal(error: unknown): unknown {
 
 export function singleWriter() {
   type Check = (at: number) => void
-  const owner = new AsyncLocalStorage<{ active: boolean; now: number; checks: Check[] }>()
+  type Turn = {
+    active: boolean
+    now: number
+    checks: Check[]
+    release: (() => void) | undefined
+    suspendedAt: number | undefined
+  }
+  const owner = new AsyncLocalStorage<Turn>()
   const committing = new AsyncLocalStorage<readonly Check[]>()
   let tail = Promise.resolve()
-  async function section<T>(write: (now: number) => Promise<T>): Promise<T> {
-    const current = { active: true, now: wallTime(), checks: [] as Check[] }
+  let accessVersion = 0
+  let guarded = false
+
+  async function acquire() {
+    const previous = tail
+    const turn = Promise.withResolvers<void>()
+    tail = turn.promise
+    await previous
+    return () => turn.resolve()
+  }
+
+  async function resume(current: Turn) {
+    if (current.suspendedAt === undefined) return
+    current.release = await acquire()
+    const expected = current.suspendedAt
+    current.suspendedAt = undefined
+    if (expected !== accessVersion) throw new AccessMoved('board access changed while a write was pending')
+  }
+
+  async function section<T>(write: (now: number) => Promise<T>, release?: () => void): Promise<T> {
+    const current: Turn = { active: true, now: wallTime(), checks: [], release, suspendedAt: undefined }
     try {
       return await owner.run(current, () => write(current.now))
     } finally {
       current.active = false
+      current.release?.()
     }
   }
   async function run<T>(write: (now: number) => Promise<T>): Promise<T> {
     // An awaited nested write cannot wait for its parent. It samples its own time.
     // Detached work that outlives the owner has to acquire its own turn.
-    if (owner.getStore()?.active) return section(write)
-    const previous = tail
-    const turn = Promise.withResolvers<void>()
-    tail = turn.promise
-    await previous
-    try {
-      return await section(write)
-    } finally {
-      turn.resolve()
-    }
+    const parent = owner.getStore()
+    return parent?.active && parent.suspendedAt === undefined ? section(write) : section(write, await acquire())
   }
   return {
     run,
-    beginDecision() {
-      owner.getStore()?.checks.splice(0)
+    beginDecision(retry: boolean) {
+      const current = owner.getStore()
+      if (!current) return
+      current.checks.length = 0
+      if (retry) current.now = wallTime()
     },
     beforeCommit(check: Check) {
       owner.getStore()?.checks.push(check)
     },
-    /** Bind checks only while the actual store append is taking its insertion timestamp. */
-    guardAppend<T>(append: () => Promise<T>) {
-      return committing.run(owner.getStore()?.checks.slice() ?? [], append)
+    /** Let versioned reads and conditional append adapters wait without owning the FIFO. */
+    async outside<T>(io: () => Promise<T>): Promise<T> {
+      const current = owner.getStore()
+      // A nested write does not own the enclosing turn, and an unguarded store
+      // has no hook to reacquire the turn before it inserts.
+      if (!guarded || !current?.active || !current.release) return io()
+      current.suspendedAt = accessVersion
+      current.release()
+      current.release = undefined
+      try {
+        return await io()
+      } finally {
+        await resume(current)
+      }
     },
+    /** Rejoin the FIFO before the actual conditional insert, below any delaying adapter. */
+    async guardAppend<T>(append: () => Promise<T>, access = false): Promise<T> {
+      const current = owner.getStore()
+      if (current?.active) await resume(current)
+      const result = await committing.run(current?.checks.slice() ?? [], append)
+      if (access) accessVersion++
+      return result
+    },
+    installGuard() { guarded = true },
     clock(clock?: Clock): Clock {
       return { now: () => {
         const date = clock?.now() ?? new Date(wallTime())
@@ -90,6 +137,7 @@ export function guardedLog<T extends A2Store>(open: (clock: Clock) => T, clock?:
   const log = open(writer.clock(clock))
   writers.set(log, writer)
   const append = log.append.bind(log)
-  log.append = (...args) => writer.guardAppend(() => append(...args))
+  writer.installGuard()
+  log.append = (...args) => writer.guardAppend(() => append(...args), args[0] === accessLog)
   return log
 }

@@ -6,9 +6,10 @@ DST_EXPECT=e1 DST_SEED=0 pnpm --filter @vercel/board exec vitest run test/dst/e1
 ```
 
 E1 runs seeds 0–199 by default; other experiments default to 0–99.
-`DST_SEED=<n>` picks just one seed. A failure lists the failing seeds and invariants,
-then prints the first failing trace. E1 still advances time at the append gate;
-queue waiters are marked blocked so the driver can release the writer. The
+`DST_SEED=<n>` picks just one seed. For a shard, `DST_SEED_START=<n>` sets the
+first seed and `DST_SEEDS` sets the count. A failure lists the failing seeds and
+invariants, then prints the first failing trace. E1 still advances time at the
+append gate; queue waiters are marked blocked so the driver can release the writer. The
 mutation and replay tests use fixed seeds.
 
 | Experiment | Default on main | To run on another checkout |
