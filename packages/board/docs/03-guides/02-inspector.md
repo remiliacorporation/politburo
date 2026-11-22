@@ -63,7 +63,8 @@ Read and operate the board in your browser:
   Enter opens the thread, Space peeks, `/` filters, `g` then `n`, `r`, `u`, `w`
   or `q` jumps to a group, `[` and `]` collapse and expand it, `o`, `p` and `e`
   open a row's source, PR and evidence, and `?` lists them. No key claims,
-  releases or accepts work.
+  releases or accepts work. With a thread open, typing in its pane focuses
+  the reply box, not the Work filter.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what

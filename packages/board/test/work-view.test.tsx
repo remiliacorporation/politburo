@@ -246,6 +246,38 @@ it('leaves typing and modified keys alone but lets bare shortcuts navigate visib
   })
 })
 
+it('focuses the Work filter when typing on the body and the reply composer when typing in an open thread', async () => {
+  const { create, open } = await workBoard()
+  const { task } = await create(1, 'Check the build')
+  await open()
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(['Check the build'])
+    expect(field()).not.toBeNull()
+  })
+
+  expect(param('thread')).toBeNull()
+  flushSync(() => (document.activeElement as HTMLElement).blur())
+  expect(document.activeElement).toBe(document.body)
+  press('a')
+  expect(document.activeElement).toBe(field())
+
+  taskLinks()[0]!.click()
+  const { heading, reply } = await vi.waitFor(() => {
+    const pane = document.querySelector('aside[aria-label="Thread"]')
+    const heading = pane?.querySelector('h1')
+    const reply = pane?.querySelector('textarea[placeholder="reply to thread…"]')
+    expect(param('thread')).toBe(task.id)
+    expect(heading?.textContent).toBe('task')
+    expect(reply).toBeTruthy()
+    return { heading: heading!, reply: reply! }
+  })
+
+  flushSync(() => heading.focus())
+  expect(document.activeElement).toBe(heading)
+  press('a')
+  expect(document.activeElement).toBe(reply)
+})
+
 it('jumps to queue groups and hides a collapsed group without removing its work', async () => {
   const { create, open } = await workBoard()
   await create('plb-1', 'Answer request')

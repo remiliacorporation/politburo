@@ -139,11 +139,14 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   const peeked = peekId === null ? undefined : rowsById.get(peekId)
   const focusQueueRow = (id: string) => list.current?.querySelector<HTMLElement>(queueRow(id))?.focus()
   const queueHeading = (group: WorkGroup | 'queue') => list.current?.querySelector<HTMLElement>(`#work-queue-${group}`)
-  const onKey = useEffectEvent((event: KeyboardEvent) => {
-    const target = event.target instanceof Element ? event.target : document.activeElement
+  const onKey = (event: KeyboardEvent, target: Element | null) => {
+    const inList = list.current?.contains(target)
+    const onBody = target === document.body && thread === null
+    // Peek keeps its dismissal keys, but doesn't take over the list's keyboard map.
+    const dismissPeek = pane.current?.contains(target) && (event.key === 'Escape' || event.key === ' ')
     const typing = isTypingTarget(target)
     const prefix = pending.current
-    if (typing || event.defaultPrevented || event.isComposing || list.current?.closest('[inert]') ||
+    if ((!inList && !onBody && !dismissPeek) || typing || event.defaultPrevented || event.isComposing || list.current?.closest('[inert]') ||
         target?.closest('[role="menu"], [role="dialog"], [role="listbox"], [inert]')) {
       pending.current = null
       return
@@ -152,13 +155,13 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
     pending.current = action?.type === 'prefix' ? action.key : null
     if (!action) {
       // Like useTypeToFocus, let the browser deliver the printable key to the newly focused field.
-      if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) field.current?.focus()
+      if (thread === null && !event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) field.current?.focus()
       return
     }
     // Keep native control activation, and let Escape close a foreground thread.
     if ((action.type === 'thread' && target?.closest('a, button, [role="button"]')) ||
         (action.type === 'peek' && target?.closest('button, [role="button"]')) ||
-        (action.type === 'escape' && thread !== null && (target?.closest('.pane') || (peekId === null && selection === null)))) return
+        (action.type === 'escape' && thread !== null && peekId === null && selection === null)) return
     event.preventDefault()
     switch (action.type) {
       case 'move': {
@@ -209,9 +212,14 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
       }
       case 'help': if (!event.repeat) setHelp((open) => !open); break
     }
+  }
+  const onDocumentKey = useEffectEvent((event: KeyboardEvent) => {
+    const target = event.target instanceof Element ? event.target : document.activeElement
+    if (target === document.body) onKey(event, target)
+    else if (!list.current?.contains(target)) pending.current = null
   })
   useEffect(() => {
-    const listen = (event: KeyboardEvent) => onKey(event)
+    const listen = (event: KeyboardEvent) => onDocumentKey(event)
     document.addEventListener('keydown', listen)
     return () => document.removeEventListener('keydown', listen)
   }, [])
@@ -284,13 +292,14 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
           </>
         )}
         <p role="status">{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
-        <div className="work-layout">
+        {/* Handle list shortcuts before the document-level type-to-focus listener. */}
+        <div className="work-layout" onKeyDown={(event) => onKey(event.nativeEvent, event.target instanceof Element ? event.target : null)}>
           <div ref={list} tabIndex={-1} aria-label="Work board tasks" className="work-list"
             onFocus={(event) => {
               focused.current = event.target
               const key = rowKey(event.target)
               if (key) setSelection(key)
-              setFrozen(true)
+              if (event.target !== event.currentTarget) setFrozen(true)
             }}
             onBlur={(event) => {
               focused.current = null

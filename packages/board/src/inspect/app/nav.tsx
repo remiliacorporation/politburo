@@ -128,9 +128,8 @@ export function isTypingTarget(target: Element | null): boolean {
  * Typing anywhere that isn't a field focuses a composer, and the keystroke lands in it: the open
  * thread's when there is one, since that's what you're looking at, or else `composer`.
  */
-export function useTypeToFocus(composer: string, enabled = true) {
+export function useTypeToFocus(composer: string) {
   useEffect(() => {
-    if (!enabled) return
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
       const target = event.target instanceof Element ? event.target : document.activeElement
@@ -141,7 +140,7 @@ export function useTypeToFocus(composer: string, enabled = true) {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [composer, enabled])
+  }, [composer])
 }
 
 /**

@@ -201,12 +201,13 @@ export function App() {
       if (element && element.isConnected && element.getClientRects().length && !element.closest('[inert]')) element.focus({ preventScroll: true })
       else focus(fallback)
     }
+    const mainFocus = route(where.path).view === 'work' ? '.main .work-list' : '.main [data-view-title]'
     if (nav) focus('.sidebar')
     else if (old?.nav && old.path === where.path && old.thread === where.thread && narrow) {
       restore(navOpener.current, `${where.thread === null ? '.main' : '.pane'} .header [aria-label="Show sidebar"]`)
     } else if (where.thread !== null && (old?.thread !== where.thread || old.nav || (narrow && !root.querySelector('.pane')?.contains(document.activeElement)))) focus('.pane [data-view-title]')
-    else if (old?.path !== where.path || old.nav) focus('.main [data-view-title]')
-    else if (old.thread !== null && where.thread === null) restore(threadOpener.current, '.main [data-view-title]')
+    else if (old?.path !== where.path || old.nav) focus(mainFocus)
+    else if (old.thread !== null && where.thread === null) restore(threadOpener.current, mainFocus)
   }, [where.path, where.thread, nav, narrow, ready])
 
   // Served from an app, the page reads nothing until you've named who you post as.
@@ -352,8 +353,7 @@ export function App() {
           <aside className="pane" aria-label="Thread" inert={nav}>
             <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
             <HeaderActions.Provider value={paneIsFront ? headerActions : null}>
-              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known}
-                lead={narrow ? headerLead : null} focusComposer={current.view !== 'work' || narrow} />
+              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} lead={narrow ? headerLead : null} />
             </HeaderActions.Provider>
           </aside>
         )}
@@ -480,9 +480,9 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
   )
 }
 
-function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode; focusComposer: boolean }) {
+function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
   const { id, state, viewer } = props
-  useTypeToFocus('thread', props.focusComposer)
+  useTypeToFocus('thread')
   const identity = board.getIdentity()
   useEffect(() => board.openThreadPane(id), [id, identity])
   const read = state.paneThread?.id === id && state.paneThread.identity === identity ? state.paneThread.result : 'loading'
