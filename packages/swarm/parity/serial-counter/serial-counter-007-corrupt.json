@@ -1,0 +1,32 @@
+{
+  "case_id": "serial-counter-007-corrupt",
+  "description": "Reject a counter that is not an integer",
+  "expected": {
+    "directories": [],
+    "exit_code": 2,
+    "files": {
+      "mob-serial.txt": "example\n"
+    },
+    "log_lines": [],
+    "stderr": "mob-serial.txt: expected a non-negative integer of at most 63 digits\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "cli"
+  },
+  "matrix_row": "M13",
+  "notes": "The input is short enough to reach integer parsing.",
+  "setup": {
+    "files": {
+      "mob-serial.txt": "example\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}
