@@ -5,10 +5,11 @@ const usage = `usage: swarm rollout <add|notify|ack|stale|show> [--dir D] [--jso
   add --subject S --version V --audience a,b,c [--summary TEXT]
   notify|ack --subject S --version V --recipient R
   stale [--subject S] [--version V]
-  show [--subject S]
+  show [--subject S] [--version V]
   --dir defaults to SWARM_ROLLOUT_DIR; stale exits 0 even with stale recipients.
-  writes use a lock directory beside the ledger on a local filesystem.
-  a killed writer never leaves the ledger permanently locked.`
+  current means the latest added version, not the highest.
+  an ack records the recipient's own statement and does not require a notice.
+  a recipient who learned of a version elsewhere can be acked with null notifiedAt.`
 
 const options = {
   dir: { type: 'string' },
@@ -25,17 +26,20 @@ const fields = {
   notify: ['subject', 'version', 'recipient'],
   ack: ['subject', 'version', 'recipient'],
   stale: ['subject', 'version'],
-  show: ['subject'],
+  show: ['subject', 'version'],
 } satisfies Record<string, (keyof typeof options)[]>
+
+function escapeControls(text: string): string {
+  return text.replace(/[\p{Cc}\u2028\u2029]/gu, (char) =>
+    `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
+}
 
 function printFailure(message: string, code: 1 | 2, json: boolean): number {
   if (json) {
-    console.error(JSON.stringify({ status: 'error', reason: code === 2 ? 'misuse' : 'rollout_failed', message }))
+    console.error(escapeControls(JSON.stringify({ status: 'error', reason: code === 2 ? 'misuse' : 'rollout_failed', message })))
     return code
   }
-  const safe = message.replace(/[\p{Cc}\u2028\u2029]/gu, (char) =>
-    `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
-  console.error(`error: ${safe}`)
+  console.error(`error: ${escapeControls(message)}`)
   if (code === 2) console.error(usage)
   return code
 }
@@ -61,7 +65,7 @@ export function rolloutMain(args: string[]): number {
     if (flag !== 'dir' && flag !== 'json' && !allowed.includes(flag)) return fail(`unexpected --${flag}`, 2)
   }
   const dir = values.dir ?? process.env.SWARM_ROLLOUT_DIR
-  if (!dir) return fail('missing --dir or SWARM_ROLLOUT_DIR', 2)
+  if (!dir) return fail('missing --dir or SWARM_ROLLOUT_DIR', action === 'show' || action === 'stale' ? 1 : 2)
 
   const { subject, version, audience, summary, recipient, json } = values
   const ledger = openLedger(dir)
@@ -73,7 +77,7 @@ export function rolloutMain(args: string[]): number {
         for (const row of stale) console.log(`${row.subject}  ${row.version}  ${row.recipient}  ${row.state}`)
       })
     } else if (action === 'show') {
-      const entries = ledger.show({ subject })
+      const entries = ledger.show({ subject, version })
       output({ entries }, () => {
         for (const [index, entry] of entries.entries()) {
           if (index) console.log('')

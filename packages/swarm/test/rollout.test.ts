@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, watch, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -19,117 +19,105 @@ function fixture(t: TestContext) {
   return { dir, file, ledger, bytes: () => readFileSync(file) }
 }
 
-test('a dead owner pid blocks or delays a rollout write', async (t) => {
-  const { dir, ledger } = fixture(t)
-  const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
-  assert.ok(child.pid)
-  const lock = join(dir, '.rollout.lock')
-  mkdirSync(lock)
-  writeFileSync(join(lock, 'pid'), String(child.pid), { flag: 'wx' })
-  assert.deepEqual(await once(child, 'close'), [0, null])
-  const started = performance.now()
-  ledger.addEntry({ ...config, audience: ['pb'] })
-  assert.ok(performance.now() - started < 1_000, 'recovering a dead owner took more than 1 s')
-  assert.deepEqual(ledger.show().map(({ version }) => version), ['v2'])
-})
-
-async function holdWrite(t: TestContext, dir: string) {
-  const child = spawn(process.execPath, ['--input-type=module', '-e', `
-    import { writeSync } from 'node:fs'
+async function race(t: TestContext, values: string[], operation: string) {
+  const { dir: gate } = fixture(t)
+  const children = values.map((value) => spawn(process.execPath, ['--input-type=module', '-e', `
+    import { existsSync, writeSync } from 'node:fs'
     import { openLedger } from './src/rollout/ledger.ts'
-    openLedger(process.argv[1], { now: () => {
-      writeSync(1, 'locked\\n')
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000)
-      return new Date()
-    } }).addEntry({ subject: 'config', version: 'v2', audience: ['pb'] })
-  `, dir], { cwd, stdio: ['ignore', 'pipe', 'inherit'] })
-  t.after(() => { child.kill('SIGKILL') })
-  const closed = once(child, 'close')
-  await Promise.race([
-    once(child.stdout, 'data'),
-    closed.then(() => assert.fail('writer exited before reaching the append')),
-  ])
-  return { child, closed }
+    const [gate, value] = process.argv.slice(1)
+    const open = (dir, at) => openLedger(dir, { now: () => {
+      writeSync(1, 'ready\\n')
+      const pause = new Int32Array(new SharedArrayBuffer(4))
+      while (!existsSync(gate + '/go')) Atomics.wait(pause, 0, 0, 5)
+      return new Date(at)
+    } })
+    try { console.log(JSON.stringify(${operation})) }
+    catch (error) { console.error(error.message); process.exitCode = 1 }
+  `, gate, value], { cwd, stdio: ['ignore', 'pipe', 'pipe'] }))
+  t.after(() => { for (const child of children) child.kill() })
+  const exits = children.map((child) => once(child, 'close'))
+  const results = children.map(() => ({ stdout: '', stderr: '' }))
+  await Promise.all(children.map((child, i) => {
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { results[i]!.stdout += chunk })
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { results[i]!.stderr += chunk })
+    return Promise.race([once(child.stdout, 'data'), exits[i]!.then(() => assert.fail(results[i]!.stderr))])
+  }))
+  writeFileSync(join(gate, 'go'), '')
+  return (await Promise.all(exits)).map(([status, signal], i) => ({ status, signal, ...results[i]! }))
 }
 
-test('a writer SIGKILLed while holding the lock blocks the next write', { timeout: 15_000 }, async (t) => {
-  const { dir, ledger } = fixture(t)
-  const { child, closed } = await holdWrite(t, dir)
-  assert.ok(child.kill('SIGKILL'))
-  assert.deepEqual(await closed, [null, 'SIGKILL'])
-  assert.ok(existsSync(join(dir, '.rollout.lock')), 'killed writer did not leave a lock to recover')
-  assert.deepEqual(ledger.show(), [])
-  ledger.addEntry({ ...config, audience: ['ty'] })
-  assert.deepEqual(ledger.show().map(({ audience }) => audience), [['ty']])
-})
+function records(bytes: Buffer) {
+  return bytes.toString().trimEnd().split('\n').map((line) => JSON.parse(line))
+}
 
-test('a live writer lets a second CLI write through or fails without waiting or explaining why', { timeout: 20_000 }, async (t) => {
-  const { dir, ledger } = fixture(t)
-  const { child, closed } = await holdWrite(t, dir)
-  const started = performance.now()
-  const result = spawnSync(process.execPath, [
-    'src/cli.ts', 'rollout', 'add', '--dir', dir, '--subject', 'config', '--version', 'v2', '--audience', 'ty',
-  ], { cwd, encoding: 'utf8', timeout: 15_000 })
-  if (result.error) throw result.error
-  assert.equal(result.status, 1, result.stdout || result.stderr)
-  assert.equal(result.stdout, '')
-  assert.equal(result.stderr, 'error: rollout ledger is locked\n')
-  assert.ok(performance.now() - started >= 10_000, 'CLI did not wait 10 s for the lock')
-  assert.deepEqual(ledger.show(), [])
-  child.kill('SIGKILL')
-  assert.deepEqual(await closed, [null, 'SIGKILL'])
-})
-
-test('concurrent ack writers lose, tear, or duplicate records or leave the lock behind', { timeout: 30_000 }, async (t) => {
+test('20+20 concurrent ack writers lose or replace effective receipts, tear records, or create a lock', { timeout: 30_000 }, async (t) => {
   const { dir, ledger, bytes } = fixture(t)
+  const seen: (string | null)[] = []
+  const watcher = watch(dir, (_, name) => { seen.push(name) })
+  t.after(() => watcher.close())
   const distinct = Array.from({ length: 20 }, (_, i) => `tier-${i}`)
-  const acked = [...distinct, 'shared']
-  ledger.addEntry({ ...config, audience: [...acked, 'pb', 'ty'] })
+  ledger.addEntry({ ...config, audience: [...distinct, 'shared', 'pb', 'ty'] })
   ledger.notify({ ...config, recipient: 'pb' })
-  async function race(recipients: string[]) {
-    const children = recipients.map((recipient) => spawn(process.execPath, ['--input-type=module', '-e', `
-      import { openLedger } from './src/rollout/ledger.ts'
-      const [dir, recipient] = process.argv.slice(1)
-      process.stdout.write('ready\\n')
-      for await (const _ of process.stdin) {}
-      const ledger = openLedger(dir, { now: () => {
-        if (recipient === 'shared') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
-        return new Date()
-      } })
-      ledger.ack({ subject: 'config', version: 'v2', recipient })
-    `, dir, recipient], { cwd, stdio: ['pipe', 'pipe', 'inherit'] }))
-    t.after(() => { for (const child of children) child.kill() })
-    const exits = children.map((child) => once(child, 'close'))
-    await Promise.all(children.map((child, i) => Promise.race([
-      once(child.stdout, 'data'),
-      exits[i]!.then(() => assert.fail('ack writer exited before gate opened')),
-    ])))
-    for (const child of children) child.stdin.end()
-    for (const result of await Promise.all(exits)) assert.deepEqual(result, [0, null])
+  for (const recipients of [distinct, distinct.map(() => 'shared')]) {
+    const results = await race(t, recipients.map((r, i) => `${r},${i}`),
+      `open(${JSON.stringify(dir)}, Date.UTC(2026, 0, 2) + Number(value.split(',')[1])).ack({
+        ...${JSON.stringify(config)}, recipient: value.split(',')[0]
+      })`)
+    for (const result of results) assert.equal(result.status, 0, result.stderr)
+    const first = new Map(records(bytes()).reverse().filter(({ type }) => type === 'ack')
+      .map(({ recipient, at }) => [recipient, at]))
+    for (const { stdout } of results) {
+      const { recipient, at } = JSON.parse(stdout.split('\n')[1]!)
+      assert.equal(at, first.get(recipient), 'writer returned a non-effective ack')
+    }
+    assert.deepEqual(ledger.show()[0]?.recipients.filter(({ ackedAt }) => ackedAt !== null)
+      .map(({ recipient, ackedAt }) => [recipient, ackedAt]), [...new Set([...distinct, ...recipients])]
+      .map((recipient) => [recipient, first.get(recipient)]))
   }
-  await race(distinct)
-  await race(Array.from({ length: 20 }, () => 'shared'))
-
-  const records = bytes().toString().trimEnd().split('\n').map((line) => JSON.parse(line))
-  assert.equal(records.length, 23)
-  assert.deepEqual(records.filter(({ type }) => type === 'ack').map(({ recipient }) => recipient).sort(), acked.sort())
   assert.deepEqual(ledger.stale().map(({ recipient, state }) => [recipient, state]), [['pb', 'waiting'], ['ty', 'not notified']])
-  assert.equal(existsSync(join(dir, '.rollout.lock')), false, 'last writer left the lock directory behind')
+  assert.ok(!seen.includes('.rollout.lock') && !existsSync(join(dir, '.rollout.lock')), 'a lock directory was created')
 })
 
-test('a torn or garbage last line blocks reads or poisons the next append', (t) => {
-  for (const garbage of ['{"type":"ack","at":', 'garbage\n']) {
+test('racing adds with different audiences both succeed, or identical adds are not idempotent', { timeout: 15_000 }, async (t) => {
+  const { dir, ledger, bytes } = fixture(t)
+  for (const [version, audiences, expected] of [['v2', ['pb', 'ty'], [0, 1]], ['v1', ['pb', 'pb'], [0, 0]]] as const) {
+    const results = await race(t, [...audiences], `open(${JSON.stringify(dir)}, ${JSON.stringify(at)})
+      .addEntryWithOutcome({ subject: 'config', version: '${version}', audience: [value] })`)
+    assert.deepEqual(results.map(({ status }) => status).sort(), expected)
+    const winner = records(bytes()).find((record) => record.version === version)
+    assert.deepEqual(ledger.show()[0]?.audience, winner.audience)
+    const successes = results.filter(({ status }) => status === 0).map(({ stdout }) => JSON.parse(stdout.split('\n')[1]!))
+    assert.equal(successes.filter(({ added }) => added).length, 1)
+    for (const { entry } of successes) assert.deepEqual(entry.audience, winner.audience)
+    for (const { stderr } of results.filter(({ status }) => status === 1)) assert.equal(stderr, 'conflicting entry config v2\n')
+  }
+})
+
+test('a torn final line is folded or concurrent recovery rewrites bytes or poisons appends', async (t) => {
+  const { dir, file, ledger, bytes } = fixture(t)
+  ledger.addEntry({ ...config, audience: ['pb', 'ty'] })
+  appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }))
+  const damaged = bytes()
+  assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['pb', 'ty'])
+  assert.deepEqual(bytes(), damaged)
+  const results = await race(t, ['pb', 'ty'], `open(${JSON.stringify(dir)}, ${JSON.stringify(at)})
+    .notify({ ...${JSON.stringify(config)}, recipient: value })`)
+  for (const result of results) assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(bytes().subarray(0, damaged.length), damaged)
+  assert.deepEqual(ledger.stale().map(({ state }) => state), ['waiting', 'waiting'])
+  ledger.ack({ ...config, recipient: 'pb' })
+  assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['ty'])
+})
+
+test('a corrupt newline-terminated last line is ignored or a writer appends after it', (t) => {
+  for (const garbage of ['garbage\n', '{}\n']) {
     const { file, ledger, bytes } = fixture(t)
-    ledger.addEntry({ ...config, audience: ['pb', 'ty'] })
+    ledger.addEntry({ ...config, audience: ['pb'] })
     appendFileSync(file, garbage)
     const damaged = bytes()
-    assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['pb', 'ty'])
+    assert.throws(() => ledger.show(), /corrupt rollout ledger at line 2$/)
+    assert.throws(() => ledger.ack({ ...config, recipient: 'pb' }), /corrupt rollout ledger at line 2$/)
     assert.deepEqual(bytes(), damaged)
-    ledger.ack({ ...config, recipient: 'pb' })
-    assert.deepEqual(bytes().subarray(0, damaged.length), damaged)
-    assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['ty'])
-    ledger.notify({ ...config, recipient: 'ty' })
-    assert.equal(ledger.stale()[0]?.state, 'waiting')
   }
 })
 
@@ -163,12 +151,25 @@ test('identical add or ack appends again, or an entry conflict is accepted', (t)
   assert.deepEqual(bytes(), before)
 })
 
+test('a later duplicate notice replaces the first notice timestamp', (t) => {
+  const { file, ledger, bytes } = fixture(t)
+  ledger.addEntry({ ...config, audience: ['pb'] })
+  const delivery = { ...config, recipient: 'pb' }
+  const notice = ledger.notify(delivery)
+  appendFileSync(file, JSON.stringify({ ...notice, at: new Date(0).toISOString() }) + '\n')
+  const before = bytes()
+  assert.equal(ledger.show()[0]?.recipients[0]?.notifiedAt, at)
+  assert.deepEqual(ledger.notify(delivery), notice)
+  assert.deepEqual(bytes(), before)
+})
+
 test('superseding a version conflates recipient states or makes stale reports select the wrong entry', (t) => {
-  const { ledger } = fixture(t)
+  const { file, ledger } = fixture(t)
   const current = { ...config, version: 'v1' }
   const audience = ['pb', 'ty', 'rw', 'core']
-  ledger.addEntry({ ...config, audience })
+  const earlier = ledger.addEntry({ ...config, audience })
   ledger.addEntry({ ...current, audience })
+  appendFileSync(file, JSON.stringify(earlier) + '\n')
   ledger.addEntry({ subject: 'setup', version: 'v1', audience: ['pb'] })
   ledger.notify({ ...config, recipient: 'pb' })
   ledger.ack({ ...config, recipient: 'core' }) // late ack of the earlier entry
@@ -209,12 +210,9 @@ test('invalid fields or overlarge records reach the ledger, or a valid Unicode s
   assert.equal(ledger.addEntry({ subject: 'setup', version: 'unicode', audience: ['pb'], summary }).summary, summary)
   const before = bytes()
   for (const [change, error] of [
-    [{ subject: '' }, /invalid subject/],
-    [{ version: 'v'.repeat(65) }, /invalid version/],
-    [{ audience: ['bad\n'] }, /invalid recipient/],
-    [{ summary: 'line\x1b' }, /invalid summary/],
-    [{ summary: 's'.repeat(501) }, /invalid summary/],
-    [{ audience: [] }, /invalid audience/],
+    [{ subject: '' }, /invalid subject/], [{ version: 'v'.repeat(65) }, /invalid version/],
+    [{ audience: ['bad\n'] }, /invalid recipient/], [{ summary: 'line\x1b' }, /invalid summary/],
+    [{ summary: 's'.repeat(501) }, /invalid summary/], [{ audience: [] }, /invalid audience/],
     [{ audience: Array.from({ length: 65 }, (_, i) => `${i}`) }, /invalid audience/],
     [{ audience: ['pb', 'pb'] }, /duplicate audience/],
     [{ audience: Array.from({ length: 64 }, (_, i) => `${i}`.padStart(64, 'r')) }, /under 4000 bytes/],
@@ -224,24 +222,81 @@ test('invalid fields or overlarge records reach the ledger, or a valid Unicode s
   assert.deepEqual(bytes(), before)
 })
 
+function cli(dir: string, ...args: string[]) {
+  const result = spawnSync(process.execPath, ['src/cli.ts', 'rollout', ...args], {
+    cwd, encoding: 'utf8', env: { ...process.env, SWARM_ROLLOUT_DIR: dir },
+  })
+  if (result.error) throw result.error
+  return result
+}
+
+test('a symlink ledger or file directory is accepted, or new paths have broad permissions', (t) => {
+  const { dir, file, ledger } = fixture(t)
+  const path = join(dir, 'nested')
+  openLedger(path).addEntry({ ...config, audience: ['pb'] })
+  const target = join(path, 'rollout.jsonl')
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(path).mode & 0o777, 0o700)
+    assert.equal(statSync(target).mode & 0o777, 0o600)
+  }
+  assert.throws(() => openLedger(target).show(), /not a rollout directory/)
+  assert.throws(() => openLedger(target).addEntry({ ...config, audience: ['pb'] }), /not a rollout directory/)
+  try { symlinkSync(target, file, 'file') } catch (error) {
+    if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') return
+    throw error
+  }
+  const before = readFileSync(target)
+  assert.throws(() => ledger.show(), /symlinked rollout ledger/)
+  assert.throws(() => ledger.addEntry({ ...config, audience: ['ty'] }), /symlinked rollout ledger/)
+  assert.deepEqual(readFileSync(target), before)
+})
+
+test('read commands report missing directories or unknown filters as healthy, or create directories', (t) => {
+  const { dir, file, ledger } = fixture(t)
+  const missing = join(dir, 'missing')
+  writeFileSync(file, '')
+  const expectFailure = (path: string, headline: RegExp, ...args: string[]) => {
+    const result = cli(path, ...args)
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, headline)
+  }
+  for (const action of ['stale', 'show']) {
+    expectFailure('', /^error: missing --dir/, action)
+    expectFailure(missing, /^error: missing rollout directory .*missing\n$/, action)
+    expectFailure(dir, /^error: unknown subject away\n$/, action, '--subject', 'away')
+  }
+  assert.ok(!existsSync(missing))
+  ledger.addEntry({ ...config, audience: ['pb'] })
+  expectFailure(dir, /^error: unknown subject away\n$/, 'stale', '--subject', 'away')
+  expectFailure(dir, /^error: unknown version v9\n$/, 'show', '--version', 'v9')
+  ledger.ack({ ...config, recipient: 'pb' })
+  const healthy = cli(dir, 'stale', '--subject', 'config', '--json')
+  assert.equal(healthy.status, 0, healthy.stderr)
+  assert.deepEqual(JSON.parse(healthy.stdout), { stale: [] })
+})
+
+test('JSON error stderr emits a raw C1 control character', () => {
+  const result = cli('', 'bad\u009bcommand', '--json')
+  assert.equal(result.status, 2)
+  assert.ok(!result.stderr.includes('\u009b'), 'stderr contains a raw U+009B')
+  assert.match(result.stderr, /bad\\u009bcommand/)
+  assert.equal(JSON.parse(result.stderr).message, 'unknown rollout command bad\u009bcommand')
+})
+
 test('the rollout CLI misreports writes, reports stale as failure, or breaks JSON and error exits', (t) => {
   const { dir } = fixture(t)
-  const run = (action: string, ...args: string[]) => {
-    const result = spawnSync(process.execPath, ['src/cli.ts', 'rollout', action, ...args], {
-      cwd, encoding: 'utf8', env: { ...process.env, SWARM_ROLLOUT_DIR: dir },
-    })
-    if (result.error) throw result.error
-    return result
-  }
+  const run = (...args: string[]) => cli(dir, ...args)
   const key = ['--subject', 'config', '--version', 'v2']
   function success(result: ReturnType<typeof run>) {
     assert.equal(result.status, 0, result.stderr)
     assert.equal(result.stderr, '')
     return result.stdout
   }
-  assert.equal(success(run('add', '--dir', join(dir, 'explicit'), ...key, '--audience', 'pb,ty')), 'added config v2\n')
-  assert.equal(success(run('add', ...key, '--audience', 'pb,ty')), 'added config v2\n')
-  assert.equal(success(run('add', ...key, '--audience', 'pb,ty')), 'exists config v2\n')
+  const add = ['add', ...key, '--audience', 'pb,ty']
+  assert.equal(success(run(...add, '--dir', join(dir, 'explicit'))), 'added config v2\n')
+  assert.equal(success(run(...add)), 'added config v2\n')
+  assert.equal(success(run(...add)), 'exists config v2\n')
   assert.equal(success(run('notify', ...key, '--recipient', 'pb')), 'notified config v2 pb\n')
   assert.equal(success(run('ack', ...key, '--recipient', 'pb')), 'acked config v2 pb\n')
   assert.equal(success(run('stale', ...key)), 'config  v2  ty  not notified\n')
@@ -261,5 +316,8 @@ test('the rollout CLI misreports writes, reports stale as failure, or breaks JSO
   const misuse = run('ack', ...key)
   assert.equal(misuse.status, 2)
   assert.match(misuse.stderr, /^error: missing --recipient\nusage:/)
-  assert.match(success(run('--help')), /stale exits 0/)
+  const help = success(run('--help'))
+  assert.match(help, /stale exits 0/)
+  assert.match(help, /current means the latest added version, not the highest/)
+  assert.match(help, /own statement and does not require a notice[\s\S]*null notifiedAt/)
 })
