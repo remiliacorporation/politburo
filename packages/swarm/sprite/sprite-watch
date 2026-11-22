@@ -1,0 +1,32 @@
+#!/bin/bash
+set -u
+n=${1:?usage: sprite-watch <name> [window-seconds]}; win=${2:-540}; idle=${SPRITE_IDLE_SECONDS:-180}
+d=/tmp/sprites; log=$d/$n.jsonl; st=$d/$n.watch
+[ -f "$d/$n.pid" ] || { echo "no sprite named $n in $d" >&2; exit 2; }
+render() { node -e '
+const fs=require("fs"),[log,st]=process.argv.slice(1);let off=0;try{off=+fs.readFileSync(st,"utf8")||0}catch{}
+let buf;try{buf=fs.readFileSync(log)}catch{process.exit(0)}
+const end=buf.lastIndexOf(10)+1;if(end<=off)process.exit(0);
+const cut=(s,n)=>{s=String(s??"").replace(/\s+/g," ").trim();return s.length>n?s.slice(0,n)+"...":s};
+const t=new Date().toISOString().slice(11,19);const out=[];
+for(const line of buf.subarray(off,end).toString().split("\n")){if(!line)continue;let e;try{e=JSON.parse(line)}catch{continue}
+ const a=e.assistantMessageEvent||{};
+ if(e.type==="session")out.push("session "+e.id);
+ else if(a.type==="thinking_end"&&a.content)out.push("THINK "+cut(a.content,600));
+ else if(e.type==="tool_execution_start"){const g=e.args||{};out.push("TOOL  "+e.toolName+" "+cut(g.command??g.path??JSON.stringify(g),300)+(e.toolName==="edit"&&g.edits?" ("+g.edits.length+" edits)":""))}
+ else if(e.type==="tool_execution_end"){const r=e.result||{};const tx=(r.content||[]).filter(c=>c.type==="text").map(c=>c.text).join(" ");out.push("  "+(e.isError?"ERROR ":"-> ")+cut(tx,240))}
+ else if(e.type==="message_end"&&e.message&&e.message.role==="assistant"){const m=e.message,u=m.usage||{};const tx=(m.content||[]).filter(c=>c.type==="text").map(c=>c.text).join(" ");if(tx)out.push("SAY   "+cut(tx,600));if(m.errorMessage)out.push("ERROR "+cut(m.errorMessage,400));out.push("USAGE "+(m.provider||"")+"/"+(m.model||"")+" in="+(u.input||0)+" out="+(u.output||0)+" reasoning="+(u.reasoning||0)+" stop="+(m.stopReason||""))}
+ else if(/error|retry|abort/i.test(e.type))out.push("EVENT "+cut(line,400));
+ else if(e.type==="agent_end")out.push("END   agent finished");}
+fs.writeFileSync(st,String(end));if(out.length)console.log(out.map(x=>t+" "+x).join("\n"));' "$log" "$st"; }
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
+stop=$(( $(date +%s)+win )); lastdiff=""
+while :; do
+  render
+  ds=$(git diff --shortstat 2>/dev/null); [ "$ds" != "$lastdiff" ] && { echo "$(date -u +%H:%M:%S) DIFF $ds"; lastdiff=$ds; }
+  if [ -f "$d/$n.rc" ]; then sleep 1; render; echo "== sprite $n done:"; cat "$d/$n.out"; [ "$(cat "$d/$n.rc")" = 0 ] && exit 0 || exit 1; fi
+  now=$(date +%s); ref=$log; [ -f "$ref" ] || ref=$d/$n.pid
+  if [ $(( now-$(mtime "$ref") )) -ge "$idle" ]; then echo "== sprite $n IDLE: no event for ${idle}s (pi-task kills it after ${PI_IDLE_SECONDS:-180}s with no file change; or run sprite-stop $n)"; exit 3; fi
+  [ "$now" -ge "$stop" ] && { echo "== sprite $n still running after ${win}s window; run sprite-watch $n again"; exit 10; }
+  sleep 5
+done
