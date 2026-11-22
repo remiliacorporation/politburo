@@ -1,15 +1,19 @@
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
+import { redact } from './redact.ts'
 import type { DecisionRecord } from './shadow.ts'
 
 export const liveFormat = 'secretary-live@1'
-export type Outcome = 'p0_now' | 'p1_batch' | 'digest' | 'expire' | 'duplicate' | `reject:${string}`
-export type LiveDigest = { type: 'digest'; from: string; to: string; ids: string[];
+export type Outcome = 'p0_now' | 'p1_batch' | 'digest' | 'expire' | 'duplicate'
+export type Rejection = { outcome: 'reject'; reason: string }
+type DigestItem = { id: string } | { summary: string }
+export type LiveDigest = { type: 'digest'; from: string; to: string; items: DigestItem[];
   counts: Record<'p0' | 'p1' | 'p2' | 'p3', number>; act_on: string[]; at?: string }
-type ForwardBatch = { lane: 'p0_now' | 'p1_batch'; ids: string[] }
-export type LiveForward = { type: 'forward'; at: string } & ForwardBatch
-export type LiveLine = LiveDigest | LiveForward | { type: 'message'; id: string; outcome: Outcome }
-type Value = Outcome[] | ForwardBatch[] | Pick<LiveDigest, 'ids' | 'counts' | 'act_on' | 'at'>
+type ForwardBatch = { at: string; lane: 'p0_now' | 'p1_batch'; ids: string[] }
+export type LiveForward = { type: 'forward' } & ForwardBatch
+type LiveMessage = { type: 'message'; id: string } & { outcome: Outcome }
+export type LiveLine = LiveDigest | LiveForward | LiveMessage | ({ type: 'message'; id: string } & Rejection)
+type Value = (Outcome | Rejection)[] | ForwardBatch[] | Pick<LiveDigest, 'items' | 'counts' | 'act_on' | 'at'>
 export type Difference = { id: string; expected: Value | null; got: Value | null }
 
 export function jsonLines(text: string): unknown[] {
@@ -28,19 +32,31 @@ export function liveLines(lines: unknown[]): LiveLine[] {
   return lines.map((line) => {
     const row = line as LiveLine
     const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === 'string')
-    if (row?.type === 'message' && typeof row.id === 'string' && row.id && typeof row.outcome === 'string'
-      && /^(p0_now|p1_batch|digest|expire|duplicate|reject:[^\s]+)$/.test(row.outcome)) {
-      return { type: 'message', id: row.id, outcome: row.outcome }
+    if (row?.type === 'message' && typeof row.id === 'string' && row.id) {
+      if (row.outcome === 'reject' && typeof row.reason === 'string') {
+        return { type: 'message', id: row.id, outcome: 'reject', reason: row.reason }
+      }
+      if (row.outcome === 'p0_now' || row.outcome === 'p1_batch' || row.outcome === 'digest'
+        || row.outcome === 'expire' || row.outcome === 'duplicate') {
+        return { type: 'message', id: row.id, outcome: row.outcome }
+      }
     }
-    if (row?.type === 'forward' && typeof row.at === 'string' && strings(row.ids)
+    if (row?.type === 'forward' && typeof row.at === 'string' && strings(row.ids) && row.ids.length > 0
       && (row.lane === 'p0_now' || row.lane === 'p1_batch')) {
-      return { type: 'forward', at: row.at, lane: row.lane, ids: [...row.ids].sort() }
+      return { type: 'forward', at: row.at, lane: row.lane, ids: row.ids }
     }
     if (row?.type === 'digest' && typeof row.from === 'string' && typeof row.to === 'string'
-      && strings(row.ids) && strings(row.act_on) && row.counts && (row.at === undefined || typeof row.at === 'string')) {
+      && Array.isArray(row.items) && strings(row.act_on) && row.counts && (row.at === undefined || typeof row.at === 'string')) {
       const { p0, p1, p2, p3 } = row.counts
       if ([p0, p1, p2, p3].every((n) => Number.isSafeInteger(n) && n >= 0)) {
-        return { type: 'digest', from: row.from, to: row.to, ids: [...row.ids].sort(), counts: { p0, p1, p2, p3 },
+        const items = row.items.map((item) => {
+          if (item && typeof item === 'object') {
+            if ('id' in item && typeof item.id === 'string') return { id: item.id }
+            if ('summary' in item && typeof item.summary === 'string') return { summary: redact(item.summary) }
+          }
+          throw new Error('invalid secretary digest item')
+        })
+        return { type: 'digest', from: row.from, to: row.to, items, counts: { p0, p1, p2, p3 },
           act_on: row.act_on, ...(row.at !== undefined && { at: row.at }) }
       }
     }
@@ -58,16 +74,14 @@ export async function readJournal(path: string, optional = false): Promise<Decis
 
 const windowId = ({ from, to }: Pick<LiveDigest, 'from' | 'to'>) => `${from}/${to}`
 
-function shadowLines(records: DecisionRecord[], checkForwards: boolean, timedWindows: Set<string>): LiveLine[] {
+function shadowLines(records: DecisionRecord[], timedWindows: Set<string>): LiveLine[] {
   const lines: LiveLine[] = []
-  const accepts = new Map<string, LiveLine & { type: 'message' }>()
+  const accepts = new Map<string, LiveMessage>()
   for (const r of records) {
     if (r?.kind === 'digest' && Array.isArray(r.items) && r.window) {
       lines.push({ type: 'digest', ...r.window, counts: r.counts, act_on: r.act_on,
-        ids: r.items.flatMap((item) => 'id' in item ? [item.id] : []),
+        items: r.items,
         ...(timedWindows.has(windowId(r.window)) && { at: new Date(r.at).toISOString() }) })
-    } else if (r?.kind === 'wake' && checkForwards) {
-      lines.push({ type: 'forward', at: new Date(r.at).toISOString(), lane: r.lane, ids: r.ids })
     } else if (r?.kind === 'accept' || r?.kind === 'revision' || r?.kind === 'expire'
       || r?.kind === 'duplicate' || r?.kind === 'reject') {
       // Invalid files have no parsed id; fixtures identify them by their filename.
@@ -79,8 +93,12 @@ function shadowLines(records: DecisionRecord[], checkForwards: boolean, timedWin
         accepts.delete(occurrence)
         continue
       }
-      const outcome = r.kind === 'reject' ? (r.reason ? `reject:${r.reason}` as const : undefined)
-        : r.kind === 'expire' || r.kind === 'duplicate' ? r.kind : r.lane
+      if (r.kind === 'reject') {
+        if (typeof r.reason !== 'string') throw new Error('invalid shadow decision')
+        lines.push({ type: 'message', id, outcome: 'reject', reason: r.reason })
+        continue
+      }
+      const outcome = r.kind === 'expire' || r.kind === 'duplicate' ? r.kind : r.lane
       if (!outcome) throw new Error('invalid shadow decision')
       const line = { type: 'message', id, outcome } as const
       lines.push(line)
@@ -92,37 +110,50 @@ function shadowLines(records: DecisionRecord[], checkForwards: boolean, timedWin
   return liveLines(lines)
 }
 
+function indexForwards(forwards: ForwardBatch[]) {
+  const byId = new Map<string, ForwardBatch[]>()
+  for (const { lane, at, ids } of forwards) {
+    const batch = { lane, at, ids: [...ids].sort() }
+    // An empty journal batch is still an unexpected record, not an empty expectation.
+    for (const id of new Set(ids.length ? ids : [''])) {
+      const batches = byId.get(id) ?? []
+      batches.push(batch)
+      byId.set(id, batches)
+    }
+  }
+  return byId
+}
+
 export function compareJournal(records: DecisionRecord[], expected: LiveLine[]): Difference[] {
-  const digest = ({ ids, counts, act_on, at }: LiveDigest) => ({ ids, counts, act_on, at })
+  const digest = ({ items, counts, act_on, at }: LiveDigest) => ({ items, counts, act_on, at })
   function index(lines: LiveLine[]) {
-    const messages = new Map<string, Outcome[]>(), digests = new Map<string, ReturnType<typeof digest>>()
-    const forwards = new Map<string, ForwardBatch[]>()
+    const messages = new Map<string, (Outcome | Rejection)[]>(), digests = new Map<string, ReturnType<typeof digest>>()
     for (const row of lines) {
       if (row.type === 'message') {
         const outcomes = messages.get(row.id) ?? []
-        outcomes.push(row.outcome)
+        outcomes.push(row.outcome === 'reject' ? { outcome: row.outcome, reason: row.reason } : row.outcome)
         messages.set(row.id, outcomes)
-      } else if (row.type === 'forward') {
-        const slot = `forward ${row.at}`
-        const batches = forwards.get(slot) ?? []
-        batches.push({ lane: row.lane, ids: row.ids })
-        forwards.set(slot, batches)
-      } else {
+      } else if (row.type === 'digest') {
         const window = windowId(row)
         if (digests.has(window)) throw new Error('duplicate digest window')
         digests.set(window, digest(row))
       }
     }
-    return [messages, digests, forwards] as const
+    return [messages, digests] as const
   }
   const live = liveLines(expected)
-  // Older recorded cases compare decisions and membership only.
   const timedWindows = new Set(live.flatMap((row) => row.type === 'digest' && row.at !== undefined ? [windowId(row)] : []))
-  const want = index(live), got = index(shadowLines(records, want[2].size > 0, timedWindows))
-  const compare = (want: ReadonlyMap<string, Value>, got: ReadonlyMap<string, Value>) =>
+  const want = index(live), got = index(shadowLines(records, timedWindows))
+  const forwards = indexForwards(live.filter((row) => row.type === 'forward'))
+  const lanes = indexForwards(records.flatMap((row) => row.kind === 'lane'
+    ? [{ lane: row.lane, at: new Date(row.at).toISOString(), ids: row.items.map(({ id }) => id) }] : []))
+  const wakes = indexForwards(records.flatMap((row) => row.kind === 'wake'
+    ? [{ lane: row.lane, at: new Date(row.at).toISOString(), ids: row.ids }] : []))
+  const compare = (want: ReadonlyMap<string, Value>, got: ReadonlyMap<string, Value>, prefix = '') =>
     [...new Set([...want.keys(), ...got.keys()])].sort().flatMap((id) => {
       const expected = want.get(id) ?? null, actual = got.get(id) ?? null
-      return JSON.stringify(expected) === JSON.stringify(actual) ? [] : [{ id, expected, got: actual }]
+      return JSON.stringify(expected) === JSON.stringify(actual) ? [] : [{ id: prefix + id, expected, got: actual }]
     })
-  return want.flatMap((group, i) => compare(group, got[i]!))
+  return [...want.flatMap((group, i) => compare(group, got[i]!)),
+    ...compare(forwards, lanes, 'lane '), ...compare(forwards, wakes, 'forward ')]
 }

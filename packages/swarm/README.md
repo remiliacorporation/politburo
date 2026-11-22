@@ -19,7 +19,11 @@ file mail is assumed to have a plain summary, a fenced YAML header, and a
 filesystem mtime that serves as receipt time.
 
 Use `diff --shadow FILE --live FILE` to compare `decisions.jsonl` with
-`secretary-live@1` JSONL. Use `replay --seed N --dir DIR` as the gate check:
+`secretary-live@1` JSONL. Use `outcome: "reject"` with a separate string
+`reason` on rejected message rows. Digest rows list ordered `items` as
+`{"id":"…"}` or, for p3, `{"summary":"…"}`. Forward rows declare the expected
+`at`, `lane` and `ids` for each p0/p1 batch; no rows means no forwards expected.
+Use `replay --seed N --dir DIR` as the gate check:
 it keeps the synthetic mail and both logs, and passes only on `zero diff`.
 `parity` checks recorded cases when present. `scorecard --out DIR --tag TAG`
 reads the journal; spend values are `unknown` until the ledger is wired in.

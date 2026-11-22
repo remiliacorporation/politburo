@@ -26,9 +26,12 @@ function printDiff(differences: Difference[], json = false) {
   const summary = differences.length ? 'diff' : 'zero diff'
   const display = (value: Difference['expected']) => value === null ? '(missing)'
     : Array.isArray(value) && value.every((item) => typeof item === 'string') ? value.join(', ') : JSON.stringify(value)
-  if (json) console.log(JSON.stringify({ result: summary, differences }))
-  else if (!differences.length) console.log(summary)
-  else for (const { id, expected, got } of differences) console.log(plain(`${id}  ${display(expected)}  ${display(got)}`))
+  // Redact values before either renderer escapes them, after comparison is done.
+  const safe = JSON.parse(JSON.stringify(differences, (_, value: unknown) =>
+    typeof value === 'string' ? redact(value) : value)) as Difference[]
+  if (json) console.log(JSON.stringify({ result: summary, differences: safe }))
+  else if (!safe.length) console.log(summary)
+  else for (const { id, expected, got } of safe) console.log(plain(`${id}  ${display(expected)}  ${display(got)}`))
   return differences.length ? 1 : 0
 }
 

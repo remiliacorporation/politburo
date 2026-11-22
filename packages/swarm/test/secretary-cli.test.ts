@@ -38,9 +38,12 @@ const inputs = [message, { ...message, id: 'escalation', ref: 'task-18', class: 
   { ...message, id: 'notice', ref: 'task-19', class: 'policy', urgency: 'p2' }]
 const decisions = inputs.map(({ id, urgency }) => ({ type: 'message', id, outcome: urgency === 'p1' ? 'p1_batch' : 'digest' }))
 const { id } = message
-const digest = { from, to, type: 'digest', ids: ['escalation', 'note-17', 'notice'],
+const items = (...ids: string[]) => ids.map((id) => ({ id }))
+const digest = { from, to, type: 'digest', items: items('note-17', 'escalation', 'notice'),
   counts: { p0: 0, p1: 1, p2: 2, p3: 0 }, act_on: ['note-17', 'escalation'] }
-const journalDigest = { ids: digest.ids, counts: digest.counts, act_on: digest.act_on }
+const journalDigest = { items: digest.items, counts: digest.counts, act_on: digest.act_on }
+const forwardAt = '2026-01-01T00:11:00.000Z'
+const forward = { type: 'forward', at: forwardAt, lane: 'p1_batch', ids: [id] }
 const window = `${from}/${to}`
 
 function parityFixture(t: TestContext, expected: object[]) {
@@ -48,7 +51,8 @@ function parityFixture(t: TestContext, expected: object[]) {
   mkdirSync(behaviour)
   const files = inputs.map((header) => ({ name: `${header.id}.md`, mtimeMs: Date.parse(now),
     content: `${header.summary}\n\`\`\`yaml\n${JSON.stringify(header)}\n\`\`\`\n` }))
-  writeFileSync(join(behaviour, 'day.json'), JSON.stringify({ name: 'recorded window', now: to, files, expected }))
+  writeFileSync(join(behaviour, 'day.json'), JSON.stringify({ name: 'recorded window', now: to,
+    files, expected: [...expected, { ...forward, at: to }] }))
   return run('parity', '--dir', dir)
 }
 
@@ -61,8 +65,8 @@ test('parity passes a matching recorded digest and decisions', (t) => {
 for (const [mismatch, expected, difference] of [
   ['lane', [{ ...decisions[0], outcome: 'digest' }, ...decisions.slice(1), digest],
     { id, expected: ['digest'], got: ['p1_batch'] }],
-  ['digest membership', [...decisions, { ...digest, ids: ['escalation', 'note-17', 'substitute'] }],
-    { id: window, expected: { ...journalDigest, ids: ['escalation', 'note-17', 'substitute'] }, got: journalDigest }],
+  ['digest membership', [...decisions, { ...digest, items: items('note-17', 'escalation', 'substitute') }],
+    { id: window, expected: { ...journalDigest, items: items('note-17', 'escalation', 'substitute') }, got: journalDigest }],
   ['act_on order', [...decisions, { ...digest, act_on: ['escalation', 'note-17'] }],
     { id: window, expected: { ...journalDigest, act_on: ['escalation', 'note-17'] }, got: journalDigest }],
   ['message missing from live', [...decisions.slice(1), digest], { id, expected: null, got: ['p1_batch'] }],
@@ -70,12 +74,11 @@ for (const [mismatch, expected, difference] of [
     { id: 'ghost', expected: ['digest'], got: null }],
 ] as const) {
   test(`diff reports ${mismatch}`, (t) => {
-    const dir = temp(t), shadow = join(dir, 'decisions.jsonl'), live = join(dir, 'live.jsonl')
     const rows = [...decisions.map(({ id, outcome }) => ({ kind: 'accept', id, lane: outcome })),
-      { kind: 'digest', window: { from, to }, items: digest.ids.map((id) => ({ id })), counts: digest.counts, act_on: digest.act_on }]
-    writeFileSync(shadow, lines(...rows.map((row, key) => ({ v: 1, key: String(key), ...row }))))
-    writeFileSync(live, lines('secretary-live@1', ...expected))
-    const result = run('diff', '--shadow', shadow, '--live', live, '--json')
+      { kind: 'lane', lane: forward.lane, at: Date.parse(forwardAt), items: items(id) },
+      { kind: 'wake', lane: forward.lane, at: Date.parse(forwardAt), ids: [id] },
+      { kind: 'digest', window: { from, to }, ...journalDigest }]
+    const result = diffFixture(t, rows, [...expected, forward], '--json')
     assert.equal(result.status, 1)
     assert.deepEqual(JSON.parse(result.stdout), { result: 'diff', differences: [difference] })
   })
@@ -86,6 +89,85 @@ for (const [mismatch, expected, difference] of [
     assert.equal(result.stdout, '1 cases, 1 failed\n')
   })
 }
+
+function diffFixture(t: TestContext, rows: object[], expected: object[], ...flags: string[]) {
+  const dir = temp(t), shadow = join(dir, 'decisions.jsonl'), live = join(dir, 'live.jsonl')
+  writeFileSync(shadow, lines(...rows.map((row, key) => ({ v: 1, key: String(key), ...row }))))
+  writeFileSync(live, lines('secretary-live@1', ...expected))
+  return run('diff', '--shadow', shadow, '--live', live, ...flags)
+}
+
+test('diff redacts IDs and nested strings in text and JSON without merging comparison keys', (t) => {
+  const canaries = ['ghp_SYNTHETIC_LIVE', 'ghp_SYNTHETIC_SHADOW']
+  const [liveId, shadowId] = canaries
+  const rows = [{ kind: 'accept', id: shadowId, lane: 'digest' },
+    { kind: 'digest', window: { from, to }, items: [{ id: shadowId }], counts: digest.counts, act_on: [shadowId] }]
+  const expected = [{ type: 'message', id: liveId, outcome: 'digest' },
+    { ...digest, items: [{ id: liveId }], act_on: [liveId] }]
+  const outputs = [[], ['--json']].map((flags) => diffFixture(t, rows, expected, ...flags))
+  assert.deepEqual(outputs.map(({ status, stdout }) => [status, canaries.some((token) => stdout.includes(token))]),
+    [[1, false], [1, false]])
+  assert.equal(outputs[0]!.stdout.trim().split('\n').length, 3)
+  assert.equal(JSON.parse(outputs[1]!.stdout).differences.length, 3)
+})
+
+test('diff detects missing p3 digest summaries even when counts match', (t) => {
+  const counts = { p0: 0, p1: 0, p2: 0, p3: 2 }
+  const row = { kind: 'digest', window: { from, to }, counts, act_on: [], items: [
+    { summary: 'one [redacted]' }, { summary: 'two' },
+  ] }
+  const expected = [{ from, to, type: 'digest', counts, act_on: [], items: [
+    { summary: 'one ghp_SYNTHETIC_SUMMARY' }, { summary: 'two' },
+  ] }]
+  for (const [items, status] of [[row.items, 0], [row.items.slice(0, 1), 1], [[...row.items].reverse(), 1]] as const) {
+    const result = diffFixture(t, [{ ...row, items }], expected, '--json')
+    assert.equal(result.status, status, result.stderr || result.stdout)
+    if (status) assert.equal(JSON.parse(result.stdout).differences[0].id, window)
+  }
+})
+
+test('diff reports swapped digest items of the same urgency', (t) => {
+  const rows = [{ kind: 'digest', window: { from, to }, ...journalDigest,
+    items: items('note-17', 'notice', 'escalation') }]
+  const result = diffFixture(t, rows, [digest], '--json')
+  assert.equal(result.status, 1, result.stderr || result.stdout)
+  assert.equal(JSON.parse(result.stdout).differences[0].id, window)
+})
+
+test('diff checks each expected forward against both journal records, including empty expectations', (t) => {
+  const lane = { kind: 'lane', lane: 'p1_batch', at: Date.parse(now), wakeId: 'receipt', items: [{ id }] }
+  const wake = { kind: 'wake', lane: 'p1_batch', at: Date.parse(now), wakeId: 'receipt', ids: [id], delivered: false }
+  const accepted = { kind: 'accept', id, lane: 'p1_batch' }
+  const expected = { type: 'message', id, outcome: 'p1_batch' }
+  const forward = { type: 'forward', at: now, lane: 'p1_batch', ids: [id] }
+  const cases = [
+    { name: 'match', records: [lane, wake], forwards: [forward], want: 'zero diff' },
+    { name: 'missing lane', records: [wake], forwards: [forward], want: 'diff' },
+    { name: 'missing wake', records: [lane], forwards: [forward], want: 'diff' },
+    { name: 'wrong lane', records: [{ ...lane, lane: 'p0_now' }, wake], forwards: [forward], want: 'diff' },
+    { name: 'wrong lane member', records: [{ ...lane, items: [{ id: 'other' }] }, wake], forwards: [forward], want: 'diff' },
+    { name: 'wrong wake lane', records: [lane, { ...wake, lane: 'p0_now' }], forwards: [forward], want: 'diff' },
+    { name: 'wrong wake member', records: [lane, { ...wake, ids: ['other'] }], forwards: [forward], want: 'diff' },
+    { name: 'unexpected wake', records: [wake], forwards: [], want: 'diff' },
+    { name: 'unexpected empty wake', records: [{ ...wake, ids: [] }], forwards: [], want: 'diff' },
+  ]
+  assert.deepEqual(cases.map(({ name, records, forwards }) => {
+    const result = diffFixture(t, [accepted, ...records], [expected, ...forwards], '--json')
+    return [name, result.status, result.stdout ? JSON.parse(result.stdout).result : result.stderr]
+  }), cases.map(({ name, want }) => [name, want === 'diff' ? 1 : 0, want]))
+})
+
+test('diff compares rejection reasons containing spaces', (t) => {
+  const reason = 'unknown_field:unknown key'
+  const row = { kind: 'reject', id, reason }
+  const expected = { type: 'message', id, outcome: 'reject', reason }
+  const match = diffFixture(t, [row], [expected])
+  assert.equal(match.status, 0, match.stderr || match.stdout)
+  assert.equal(match.stdout, 'zero diff\n')
+  const mismatch = diffFixture(t, [row], [{ ...expected, reason: 'unknown_field:different key' }], '--json')
+  assert.equal(mismatch.status, 1)
+  assert.equal(JSON.parse(mismatch.stdout).differences[0].id, id)
+})
 
 function mailbox(dir: string) {
   const mail = join(dir, 'mail'), inbox = join(mail, 'pb', 'inbox')
