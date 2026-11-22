@@ -234,6 +234,49 @@ it('shows only the Cell claimant’s work and clock, PR and spend, without write
   })
 })
 
+it('keeps the Cell thread pane scoped to its claimant as claims change live', async () => {
+  const { create, actor, open } = await workBoard()
+  const bob = await actor('u_bob')
+  const aliceText = 'Prepare the release notes'
+  const bobText = 'Investigate the build failure'
+  const alice = await create(1, aliceText, { claim: true })
+  const { task: bobsTask } = await create(2, bobText)
+  await bob.tasks.claim(bobsTask.id)
+  const cellPath = `/cell/${encodeURIComponent(alice.task.task!.claim!.actor)}`
+  const thread = () => document.querySelector('aside[aria-label="Thread"]')
+  const expectOutsideCell = (taskText: string) => {
+    expect(thread()?.textContent).not.toContain(taskText)
+    expect(thread()?.textContent?.trim()).toBe('not in this cell close')
+  }
+
+  await open(`${cellPath}?party=blue&thread=${bobsTask.id}`)
+  await vi.waitFor(() => {
+    expect(titles()).toEqual([aliceText])
+    expectOutsideCell(bobText)
+  })
+
+  taskLinks()[0]!.click()
+  await vi.waitFor(() => {
+    expect(param('thread')).toBe(alice.task.id)
+    expect(thread()?.textContent).toContain(aliceText)
+  })
+
+  await alice.claim!.release()
+  await vi.waitFor(() => {
+    expect(statuses()).toContain('nothing claimed by this cell')
+    expect(param('thread')).toBe(alice.task.id)
+    expectOutsideCell(aliceText)
+  })
+
+  link('close', thread()!)!.click()
+  await vi.waitFor(() => {
+    expect(thread()).toBeNull()
+    expect(param('thread')).toBeNull()
+    expect(location.pathname).toBe(cellPath)
+    expect(param('party')).toBe('blue')
+  })
+})
+
 it('never shows a cached task missing from the latest read in any scope and links the claimant to their Cell', async () => {
   const { create, client, open } = await workBoard()
   const old = await create(1, 'Old claim', { claim: true })

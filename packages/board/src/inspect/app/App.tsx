@@ -10,7 +10,7 @@ import { Home } from './home.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { here, isTypingTarget, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { here, isTypingTarget, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
@@ -19,7 +19,7 @@ import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
-import { isWorkRoute, workScope } from './work-scope.ts'
+import { cellHasThread, isWorkRoute, workScope } from './work-scope.ts'
 import { Work } from './work-view.tsx'
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
@@ -292,6 +292,9 @@ export function App() {
     </>
   ) : null
   const identity = board.getIdentity()
+  const cellPaneStatus = current.view === 'cell' && where.thread !== null
+    ? !state.tasksCounted ? 'loading…' : cellHasThread(state, current.cell, where.thread) ? null : 'not in this cell'
+    : null
   const paneIsFront = narrow && where.thread !== null
   const expand = paneIsFront ? null : headerLead
   const banner = pauseBanner(state, now)
@@ -349,8 +352,16 @@ export function App() {
           <aside className="pane" aria-label="Thread" inert={nav}>
             <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
             <HeaderActions.Provider value={paneIsFront ? headerActions : null}>
-              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known}
-                lead={narrow ? headerLead : null} readOnly={current.view === 'cell'} />
+              {cellPaneStatus === null ? (
+                <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known}
+                  lead={narrow ? headerLead : null} readOnly={current.view === 'cell'} />
+              ) : (
+                <div className="view-body">
+                  <p className="empty" role="status" data-view-title tabIndex={-1}>{cellPaneStatus}{' '}
+                    <Link className="text-link" to={here({ thread: null })}>close</Link>
+                  </p>
+                </div>
+              )}
             </HeaderActions.Provider>
           </aside>
         )}

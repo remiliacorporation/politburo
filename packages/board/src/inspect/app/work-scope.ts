@@ -1,4 +1,5 @@
 import type { Route } from './routes.ts'
+import { isTask, type State } from './store.ts'
 import { labelsOf, partyOf, type SwarmRecords } from './work.ts'
 
 export type WorkRoute = Extract<Route, { view: 'work' | 'presidium' | 'party' | 'cell' }>
@@ -22,6 +23,12 @@ export function workScope(route: WorkRoute, params: URLSearchParams, records: Sw
     : route.view === 'presidium' ? labels.repoView
     : route.view === 'cell' ? labels.mobView : { label: 'Work', subtitle: undefined }
   return { party, partyId, title: words.label, subtitle: words.subtitle }
+}
+
+/** Like the Cell's peek, check scope membership before display filters. */
+export function cellHasThread(state: Pick<State, 'openTaskRoots'>, actor: string, id: string): boolean {
+  const root = Object.hasOwn(state.openTaskRoots, id) ? state.openTaskRoots[id] : undefined
+  return isTask(root) && !root.deleted && root.task.claim?.actor === actor
 }
 
 /** Carry the preview across scopes, not the previous scope's filters or open row. */
