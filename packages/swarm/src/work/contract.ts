@@ -54,12 +54,6 @@ function insideFence(lines: readonly string[]): boolean {
   return fence !== undefined
 }
 
-function insideComment(prefix: string): boolean {
-  let open = false
-  for (const [token] of prefix.matchAll(/<!--|-->/g)) open = token === '<!--'
-  return open
-}
-
 function contractBlock(description: string) {
   const offset = description.indexOf(marker)
   if (offset === -1 || offset !== description.lastIndexOf(marker)) {
@@ -84,10 +78,11 @@ function contractBlock(description: string) {
   let end = lines.findIndex((line, i) => i > verification && sectionHeading.test(line))
   if (end === -1) end = lines.length
   while (end > verification + 1 && !lines[end - 1]!.trim()) end--
+  const throughVerification = raw.slice(0, end).join('')
+  const outsideMarker = throughVerification.replace(marker, '')
   if (insideFence(lines.slice(0, heading)) || lines.slice(heading, end).some(fenceRun) ||
-    /<(?:pre|code|script|textarea)/i.test(raw.slice(0, end).join('')) ||
-    insideComment(description.slice(0, offset))) {
-    return 'The outcomes contract must be outside code and HTML comments.'
+    /<[A-Za-z/]|<!--/.test(outsideMarker)) {
+    return 'The outcomes contract must be outside code blocks and raw HTML.'
   }
   return {
     outcomes: lines.slice(start + 1, verification),
@@ -117,7 +112,7 @@ function onlyFields(fields: Fields, ...allowed: string[]): boolean {
 
 function plausibleBranch(base: string): boolean {
   return !/[\s\p{Cc}~^:?*\[\\]/u.test(base) && !base.includes('..') && !base.includes('@{') &&
-    base !== '@' && !base.startsWith('-') && !base.endsWith('.') &&
+    base !== '@' && base !== 'HEAD' && !base.startsWith('-') && !base.endsWith('.') &&
     base.split('/').every(part => part && !part.startsWith('.') && !part.endsWith('.lock'))
 }
 
@@ -134,7 +129,7 @@ function readOutcome(fields: Fields): Outcome | string {
       const state = fields.get('state')
       const checks = fields.get('checks')
       const draft = fields.get('draft') ?? 'not_allowed'
-      if (!repo || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo) || /\/\.{1,2}$/.test(repo) ||
+      if (!repo || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo) || repo.split('/').some(part => part === '.' || part === '..') ||
         !base || !plausibleBranch(base)) {
         return 'A pull_request needs an owner/repo and a valid base branch.'
       }

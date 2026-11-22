@@ -87,7 +87,17 @@ test('a non-ASCII fence closer or an HTML code context cannot hide a contract', 
     rejects(bad)
     assert.equal(contractFingerprint(bad), null)
   }
-  assert.equal(parseOutcomesContract(`~~~md\nSample\n~~~~ \t\n<!-- Context -->\n\n${text}`).valid, true)
+  assert.equal(parseOutcomesContract(`~~~md\nSample\n~~~~ \t\n\n${text}`).valid, true)
+})
+
+test('a raw style block or inline raw HTML cannot hide a valid contract', () => {
+  const text = description()
+  for (const bad of [`<style>\n${text}\n</style>`, `<details>\n${text}\n</details>`,
+    `Code: \`<div>\`\n\n${text}`, `Link: <https://example.com>\n\n${text}`]) {
+    rejects(bad)
+    assert.equal(contractFingerprint(bad), null)
+  }
+  assert.equal(parseOutcomesContract(`${text}\n\n## Notes\n<div>Extra</div>`).valid, true)
 })
 
 test('empty, kindless, or unknown outcomes are invalid, including "work on it" alongside a valid PR', () => {

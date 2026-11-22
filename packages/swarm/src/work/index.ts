@@ -1,3 +1,6 @@
 export * from './ids.ts'
 export * from './links.ts'
 export * from './contract.ts'
+export * from './validate.ts'
+export { registerWorkSchemas, recordOutcome, readOutcomes, type OutcomeRecord, type WorkItemRecord, type WorkKind } from './record.ts'
+export * from './items.ts'
