@@ -93,4 +93,9 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+if (process.argv[2] === 'capture-claude') {
+  const { runCaptureClaude } = await import('./capture-claude/cli.ts')
+  process.exitCode = await runCaptureClaude(process.argv.slice(3))
+} else {
+  process.exitCode = main(process.argv.slice(2))
+}

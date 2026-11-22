@@ -28,6 +28,7 @@ export function readJsonl(path: string): SpendRecord[] {
 
 interface ReleaseOptions {
   records: SpendRecord[]
+  existing?: SpendRecord[]
   registry: Pick<SessionRegistry, 'lookup'>
   ledger: SpendWriter
   actor: string
@@ -35,11 +36,18 @@ interface ReleaseOptions {
   now?: Date | (() => Date)
 }
 
-export function releaseQuarantine({ records, registry, ledger, actor, reason, now = () => new Date() }: ReleaseOptions) {
+export function releaseQuarantine({ records, existing = [], registry, ledger, actor, reason, now = () => new Date() }: ReleaseOptions) {
+  const ledgerIds = new Map(existing.map((record) => [record.dedupe_key, record.record_id]))
+  const attributed = new Map<string, string>()
   let released = 0
   let stillUnbound = 0
   for (const record of records) {
-    if (record.envelope !== null || record.coverage.state !== 'unattributed') continue
+    if (record.envelope !== null) continue
+    const existingId = ledgerIds.get(record.dedupe_key)
+    if (existingId !== undefined) {
+      attributed.set(record.record_id, existingId)
+      continue
+    }
     const session = /^claude\/([^/]+)\//.exec(record.evidence_ref)?.[1]
     const envelope = session === undefined ? null
       : registry.lookup(session.replace(/%2F|%25/g, (escape) => escape === '%2F' ? '/' : '%'))
@@ -47,11 +55,15 @@ export function releaseQuarantine({ records, registry, ledger, actor, reason, no
       stillUnbound++
       continue
     }
+    const id = randomUUID()
+    // A reconciled or disputed successor must also supersede the attributed original.
+    const parent = record.revises === null ? undefined : attributed.get(record.revises)
     ledger.append({
-      ...record, record_id: randomUUID(), revises: record.record_id, envelope, actor, reason,
+      ...record, record_id: id, revises: parent ?? record.record_id, envelope, actor, reason,
       received: (typeof now === 'function' ? now() : now).toISOString(),
-      coverage: { ...record.coverage, state: 'partial' },
+      coverage: record.coverage.state === 'unattributed' ? { ...record.coverage, state: 'partial' } : record.coverage,
     })
+    attributed.set(record.record_id, id)
     // SpendWriter has no insertion result: count submissions, including deduped replays.
     released++
   }

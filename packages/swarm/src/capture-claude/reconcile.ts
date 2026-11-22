@@ -19,7 +19,7 @@ function matches(a: RequestFact, b: RequestFact): boolean {
   return a.responseId !== null && a.responseId === b.responseId
 }
 
-export function reconcile(otlp: RequestFact[], transcript: RequestFact[]) {
+export function reconcile(otlp: RequestFact[], transcript: RequestFact[], { exactCounts = false } = {}) {
   const groups = new Map<string, RequestFact[]>()
   for (const [index, fact] of otlp.entries()) {
     const id = fact.requestId ?? fact.responseId
@@ -38,7 +38,8 @@ export function reconcile(otlp: RequestFact[], transcript: RequestFact[]) {
     const index = transcript.findIndex((row, i) => !used.has(i) && group.some((a) => matches(a, row)))
     const other = transcript[index]
     if (other) used.add(index)
-    const disagrees = other !== undefined && group.some((a) => conflict(a, other))
+    const disagrees = other !== undefined && group.some((a) => exactCounts
+      ? buckets.some((key) => a.tokens[key] !== other.tokens[key]) : conflict(a, other))
     // Count a disputed request once, but return its evidence for separate handling.
     if (disagrees || group.some((a, i) => group.slice(i + 1).some((b) => conflict(a, b)))) {
       counters.mismatched++

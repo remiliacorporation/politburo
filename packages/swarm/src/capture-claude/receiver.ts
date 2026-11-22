@@ -97,9 +97,6 @@ export function createReceiver({
         const envelope = registry.lookup(fact.nativeSession)
         const [resolved] = reconcile([fact], []).records
         const record = buildRecord(resolved!, envelope, now())
-        // Keep the session reversible even when it contains a path separator.
-        const session = fact.nativeSession.replace(/%/g, '%25').replace(/\//g, '%2F')
-        record.evidence_ref = `claude/${session}/${fact.requestId ?? fact.responseId}`
         if (envelope === null) {
           quarantine.append(record)
           counters.quarantined++

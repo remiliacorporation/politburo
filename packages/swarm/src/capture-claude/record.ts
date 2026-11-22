@@ -41,6 +41,11 @@ export type SpendRecord = {
   }
 } & ({ revises: null } | { revises: string; actor: string; reason: string })
 
+export function evidencePrefix(nativeSession: string): string {
+  const session = nativeSession.replace(/%/g, '%25').replace(/\//g, '%2F')
+  return `claude/${session}/`
+}
+
 export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelope | null, now: Date): SpendRecord {
   const id = fact.requestId ?? fact.responseId
   // Keep ordinary keys stable, but use an unambiguous tuple for delimiter-bearing IDs.
@@ -57,7 +62,7 @@ export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelo
     envelope,
     source: fact.source === 'otlp' ? 'claude_local_request' : 'claude_local_transcript',
     source_version: 'capture-claude@1', source_event_key: conflictKey ?? eventKey,
-    evidence_ref: `claude/${fact.nativeSession}/${id}`,
+    evidence_ref: `${evidencePrefix(fact.nativeSession)}${id}`,
     provider: 'anthropic', requested_route: 'claude-local', actual_model: fact.model, auth_class: null,
     tokens: { ...fact.tokens }, amount: null, basis: 'unknown',
     occurred: fact.occurred, received: now.toISOString(), started: null, ended: null,
