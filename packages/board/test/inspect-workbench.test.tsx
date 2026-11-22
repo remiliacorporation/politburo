@@ -7,7 +7,7 @@ import { createBoardClient, type ProfileOption } from '../src/client/client.ts'
 import { shell } from '../src/inspect/shell.ts'
 import { slack } from '../src/sync/slack.ts'
 import { BOARD_URL, localBoard, personToken } from './harness.ts'
-import { deploymentToken } from './tokens.ts'
+import { deploymentToken, localUserToken } from './tokens.ts'
 import { fakePlatform } from './sync-fixtures.ts'
 
 let visit = 0
@@ -141,6 +141,101 @@ it('shows normal priority and lets the reader set and remove the URL priority fi
   document.querySelector<HTMLButtonElement>('button[title="remove priority urgent"]')!.click()
   await vi.waitFor(() => expect(rows()).toHaveLength(2), { timeout: 5000 })
   expect(Object.fromEntries(new URLSearchParams(location.search))).toEqual({ state: 'ready', channel: 'work' })
+}, 30_000)
+
+const taskRows = () => [...document.querySelectorAll<HTMLElement>('main [data-task-row]')]
+const taskRowIds = () => taskRows().map((row) => row.dataset.taskRow)
+const taskRead = { timeout: 5000 }
+
+it('orders rendered Ready rows by default claim-next eligibility and log order', async () => {
+  const { api, as, client, open } = await workbench()
+  const worker = as('worker')
+  const me = await worker.me()
+  const make = async (text: string, priority: 'urgent' | 'high', assigned?: string) =>
+    (await worker.tasks.create('work', { text, priority, ...(assigned ? { for: assigned } : {}) })).task
+  const fenced = await make('Fenced', 'urgent')
+  await worker.tasks.claim(fenced.id, { lease: 600 })
+  const parked = await make('Parked', 'urgent')
+  await client.tasks.park(parked.id, 'hold for operator')
+  const other = await make('Other profile', 'urgent', (await as('reviewer').me()).actor)
+  const teammate = createBoardClient({ url: BOARD_URL, token: await personToken('u_teammate', BOARD_URL), fetch: (input, init) => api.fetch(new Request(input, init)) })
+  const foreign = (await teammate.tasks.create('work', { text: 'Other owner', priority: 'urgent' })).task
+  const first = await make('First in log', 'high')
+  // Log order, not the clocks on writes, breaks a priority/assignment tie.
+  vi.setSystemTime(Date.now() - 1000)
+  const second = await make('Second in log', 'high')
+  vi.useRealTimers()
+  expect(second.createdAt < first.createdAt).toBe(true)
+  const assigned = await make('For this profile', 'high', me.actor)
+  await client.pause('fence the outstanding lease')
+  await client.resume('accept claims again')
+  const stillHeld = await make('Claimed after resume', 'urgent')
+  await worker.tasks.claim(stillHeld.id, { lease: 600 })
+
+  await open('/tasks?state=ready&channel=work', { profile: 'worker' })
+  const expected = [fenced.id, assigned.id, first.id, second.id, other.id, foreign.id]
+  await vi.waitFor(() => expect(taskRowIds()).toEqual(expected), taskRead)
+  const rendered = taskRowIds()
+  const claimed: string[] = []
+  for (;;) {
+    const next = await worker.tasks.claim({ channel: 'work' })
+    if (!next) break
+    claimed.push(next.task.id)
+  }
+  expect(rendered).toEqual([...claimed, other.id, foreign.id])
+}, 30_000)
+
+async function revocableTasks() {
+  const bench = await workbench()
+  const { api, client } = bench
+  const admin = createBoardClient({ url: BOARD_URL, token: await localUserToken('julian', BOARD_URL), fetch: (input, init) => api.fetch(new Request(input, init)) })
+  const { task: secret } = await admin.tasks.create('secret', { text: 'Private task' })
+  const { task: publicTask } = await client.tasks.create('work', { text: 'Shared task' })
+  await admin.createGrant({ principals: [{ kind: 'everyone' }], can: { secret: [] } })
+  const { grant } = await admin.createGrant({ principals: [{ kind: 'user', userId: 'u_reader' }], can: { secret: ['read'] } })
+  return { ...bench, secret, publicTask, revoke: () => admin.revokeGrant(grant.id) }
+}
+
+it('drops a cached Ready row when a fresh task read omits it after revocation', async () => {
+  const { client, open, secret, publicTask, revoke } = await revocableTasks()
+  await open('/tasks?state=ready')
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
+  await revoke()
+  expect((await client.tasks.list({ state: 'ready' })).tasks.map(({ message }) => message.id)).toEqual([publicTask.id])
+  link('open', document.querySelector('main .tabs')!).click()
+  await vi.waitFor(() => expect(location.search).toBe(''), taskRead)
+  link('ready', document.querySelector('main .tabs')!).click()
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id]), taskRead)
+}, 30_000)
+
+it('drops a cached row when opening its thread is refused after revocation', async () => {
+  const { client, open, secret, publicTask, revoke } = await revocableTasks()
+  await open('/tasks?state=ready')
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
+  await revoke()
+  await expect(client.thread(secret.id)).rejects.toMatchObject({ status: 404 })
+  taskRows()[1]!.click()
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id]), taskRead)
+  expect(document.body.textContent).not.toContain('Private task')
+}, 30_000)
+
+it('keeps the same focused Ready row in place during a live promotion until blur', async () => {
+  const { client, open } = await workbench()
+  const { task: first } = await client.tasks.create('work', { text: 'First task', priority: 'high' })
+  const { task: second } = await client.tasks.create('work', { text: 'Reading this task' })
+  await open(`/tasks?state=ready&thread=${second.id}`)
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([first.id, second.id]), taskRead)
+  const reading = taskRows()[1]!
+  reading.focus()
+  expect(document.activeElement).toBe(reading)
+  await client.tasks.priority(second.id, 'urgent')
+  // The thread pane updates independently, proving the live change arrived before blur.
+  await vi.waitFor(() => expect([...document.querySelectorAll('dt')].find((el) => el.textContent === 'priority')?.nextElementSibling?.textContent).toBe('urgent'), taskRead)
+  expect(taskRowIds()).toEqual([first.id, second.id])
+  expect(taskRows()[1]).toBe(reading)
+  expect(document.activeElement).toBe(reading)
+  reading.blur()
+  await vi.waitFor(() => expect(taskRowIds()).toEqual([second.id, first.id]), taskRead)
 }, 30_000)
 
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {

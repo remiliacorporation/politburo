@@ -607,7 +607,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, politburo? }`,
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, task_root_order?, politburo? }`,
   so the client knows which project to mint for. `wake_by_path` is for a board
   that wakes registered projects, as Vercel's board does. A self-hosted
   `local()` board does not send it. The CLI can run from any directory.
@@ -4452,7 +4452,7 @@ task: {
   for: ActorId | null                                                        // the profile it's assigned to
   needs: MessageId[]
   epoch: number
-  claim: { actor: ActorId, until: string, binding?: TaskBindingInput } | null // never its token
+  claim: { actor: ActorId, until: string, pauseEpoch?: number, binding?: TaskBindingInput } | null // never its token
   blocked: { kind: string | null, reason: string } | null
   parked?: { reason: string, by: Author, previous: 'waiting' | 'ready' | 'claimed' } | null
   handoff?: { id: string, commit: string, packetPath: string, sha256: string, supersedes?: string, by: Author, at: string, generation: number } | null
@@ -4461,6 +4461,11 @@ task: {
   reason: string | null                                                      // when failed or canceled
 }
 ```
+
+On local boards `pauseEpoch` is the epoch in which the claim was admitted. A
+later epoch from `/control` fences it even before `until`.
+Discovery's `task_root_order: 'log-id'` says task lists and claim-next scan
+roots in increasing numeric message ID order (not timestamp order).
 
 A lease reserves work, but does not confirm that the agent is working.
 The fork's opt-in [run health](#run-health) is a separate read. It leaves the

@@ -1,6 +1,5 @@
 import { ListFilter, X } from 'lucide-react'
 import { Component, createRef, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { MessageView } from '../../api/routes.ts'
 import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../../contract/schemas.ts'
 import { compileAccess } from '../../server/access.ts'
 import * as board from './board.ts'
@@ -8,7 +7,7 @@ import { Composer } from './composer.tsx'
 import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
-import { isTask, nameOf, placesUnder, readFilter, stateNow, TASK_FILTER_STATES, tasks, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
+import { isTask, nameOf, placesUnder, readFilter, taskState, TASK_FILTER_STATES, taskListRows, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark, useLapse } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
 import { firstLine } from './words.ts'
@@ -27,28 +26,32 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   // A priority change filters the loaded pages, without starting the board's list over.
   const { priority, ...boardFilter } = filter
   const key = JSON.stringify(boardFilter)
-  // Where the board's list ended, for the filter it was asked with: the list stops there while the board has more.
-  const [listed, setListed] = useState<{ key: string; cursor: string; last: MessageView | undefined; more: boolean } | null>(null)
-  // What the board answered instead of the list, when it refused: `tooWide` when its tree holds more channels than one list reads.
-  const [refused, setRefused] = useState<{ text: string; tooWide: boolean } | null>(null)
-  const [loading, setLoading] = useState(true)
+  const scope = useMemo(() => Symbol(), [key])
   useEffect(() => {
-    let current = true
-    setLoading(true)
-    // A refusal was the last filter's: this one says its own once the board answers.
-    setRefused(null)
-    void board.loadTasks(boardFilter).then((page) => {
-      if (!current || !page) return
-      setLoading(false)
-      setRefused('refused' in page ? { text: page.refused, tooWide: page.tooWide } : null)
-      setListed('cursor' in page ? { key, ...page } : null)
-    })
-    return () => {
-      current = false
-    }
-  }, [key])
-  const end = listed?.key === key && listed.more ? listed.last : undefined
-  const rows = useMemo(() => tasks(state, filter, props.now, end, viewer), [state.messages, state.ops, state.actors, filter, viewer, props.now, end])
+    void board.readTaskList(scope, boardFilter)
+    return () => board.closeTaskList(scope)
+  }, [scope])
+  const list = state.taskList?.scope === scope ? state.taskList : undefined
+  const refused = list?.refused
+  const latest = list?.page ? taskListRows(state, list, filter, props.now, viewer) : []
+  const [frozen, setFrozen] = useState<{ query: string; rows: TaskRoot[] } | null>(null)
+  const rowList = useRef<HTMLDivElement>(null)
+  const hovered = useRef(false)
+  const selecting = () => {
+    const selection = document.getSelection()
+    const inside = (node: Node | null) => node !== null && rowList.current?.contains(node)
+    return selection && !selection.isCollapsed && (inside(selection.anchorNode) || inside(selection.focusNode))
+  }
+  const releaseRows = () => {
+    if (!hovered.current && !rowList.current?.contains(document.activeElement) && !selecting()) setFrozen(null)
+  }
+  useEffect(() => {
+    document.addEventListener('selectionchange', releaseRows)
+    return () => document.removeEventListener('selectionchange', releaseRows)
+  }, [])
+  const freezeRows = () => setFrozen((prior) => prior?.query === query ? prior : { query, rows: latest })
+  // Reading holds the sort/filter in place, never access: a refused read still removes a row.
+  const rows = frozen?.query === query ? frozen.rows.filter((row) => list?.ids.has(row.id)) : latest
 
   // A task can wait for one this list doesn't hold (a completed one, say): its thread says its state.
   const missing = [...new Set(rows.flatMap((row) => row.task.needs))].filter((id) => !state.messages[id]).slice(0, 30)
@@ -66,12 +69,12 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
     ...(filter.owner ? [{ key: 'owner', text: `owner ${nameOf(state, filter.owner)}`, drop: { owner: null } }] : []),
     ...(filter.for ? [{ key: 'for', text: `for ${nameOf(state, filter.for)}`, drop: { for: null } }] : []),
   ]
-  const more = listed?.key === key && listed.more
+  const more = list?.page?.through ? list.page.cursor : undefined
   // Tasks on their way, and any the board refused, with why.
   const pending = state.pending.filter((post) => post.task !== undefined && post.re === null)
   return (
     <>
-      <Header title="tasks" meta="by priority, then assigned to you, then oldest" live={state.live} lead={props.lead}>
+      <Header title="tasks" meta="claimable first · by priority, then age" live={state.live} lead={props.lead}>
         <TaskFilterButton filter={filter} channels={Object.keys(state.channels).sort()} owners={owners} assignees={assignees} state={state} known={props.known} count={chips.length} />
       </Header>
       <div className="view-body">
@@ -93,12 +96,21 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
       <TaskPage rows={rows} query={query}>
         {refused?.tooWide ? (
           <Places channels={Object.keys(state.channels)} under={filter.channel} />
-        ) : refused !== null ? (
+        ) : refused ? (
           <p className="empty error">{refused.text}</p>
         ) : rows.length === 0 && pending.length === 0 ? (
-          <p className="empty">{loading ? 'loading…' : chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
+          <p className="empty">{!list?.page ? 'loading…' : chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
         ) : (
-          <div className="task-rows">
+          <div
+            className="task-rows"
+            ref={rowList}
+            onFocusCapture={freezeRows}
+            onBlurCapture={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget) && !hovered.current && !selecting()) setFrozen(null)
+            }}
+            onMouseEnter={() => { hovered.current = true; freezeRows() }}
+            onMouseLeave={() => { hovered.current = false; releaseRows() }}
+          >
             {rows.map((row) => (
               <TaskRow key={row.id} root={row} state={state} open={where.thread === row.id} />
             ))}
@@ -108,7 +120,7 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
         {more && (
           <button
             className="clear more"
-            onClick={() => void board.loadTasks(boardFilter, listed.cursor).then((page) => page && 'cursor' in page && setListed({ key, ...page }))}
+            onClick={() => void board.readTaskList(scope, boardFilter, more)}
           >
             load more
           </button>
@@ -191,7 +203,7 @@ function Places({ channels, under }: { channels: string[]; under: string | undef
 function TaskRow({ root, state, open }: { root: TaskRoot; state: State; open: boolean }) {
   const { task } = root
   const now = useLapse(task.claim?.until)
-  const current = stateNow(task, now)
+  const current = taskState(task, now, state.status)
   const labels = Object.entries(root.labels).filter(([key]) => !key.startsWith('board.'))
   return (
     <div
@@ -225,7 +237,7 @@ function TaskRow({ root, state, open }: { root: TaskRoot; state: State; open: bo
             {nameOf(state, task.claim.actor)} · <Lease until={task.claim.until} />
           </>
         )}
-        {current === 'ready' && (task.state === 'claimed' ? 'lease ran out' : task.for ? `for ${nameOf(state, task.for)}` : '')}
+        {current === 'ready' && (task.state === 'claimed' ? 'claim ended' : task.for ? `for ${nameOf(state, task.for)}` : '')}
         {current === 'waiting' && (
           <>
             needs <Needs ids={task.needs} state={state} />

@@ -217,6 +217,7 @@ export async function boot(): Promise<void> {
     queue = []
     if (!current()) return
     listed.apply(events)
+    addLiveTasks(events)
     if (attentionVisit) refreshAttentionEvents(events)
     // A schedule's own state isn't in the feed, but its sends are: one that landed means the list moved.
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
@@ -297,12 +298,27 @@ export async function loadOlder(channel: string): Promise<boolean> {
   }
 }
 
-export const loadThread = (id: string) =>
-  once(`thread:${id}`, async () => {
+let threadDenials = 0
+const deniedThreads = new Map<string, number>()
+
+export function loadThread(id: string, fresh = false) {
+  const load = async () => {
     const as = identity
-    const { message: root, replies } = await readThread(id)
-    if (as === identity) set((s) => store.merge(s, [root, ...replies]))
-  })
+    try {
+      const { message: root, replies } = await readThread(id)
+      if (as === identity) set((s) => store.merge(s, [root, ...replies]))
+    } catch (error) {
+      const status = (error as { status?: unknown } | null)?.status
+      if (as === identity && (status === 403 || status === 404)) {
+        deniedThreads.set(id, ++threadDenials)
+        liveTaskCursors.delete(id)
+        set((s) => store.forgetThread(s, id))
+      }
+      throw error
+    }
+  }
+  return fresh ? load().catch((error) => toast(said(error))) : once(`thread:${id}`, load)
+}
 
 /** Threads a filtered view asks the board for, and how many of them it reads whole. */
 const FILTERED = 50
@@ -544,7 +560,9 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
  * now, or what the board refused it for: `tooWide` when the filter's tree holds more channels than
  * one list reads, as Vercel's board says for a caller who doesn't read every channel.
  */
-export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<{ cursor: string; last: MessageView | undefined; more: boolean } | { refused: string; tooWide: boolean } | undefined> {
+async function fetchTaskPage(filter: store.TaskFilter, after?: string): Promise<
+  { cursor: string; roots: MessageView[]; more: boolean } | { refused: string; tooWide: boolean } | undefined
+> {
   const as = identity
   try {
     const page = await listTasks({
@@ -557,12 +575,73 @@ export async function loadTasks(filter: store.TaskFilter, after?: string): Promi
       })
     if (as !== identity) return
     const roots = page.tasks.map((task) => task.message)
-    set((s) => store.merge(s, roots))
-    return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE }
+    return { cursor: page.cursor, roots, more: roots.length === PAGE }
   } catch (error) {
     if (as !== identity) return
     return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large' }
   }
+}
+
+export async function loadTasks(filter: store.TaskFilter, after?: string) {
+  const as = identity
+  const denials = threadDenials
+  const page = await fetchTaskPage(filter, after)
+  if (!page || as !== identity || 'refused' in page) return page
+  set((s) => store.merge(s, page.roots.filter((root) => (deniedThreads.get(root.id) ?? 0) <= denials)))
+  return { cursor: page.cursor, more: page.more }
+}
+
+// Only the active table read vouches for membership. Neither sidebar reads nor old threads do.
+let liveTaskCursors = new Map<string, number>()
+
+function addLiveTasks(events: BoardEventView[]) {
+  const list = state.taskList
+  if (!list || list.refused) return
+  const logIds = state.discovery?.task_root_order === 'log-id'
+  let ids: Set<string> | undefined
+  for (const event of events) {
+    const root = event.message
+    if (!store.isTask(root)) continue
+    if (!list.page) {
+      // Keep in-flight events only when we can tell they're newer than the read's cursor.
+      if (logIds) liveTaskCursors.set(root.id, Number(event.cursor))
+      continue
+    }
+    if ((logIds && Number(event.cursor) <= Number(list.page.cursor)) || list.ids.has(root.id)) continue
+    ;(ids ??= new Set(list.ids)).add(root.id)
+  }
+  if (ids) set((s) => ({ ...s, taskList: { ...list, ids } }))
+}
+
+export async function readTaskList(scope: symbol, filter: store.TaskFilter, after?: string) {
+  const as = identity
+  const denials = threadDenials
+  if (!after) {
+    liveTaskCursors = new Map()
+    set((s) => ({ ...s, taskList: { scope, ids: new Set() } }))
+  } else if (state.taskList?.scope !== scope || state.taskList.page?.cursor !== after) return
+  // Read the open pool for Ready and Claimed so leases and pause fences can move rows between
+  // those states without another request. A new visit still starts a fresh authorized read.
+  const page = await fetchTaskPage(filter.state === 'ready' || filter.state === 'claimed' ? { ...filter, state: 'open' } : filter, after)
+  if (!page || as !== identity) return
+  const list = state.taskList
+  if (list?.scope !== scope || (after && list.page?.cursor !== after)) return
+  if ('refused' in page) {
+    set((s) => ({ ...s, taskList: { scope, ids: new Set(), refused: { text: page.refused, tooWide: page.tooWide } } }))
+    return
+  }
+  const roots = page.roots.filter((root) => (deniedThreads.get(root.id) ?? 0) <= denials)
+  const ids = new Set(list.ids)
+  for (const root of roots) ids.add(root.id)
+  for (const [id, cursor] of liveTaskCursors) if (cursor > Number(page.cursor)) ids.add(id)
+  liveTaskCursors.clear()
+  set((s) => ({ ...store.merge(s, roots), taskList: { scope, ids, page: { cursor: page.cursor, through: page.more ? page.roots.at(-1) : undefined } } }))
+}
+
+export function closeTaskList(scope: symbol) {
+  if (state.taskList?.scope !== scope) return
+  liveTaskCursors.clear()
+  set((s) => ({ ...s, taskList: undefined }))
 }
 
 /** The shared open-task index also supplies the sidebar counts. */

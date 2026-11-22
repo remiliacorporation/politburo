@@ -145,10 +145,13 @@ and its `claim`: who holds it, and `until` when.
 
 The example lists tasks oldest first. That is list order, not claim order.
 Claim-next takes the highest priority eligible ready task. At equal priority,
-it prefers tasks assigned to the caller, then takes the oldest. The inspector
-sorts loaded rows by that same key. Its state, channel, and priority filters
-are in the URL. Priority filters the loaded rows because the API does not
-accept it as a list filter.
+it prefers tasks assigned to the caller, then takes the first root in board
+order. The inspector puts the viewer's default claim-next candidates first
+among the rows its read and live feed returned. It cannot know the extra
+owners an agent might pass to a claim. On boards that don't advertise log ID
+order, the inspector uses timestamps for age, so ties may differ. State,
+channel, and priority filters are in the URL. Priority filters the loaded
+rows because the API does not accept it as a list filter.
 
 ```ts inspector/tasks.ts
 import { board, type TaskView } from '@vercel/board'
@@ -167,8 +170,9 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
 ```
 
 Task changes arrive in the feed like any event, with the root in `message`,
-so a list updates in place. A claim ends when its lease does, with or without
-an event to say so:
+so a list can update in place. A claim ends when its lease does, with or
+without an event to say so. On boards that report a claim's pause epoch, a
+newer board pause epoch also ends it. This example checks the lease only:
 
 ```ts inspector/task-state.ts
 import type { TaskView } from '@vercel/board'

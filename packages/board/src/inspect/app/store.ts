@@ -67,6 +67,7 @@ export type State = AttentionState & {
   control: Extract<BoardEventView, { type: 'work.control' }> | null
   /** Whether every open task is loaded, so the page can count them. */
   tasksCounted: boolean
+  taskList?: TaskList | undefined
   /** Each opened channel's listing, or null on a board whose thread pages have no `older`: it loads by messages. */
   listings: Record<string, Listing | null>
   /** The board's schema registry, once it's read: what a block's fields mean. */
@@ -185,6 +186,16 @@ export function merge(state: State, views: MessageView[]): State {
     }
   }
   return reconcileAttention({ ...state, messages, ops }, views)
+}
+
+/** A fresh thread read refused the old view. Drop its messages and any Tasks membership. */
+export function forgetThread(state: State, id: string): State {
+  const messages = Object.fromEntries(Object.entries(state.messages).filter(([key, m]) => key !== id && m.re !== id))
+  const list = state.taskList
+  if (!list?.ids.has(id)) return { ...state, messages }
+  const ids = new Set(list.ids)
+  ids.delete(id)
+  return { ...state, messages, taskList: { ...list, ids } }
 }
 
 // #region guide inspector/pending.ts
@@ -557,6 +568,12 @@ export function stateNow(task: TaskView, now: number): TaskState {
 }
 // #endregion
 
+/** A pause fences even claims whose wall-clock lease has time left. */
+export function taskState(task: TaskView, now: number, status: BoardStatus | null): TaskState {
+  if (task.state === 'claimed' && task.claim?.pauseEpoch !== undefined && status && task.claim.pauseEpoch < status.pauseEpoch) return 'ready'
+  return stateNow(task, now)
+}
+
 /** A root that's a task. */
 export type TaskRoot = MessageView & { task: TaskView }
 export const isTask = (message: MessageView | null | undefined): message is TaskRoot => !!message?.task
@@ -613,6 +630,14 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
 /** Which tasks a list shows. `channel` can name a tree with a trailing `/`; `priority` is filtered locally. */
 export type TaskFilter = { channel?: string; state: 'open' | 'all' | TaskState; label: string[]; owner?: string; for?: string; priority?: TaskPriority }
 
+/** Membership of the current Tasks read, not the shared message cache. Live roots can join it. */
+export type TaskList = {
+  scope: symbol
+  ids: ReadonlySet<string>
+  page?: { cursor: string; through?: MessageView | undefined } | undefined
+  refused?: { text: string; tooWide: boolean } | undefined
+}
+
 export const TASK_FILTER_STATES = ['open', 'waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled', 'all'] as const
 
 /** The task list filter from its URL: `/tasks?state=ready&channel=work/&priority=urgent`. */
@@ -660,44 +685,53 @@ export function placesUnder(channels: string[], under?: string): TaskPlace[] {
 }
 
 /** The board's rules for a task list, for tasks already here, so one that changes state moves in or out as it happens. */
-export function taskMatches(root: TaskRoot, filter: TaskFilter, now: number): boolean {
+export function taskMatches(root: TaskRoot, filter: TaskFilter, now: number, status: BoardStatus | null): boolean {
   const { task } = root
   if (root.deleted) return false
   if (filter.channel && !inChannel(root.channel, filter.channel)) return false
   // Open is what the task wears; a state by name is what it is now, so a lapsed claim lists as ready.
-  if (filter.state === 'open' ? !OPEN_STATES.includes(task.state) : filter.state !== 'all' && stateNow(task, now) !== filter.state) return false
+  if (filter.state === 'open' ? !OPEN_STATES.includes(task.state) : filter.state !== 'all' && taskState(task, now, status) !== filter.state) return false
   if (filter.owner && task.owner !== filter.owner) return false
   if (filter.for && task.for !== filter.for) return false
   if (filter.priority && (task.priority ?? DEFAULT_TASK_PRIORITY) !== filter.priority) return false
   return filter.label.every((label) => hasLabel(root.labels, label))
 }
 
-/** Claim-next's sort key, not its eligibility rules: highest priority, assigned to the viewer, then oldest. */
-export function byClaimOrder(a: TaskRoot, b: TaskRoot, viewer: Pick<Viewer, 'actor' | 'principal'>): number {
-  const assigned = (root: TaskRoot) => root.task.for === viewer.actor && root.task.owner === viewer.principal
-  return priorityRank(b.task.priority) - priorityRank(a.task.priority)
-    || Number(assigned(b)) - Number(assigned(a))
-    || byWritten(a, b)
+/** The loaded tasks a filter keeps, in age order for the home view. */
+export function tasks(state: State, filter: TaskFilter, now: number, through?: MessageView): TaskRoot[] {
+  return Object.values(state.messages)
+    .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, now, state.status))
+    .filter((root) => !through || byWritten(root, through) <= 0)
+    .map((root) => shown(state, root.id) as TaskRoot).sort(byWritten)
 }
 
-/**
- * The loaded tasks a filter keeps. `through` is the last row the board listed, in its oldest-first
- * order. Apply that boundary before sorting for the viewer so tasks past a gap don't show yet.
- * Without a viewer, keep the board's order (used by the home view).
- */
-export function tasks(
-  state: State, filter: TaskFilter, now: number,
-  through?: Pick<MessageView, 'createdAt' | 'id'>,
-  viewer?: Pick<Viewer, 'actor' | 'principal' | 'may'>,
-): TaskRoot[] {
+/** Tasks from the current read or the authorized feed, with default claim-next candidates first. */
+export function taskListRows(state: State, list: TaskList, filter: TaskFilter, now: number, viewer: Viewer): TaskRoot[] {
+  // Local roots have numeric log IDs, which is the order claim-next actually scans. Without
+  // that guarantee, use createdAt (then ID); equal-priority/assignment ties may differ there.
+  const byAge = state.discovery?.task_root_order === 'log-id'
+    ? (a: MessageView, b: MessageView) => Number(a.id) - Number(b.id)
+    : byWritten
+  const through = list.page?.through
   const found: TaskRoot[] = []
-  for (const message of Object.values(state.messages)) {
-    if (!isTask(message) || !taskMatches(message, filter, now)) continue
-    if (viewer && !viewer.may('read', message.channel)) continue
-    if (through && byWritten(message, through) > 0) continue
-    found.push(shown(state, message.id) as TaskRoot)
+  for (const id of list.ids) {
+    const root = shown(state, id)
+    if (!isTask(root) || !taskMatches(root, filter, now, state.status)) continue
+    if (through && byAge(root, through) > 0) continue
+    found.push(root)
   }
-  return found.sort(viewer ? (a, b) => byClaimOrder(a, b, viewer) : byWritten)
+  const group = ({ task, channel }: TaskRoot) => {
+    // The inspector knows the viewer's own pool, not the explicit `from` owners of a claim.
+    if (state.status?.paused || task.parked || taskState(task, now, state.status) !== 'ready'
+      || task.owner !== viewer.principal || !viewer.may('label', channel)) return 0
+    return task.for === viewer.actor ? 2 : task.for === null ? 1 : 0
+  }
+  return found.sort((a, b) => {
+    const left = group(a), right = group(b)
+    return Number(right > 0) - Number(left > 0)
+      || priorityRank(b.task.priority) - priorityRank(a.task.priority)
+      || right - left || byAge(a, b)
+  })
 }
 
 /** How many loaded tasks are in each state, treating a lapsed claim as ready. */

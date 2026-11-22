@@ -479,7 +479,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
   const identity = board.getIdentity()
   useEffect(() => {
     setMissing(false)
-    void board.loadThread(id).then(() => {
+    void board.loadThread(id, true).then(() => {
       if (identity === board.getIdentity()) setMissing(!board.getState().messages[id])
     })
   }, [id, identity])
