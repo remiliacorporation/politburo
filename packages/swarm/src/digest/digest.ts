@@ -20,7 +20,7 @@ function projectHeader({ id, urgency, class: kind, state, createdAt, expires, su
 }
 
 function timestamp(value: unknown, field: string, id: string): number {
-  const syntax = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i
+  const syntax = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i
   if (typeof value === 'string' && syntax.test(value)) {
     const at = Date.parse(value), day = new Date(`${value.slice(0, 10)}T00:00:00Z`)
     if (Number.isFinite(at) && Number.isFinite(+day) && day.toISOString().startsWith(value.slice(0, 10))) return at
@@ -28,12 +28,17 @@ function timestamp(value: unknown, field: string, id: string): number {
   throw new InputError(`invalid ${field} for header ${JSON.stringify(id)}`)
 }
 
+function windowBound(value: string, bound: 'from' | 'to'): number {
+  if (/:\d{1,2}\.\d{4}/.test(value)) throw new InputError(`invalid window ${bound}: fractional seconds exceed three digits`)
+  return Date.parse(value)
+}
+
 export function exceptionDigest({ repo, window, headers, acks = [], now }: {
   repo: string; window: { from: string; to: string }; headers: readonly MessageHeader[]
   acks?: readonly RolloutAck[]; now: string | number | Date
 }) {
   // Use a half-open interval so adjacent windows do not repeat boundary headers.
-  const from = Date.parse(window.from), to = Date.parse(window.to)
+  const from = windowBound(window.from, 'from'), to = windowBound(window.to, 'to')
   const nowMs = new Date(now).getTime()
   const open = new Map<string, MessageHeader>()
   const latest = new Map<string, { item: MessageHeader; at: number; expiry: number }>()
@@ -82,13 +87,14 @@ export async function postDigest({ digest, mailbox, mail }: {
 }): Promise<'empty' | 'posted' | 'existing'> {
   checkMailbox(mailbox)
   const { batch, repo, window: { from, to }, counts: { p0, p1, p2, p3 }, act_on, items } = digest
+  const fromMs = windowBound(from, 'from'), toMs = windowBound(to, 'to')
   if (!items.length && !act_on.length) return 'empty'
   const { landed } = await mail.post({
-    id: `digest:${mailbox}:${repo}:${new Date(from).toISOString()}:${new Date(to).toISOString()}`,
+    id: `digest:${mailbox}:${repo}:${new Date(fromMs).toISOString()}:${new Date(toMs).toISOString()}`,
     mailbox, class: 'sec.log', urgency: 'p3',
     text: `exception digest for ${repo}: ${act_on.length} to act on, ${items.length} items`,
     block: { schema: 'swarm-digest@1', data: {
-      batch, repo, window: { from, to }, counts: { p0, p1, p2, p3 }, act_on: [...act_on], items: items.map(projectHeader),
+      batch, repo, window: { from, to }, counts: { p0, p1, p2, p3 }, act_on: [...act_on], items: Array.from(items, projectHeader),
     } },
   })
   return landed === 'new' ? 'posted' : 'existing'

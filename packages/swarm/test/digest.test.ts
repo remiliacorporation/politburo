@@ -64,6 +64,16 @@ test('notice routing: heartbeat misses mail, a dotted key impersonates a path, o
   assert.deepEqual(mail.messages, [])
 })
 
+test('notice routing broadcasts unknown descendants when a scalar replaces an object or vice versa', async () => {
+  const readers = { dispatch: 'dispatch-inbox', mail: 'mail-inbox', watch: 'watch-inbox' }
+  const configs = ['forward_now', { future: true }].map((p0) => ({ mail: { urgency: { p0 } } }))
+  for (const i of [0, 1]) {
+    const mail = memoryMail()
+    await policyNotices({ version: 1, previous: configs[i], next: configs[1 - i], mailboxes: readers, mail })
+    assert.deepEqual(mail.messages.map(({ mailbox }) => mailbox), Object.values(readers))
+  }
+})
+
 test('policy notice paths: values, unknown segments or dynamic keys leak in text, block or receipt', async () => {
   const dataKey = ['fixture', 'private', 'entry'].join('_')
   const tracker = `acme/${dataKey}`
@@ -73,11 +83,14 @@ test('policy notice paths: values, unknown segments or dynamic keys leak in text
     mail: { [dataKey]: true, 'urgency.p1': true, urgency: { p1: { forward_within_minutes: 20 } } },
   } })
   const paths = ['mail', 'mail.urgency.p1.forward_within_minutes', 'tiers.models.adviser', 'tiers.models.core', 'trackers']
-  assert.deepEqual(receipt, { sent: ['policy:shared-inbox:party:v413', 'policy:watch-inbox:party:v413'], skipped: [] })
-  for (const notice of mail.messages) {
-    assert.deepEqual(notice.block, { schema: 'swarm-policy@1', data: { record: 'party', version: 413, changed_paths: paths } })
-    assert.equal(notice.text.split('. fetch')[0], `config party v413 changed: ${paths.join(', ')}`)
-  }
+  const boxes = ['shared-inbox', 'watch-inbox']
+  assert.deepEqual(receipt, { sent: boxes.map((box) => `policy:${box}:party:v413`), skipped: [] })
+  // Whitelist the complete notice, so no config values or private keys can appear even after the fetch instruction.
+  assert.deepEqual(mail.messages, boxes.map((mailbox) => ({
+    id: `policy:${mailbox}:party:v413`, mailbox, class: 'policy', urgency: 'p1',
+    block: { schema: 'swarm-policy@1', data: { record: 'party', version: 413, changed_paths: paths } },
+    text: `config party v413 changed: ${paths.join(', ')}. fetch this committed record from the config thread on the party board.`,
+  })))
 })
 
 const window = { from: '2026-11-20T21:00:00Z', to: now }
@@ -106,6 +119,18 @@ test('digest rejects malformed timestamps and expiry on p0/p1, naming even filte
   ] as const) {
     assert.throws(() => exceptionDigest({ ...args, headers: [bad] }), new RegExp(`${field}.*header "${bad.id}"`))
   }
+})
+
+test('digest rejects sub-millisecond expiry instead of dropping a live header', () => {
+  const live = header('live', 'p2', { expires: '2026-11-20T21:30:00.0009Z' })
+  assert.throws(() => exceptionDigest({ ...args, headers: [live] }), /expires.*header "live"/)
+})
+
+test('digest rejects sub-millisecond createdAt instead of tying distinct duplicate versions', () => {
+  const headers = ['0001', '0009'].map((fraction, i) => header('dup', 'p2', {
+    createdAt: `2026-11-20T21:01:00.${fraction}Z`, summary: i === 0 ? 'older' : 'newer',
+  }))
+  assert.throws(() => exceptionDigest({ ...args, headers }), /createdAt.*header "dup"/)
 })
 
 test('digest ordering: duplicate ids choose newest and distinct ids tie-break by code units', () => {
@@ -146,15 +171,38 @@ test('notice and overdue ack identity: two repo records at v1 collide or lose th
   assert.deepEqual(digest.items.map(({ class: kind, urgency }) => [kind, urgency]), [['policy', 'p1'], ['policy', 'p1']])
 })
 
-test('digest delivery: repo or window ids collide, retries duplicate, or extra fields escape', async () => {
-  const mail = memoryMail(), mailbox = 'shared-inbox'
+test('digest rejects sub-millisecond window bounds instead of colliding delivery ids', async () => {
+  const headers = [header('outage', 'p0')], digest = exceptionDigest({ ...args, headers })
+  const mail = memoryMail()
+  for (const bounds of [{ ...window, to: '2026-11-20T21:30:00.0001Z' },
+    { ...window, to: '2026-11-20T21:30:00.0009Z' }, { ...window, from: '2026-11-20T21:00:00.0001Z' }]) {
+    assert.throws(() => exceptionDigest({ ...args, window: bounds, headers }), /invalid window/)
+    await assert.rejects(postDigest({ mailbox: 'shared-inbox', mail, digest: { ...digest, window: bounds } }), /invalid window/)
+  }
+  assert.deepEqual(mail.messages, [])
+})
+
+test('digest delivery: repo or window ids collide, retries duplicate, or extra fields serialize', async () => {
+  const mailbox = 'shared-inbox', store = memoryMail()
+  const mail: typeof store = { get messages() { return store.messages }, async post(message) {
+    return store.post(JSON.parse(JSON.stringify(message)))
+  } }
+  const body = ['fixture', 'body'].join(' ')
+  class DecoratedItems extends Array<MessageHeader> {
+    body = body
+    toJSON() { return { body: this.body } }
+  }
   const headers = [header('outage', 'p0', { createdAt: '2026-11-20T21:20:00Z' })]
   for (const [repo, bounds] of [[args.repo, window], ['acme/extras', window],
     [args.repo, { ...window, from: '2026-11-20T21:01:00Z' }],
     [args.repo, { ...window, to: '2026-11-20T21:30:00.001Z' }]] as const) {
     const digest = exceptionDigest({ ...args, repo, window: bounds, headers })
-    const body = ['fixture', 'body'].join(' ')
-    const extra = { ...digest, body, items: digest.items.map((item) => ({ ...item, body })) }
+    const items = new DecoratedItems()
+    for (const item of digest.items) {
+      const decorated = { ...item, body, toJSON: () => ({ body }) }
+      items.push(decorated)
+    }
+    const extra = { ...digest, body, items }
     assert.equal(digest.batch, 'ex-2026-11-20T21:30Z')
     assert.equal(await postDigest({ mailbox, mail, digest: extra }), 'posted')
     assert.deepEqual(mail.messages.at(-1)?.block, { schema: 'swarm-digest@1', data: digest })

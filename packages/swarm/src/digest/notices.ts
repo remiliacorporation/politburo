@@ -23,23 +23,25 @@ const definitions: Record<string, Shape> = schema.definitions
 
 function changes(previous: unknown, next: unknown): Change[] {
   const found: Change[] = []
-  function visit(left: unknown, right: unknown, path: string[], shape: Shape) {
-    if (isDeepStrictEqual(left, right)) return
+  function visit(left: unknown, right: unknown, path: string[], shape: Shape, collapsed = false) {
+    if (!collapsed && isDeepStrictEqual(left, right)) return
     if (shape.$ref) shape = definitions[shape.$ref.split('/').at(-1)!]!
     const fields = shape.properties ?? shape.then?.properties
     const a = isConfigObject(left) ? left : undefined
     const b = isConfigObject(right) ? right : undefined
     const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})])
-    if (shape.patternProperties || !keys.size || (!a && left !== undefined) || (!b && right !== undefined)) {
+    if (shape.patternProperties || !keys.size) {
       found.push({ path })
       return
     }
+    // Keep the parent path on type changes, but still check the object for unknown keys.
+    collapsed ||= (!a && left !== undefined) || (!b && right !== undefined)
     for (const key of keys) {
       const child = /^[a-z][a-z0-9_]*$/.test(key) && fields && Object.hasOwn(fields, key) ? fields[key] : undefined
       const l = a && Object.hasOwn(a, key) ? a[key] : undefined
       const r = b && Object.hasOwn(b, key) ? b[key] : undefined
-      if (child) visit(l, r, [...path, key], child)
-      else if (!isDeepStrictEqual(l, r)) found.push({ path, unknown: true })
+      if (child) visit(l, r, collapsed ? path : [...path, key], child, collapsed)
+      else if (collapsed || !isDeepStrictEqual(l, r)) found.push({ path, unknown: true })
     }
   }
   visit(previous, next, [], schema)
