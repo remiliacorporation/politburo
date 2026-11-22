@@ -117,7 +117,10 @@ for (const [name, claim] of [
 
 for (const [name, input] of [
   ['duplicate emails after case folding', { members: [entry(email), entry(email.toUpperCase())] }],
-  ['colliding principal IDs', { members: [entry('a.at.b@c.invalid'), entry('a@b.at.c.invalid')] }],
+  ['a separator overlapping @ from the local part', { members: [entry('x.at@b.c')] }],
+  ['a separator overlapping @ from the domain', { members: [entry('a@at.c')] }],
+  ['a second separator in the local part', { members: [entry('a.at.b@c.d')] }],
+  ['a second separator in the domain', { members: [entry('a@b.at.c')] }],
   ['unknown registry fields', { members: [], owner: email }],
   ['unknown member fields', { members: [{ ...entry(email), owner: true }] }],
   ['unknown fields nested under a grant', { members: [{ email, can: { '*': { read: true } } }] }],

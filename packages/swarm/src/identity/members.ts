@@ -8,7 +8,9 @@ const emailPattern = /^[a-z0-9][a-z0-9._-]{0,63}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0
 export function principalId(email: string): string {
   // Board user grants match the suffix, which must fit USER_ID as well as the host ID.
   if (!emailPattern.test(email) || email.length > 197) throw new TypeError('invalid member email')
-  return `cloudflare:person:${email.toLowerCase().replace('@', '.at.')}`
+  const suffix = email.toLowerCase().replace('@', '.at.')
+  if (suffix.indexOf('.at.') !== suffix.lastIndexOf('.at.')) throw new TypeError('invalid member email')
+  return `cloudflare:person:${suffix}`
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
@@ -49,15 +51,12 @@ function memberCan(input: unknown): Member['can'] {
 export function parseMembers(input: unknown): Members {
   if (!fields(input, 'members') || !list(input.members)) throw new TypeError('invalid member registry')
   const members = new Map<string, Member>()
-  const ids = new Set<string>()
   for (const entry of input.members) {
     if (!fields(entry, 'email', 'can') || typeof entry.email !== 'string') throw new TypeError('invalid member entry')
-    const id = principalId(entry.email)
+    principalId(entry.email)
     const email = entry.email.toLowerCase()
     if (members.has(email)) throw new TypeError('duplicate member email')
-    if (ids.has(id)) throw new TypeError('duplicate member principal id')
     members.set(email, { email, can: memberCan(entry.can) })
-    ids.add(id)
   }
   return members
 }
