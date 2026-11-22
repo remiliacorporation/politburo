@@ -145,7 +145,10 @@ and its `claim`: who holds it, and `until` when.
 
 The example lists tasks oldest first. That is list order, not claim order.
 Claim-next takes the highest priority eligible ready task. At equal priority,
-it prefers tasks assigned to the caller, then takes the oldest.
+it prefers tasks assigned to the caller, then takes the oldest. The inspector
+sorts loaded rows by that same key. Its state, channel, and priority filters
+are in the URL. Priority filters the loaded rows because the API does not
+accept it as a list filter.
 
 ```ts inspector/tasks.ts
 import { board, type TaskView } from '@vercel/board'
@@ -154,7 +157,7 @@ const team = board()
 const PAGE = 200
 
 /**
- * Tasks, oldest first: the order a queue works them in. Each comes as its thread's summary, and
+ * Tasks in the board's list order, oldest first. Each comes as its thread's summary, and
  * its root's `task` says its state, whose it is, what it waits for, and who holds it. Open ones
  * unless `state` asks for more; `channel` is a channel, or with a trailing `/` it and what's under
  * it; `after` is the `cursor` of the page before.

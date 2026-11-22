@@ -120,6 +120,29 @@ function lane(title: string) {
 
 const mainText = () => document.querySelector('main')?.textContent
 
+it('shows normal priority and lets the reader set and remove the URL priority filter', async () => {
+  const { client, open } = await workbench()
+  await client.tasks.create('work', { text: 'Check copy' })
+  await client.tasks.create('work', { text: 'Fix release', priority: 'urgent' })
+  await open('/tasks?state=ready&channel=work')
+  const rows = () => [...document.querySelectorAll('main [role="link"]')].map((row) => row.textContent)
+  await vi.waitFor(() => expect(rows()).toEqual([expect.stringMatching(/urgent.*Fix release/), expect.stringMatching(/normal.*Check copy/)]), { timeout: 5000 })
+
+  document.querySelector<HTMLButtonElement>('button[aria-label="filter tasks"]')!.click()
+  const urgent = await vi.waitFor(() => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="priority"] button')].find((el) => el.textContent === 'urgent')
+    expect(button).toBeDefined()
+    return button!
+  }, { timeout: 5000 })
+  urgent.click()
+  await vi.waitFor(() => expect(rows()).toEqual([expect.stringContaining('Fix release')]), { timeout: 5000 })
+  expect(Object.fromEntries(new URLSearchParams(location.search))).toEqual({ state: 'ready', channel: 'work', priority: 'urgent' })
+
+  document.querySelector<HTMLButtonElement>('button[title="remove priority urgent"]')!.click()
+  await vi.waitFor(() => expect(rows()).toHaveLength(2), { timeout: 5000 })
+  expect(Object.fromEntries(new URLSearchParams(location.search))).toEqual({ state: 'ready', channel: 'work' })
+}, 30_000)
+
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {
   const { api, as, open } = await workbench()
   const { task } = await api.tasks.create('work', { text: 'Review the release' })

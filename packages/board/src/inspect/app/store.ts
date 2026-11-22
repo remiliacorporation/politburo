@@ -2,6 +2,7 @@ import type { ActorView, BoardStatus, BlockView, BoardEventView, ChannelView, Di
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
+import { DEFAULT_TASK_PRIORITY, priorityRank, TaskPriority } from '../../contract/schemas.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { confirmAttention, needsAttentionAnswer, reconcileAttention, type AttentionState } from './attention-store.ts'
 import { ago, shownName } from './words.ts'
@@ -516,7 +517,7 @@ export type Viewer = {
   principal: string
   /** The profile you write as, or null as yourself. */
   profile: string | null
-  may(permission: 'post' | 'label' | 'react' | 'manage', channel: string): boolean
+  may(permission: 'read' | 'post' | 'label' | 'react' | 'manage', channel: string): boolean
   /** `manage` at `*`: what registering a schema and listing grants need. */
   manages: boolean
   person: boolean
@@ -609,8 +610,25 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
   }
 }
 
-/** Which tasks a list shows, as the board's API takes them: `channel` is a channel or, with a trailing `/`, it and what's under it. */
-export type TaskFilter = { channel?: string; state: 'open' | 'all' | TaskState; label: string[]; owner?: string; for?: string }
+/** Which tasks a list shows. `channel` can name a tree with a trailing `/`; `priority` is filtered locally. */
+export type TaskFilter = { channel?: string; state: 'open' | 'all' | TaskState; label: string[]; owner?: string; for?: string; priority?: TaskPriority }
+
+export const TASK_FILTER_STATES = ['open', 'waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled', 'all'] as const
+
+/** The task list filter from its URL: `/tasks?state=ready&channel=work/&priority=urgent`. */
+export function readFilter(params: URLSearchParams): TaskFilter {
+  const state = params.get('state') ?? 'open'
+  const priority = TaskPriority.safeParse(params.get('priority'))
+  const one = (name: 'channel' | 'owner' | 'for') => (params.get(name) ? { [name]: params.get(name)! } : {})
+  return {
+    state: TASK_FILTER_STATES.find((name) => name === state) ?? 'open',
+    label: params.getAll('label').filter(Boolean),
+    ...(priority.success ? { priority: priority.data } : {}),
+    ...one('channel'),
+    ...one('owner'),
+    ...one('for'),
+  }
+}
 
 const inChannel = (channel: string, wanted: string) => (wanted.endsWith('/') ? channel === wanted.slice(0, -1) || channel.startsWith(wanted) : channel === wanted)
 
@@ -650,22 +668,36 @@ export function taskMatches(root: TaskRoot, filter: TaskFilter, now: number): bo
   if (filter.state === 'open' ? !OPEN_STATES.includes(task.state) : filter.state !== 'all' && stateNow(task, now) !== filter.state) return false
   if (filter.owner && task.owner !== filter.owner) return false
   if (filter.for && task.for !== filter.for) return false
+  if (filter.priority && (task.priority ?? DEFAULT_TASK_PRIORITY) !== filter.priority) return false
   return filter.label.every((label) => hasLabel(root.labels, label))
 }
 
+/** Claim-next's sort key, not its eligibility rules: highest priority, assigned to the viewer, then oldest. */
+export function byClaimOrder(a: TaskRoot, b: TaskRoot, viewer: Pick<Viewer, 'actor' | 'principal'>): number {
+  const assigned = (root: TaskRoot) => root.task.for === viewer.actor && root.task.owner === viewer.principal
+  return priorityRank(b.task.priority) - priorityRank(a.task.priority)
+    || Number(assigned(b)) - Number(assigned(a))
+    || byWritten(a, b)
+}
+
 /**
- * The loaded tasks a filter keeps, oldest first: the order a queue works them in. While the board
- * has more than it listed, the list ends at `through`, the last one it did, so a new task doesn't
- * show after a gap.
+ * The loaded tasks a filter keeps. `through` is the last row the board listed, in its oldest-first
+ * order. Apply that boundary before sorting for the viewer so tasks past a gap don't show yet.
+ * Without a viewer, keep the board's order (used by the home view).
  */
-export function tasks(state: State, filter: TaskFilter, now: number, through?: Pick<MessageView, 'createdAt' | 'id'>): TaskRoot[] {
+export function tasks(
+  state: State, filter: TaskFilter, now: number,
+  through?: Pick<MessageView, 'createdAt' | 'id'>,
+  viewer?: Pick<Viewer, 'actor' | 'principal' | 'may'>,
+): TaskRoot[] {
   const found: TaskRoot[] = []
   for (const message of Object.values(state.messages)) {
     if (!isTask(message) || !taskMatches(message, filter, now)) continue
+    if (viewer && !viewer.may('read', message.channel)) continue
     if (through && byWritten(message, through) > 0) continue
     found.push(shown(state, message.id) as TaskRoot)
   }
-  return found.sort(byWritten)
+  return found.sort(viewer ? (a, b) => byClaimOrder(a, b, viewer) : byWritten)
 }
 
 /** How many loaded tasks are in each state, treating a lapsed claim as ready. */

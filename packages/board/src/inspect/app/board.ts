@@ -530,7 +530,7 @@ export async function saveAttachment(attachment: Attachment) {
 
 // #region guide inspector/tasks.ts
 /**
- * Tasks, oldest first: the order a queue works them in. Each comes as its thread's summary, and
+ * Tasks in the board's list order, oldest first. Each comes as its thread's summary, and
  * its root's `task` says its state, whose it is, what it waits for, and who holds it. Open ones
  * unless `state` asks for more; `channel` is a channel, or with a trailing `/` it and what's under
  * it; `after` is the `cursor` of the page before.

@@ -1,34 +1,19 @@
 import { ListFilter, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, createRef, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { MessageView } from '../../api/routes.ts'
-import * as board from './board.ts'
+import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../../contract/schemas.ts'
 import { compileAccess } from '../../server/access.ts'
+import * as board from './board.ts'
 import { Composer } from './composer.tsx'
 import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
-import { isTask, nameOf, placesUnder, stateNow, tasks, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
+import { isTask, nameOf, placesUnder, readFilter, stateNow, TASK_FILTER_STATES, tasks, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark, useLapse } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
 import { firstLine } from './words.ts'
 
-// The board's tasks as a queue: open ones, oldest first, the order they're worked in. Each row is
-// its thread, which is where a task is read and worked.
-
-const STATES = ['open', 'waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled', 'all'] as const
-
-/** The view's filter, from its URL: `/tasks?state=ready&channel=work/&label=step=fix`. */
-function readFilter(params: URLSearchParams): TaskFilter {
-  const state = params.get('state') ?? 'open'
-  const one = (name: 'channel' | 'owner' | 'for') => (params.get(name) ? { [name]: params.get(name)! } : {})
-  return {
-    state: (STATES as readonly string[]).includes(state) ? (state as TaskFilter['state']) : 'open',
-    label: params.getAll('label').filter(Boolean),
-    ...one('channel'),
-    ...one('owner'),
-    ...one('for'),
-  }
-}
+const PRIORITIES = [...TaskPriority.options].reverse()
 
 const setFilter = (changes: Record<string, string | string[] | null>) => navigate(here({ params: changes }), true)
 
@@ -39,7 +24,9 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   useTypeToFocus('main')
   const query = where.params.toString()
   const filter = useMemo(() => readFilter(where.params), [query])
-  const key = JSON.stringify(filter)
+  // A priority change filters the loaded pages, without starting the board's list over.
+  const { priority, ...boardFilter } = filter
+  const key = JSON.stringify(boardFilter)
   // Where the board's list ended, for the filter it was asked with: the list stops there while the board has more.
   const [listed, setListed] = useState<{ key: string; cursor: string; last: MessageView | undefined; more: boolean } | null>(null)
   // What the board answered instead of the list, when it refused: `tooWide` when its tree holds more channels than one list reads.
@@ -50,7 +37,7 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
     setLoading(true)
     // A refusal was the last filter's: this one says its own once the board answers.
     setRefused(null)
-    void board.loadTasks(filter).then((page) => {
+    void board.loadTasks(boardFilter).then((page) => {
       if (!current || !page) return
       setLoading(false)
       setRefused('refused' in page ? { text: page.refused, tooWide: page.tooWide } : null)
@@ -61,7 +48,7 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
     }
   }, [key])
   const end = listed?.key === key && listed.more ? listed.last : undefined
-  const rows = useMemo(() => tasks(state, filter, props.now, end), [state.messages, state.ops, state.actors, key, props.now, end])
+  const rows = useMemo(() => tasks(state, filter, props.now, end, viewer), [state.messages, state.ops, state.actors, filter, viewer, props.now, end])
 
   // A task can wait for one this list doesn't hold (a completed one, say): its thread says its state.
   const missing = [...new Set(rows.flatMap((row) => row.task.needs))].filter((id) => !state.messages[id]).slice(0, 30)
@@ -72,7 +59,9 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   const owners = [...new Set(Object.values(state.messages).flatMap((m) => (isTask(m) ? [m.task.owner] : [])))]
   const assignees = [...new Set(Object.values(state.messages).flatMap((m) => (isTask(m) && m.task.for ? [m.task.for] : [])))]
   const chips: { key: string; text: string; drop: Record<string, string | string[] | null> }[] = [
+    ...(filter.state !== 'open' ? [{ key: 'state', text: `state ${filter.state}`, drop: { state: null } }] : []),
     ...(filter.channel ? [{ key: 'channel', text: `in #${filter.channel}`, drop: { channel: null } }] : []),
+    ...(priority ? [{ key: 'priority', text: `priority ${priority}`, drop: { priority: null } }] : []),
     ...filter.label.map((label) => ({ key: `label:${label}`, text: describe(label), drop: { label: filter.label.filter((l) => l !== label) } })),
     ...(filter.owner ? [{ key: 'owner', text: `owner ${nameOf(state, filter.owner)}`, drop: { owner: null } }] : []),
     ...(filter.for ? [{ key: 'for', text: `for ${nameOf(state, filter.for)}`, drop: { for: null } }] : []),
@@ -82,12 +71,12 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   const pending = state.pending.filter((post) => post.task !== undefined && post.re === null)
   return (
     <>
-      <Header title="tasks" meta="oldest first" live={state.live} lead={props.lead}>
+      <Header title="tasks" meta="by priority, then assigned to you, then oldest" live={state.live} lead={props.lead}>
         <TaskFilterButton filter={filter} channels={Object.keys(state.channels).sort()} owners={owners} assignees={assignees} state={state} known={props.known} count={chips.length} />
       </Header>
       <div className="view-body">
       <nav className="tabs plain">
-        {STATES.map((name) => (
+        {TASK_FILTER_STATES.map((name) => (
           <Link key={name} to={here({ params: { state: name === 'open' ? null : name } })} className="tab" current={filter.state === name}>
             {name}
           </Link>
@@ -95,19 +84,19 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
         {chips.map((chip) => (
           <span key={chip.key} className="label">
             {chip.text}
-            <button title="remove" onClick={() => setFilter(chip.drop)}>
+            <button title={`remove ${chip.text}`} onClick={() => setFilter(chip.drop)}>
               <X size={11} />
             </button>
           </span>
         ))}
       </nav>
-      <div className="page">
+      <TaskPage rows={rows} query={query}>
         {refused?.tooWide ? (
           <Places channels={Object.keys(state.channels)} under={filter.channel} />
         ) : refused !== null ? (
           <p className="empty error">{refused.text}</p>
         ) : rows.length === 0 && pending.length === 0 ? (
-          <p className="empty">{loading ? 'loading…' : chips.length > 0 || filter.state !== 'open' ? 'no tasks match' : 'no open tasks'}</p>
+          <p className="empty">{loading ? 'loading…' : chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
         ) : (
           <div className="task-rows">
             {rows.map((row) => (
@@ -119,12 +108,12 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
         {more && (
           <button
             className="clear more"
-            onClick={() => void board.loadTasks(filter, listed.cursor).then((page) => page && 'cursor' in page && setListed({ key, ...page }))}
+            onClick={() => void board.loadTasks(boardFilter, listed.cursor).then((page) => page && 'cursor' in page && setListed({ key, ...page }))}
           >
             load more
           </button>
         )}
-      </div>
+      </TaskPage>
       {state.me && compileAccess(state.me.can).anywhere('post') && <Composer
         scope="tasks"
         role="main"
@@ -141,6 +130,38 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
       </div>
     </>
   )
+}
+
+type TaskPageProps = { rows: TaskRoot[]; query: string; children: ReactNode }
+
+/** Keep the first visible surviving row in place when a live change reorders the list. */
+class TaskPage extends Component<TaskPageProps> {
+  private page = createRef<HTMLDivElement>()
+
+  getSnapshotBeforeUpdate(previous: TaskPageProps): { row: HTMLElement; offset: number } | null {
+    const page = this.page.current
+    if (!page || previous.query !== this.props.query || previous.rows === this.props.rows) return null
+    const frame = page.getBoundingClientRect()
+    const next = new Set(this.props.rows.map((row) => row.id))
+    for (const row of page.querySelectorAll<HTMLElement>('[data-task-row]')) {
+      const id = row.dataset.taskRow!
+      const box = row.getBoundingClientRect()
+      if (box.top >= frame.bottom) break
+      if (box.bottom > frame.top && next.has(id)) return { row, offset: box.top - frame.top }
+    }
+    return null
+  }
+
+  componentDidUpdate(_previous: TaskPageProps, _state: unknown, anchor: { row: HTMLElement; offset: number } | null) {
+    const page = this.page.current
+    if (!page || !anchor || !page.contains(anchor.row)) return
+    const shift = anchor.row.getBoundingClientRect().top - page.getBoundingClientRect().top - anchor.offset
+    if (shift) page.scrollTop += shift
+  }
+
+  render() {
+    return <div className="page task-page" ref={this.page}>{this.props.children}</div>
+  }
 }
 
 /**
@@ -175,6 +196,7 @@ function TaskRow({ root, state, open }: { root: TaskRoot; state: State; open: bo
   return (
     <div
       className="task-row"
+      data-task-row={root.id}
       role="link"
       tabIndex={0}
       aria-current={open ? 'true' : undefined}
@@ -187,6 +209,7 @@ function TaskRow({ root, state, open }: { root: TaskRoot; state: State; open: bo
       }}
     >
       <StateMark state={current} />
+      <span className="task-priority">{task.priority ?? DEFAULT_TASK_PRIORITY}</span>
       <span className="task-title" {...nativeMenu}>
         {/* A task can be its files alone. */}
         <span className="faint">#{root.id}</span> {firstLine(root.text) || (root.attachments ?? []).map((file) => file.name).join(', ') || 'message removed'}
@@ -272,6 +295,21 @@ function TaskFilterButton(props: { filter: TaskFilter; channels: string[]; owner
             placeholder="any (work/ for all under it)"
             onEnter={() => setFilter({ channel: channel.trim().replace(/^#/, '') || null })}
           />
+        </div>
+        <div className="filter-row">
+          <span className="filter-name">priority</span>
+          <div className="segments" role="group" aria-label="priority">
+            {[null, ...PRIORITIES].map((priority) => (
+              <button
+                key={priority ?? 'any'}
+                className={`segment${(filter.priority ?? null) === priority ? ' on' : ''}`}
+                aria-pressed={(filter.priority ?? null) === priority}
+                onClick={() => setFilter({ priority })}
+              >
+                {priority ?? 'any'}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="filter-row">
           <span className="filter-name">labels</span>
