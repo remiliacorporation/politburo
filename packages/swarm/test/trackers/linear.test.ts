@@ -7,7 +7,8 @@ import { fakeLinear, linearIssue } from './fake-linear.ts'
 const source = 'linear:KEY'
 const credential = 'dummy-linear-adapter-key'
 async function setup(t: TestContext, options?: Parameters<typeof fakeLinear>[1]) {
-  const { baseUrl } = await fakeLinear(t, options)
+  const { baseUrl, rejected } = await fakeLinear(t, options)
+  t.after(() => assert.deepEqual(rejected, [], 'Linear scan/get sent a non-query document'))
   return linearAdapter({ source, baseUrl, token: () => credential })
 }
 

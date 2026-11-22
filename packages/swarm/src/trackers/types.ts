@@ -18,11 +18,12 @@ export interface TrackerAdapter {
   readonly source: string
   scan(cursor?: string): Promise<{ items: Observation[]; nextCursor?: string; complete: boolean }>
   get(ref: SourceRef): Promise<Observation | 'gone' | 'inaccessible'>
+  comment?(ref: SourceRef, body: string, opId: string): Promise<{ receipt: string; alreadyApplied: boolean }>
 }
 
 export class TrackerError extends Error {
   readonly reason: 'bad_source' | 'no_credential' | 'unauthorized' | 'unavailable'
-    | 'rate_limited' | 'bad_response' | 'write_disabled'
+    | 'rate_limited' | 'bad_request' | 'bad_response' | 'write_disabled'
 
   constructor(reason: TrackerError['reason']) {
     super(reason)

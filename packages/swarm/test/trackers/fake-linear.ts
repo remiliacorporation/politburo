@@ -19,15 +19,17 @@ export async function fakeLinear(t: TestContext, options: {
     labels: { nodes: { name: string }[]; pageInfo?: unknown }
   }
   failure?: 401 | 500 | 'errors' | 'rate' | 'missing-labels'
+  comments?: { createdPage?: number; pages?: number; missingCursor?: boolean; failure?: 500 | 'drop' | 'unsuccessful' }
 } = {}) {
-  const requests: { authorization?: string; elsewhere: string }[] = []
+  const requests: { method?: string; body: string; authorization?: string; elsewhere: string }[] = []
+  const posted: { id: string; body: string }[] = []
   const rejected: string[] = []
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk)
     const raw = Buffer.concat(chunks).toString()
     const { authorization, ...headers } = req.headers
-    requests.push({ authorization, elsewhere: JSON.stringify([req.method, req.url, headers, raw]) })
+    requests.push({ method: req.method, body: raw, authorization, elsewhere: JSON.stringify([req.method, req.url, headers, raw]) })
     function reply(status: number, body: unknown = { id: status }) {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(body))
@@ -37,13 +39,34 @@ export async function fakeLinear(t: TestContext, options: {
     // Only accept a single explicit query; collapse nested selection sets before checking.
     let operation = typeof query === 'string' ? query.trim() : ''
     while (/\{[^{}]*\}/.test(operation)) operation = operation.replace(/\{[^{}]*\}/g, '§')
+    const { comments } = options
+    const document = query ?? ''
+    if (comments && req.method === 'POST' && /^mutation\s+\w+\s*\([^{}§]*\)\s*§$/.test(operation)
+      && /\{\s*commentCreate\s*\(/.test(document)) {
+      if (variables?.issueId !== first.id || typeof variables.body !== 'string') return reply(400)
+      if (comments.failure === 'drop') return req.socket.destroy()
+      if (comments.failure === 500) return reply(500, { authorization })
+      const comment = { id: `comment-${posted.length + 1}`, body: variables.body }
+      const success = comments.failure !== 'unsuccessful'
+      if (success) posted.push(comment)
+      return reply(200, { data: { commentCreate: { success, comment, authorization } } })
+    }
     if (req.method !== 'POST' || !/^query(?:\s+\w+)?\s*(?:\([^{}§]*\)\s*)?§$/.test(operation)) {
       rejected.push(req.method ?? '')
       return reply(405)
     }
     const { failure, singleIssue } = options
     if (typeof failure === 'number') return reply(failure)
-    const document = query ?? ''
+    if (comments && /\{\s*issue\s*\(/.test(document) && /\bcomments\s*\(/.test(document)) {
+      if (variables?.id !== first.id) return reply(400)
+      const cursor = /\bafter:\s*\$cursor\b/.test(document) ? variables.cursor : null
+      const page = cursor == null ? 1 : Number(String(cursor).replace(/^comments-/, ''))
+      const last = Math.max(comments.pages ?? 1, posted.length ? comments.createdPage ?? 1 : 1)
+      const nodes = page === (comments.createdPage ?? 1) ? posted : [{ id: 'older', body: 'Earlier comment\n<!-- politburo-op:review:4070 -->' }]
+      const pageInfo = { hasNextPage: page < last,
+        ...(/\bendCursor\b/.test(document) && { endCursor: page < last && !comments.missingCursor ? `comments-${page + 1}` : null }) }
+      return reply(200, { data: { issue: { comments: { nodes, pageInfo } } } })
+    }
     const requestsLabelPageInfo = /labels\s*\{\s*nodes\s*\{\s*name\s*\}\s*pageInfo\s*\{\s*hasNextPage\s*\}/.test(document)
     const selectLabels = (issue: NonNullable<typeof singleIssue>) => requestsLabelPageInfo
       ? issue : { ...issue, labels: { nodes: issue.labels.nodes } }

@@ -1,4 +1,5 @@
 import { parseSourceId, TrackerError, type ItemState, type Observation, type TrackerAdapter } from './types.ts'
+import { commentMarker } from './write.ts'
 
 export type LinearOptions = {
   source: string
@@ -16,6 +17,12 @@ const scanQuery = `query ScanIssues($key: String!, $cursor: String) {
   }
 }`
 const getQuery = `query GetIssue($id: String!) { issue(id: $id) { ${fields} } }`
+const commentsQuery = `query IssueComments($id: String!, $cursor: String) {
+  issue(id: $id) { comments(first: 100, after: $cursor) { nodes { id body } pageInfo { hasNextPage endCursor } } }
+}`
+const createComment = `mutation CreateComment($issueId: String!, $body: String!) {
+  commentCreate(input: { issueId: $issueId, body: $body }) { success comment { id } }
+}`
 const priorities = ['none', 'urgent', 'high', 'normal', 'low'] as const
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -130,6 +137,37 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
       const result = observation(issue)
       if (result.ref.itemId !== ref.itemId) return 'gone'
       return teamIdentifier.test(result.ref.displayId) ? result : 'inaccessible'
+    },
+    async comment(ref, body, opId) {
+      const marker = commentMarker(body, opId)
+      if (ref.source !== source || !ref.itemId) throw new TrackerError('bad_source')
+      let cursor: string | null = null
+      for (let count = 0; count < 10; count++) {
+        const result = await data(await request(commentsQuery, { id: ref.itemId, cursor }))
+        const issue = result.issue
+        const comments = isObject(issue) ? issue.comments : undefined
+        if (!isObject(comments) || !Array.isArray(comments.nodes) || !isObject(comments.pageInfo)
+          || typeof comments.pageInfo.hasNextPage !== 'boolean') throw new TrackerError('bad_response')
+        for (const comment of comments.nodes as unknown[]) {
+          if (!isObject(comment) || typeof comment.body !== 'string') throw new TrackerError('bad_response')
+          if (!comment.body.includes(marker)) continue
+          if (typeof comment.id !== 'string' || !comment.id) throw new TrackerError('bad_response')
+          return { receipt: comment.id, alreadyApplied: true }
+        }
+        const { hasNextPage, endCursor } = comments.pageInfo
+        if (!hasNextPage) { cursor = null; break }
+        if (typeof endCursor !== 'string' || !endCursor) throw new TrackerError('unavailable')
+        cursor = endCursor
+      }
+      if (cursor) throw new TrackerError('unavailable')
+      const { commentCreate } = await data(await request(createComment, {
+        issueId: ref.itemId, body: `${body}\n${marker}`,
+      }))
+      if (!isObject(commentCreate) || commentCreate.success !== true || !isObject(commentCreate.comment)
+        || typeof commentCreate.comment.id !== 'string' || !commentCreate.comment.id) {
+        throw new TrackerError('bad_response')
+      }
+      return { receipt: commentCreate.comment.id, alreadyApplied: false }
     },
   }
 }

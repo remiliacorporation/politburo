@@ -3,3 +3,4 @@ export { mergeWorkItems, type ExplicitLink, type SourceStatus, type WorkItem } f
 export { scanTrackers, type SourceScan } from './service.ts'
 export { githubAdapter, type GitHubOptions } from './github.ts'
 export { linearAdapter, type LinearOptions } from './linear.ts'
+export { commentOn } from './write.ts'

@@ -19,18 +19,40 @@ export const failures = {
   200: { reason: 'bad_response', status: 200, body: '{"id":91200', headers: {} },
 } as const
 
-export async function fakeGitHub(t: TestContext, singleIssueLabels?: string[]) {
-  const requests: { authorization?: string; elsewhere: string }[] = []
+export async function fakeGitHub(t: TestContext, singleIssueLabels?: string[], comments?: {
+  createdPage?: number; pages?: number; failure?: 500 | 'drop'
+}) {
+  const requests: { method?: string; body: string; authorization?: string; elsewhere: string }[] = []
+  const posted: { id: number; node_id: string; body: string }[] = []
   const rejected: string[] = []
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk)
     const { authorization, ...headers } = req.headers
-    requests.push({ authorization, elsewhere: JSON.stringify([req.method, req.url, headers, Buffer.concat(chunks).toString()]) })
+    const body = Buffer.concat(chunks).toString()
+    requests.push({ method: req.method, body, authorization, elsewhere: JSON.stringify([req.method, req.url, headers, body]) })
     const url = new URL(req.url!, `http://${req.headers.host}`)
     function reply(status: number, body: unknown = { id: status }, headers = {}) {
       res.writeHead(status, { 'content-type': 'application/json', ...headers })
       res.end(typeof body === 'string' ? body : JSON.stringify(body))
+    }
+    if (comments && url.pathname === '/repos/acme/web/issues/7/comments') {
+      if (req.method === 'GET') {
+        const page = Number(url.searchParams.get('page') ?? '1')
+        const last = Math.max(comments.pages ?? 1, posted.length ? comments.createdPage ?? 1 : 1)
+        return reply(200, page === (comments.createdPage ?? 1) ? posted : [{ id: 99, body: 'Earlier comment\n<!-- politburo-op:review:4070 -->' }],
+          page < last ? { link: `<${url.origin}${url.pathname}?page=${page + 1}>; rel="next"` } : {})
+      }
+      if (req.method === 'POST') {
+        if (comments.failure === 'drop') return req.socket.destroy()
+        if (comments.failure === 500) return reply(500, { authorization })
+        let text: unknown
+        try { text = JSON.parse(body).body } catch { return reply(400) }
+        if (typeof text !== 'string') return reply(400)
+        const created = { id: posted.length + 1, node_id: `IC_${posted.length + 1}`, body: text }
+        posted.push(created)
+        return reply(201, created)
+      }
     }
     if (req.method !== 'GET') {
       rejected.push(req.method ?? '')

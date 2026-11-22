@@ -1,4 +1,5 @@
 import { parseSourceId, TrackerError, type ItemState, type Observation, type Priority, type TrackerAdapter } from './types.ts'
+import { commentMarker } from './write.ts'
 
 export type GitHubOptions = {
   source: string
@@ -62,16 +63,17 @@ export function githubAdapter({ source, token, baseUrl = 'https://api.github.com
   if (kind !== 'github') throw new TrackerError('bad_source')
   const issues = `${baseUrl.replace(/\/+$/, '')}/repos/${scope}/issues`
 
-  async function request(url: string) {
+  async function request(url: string, body?: string) {
     let credential: string | undefined
     try { credential = token() } catch { throw new TrackerError('no_credential') }
     if (!credential?.trim()) throw new TrackerError('no_credential')
     let response: Response
     try {
-      response = await send(url, { method: 'GET', headers: {
+      response = await send(url, { method: body === undefined ? 'GET' : 'POST', headers: {
         Authorization: `Bearer ${credential}`, Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'politburo-swarm',
-      } })
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      }, ...(body === undefined ? {} : { body, redirect: 'error' as const }) })
     } catch {
       throw new TrackerError('unavailable')
     }
@@ -124,6 +126,35 @@ export function githubAdapter({ source, token, baseUrl = 'https://api.github.com
       if (Object.hasOwn(item, 'pull_request')) return 'gone'
       const result = observation(item)
       return result.ref.itemId === ref.itemId ? result : 'gone'
+    },
+    async comment(ref, body, opId) {
+      const marker = commentMarker(body, opId)
+      if (ref.source !== source || !/^[1-9][0-9]*$/.test(ref.displayId)
+        || !Number.isSafeInteger(Number(ref.displayId))) throw new TrackerError('bad_source')
+      const endpoint = `${issues}/${ref.displayId}/comments`
+      let page: string | undefined
+      for (let count = 0; count < 10; count++) {
+        const url: string = `${endpoint}?per_page=100${page ? `&page=${page}` : ''}`
+        const response = await request(url)
+        const comments = await json(response)
+        if (!Array.isArray(comments)) throw new TrackerError('bad_response')
+        for (const comment of comments as unknown[]) {
+          if (!isObject(comment) || typeof comment.body !== 'string') throw new TrackerError('bad_response')
+          if (!comment.body.includes(marker)) continue
+          const { id } = comment
+          if (!(typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
+            && !(typeof id === 'string' && id)) throw new TrackerError('bad_response')
+          return { receipt: String(id), alreadyApplied: true }
+        }
+        page = nextPage(response.headers.get('link') ?? '', url)
+        if (!page) break
+      }
+      if (page) throw new TrackerError('unavailable')
+      const created = await json(await request(endpoint, JSON.stringify({ body: `${body}\n${marker}` })))
+      if (!isObject(created) || typeof created.node_id !== 'string' || !created.node_id) {
+        throw new TrackerError('bad_response')
+      }
+      return { receipt: created.node_id, alreadyApplied: false }
     },
   }
 }

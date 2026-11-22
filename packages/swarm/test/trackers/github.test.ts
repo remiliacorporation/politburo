@@ -11,7 +11,8 @@ const ref = (n: number): SourceRef => ({ source, itemId: `I_${n}`, displayId: St
   url: `https://example.invalid/o/r/issues/${n}` })
 
 async function setup(t: TestContext) {
-  const { baseUrl, requests } = await fakeGitHub(t)
+  const { baseUrl, requests, rejected } = await fakeGitHub(t)
+  t.after(() => assert.deepEqual(rejected, [], 'GitHub scan/get used a non-GET method'))
   const credential = randomUUID()
   const adapter = (sourceId = source, token: () => string | undefined = () => credential) =>
     githubAdapter({ source: sourceId, baseUrl, token })
