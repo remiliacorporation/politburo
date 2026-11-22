@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import * as board from './board.ts'
+import { claimFirst } from './claim-order.ts'
 import { here, Link } from './nav.tsx'
-import { isTask, nameOf, stateNow, tasks, type State, type TaskFilter, type TaskRoot } from './store.ts'
+import { isTask, nameOf, stateNow, tasks, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { StateMark } from './task.tsx'
 import { Header } from './ui.tsx'
 import { firstLine } from './words.ts'
@@ -81,7 +82,9 @@ function Handoff({ root, state, now }: { root: TaskRoot; state: State; now: numb
   )
 }
 
-export function Home({ state, now, lead }: { state: State; now: number; lead: ReactNode }) {
+export function Home({ state, viewer, now, lead }: { state: State; viewer: Viewer; now: number; lead: ReactNode }) {
+  const [reading, setReading] = useState<string[] | null>(null)
+  const hovered = useRef(false)
   const [listed, setListed] = useState<Awaited<ReturnType<typeof board.loadTasks>>>()
   const [loadingMore, setLoadingMore] = useState(false)
   useEffect(() => {
@@ -113,10 +116,29 @@ export function Home({ state, now, lead }: { state: State; now: number; lead: Re
       <div className="page home-view handoffs-view">
         {status && <div className="home-intro"><p role="status">{status}</p></div>}
         {lanes.map(({ title }, index) => {
-          const items = rows.filter(({ id }) => placement.get(id) === title)
+          let items = rows.filter(({ id }) => placement.get(id) === title)
+          const runnable = title === 'Runnable'
+          if (runnable) {
+            items = claimFirst(items, state.status?.paused ? { ...viewer, may: () => false } : viewer, now)
+            if (reading) {
+              const place = new Map(reading.map((id, i) => [id, i]))
+              items.sort((a, b) => (place.get(a.id) ?? reading.length) - (place.get(b.id) ?? reading.length))
+            }
+          }
           if (items.length === 0) return null
+          const holdOrder = () => setReading((held) => held ?? items.map(({ id }) => id))
           return (
-            <section key={title} className="home-queue" aria-labelledby={`handoff-lane-${index}`}>
+            <section key={title} className="home-queue" aria-labelledby={`handoff-lane-${index}`}
+              onFocusCapture={runnable ? holdOrder : undefined}
+              onBlurCapture={runnable ? (event) => {
+                if (!hovered.current && !event.currentTarget.contains(event.relatedTarget)) setReading(null)
+              } : undefined}
+              onMouseEnter={runnable ? () => { hovered.current = true; holdOrder() } : undefined}
+              onMouseLeave={runnable ? (event) => {
+                hovered.current = false
+                if (!event.currentTarget.contains(document.activeElement)) setReading(null)
+              } : undefined}
+            >
               <h2 id={`handoff-lane-${index}`}>{title}</h2>
               <ul className="handoff-list" role="list">{items.map((root) => <Handoff key={root.id} root={root} state={state} now={now} />)}</ul>
             </section>

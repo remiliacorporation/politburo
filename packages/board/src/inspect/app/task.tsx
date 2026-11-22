@@ -48,13 +48,15 @@ export function useLapse(until: string | undefined): number {
 }
 
 /** What's left of a lease, counted down a second at a time. */
-export function Lease({ until }: { until: string }) {
+export function Lease({ until, now }: { until: string; now?: number }) {
   const [, tick] = useReducer((n: number) => n + 1, 0)
+  const useOwnClock = now === undefined
   useEffect(() => {
+    if (!useOwnClock) return
     const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
-  }, [])
-  const left = Date.parse(until) - Date.now()
+  }, [useOwnClock])
+  const left = Date.parse(until) - (now ?? Date.now())
   return (
     <span className="lease" title={`until ${new Date(until).toLocaleString()}`}>
       {left > 0 ? `${clock(left)} left` : 'lease ran out'}
@@ -63,7 +65,7 @@ export function Lease({ until }: { until: string }) {
 }
 
 /** The tasks one waits for, each a link to its thread, with its state where the page has it. */
-export function Needs({ ids, state }: { ids: string[]; state: State }) {
+export function Needs({ ids, state, now = Date.now() }: { ids: string[]; state: State; now?: number }) {
   return (
     <span className="needs">
       {ids.map((id) => {
@@ -71,7 +73,7 @@ export function Needs({ ids, state }: { ids: string[]; state: State }) {
         return (
           <Link key={id} to={here({ thread: id })} className="need" title={need ? firstLine(need.text) : `#${id}`}>
             #{id}
-            {isTask(need) && <span className={`need-state ${stateNow(need.task, Date.now())}`}>{stateNow(need.task, Date.now())}</span>}
+            {isTask(need) && <span className={`need-state ${stateNow(need.task, now)}`}>{stateNow(need.task, now)}</span>}
           </Link>
         )
       })}

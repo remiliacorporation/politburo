@@ -146,12 +146,15 @@ and its `claim`: who holds it, and `until` when.
 The example lists tasks oldest first. That is list order, not claim order.
 Claim-next takes the highest priority eligible ready task. At equal priority,
 it prefers tasks assigned to the caller, then takes the first root in board
-order. Among the loaded rows, the inspector puts tasks in the viewer's default
-claim-next order first, then sorts the rest by priority and age. Ties use
-`createdAt` then ID, matching claim-next while the board's clock moves forward.
-A claim fenced by a pause still shows as claimed because the API does not expose
-the fence. State, channel, and priority filters are in the URL. Priority filters
-the loaded rows because the API does not accept it as a list filter.
+order. The inspector's Tasks view reads the full scope before showing
+claimable tasks first, then the rest by priority and age. It makes one request
+per page of the scope, plus a permission read, and shows a count while the
+first read is incomplete. Handoffs uses the same order within the Runnable
+rows it has loaded. Ties use `createdAt` then ID, matching claim-next while the board's clock
+moves forward. A claim fenced by a pause still shows as claimed because the API
+does not expose the fence. State, channel, and priority filters are in the URL.
+The inspector applies priority locally because the API does not accept it as a
+list filter.
 
 ```ts inspector/tasks.ts
 import { board, type TaskView } from '@vercel/board'
@@ -170,9 +173,19 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
 ```
 
 Task changes arrive in the feed like any event, with the root in `message`,
-so a list can update in place. A claim ends when its lease does, with or
-without an event to say so. On boards that report a claim's pause epoch, a
-newer board pause epoch also ends it. This example checks the lease only:
+so a list can update in place. The thread pane only shows its own read and
+reads again when a feed frame changes that thread. If the board refuses access,
+older feed frames cannot restore the thread to the shared cache.
+The board sends no event for grant changes, so a revoked row on an idle page
+stays until the next read. Revalidation is event-driven, including navigation,
+focus return, or reconnect. Periodic revalidation would need an owner decision.
+
+A claim ends when its lease does, with or without an event to say so. The Tasks
+view uses one local clock for membership, ordering, and state badges. It sets
+one timer for the earlier of 30 seconds and the next lease expiry, plus one
+second. The timer does not read the board. On boards that report a claim's
+pause epoch, a newer board pause epoch also ends a claim. This example checks
+the lease only:
 
 ```ts inspector/task-state.ts
 import type { TaskView } from '@vercel/board'

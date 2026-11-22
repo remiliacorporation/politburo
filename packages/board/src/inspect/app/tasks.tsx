@@ -9,7 +9,7 @@ import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
 import { isTask, nameOf, placesUnder, readFilter, shownMessage, taskMatches, taskState, TASK_FILTER_STATES, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
-import { Lease, Needs, StateMark, useLapse } from './task.tsx'
+import { Lease, Needs, StateMark } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
 import { firstLine } from './words.ts'
 
@@ -17,7 +17,7 @@ const PRIORITIES = [...TaskPriority.options].reverse()
 
 const setFilter = (changes: Record<string, string | string[] | null>) => navigate(here({ params: changes }), true)
 
-export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: ReactNode; where: Where; known: KnownLabels }) {
+export function Tasks(props: { state: State; viewer: Viewer; lead: ReactNode; where: Where; known: KnownLabels }) {
   const { state, viewer, where } = props
   const mayPost = (channel: string) => viewer.may('post', channel)
   const writable = Object.keys(state.channels).filter(mayPost).sort()
@@ -33,14 +33,15 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   const list = state.taskList?.scope === scope ? state.taskList : undefined
   const refused = list?.refused
   const read = list?.read
+  const now = useTaskClock(read?.roots)
   const latest = useMemo(() => {
     if (!read) return []
-    const now = new Date(props.now).toISOString()
-    const roots = [...read.roots.values()].map((root) => shownMessage(state, root, now))
-      .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, props.now, state.status))
+    const iso = new Date(now).toISOString()
+    const roots = [...read.roots.values()].map((root) => shownMessage(state, root, iso))
+      .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, now, state.status))
     const eligible = state.status?.paused ? { ...read.viewer, may: () => false } : read.viewer
-    return claimFirst(roots, eligible, props.now)
-  }, [read, filter, props.now, state])
+    return claimFirst(roots, eligible, now)
+  }, [read, filter, now, state])
   const [frozen, setFrozen] = useState<{ query: string; ids: string[] } | null>(null)
   const rowList = useRef<HTMLDivElement>(null)
   const hovered = useRef(false)
@@ -118,8 +119,10 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
           <Places channels={Object.keys(state.channels)} under={filter.channel} />
         ) : refused ? (
           <p className="empty error">{refused.text}</p>
+        ) : !read ? (
+          <p className="empty" role="status">loading all {list?.loading ?? 0} so far</p>
         ) : rows.length === 0 && pending.length === 0 ? (
-          <p className="empty">{!read ? 'loading…' : chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
+          <p className="empty">{chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
         ) : null}
         <div
           className="task-rows"
@@ -133,18 +136,10 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
           onMouseLeave={() => { hovered.current = false; releaseRows() }}
         >
           {rows.map((row) => (
-            <TaskRow key={row.id} root={row} state={state} open={where.thread === row.id} />
+            <TaskRow key={row.id} root={row} state={state} now={now} open={where.thread === row.id} />
           ))}
         </div>
         <Pendings posts={pending} me={state.me!} />
-        {read?.more && (
-          <button
-            className="clear more"
-            onClick={() => board.extendTaskList(scope)}
-          >
-            load more
-          </button>
-        )}
       </TaskPage>
       {state.me && compileAccess(state.me.can).anywhere('post') && <Composer
         scope="tasks"
@@ -234,10 +229,24 @@ function Places({ channels, under }: { channels: string[]; under: string | undef
   )
 }
 
+/** Re-arm one display clock, including claims that are not yet in the Ready tab. No board reads. */
+function useTaskClock(roots: ReadonlyMap<string, TaskRoot> | undefined) {
+  const [now, tick] = useState(Date.now)
+  let next = now + 30_000
+  for (const { task } of roots?.values() ?? []) {
+    const expiry = task.state === 'claimed' && task.claim ? Date.parse(task.claim.until) : NaN
+    if (expiry > now && expiry < next) next = expiry
+  }
+  useEffect(() => {
+    const timer = setTimeout(() => tick(Date.now()), Math.max(0, next + 1000 - Date.now()))
+    return () => clearTimeout(timer)
+  }, [next, now])
+  return now
+}
+
 /** One task: its state, what it says, and the one thing about it that matters now. Opens its thread. */
-function TaskRow({ root, state, open }: { root: TaskRoot; state: State; open: boolean }) {
+function TaskRow({ root, state, now, open }: { root: TaskRoot; state: State; now: number; open: boolean }) {
   const { task } = root
-  const now = useLapse(task.claim?.until)
   const current = taskState(task, now, state.status)
   const labels = Object.entries(root.labels).filter(([key]) => !key.startsWith('board.'))
   return (
@@ -269,13 +278,13 @@ function TaskRow({ root, state, open }: { root: TaskRoot; state: State; open: bo
       <span className="task-now">
         {current === 'claimed' && task.claim && (
           <>
-            {nameOf(state, task.claim.actor)} · <Lease until={task.claim.until} />
+            {nameOf(state, task.claim.actor)} · <Lease until={task.claim.until} now={now} />
           </>
         )}
         {current === 'ready' && (task.state === 'claimed' ? 'claim ended' : task.for ? `for ${nameOf(state, task.for)}` : '')}
         {current === 'waiting' && (
           <>
-            needs <Needs ids={task.needs} state={state} />
+            needs <Needs ids={task.needs} state={state} now={now} />
           </>
         )}
         {current === 'blocked' && (task.blocked?.kind ?? task.blocked?.reason)}

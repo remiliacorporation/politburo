@@ -16,7 +16,7 @@ import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
-import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
+import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, paneThread, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
 
@@ -325,12 +325,12 @@ export function App() {
         </nav>
         <main className="main" inert={narrow && (nav || where.thread !== null)}>
           <HeaderActions.Provider value={paneIsFront ? null : headerActions}>
-            {current.view === 'home' && <Home key={identity} state={state} now={now} lead={expand} />}
+            {current.view === 'home' && <Home key={identity} state={state} viewer={viewer} now={now} lead={expand} />}
             {current.view === 'presidium' && <Presidium key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'channel' && (
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
-            {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
+            {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} lead={expand} where={where} known={known} />}
             {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
             {current.view === 'missing' && (
@@ -475,15 +475,10 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
 function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
   const { id, state, viewer } = props
   useTypeToFocus('thread')
-  const [missing, setMissing] = useState(false)
   const identity = board.getIdentity()
-  useEffect(() => {
-    setMissing(false)
-    void board.loadThread(id, true).then(() => {
-      if (identity === board.getIdentity()) setMissing(!board.getState().messages[id])
-    })
-  }, [id, identity])
-  const t = useMemo(() => threadOf(state, id), [state.messages, state.ops, state.pending, state.actors, id])
+  useEffect(() => board.openThreadPane(id), [id, identity])
+  const pane = state.threadPane?.id === id && state.threadPane.as === identity ? state.threadPane : undefined
+  const t = useMemo(() => paneThread(state, id, identity, new Date(props.now).toISOString()), [state, id, identity, props.now])
   // Where the thread's copies are, on the platforms it syncs with.
   const [synced, setSynced] = useState<SyncedView['targets']>([])
   useEffect(() => {
@@ -516,7 +511,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       </Header>
       <div className="view-body">
       {t && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
-      {(synced.length > 0 || scheduled.length > 0) && (
+      {t && (synced.length > 0 || scheduled.length > 0) && (
         <dl className="facts thread-facts" {...nativeMenu}>
           {synced.length > 0 && (
             <>
@@ -554,7 +549,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       )}
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
         {!t ? (
-          <p className="empty">{missing ? 'no such thread' : 'loading…'}</p>
+          <p className="empty">{pane?.status === 'missing' ? pane.error ?? 'no such thread' : 'loading…'}</p>
         ) : (
           <>
             <Messages messages={[t.root]} now={props.now} options={options} />

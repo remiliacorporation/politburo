@@ -21,6 +21,9 @@ import { refusal, said } from './words.ts'
 
 // The page's data: one handle on the board, and every read and write the page makes through it.
 
+let readSerial = 0
+let feedRead = 0
+
 const meta = (name: string) => document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content ?? ''
 
 /**
@@ -38,6 +41,9 @@ const yourself = board({
     fetch: (input, init) => {
       const headers = new Headers(init?.headers)
       headers.set('x-inspect-token', meta('inspect-token'))
+      // The handle yields every event in this poll before starting another. Stamp at dispatch,
+      // not delivery: a poll already on the wire may still hold a view from before a refusal.
+      if (new URL(String(input)).pathname === `${base}/board/events` && !init?.signal?.aborted) feedRead = ++readSerial
       return fetch(input, { ...init, headers })
     },
   }),
@@ -211,15 +217,18 @@ export async function boot(): Promise<void> {
   set((s) => ({ ...s, me, discovery, channels: Object.fromEntries(channels.map((c) => [c.path, c])) }))
   const controller = feedFollow = new AbortController()
   // A burst of events is one render: they're folded in a frame at a time.
-  let queue: { event: BoardEventView; taskEpoch: number }[] = []
+  let queue: { event: BoardEventView; taskEpoch: number; read: number }[] = []
   let retrying = false
   const flush = () => {
-    const batch = queue
+    const frame = queue
     queue = []
     if (!current()) return
+    const batch = frame.filter(({ event: { message }, read }) => !message || store.readableAt(state, message.re ?? message.id, read))
     const events = batch.map(({ event }) => event)
-    listed.apply(events)
+    listed.apply(events, batch.map(({ read }) => read))
     updateLiveTasks(batch.flatMap(({ event, taskEpoch }) => taskEpoch === taskListEpoch && event.message ? [event.message] : []))
+    const pane = threadPaneVisit
+    if (pane && events.some(({ message }) => message && (message.re ?? message.id) === pane.id)) pane.refresh()
     if (attentionVisit) refreshAttentionEvents(events)
     // A schedule's own state isn't in the feed, but its sends are: one that landed means the list moved.
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
@@ -236,13 +245,16 @@ export async function boot(): Promise<void> {
         void loadStatus()
       } else {
         noteTaskListEvent(event.message)
-        if (queue.push({ event, taskEpoch: taskListEpoch }) === 1) requestAnimationFrame(flush)
+        if (queue.push({ event, taskEpoch: taskListEpoch, read: feedRead }) === 1) requestAnimationFrame(flush)
       }
     },
     (feed) => {
       if (!current()) return
       set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' }))
-      if (feed === 'live' && retrying) refreshTaskList()
+      if (feed === 'live' && retrying) {
+        refreshTaskList()
+        threadPaneVisit?.refresh()
+      }
       retrying = feed === 'retrying'
     },
   ).catch((error) => { if (current()) toast(`live updates stopped: ${said(error)}`) })
@@ -291,6 +303,8 @@ function listingForCurrentHandle() {
     { threads: (query) => handle.threads(query), messages: (channel) => readChannel(channel, handle) },
     () => state,
     (next) => { if (as === identity) set(next) },
+    undefined,
+    () => ++readSerial,
   )
 }
 
@@ -308,25 +322,66 @@ export async function loadOlder(channel: string): Promise<boolean> {
   }
 }
 
-let threadDenials = 0
-const deniedThreads = new Map<string, number>()
+// A late refusal cannot erase the result of a newer settled thread read for this viewer.
+const threadSettled = new Map<string, { as: number; read: number }>()
+let threadPaneVisit: { id: string; refresh: () => void } | undefined
 
-export function loadThread(id: string, fresh = false) {
-  const load = async () => {
-    const as = identity
-    try {
-      const { message: root, replies } = await readThread(id)
-      if (as === identity) set((s) => store.merge(s, [root, ...replies]))
-    } catch (error) {
-      const status = (error as { status?: unknown } | null)?.status
-      if (as === identity && (status === 403 || status === 404)) {
-        deniedThreads.set(id, ++threadDenials)
-        set((s) => store.forgetThread(s, id))
-      }
-      throw error
+async function loadThreadRead(id: string, accept?: (state: store.State, views: MessageView[]) => store.State) {
+  const as = identity
+  const read = ++readSerial
+  try {
+    const { message: root, replies } = await readThread(id)
+    if (as !== identity || !store.readableAt(state, id, read)) return
+    const settled = threadSettled.get(id)
+    if (settled?.as !== as || read > settled.read) threadSettled.set(id, { as, read })
+    const views = [root, ...replies]
+    set((s) => {
+      const next = store.merge(s, views, read)
+      return accept ? accept(next, views) : next
+    })
+  } catch (error) {
+    const status = (error as { status?: unknown } | null)?.status
+    if (as !== identity) return
+    const settled = threadSettled.get(id)
+    if ((status === 403 || status === 404) && (settled?.as !== as || read > settled.read)) {
+      threadSettled.set(id, { as, read })
+      loaded.delete(`thread:${id}`)
+      set((s) => store.forgetThread(s, id, read, said(error)))
     }
+    throw error
   }
-  return fresh ? load().catch((error) => toast(said(error))) : once(`thread:${id}`, load)
+}
+
+export const loadThread = (id: string) => once(`thread:${id}`, () => loadThreadRead(id))
+
+export function openThreadPane(id: string) {
+  const as = identity
+  let running = false
+  let again = false
+  const current = () => threadPaneVisit === visit && as === identity
+  const visit = threadPaneVisit = { id, refresh }
+  set((s) => ({ ...s, threadPane: { id, as, status: 'loading', messages: {} } }))
+
+  // Feed frames invalidate the pane; only this pane's own reads can supply its contents.
+  function refresh() {
+    if (!current()) return
+    if (running) { again = true; return }
+    running = true
+    void loadThreadRead(id, (s, views) => current() ? store.acceptPaneRead(s, views) : s).catch((error) => {
+      if (current()) set((s) => ({ ...s, threadPane: { id, as, status: 'missing', error: said(error), messages: {} } }))
+    }).finally(() => {
+      running = false
+      if (again) { again = false; refresh() }
+    })
+  }
+  refresh()
+  addEventListener('focus', refresh)
+  return () => {
+    removeEventListener('focus', refresh)
+    if (threadPaneVisit !== visit) return
+    threadPaneVisit = undefined
+    set((s) => ({ ...s, threadPane: undefined }))
+  }
 }
 
 /** Threads a filtered view asks the board for, and how many of them it reads whole. */
@@ -347,6 +402,7 @@ export const loadFiltered = (channel: string, filter: store.Filter) => {
   if (unsupported.has(kind)) return Promise.resolve()
   return once(`filtered:${channel}:${JSON.stringify(filter)}`, async () => {
     const as = identity
+    const read = ++readSerial
     const page = await team
       .threads({
         channel,
@@ -360,7 +416,7 @@ export const loadFiltered = (channel: string, filter: store.Filter) => {
         throw error
       })
     if (as !== identity) return
-    set((s) => store.merge(s, page.threads.flatMap((thread) => (thread.last ? [thread.message, thread.last] : [thread.message]))))
+    set((s) => store.merge(s, page.threads.flatMap((thread) => (thread.last ? [thread.message, thread.last] : [thread.message])), read))
     await Promise.all(page.threads.filter((thread) => thread.replies > 1).slice(0, FILTERED_WHOLE).map((thread) => loadThread(thread.message.id)))
   })
 }
@@ -481,11 +537,12 @@ export async function send(
     // The same `id` never posts twice, so a retry is safe.
     const options = { ...content, id: key }
     // A thread that starts as a task is one write: its root, files and all, and what makes it a task.
+    const read = ++readSerial
     const sent = post.task
       ? (await team.tasks.create(post.channel, { ...options, needs: post.task.needs, for: post.task.for })).task
       : await write(post.re === null ? { channel: post.channel } : { re: post.re }, options)
     outgoing.delete(key)
-    set((s) => as === identity ? store.sent(s, key, sent) : { ...s, pending: s.pending.filter((p) => p.key !== key) })
+    set((s) => as === identity ? store.sent(s, key, sent, read) : { ...s, pending: s.pending.filter((p) => p.key !== key) })
   } catch (error) {
     set((s) => ({ ...s, pending: s.pending.map((p) => (p.key === key ? { ...p, error: refusal(error) } : p)) }))
   }
@@ -593,16 +650,16 @@ async function fetchTaskPage(filter: store.TaskFilter, after?: string): Promise<
 
 export async function loadTasks(filter: store.TaskFilter, after?: string) {
   const as = identity
-  const denials = threadDenials
+  const read = ++readSerial
   const page = await fetchTaskPage(filter, after)
   if (!page || as !== identity || 'refused' in page) return page
-  set((s) => store.merge(s, page.roots.filter((root) => (deniedThreads.get(root.id) ?? 0) <= denials)))
+  set((s) => store.merge(s, page.roots, read))
   return { cursor: page.cursor, more: page.more }
 }
 
 // Only a complete read vouches for membership. The shared message cache is not a task list.
 type TaskListVisit = {
-  scope: symbol; as: number; filter: store.TaskFilter; pages: number
+  scope: symbol; as: number; filter: store.TaskFilter
   revision: number; running: boolean; queued: boolean
 }
 let taskListVisit: TaskListVisit | undefined
@@ -626,7 +683,7 @@ function updateLiveTasks(views: MessageView[]) {
 }
 
 export function openTaskList(scope: symbol, filter: store.TaskFilter) {
-  const visit = taskListVisit = { scope, as: identity, filter, pages: 1, revision: 0, running: false, queued: false }
+  const visit = taskListVisit = { scope, as: identity, filter, revision: 0, running: false, queued: false }
   taskListEpoch++
   set((s) => ({ ...s, taskList: { scope } }))
   const visible = () => { if (document.visibilityState === 'visible') refreshTaskList() }
@@ -650,13 +707,6 @@ export function refreshTaskList() {
   requestTaskList(visit)
 }
 
-export function extendTaskList(scope: symbol) {
-  const visit = taskListVisit
-  if (!visit || visit.scope !== scope || visit.as !== identity || visit.running || !state.taskList?.read?.more) return
-  visit.pages++
-  requestTaskList(visit)
-}
-
 function requestTaskList(visit: TaskListVisit) {
   visit.queued = true
   if (visit.running) return
@@ -674,28 +724,28 @@ function requestTaskList(visit: TaskListVisit) {
 }
 
 async function readTaskList(visit: TaskListVisit) {
-  const { scope, as, revision, pages, filter } = visit
-  const denials = threadDenials
+  const { scope, as, revision, filter } = visit
+  const read = ++readSerial
   const current = () => taskListVisit === visit && identity === as && visit.revision === revision
   // Ready and Claimed share the open pool, so a lease can end without another request.
   const query = filter.state === 'ready' || filter.state === 'claimed' ? { ...filter, state: 'open' as const } : filter
   const fetched: MessageView[] = []
   let after: string | undefined
-  let more = false
   const refuse = (text: string, tooWide = false) => {
     if (!current()) return
     taskListEpoch++
     set((s) => ({ ...s, taskList: { scope, refused: { text, tooWide } } }))
   }
   try {
-    // Re-read from the beginning even for Load more: retaining an old page would retain its old access.
-    for (let n = 0; n < pages; n++) {
+    // Only publish a complete scope: its oldest page cannot vouch for claim-next order.
+    for (;;) {
       const page = await fetchTaskPage(query, after)
       if (!page || !current()) return
       if ('refused' in page) return refuse(page.refused, page.tooWide)
       fetched.push(...page.roots)
-      more = page.more && page.cursor !== after
-      if (!more) break
+      if (!page.more) break
+      if (page.cursor === after) return refuse('could not finish reading tasks: the cursor did not advance')
+      if (!state.taskList?.read) set((s) => ({ ...s, taskList: { scope, loading: fetched.length } }))
       after = page.cursor
     }
     const viewer = viewerOf(await team.me())
@@ -704,13 +754,13 @@ async function readTaskList(visit: TaskListVisit) {
     const roots = new Map<string, store.TaskRoot>()
     for (const root of fetched) {
       // The permission read follows the pages: it can already know of a revocation they missed.
-      if (!store.isTask(root) || !viewer.may('read', root.channel) || root.deleted || state.messages[root.id]?.deleted || (deniedThreads.get(root.id) ?? 0) > denials) continue
+      if (!store.isTask(root) || !viewer.may('read', root.channel) || root.deleted || state.messages[root.id]?.deleted || !store.readableAt(state, root.id, read)) continue
       // A newer live view can survive only if this complete read still includes its root.
       const live = previous?.get(root.id)
       roots.set(root.id, live && live.version > root.version ? live : root)
     }
     taskListEpoch++
-    set((s) => ({ ...store.merge(s, [...roots.values()]), taskList: { scope, read: { roots, more, viewer } } }))
+    set((s) => ({ ...store.merge(s, [...roots.values()], read), taskList: { scope, read: { roots, viewer } } }))
   } catch (error) {
     refuse(refusal(error))
   }
@@ -812,10 +862,11 @@ export async function answerAttention(id: string, requestId: string, optionId: s
 /** A task write: the root it answers goes in the store, and a refusal is said in the page's words. */
 async function work(write: () => Promise<MessageView>): Promise<boolean> {
   const as = identity
+  const read = ++readSerial
   try {
     const root = await write()
     if (as !== identity) return false
-    set((s) => store.merge(s, [root]))
+    set((s) => store.merge(s, [root], read))
     return true
   } catch (error) {
     if (as === identity) toast(refusal(error))
