@@ -10,6 +10,8 @@ export type OutcomeRecord = {
   checked_at: string; verifier_version: string; override: null
 }
 
+type StoredReview = ReviewRecord & { record: string }
+
 const record = 'outcome-record', review = 'outcome-review'
 const text = { type: 'string' }, nil = { type: 'null' }, count = { type: 'integer', minimum: 0 }
 const nullable = (schema: object) => ({ anyOf: [schema, nil] })
@@ -27,7 +29,7 @@ export async function registerOutcomeSchemas(board: Pick<Board, 'createSchema'>)
     checked_at: nil, verifier_version: text, override: nil,
   }) })
   await board.createSchema({ name: review, version: 1, schema: object({
-    work_id: text, evidence_sha256: text, reviewer: nil, decision: { enum: ['accept', 'reject'] }, reason: text, at: nil,
+    work_id: text, record: text, evidence_sha256: text, reviewer: nil, decision: { enum: ['accept', 'reject'] }, reason: text, at: nil,
   }) })
 }
 
@@ -38,9 +40,10 @@ export async function writeRecord(board: Board, id: string, data: Omit<OutcomeRe
 }
 
 export function readRecords(replies: MessageView[]) {
-  return replies.flatMap((message, offset) => dataIn<OutcomeRecord>(message, record).map((data) => ({
-    record: { ...data, checked_at: message.createdAt }, author: message.by.actor, offset,
-  })))
+  return replies.flatMap((message, offset) => verified(message) ?
+    dataIn<OutcomeRecord>(message, record).map((data) => ({
+      record: { ...data, checked_at: message.createdAt }, author: message.by.actor, id: message.id, offset,
+    })) : [])
 }
 
 function dataIn<T>(message: MessageView, schema: string): T[] {
@@ -48,12 +51,14 @@ function dataIn<T>(message: MessageView, schema: string): T[] {
     message.blocks.filter((entry) => entry.schema === schema && entry.version === 1).map((entry) => entry.data as T)
 }
 
-export function readReviews(replies: MessageView[]): ReviewRecord[] {
-  return replies.flatMap((message) => message.author?.verified === true && message.author.kind !== 'external' ?
-    dataIn<ReviewRecord>(message, review).map((data) => ({ ...data, at: message.createdAt, reviewer: message.by.actor })) : [])
+const verified = (message: MessageView) => message.author?.verified === true && message.author.kind !== 'external'
+
+export function readReviews(replies: MessageView[]): StoredReview[] {
+  return replies.flatMap((message) => verified(message) ?
+    dataIn<StoredReview>(message, review).map((data) => ({ ...data, at: message.createdAt, reviewer: message.by.actor })) : [])
 }
 
-export async function writeReview(board: Board, id: string, data: Omit<ReviewRecord, 'at' | 'reviewer'>) {
+export async function writeReview(board: Board, id: string, data: Omit<StoredReview, 'at' | 'reviewer'>) {
   const message = await board.reply(id, { text: block(`${review}@1`, { ...data, reviewer: null, at: null }), noSync: true })
   const saved = readReviews([message])[0]
   if (!saved) throw new Error('review requires a verified board author')

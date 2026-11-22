@@ -6,10 +6,10 @@ type IO = { log(line: string): void; error(line: string): void; board?: Board; j
 const options = {
   submit: ['task', 'kind', 'path', 'sha256', 'party', 'attempt', 'root', 'index'],
   review: ['task', 'decision', 'reason'],
-  complete: ['task', 'reviewer', 'claimant', 'root'],
+  complete: ['task', 'reviewer', 'validators', 'party', 'attempt', 'root'],
 } as const
 const required = {
-  submit: ['task', 'kind', 'path', 'sha256', 'party', 'attempt'], review: ['task', 'decision'], complete: ['task', 'claimant'],
+  submit: ['task', 'kind', 'path', 'sha256', 'party', 'attempt'], review: ['task', 'decision'], complete: ['task', 'validators', 'party', 'attempt'],
 } as const
 const usage = 'usage: swarm outcome <submit|review|complete> --task ID [--json]'
 
@@ -60,7 +60,8 @@ export async function outcomeCommand([action, ...args]: string[], io: IO): Promi
       })
       return say(result, 'outcome recorded', result.reasons)
     }
-    const result = await completeOutcome(team, { taskId, root, claimant: value('claimant')!,
+    const result = await completeOutcome(team, { taskId, root, party: value('party')!, attempt: value('attempt')!,
+      validators: value('validators')!.split(',').map((actor) => actor.trim()).filter(Boolean),
       declaredReviewer: value('reviewer') ?? outcomeContract(task).reviewer, jockeys: io.jockeys ?? [],
     })
     return say(result, 'completed', result.reasons)
