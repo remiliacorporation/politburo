@@ -62,9 +62,13 @@ function actions(options: Options, replay: Replay, key: string, binding: Binding
     return flag({ key, status: 'uncertain', reason }, reason)
   }
 
-  async function epochMatches(name: 'epoch_before_sent' | 'epoch_before_send') {
-    await step(name)
+  async function epochMatches() {
     try { return await control.epoch() === binding.epoch } catch { return false }
+  }
+
+  async function bindingMatches(recovered: boolean) {
+    if (!control.matches) return !recovered
+    try { return await control.matches(key, { ...binding }) === true } catch { return false }
   }
 
   async function abandon(reason: 'board_paused' | 'binding_mismatch', recovered: boolean): Promise<ActionResult> {
@@ -75,14 +79,15 @@ function actions(options: Options, replay: Replay, key: string, binding: Binding
   async function firstSend(recovered: boolean): Promise<ActionResult> {
     if (control.matches || recovered) {
       await step('binding')
-      let matches = false
-      try { matches = await control.matches?.(key, { ...binding }) === true } catch { /* unreadable */ }
-      if (!matches) return abandon('binding_mismatch', recovered)
+      if (!await bindingMatches(recovered)) return abandon('binding_mismatch', recovered)
     }
-    if (!await epochMatches('epoch_before_sent')) return abandon('board_paused', recovered)
+    await step('epoch_before_sent')
+    if (!await epochMatches()) return abandon('board_paused', recovered)
     await record('sent')
-    if (!await epochMatches('epoch_before_send')) return abandon('board_paused', recovered)
+    await step('epoch_before_send')
     if (hook) await hook('send')
+    if (!await bindingMatches(recovered)) return abandon('binding_mismatch', recovered)
+    if (!await epochMatches()) return abandon('board_paused', recovered)
     let session: string
     try { ({ session } = await provider.send({ key, binding: { ...binding } })) } catch { return uncertain('send_ambiguous') }
     if (!sessionId(session)) return uncertain('send_ambiguous')

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { open, readFile } from 'node:fs/promises'
+import { lstat, open, readFile, rename, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 // Local stub for the ledger envelope: persist its opaque ref, not the envelope.
@@ -26,10 +26,11 @@ export type JournalRecord = {
   key: string; state: keyof typeof transitions; binding: Binding; seq: number; at: number
   session?: string; reason?: typeof reasons[number]
 }
-export type JournalFailure = { ok: false; reason: 'torn_tail' | 'corrupt' | 'missing' }
+export type JournalFailure = { ok: false; reason: 'torn_tail' | 'corrupt' | 'missing' | 'locked' }
 type Replay = { ok: true; latest: Map<string, JournalRecord>; attention: Set<string>; seq: number }
 
 const text = (x: unknown): x is string => typeof x === 'string' && x.length > 0
+const ref = (x: unknown) => text(x) && x.length <= 200 && !/[^a-zA-Z0-9._:/@+-]|:\/\/[^/]*@/.test(x)
 const uint = (x: unknown): x is number => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0
 const digest = (x: unknown) => text(x) && /^(?:sha256:)?[a-f0-9]{64}$/i.test(x)
 const object = (x: unknown): x is Record<string, unknown> => !!x && Object.getPrototypeOf(x) === Object.prototype
@@ -47,8 +48,8 @@ function valid(x: unknown): x is JournalRecord {
   if (!object(x) || !fields(x, 'key state binding seq at session reason')) return false
   const b = x.binding
   if (!object(b) || !fields(b, 'kind envelopeRef repo account briefRef briefDigest generation epoch requestDigest createdAt')
-      || (b.kind !== 'implement' && b.kind !== 'review') || !text(b.envelopeRef) || !text(b.repo) || !text(b.account)
-      || !text(b.briefRef) || !digest(b.briefDigest) || !digest(b.requestDigest)
+      || (b.kind !== 'implement' && b.kind !== 'review') || !ref(b.envelopeRef) || !ref(b.repo) || !ref(b.account)
+      || !ref(b.briefRef) || !digest(b.briefDigest) || !digest(b.requestDigest)
       || !uint(b.generation) || !uint(b.epoch) || !uint(b.createdAt)) return false
   return text(x.key) && scoped(x.key, b as Binding) && text(x.state) && Object.hasOwn(transitions, x.state)
     && uint(x.seq) && uint(x.at) && (x.state === 'confirmed' ? text(x.session) : x.session === undefined)
@@ -75,18 +76,85 @@ function fold(replay: Replay, row: JournalRecord) {
 
 const busy = new Map<string, Promise<unknown>>()
 
-/** The directory already exists. Use one dispatcher process per journal. */
+const errno = (error: unknown) => (error as NodeJS.ErrnoException).code
+
+async function lockPid(path: string): Promise<number | undefined> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    const stat = await file.stat()
+    if (!stat.isFile() || stat.size > 11) return
+    const text = (await file.readFile('utf8')).trim()
+    if (/^[1-9][0-9]*$/.test(text) && Number(text) <= 0x7fffffff) return Number(text)
+  } finally { await file.close() }
+}
+
+async function staleLock(path: string) {
+  const pid = await lockPid(path)
+  if (pid === undefined) return false
+  try { process.kill(pid, 0); return false } catch (error) { return errno(error) === 'ESRCH' }
+}
+
+async function createLock(path: string) {
+  const file = await open(path, 'wx', 0o600)
+  try { await file.writeFile(`${process.pid}\n`) } finally { await file.close() }
+}
+
+async function acquireLock(path: string) {
+  try { await createLock(path); return true } catch (error) {
+    if (errno(error) !== 'EEXIST') return false
+  }
+  const temp = `${path}.tmp`
+  try {
+    if (!await staleLock(path)) return false
+    // The exclusive temp file serializes takeovers. Check again under that guard
+    // so a delayed contender cannot replace a lock that another process just took.
+    await createLock(temp)
+    let moved = false
+    try {
+      if (!await staleLock(path)) return false
+      await rename(temp, path)
+      moved = true
+      return await lockPid(path) === process.pid
+    } finally { if (!moved) await unlink(temp) }
+  } catch { return false } // An unclear lock is not permission to dispatch.
+}
+
+/** The journal directory already exists. */
 export function openJournal(dir: string, { known = false } = {}) {
-  const path = resolve(dir, 'launch.jsonl')
+  const parentPath = resolve(dir)
+  const path = resolve(parentPath, 'launch.jsonl')
+  const lock = resolve(parentPath, 'launch.lock')
+  const marker = resolve(parentPath, 'launch.known')
+
+  async function hasMarker() {
+    try { await lstat(marker); return true } catch (error) {
+      if (errno(error) !== 'ENOENT') throw error
+      return false
+    }
+  }
+
+  async function markKnown() {
+    const file = await open(marker, 'wx', 0o600).catch((error: unknown) => {
+      if (errno(error) !== 'EEXIST') throw error
+    })
+    if (!file) return
+    try { await file.sync() } finally { await file.close() }
+    await syncParent()
+  }
+
+  async function syncParent() {
+    const parent = await open(parentPath, 'r')
+    try { await parent.sync() } finally { await parent.close() }
+  }
 
   async function load(): Promise<Replay | JournalFailure> {
     const replay: Replay = { ok: true, latest: new Map(), attention: new Set(), seq: 0 }
     let bytes: Buffer
     try { bytes = await readFile(path) } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      return known ? { ok: false, reason: 'missing' } : replay
+      if (errno(error) !== 'ENOENT') throw error
+      return known || await hasMarker() ? { ok: false, reason: 'missing' } : replay
     }
-    if (!bytes.length && known) return { ok: false, reason: 'corrupt' }
+    if (!bytes.length && (known || await hasMarker())) return { ok: false, reason: 'corrupt' }
     known ||= bytes.length > 0
     const end = bytes.lastIndexOf(10) + 1
     try {
@@ -113,16 +181,20 @@ export function openJournal(dir: string, { known = false } = {}) {
     try {
       if ((await file.write(line)).bytesWritten !== line.length) throw new Error('torn_tail')
       await file.sync()
-      if (record.seq === 1) {
-        const parent = await open(resolve(path, '..'), 'r')
-        try { await parent.sync() } finally { await parent.close() }
-      }
+      // Sync every time: even a recovered or restored journal's directory entry
+      // must be durable before a send can rely on the recorded history.
+      await syncParent()
+      await markKnown()
       known = true
     } finally { await file.close() }
   }
 
-  async function exclusive<T>(run: () => Promise<T>): Promise<T> {
-    const next = (busy.get(path) ?? Promise.resolve()).then(run, run)
+  async function exclusive<T>(run: () => Promise<T>): Promise<T | JournalFailure> {
+    const dispatch = async (): Promise<T | JournalFailure> => {
+      if (!await acquireLock(lock)) return { ok: false, reason: 'locked' }
+      try { return await run() } finally { await unlink(lock) }
+    }
+    const next = (busy.get(path) ?? Promise.resolve()).then(dispatch, dispatch)
     busy.set(path, next)
     try { return await next } finally { if (busy.get(path) === next) busy.delete(path) }
   }

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, readFile, rm, truncate } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { appendFile, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -33,9 +35,9 @@ async function fixture(t: TestContext, attemptId = 'attempt') {
     if (error.code !== 'ENOENT') throw error
     return ''
   })
-  return { options, key, live, sends, alerts, path, bytes,
+  return { options, key, live, sends, alerts, dir, path, bytes,
     restart: (known = true) => { options.journal = openJournal(dir, { known }) },
-    tick: (hook?: (step: HookStep) => void) => launch({ ...options, key, binding, hook }),
+    tick: (hook?: (step: HookStep) => void | Promise<void>) => launch({ ...options, key, binding, hook }),
     recover: (hook?: (step: HookStep) => void) => recover({ ...options, hook }),
     async row() {
       const replay = await options.journal.load()
@@ -135,6 +137,43 @@ test('the provider cannot receive a send before its sent line is on disk', async
   }), 'no sent line at provider entry')
 })
 
+test('a claim that lapses after the sent append cannot dispatch', async (t) => {
+  const f = await fixture(t)
+  let claimed = true
+  f.options.control.matches = async () => claimed
+  const result = await f.tick(async (step) => {
+    if (step !== 'epoch_before_send') return
+    assert.equal((await f.row())?.state, 'sent')
+    claimed = false
+  })
+  assert.deepEqual(f.sends, [])
+  assert.deepEqual(result, { key: f.key, status: 'abandoned', reason: 'binding_mismatch' })
+  assert.equal((await f.row())?.state, 'abandoned')
+})
+
+test('launch and recover cannot dispatch under a live journal lock', async (t) => {
+  const f = await fixture(t), lock = join(f.dir, 'launch.lock')
+  await assert.rejects(f.tick(crashAt('binding')), crash)
+  await writeFile(lock, `${process.pid}\n`, { flag: 'wx' })
+  const launched = await f.tick(), recovered = await f.recover()
+  const refusal = { ok: false, reason: 'locked' }
+  assert.deepEqual(launched, refusal)
+  assert.deepEqual(recovered, refusal)
+  assert.deepEqual(f.sends, [])
+  assert.equal(await readFile(lock, 'utf8'), `${process.pid}\n`)
+})
+
+test('a dead journal lock owner cannot block launch', async (t) => {
+  const f = await fixture(t), lock = join(f.dir, 'launch.lock')
+  const child = spawn(process.execPath, ['-e', ''], { env: {}, stdio: 'ignore' })
+  assert.deepEqual(await once(child, 'exit'), [0, null])
+  assert.ok(child.pid)
+  await writeFile(lock, `${child.pid}\n`, { flag: 'wx' })
+  assert.deepEqual(await f.tick(), { key: f.key, status: 'launched', session })
+  assert.equal(f.sends.length, 1)
+  await assert.rejects(readFile(lock), { code: 'ENOENT' })
+})
+
 test('a torn, corrupt, or known-missing journal cannot send', async (t) => {
   for (const reason of ['torn_tail', 'corrupt', 'missing'] as const) {
     const f = await fixture(t)
@@ -148,6 +187,15 @@ test('a torn, corrupt, or known-missing journal cannot send', async (t) => {
     assert.deepEqual(await f.tick(), refusal)
     assert.deepEqual(f.sends, [])
   }
+})
+
+test('reopening with defaults cannot dispatch again after journal deletion', async (t) => {
+  const f = await fixture(t)
+  assert.deepEqual(await f.tick(), { key: f.key, status: 'launched', session })
+  await rm(f.path)
+  f.options.journal = openJournal(f.dir)
+  assert.deepEqual(await f.tick(), { ok: false, reason: 'missing' })
+  assert.equal(f.sends.length, 1)
 })
 
 test('an absent or unknown probe after send closes replay and raises only one alert', async (t) => {
@@ -187,14 +235,15 @@ test('a pre-pause intent cannot send after resume', async (t) => {
   assert.deepEqual(f.sends, [])
 })
 
-test('a binding cannot put a token or raw prompt in the journal', async (t) => {
+test('a binding cannot put a token, raw prompt, or presigned brief URL in the journal', async (t) => {
   const f = await fixture(t), token = 'fixture-private-token', prompt = 'fixture-private-prompt'
-  for (const extra of [{ authToken: token }, { rawPrompt: prompt }]) {
-    const result = await launch({ ...f.options, key: f.key, binding: { ...binding, ...extra } })
-      .catch((error: unknown) => error)
-    const bytes = await f.bytes()
-    assert.ok(!bytes.includes(token) && !bytes.includes(prompt), 'journal contains private binding data')
-    assert.ok(result instanceof Error && /invalid journal record/.test(result.message))
+  const badBindings = [{ authToken: token }, { rawPrompt: prompt }, { briefRef: `https://example.test/brief?X-Amz-Signature=${token}` },
+    { envelopeRef: `token=${token}` }, { account: `https://${token}@example.test` }, { repo: 'a'.repeat(201) }]
+  for (const extra of badBindings) {
+    const candidate = { ...binding, ...extra }
+    const key = launchKey({ ...candidate, workId: 'work', round: 1, attemptId: 'attempt' })
+    await assert.rejects(launch({ ...f.options, key, binding: candidate }), /invalid journal record/)
+    assert.equal(await f.bytes(), '', 'invalid binding reached the journal')
     assert.deepEqual(f.sends, [])
   }
 })
