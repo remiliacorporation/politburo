@@ -1,6 +1,13 @@
 status: proposed
 the owner decides on this PR.
 
+Partly replaced by [the merger design](swarm-merger.md). The channel layout
+(`swarm/<tag>/...`) becomes `party/<party-id>/...` on a repo board, and mail
+moves to [swarm mail](swarm-mail.md). The page layout, the queue and the scopes
+are replaced by the work board in [work items](swarm-work-items.md) (decision
+D21, work package WP-404). The gap list G1 to G15 stays as the record; each gap
+that needs the board is re-derived in [board additions](swarm-board-additions.md).
+
 # Swarm frontend
 
 ## Status

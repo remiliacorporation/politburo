@@ -1,5 +1,13 @@
 # Parity with tigeryard: intent
 
+> [!NOTE]
+> Replaced as the plan of record by [the merger design](design/swarm-merger.md)
+> (work package WP-101). This file stays as the statement of intent audited on
+> 2026-11-19. Its status table is stale: see
+> [what each work package builds on](design/swarm-reuse.md) for what exists on
+> `main`, and [the board additions](design/swarm-board-additions.md) for what the
+> swarm layer needs from the board.
+
 This document states what this project must gain to reach feature parity with
 tigeryard. It records intent, not design. Each gap needs its own design before
 work starts.
