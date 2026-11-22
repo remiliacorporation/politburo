@@ -43,14 +43,17 @@ export type SpendRecord = {
 
 export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelope | null, now: Date): SpendRecord {
   const id = fact.requestId ?? fact.responseId
-  const eventKey = `${fact.nativeSession}:${id}`
-  const conflictKey = state === 'mismatch' ? `claude:${eventKey}:conflict:${fact.source}` : null
+  // Keep ordinary keys stable, but use an unambiguous tuple for delimiter-bearing IDs.
+  const delimited = fact.nativeSession.includes(':') || id?.includes(':')
+  const eventKey = delimited ? JSON.stringify([fact.nativeSession, id]) : `${fact.nativeSession}:${id}`
+  const dedupeKey = `${delimited ? 'claude-v2' : 'claude'}:${eventKey}`
+  const conflictKey = state === 'mismatch' ? `${dedupeKey}:conflict:${fact.source}` : null
   const field_quality: Record<string, string> = { amount: 'unknown' }
   for (const [key, value] of Object.entries(fact.tokens)) {
     field_quality[`tokens.${key}`] = value === null ? 'unknown' : quality
   }
   return {
-    record_id: randomUUID(), dedupe_key: conflictKey ?? `claude:${eventKey}`, revises: null,
+    record_id: randomUUID(), dedupe_key: conflictKey ?? dedupeKey, revises: null,
     envelope,
     source: fact.source === 'otlp' ? 'claude_local_request' : 'claude_local_transcript',
     source_version: 'capture-claude@1', source_event_key: conflictKey ?? eventKey,
