@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
+import { runClassifierCli } from './classifier/cli.ts'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 
 const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
@@ -42,6 +43,7 @@ function main(args: string[]): number {
     return 0
   }
   if (command === undefined) return misuse('missing command')
+  if (command === 'classifier') return runClassifierCli(args.slice(1))
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {

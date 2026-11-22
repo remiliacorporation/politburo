@@ -1,0 +1,179 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+import {
+  ClassifierInvalid, ClassifierUnavailable, createClassifier, fakeClassifier, runClassifierCli,
+  typesafeClassifier, type Ask, type Classifier, type ClassifierInput,
+} from '../src/classifier/index.ts'
+
+const mail: Ask = {
+  question: 'J2', urgency: 'p1', case_ref: 'review-1',
+  state: { excerpt: 'The review is ready.', source_kind: 'mail', fields: {} },
+}
+const drop = { label: 'no_spawner', probabilities: { no_spawner: 1, needs_spawner: 0 } }
+const dropClassifier = fakeClassifier({ needs_spawner: drop })
+const sentinel = 'test-only-typesafe-sentinel'
+const baseUrl = 'https://classifier.invalid'
+const clientInput: ClassifierInput = {
+  question: 'needs_spawner', promptVersion: 1, instruction: 'Choose a label.',
+  choices: ['needs_spawner', 'no_spawner'], state: mail.state,
+}
+
+function tempDir(t: TestContext) {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-classifier-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+function service(dir: string, classifier = dropClassifier, state = 'live', key = 'needs_spawner') {
+  return createClassifier({ dir, classifier, config: {
+    secretary: { questions: { [key]: { enabled: true, state, threshold: 0.97, late_p1_rate_limit: '1/500' } } },
+  } })
+}
+
+function callLog(dir: string) {
+  return readFileSync(join(dir, 'calls.jsonl'), 'utf8')
+}
+
+test('p0 reaches the classifier or fails to wake', async (t) => {
+  const calls: ClassifierInput[] = []
+  const classifier: Classifier = { async classify(input) { calls.push(input); return drop } }
+  const decision = await service(tempDir(t), classifier).ask({ ...mail, urgency: 'p0' })
+  assert.equal(calls.length, 0)
+  assert.equal(decision.action, 'wake')
+})
+
+test('a below-threshold drop suppresses a live wake', async (t) => {
+  const classifier = fakeClassifier({ needs_spawner: {
+    label: 'no_spawner', probabilities: { no_spawner: 0.96, needs_spawner: 0.04 },
+  } })
+  const decision = await service(tempDir(t), classifier).ask(mail)
+  assert.equal(decision.reason, 'below_threshold')
+  assert.equal(decision.action, 'wake')
+})
+
+test('shadow acts on a drop or fails to log what it would do', async (t) => {
+  const dir = tempDir(t)
+  const decision = await service(dir, dropClassifier, 'shadow').ask(mail)
+  assert.equal(decision.action, 'wake')
+  assert.equal(decision.action_would, 'drop')
+  const record = JSON.parse(callLog(dir).trim())
+  assert.equal(record.action_taken, 'wake')
+  assert.equal(record.action_would, 'drop')
+})
+
+test('unavailable, invalid or refused classifications suppress a wake or send a request', async (t) => {
+  const dir = tempDir(t)
+  const fetch = t.mock.fn(async () => Response.json({ choice: drop.label, probabilities: drop.probabilities }))
+  const unavailable = service(dir, typesafeClassifier({ baseUrl, env: {}, fetch }))
+  const invalid = service(dir, fakeClassifier({ needs_spawner: {
+    label: drop.label, probabilities: { no_spawner: 1, needs_spawner: 1 },
+  } }))
+  const refused = service(dir, typesafeClassifier({ baseUrl, env: { TYPESAFE_API_KEY: sentinel }, fetch }))
+  const cases = [
+    [unavailable, mail, 'unavailable'],
+    [invalid, mail, 'invalid'],
+    ...['diff --git a/note b/note', 'api_key=synthetic', '```text\nnote\n```', 'x'.repeat(601)]
+      .map((excerpt) => [refused, { ...mail, state: { ...mail.state, excerpt } }, 'guard'] as const),
+  ] as const
+  for (const [classifier, input, reason] of cases) {
+    const decision = await classifier.ask(input)
+    assert.equal(fetch.mock.callCount(), 0, reason)
+    assert.equal(decision.action, 'wake', reason)
+    assert.equal(decision.reason, reason)
+  }
+})
+
+test('a costly breach does not stay latched or a reasoned clear does not release it', async (t) => {
+  const dir = tempDir(t)
+  const live = service(dir)
+  for (const case_ref of ['review-1', 'review-2']) {
+    const decision = await live.ask({ ...mail, case_ref })
+    assert.equal(decision.action, 'drop')
+    assert.ok(decision.call_id)
+    live.outcome(decision.call_id, { spawner_did: 'wake', costly: true })
+  }
+  const reopened = service(dir)
+  const latched = await reopened.ask({ ...mail, case_ref: 'review-3' })
+  assert.equal(latched.action, 'wake')
+  assert.equal(latched.action_would, 'drop')
+  assert.equal(latched.reason, 'shadow')
+  assert.throws(() => reopened.clear('J2', ' '), /invalid classifier clear/)
+  reopened.clear('J2', 'Core reviewed the missed wakes')
+  assert.equal((await service(dir).ask({ ...mail, case_ref: 'review-4' })).action, 'drop')
+})
+
+test('TypeSafe leaks the excerpt or key to logs or errors, or sends the key outside Authorization', async (t) => {
+  const dir = tempDir(t)
+  let transportFails = false
+  const requests: Request[] = []
+  const classifier = typesafeClassifier({ baseUrl, env: { TYPESAFE_API_KEY: sentinel }, async fetch(input, init) {
+    requests.push(new Request(input, init))
+    if (transportFails) throw new Error(`${sentinel}: ${mail.state.excerpt}`)
+    return Response.json({ choice: drop.label, probabilities: drop.probabilities, snapshot: sentinel })
+  } })
+  assert.equal((await service(dir, classifier).ask(mail)).action, 'drop')
+  transportFails = true
+  await assert.rejects(classifier.classify(clientInput), (error) => {
+    assert.ok(error instanceof ClassifierUnavailable)
+    assert.equal(error.message.includes(sentinel), false, 'key in error')
+    assert.equal(error.message.includes(mail.state.excerpt), false, 'excerpt in error')
+    return true
+  })
+  assert.ok(requests.length > 0)
+  for (const request of requests) {
+    assert.equal(request.headers.get('authorization') === `Bearer ${sentinel}`, true, 'missing bearer header')
+    request.headers.delete('authorization')
+    assert.equal(JSON.stringify([...request.headers]).includes(sentinel), false, 'key in another header')
+    assert.equal(request.url.includes(sentinel), false, 'key in URL')
+    assert.equal((await request.text()).includes(sentinel), false, 'key in body')
+  }
+  const log = callLog(dir)
+  assert.equal(log.includes(mail.state.excerpt), false, 'excerpt in call log')
+  assert.equal(log.includes(sentinel), false, 'key in call log')
+})
+
+test('TypeSafe accepts a label outside the choices or probabilities that do not sum to one', async () => {
+  for (const response of [
+    { choice: 'invented', probabilities: drop.probabilities },
+    { choice: drop.label, probabilities: { no_spawner: 1, needs_spawner: 1 } },
+  ]) {
+    const classifier = typesafeClassifier({ baseUrl, env: { TYPESAFE_API_KEY: sentinel },
+      async fetch() { return Response.json(response) },
+    })
+    await assert.rejects(classifier.classify(clientInput), ClassifierInvalid, response.choice)
+  }
+})
+
+test('J1 routes to a repo no longer among the supplied candidates', async (t) => {
+  const candidateRepos = ['repo-a', 'repo-b']
+  let revoke = false
+  const classifier: Classifier = { async classify({ choices }) {
+    if (revoke) candidateRepos.splice(candidateRepos.indexOf('repo-a'), 1)
+    return { label: 'repo-a', probabilities: Object.fromEntries(choices.map((choice) => [choice, Number(choice === 'repo-a')])) }
+  } }
+  const intake = service(tempDir(t), classifier, 'live', 'intake_route')
+  assert.equal((await intake.ask({ ...mail, question: 'J1', candidateRepos })).action, 'route:repo-a')
+  revoke = true
+  const decision = await intake.ask({ ...mail, question: 'J1', candidateRepos })
+  assert.equal(decision.action, 'wake')
+  assert.equal(decision.reason, 'invalid')
+})
+
+test('J1 through J10 lack a wake-compatible default or a report line', async (t) => {
+  const dir = tempDir(t)
+  const defaults = createClassifier({ dir, classifier: dropClassifier })
+  const ids = Array.from({ length: 10 }, (_, i) => `J${i + 1}`)
+  for (const question of ids) {
+    const decision = await defaults.ask({ ...mail, question })
+    assert.equal(decision.action, 'wake', question)
+    assert.equal(decision.reason, 'disabled', question)
+  }
+  const log = t.mock.method(console, 'log', () => {})
+  assert.equal(runClassifierCli(['report', dir]), 0)
+  const lines = log.mock.calls.flatMap(({ arguments: args }) => String(args[0]).split('\n'))
+  assert.deepEqual(lines.map((line) => line.trim().split(/\s+/)[0]).sort(), [...ids].sort())
+  for (const line of lines) assert.match(line, /^J\d+\s+shadow\b/)
+})
