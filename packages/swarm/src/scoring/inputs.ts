@@ -110,6 +110,10 @@ function unique<T>(rows: T[], list: string, field: keyof T) {
   return byId
 }
 
+export function outcomeRefId({ work_id, attempt, checked_at }: OutcomeRecord): string {
+  return `${work_id}#${attempt}@${checked_at}`
+}
+
 export function parseScoreInput(value: unknown): ScoreInput {
   if (!validate(value)) {
     const errors = validate.errors!
@@ -128,11 +132,11 @@ export function parseScoreInput(value: unknown): ScoreInput {
       throw new ScoringInputError(`spend/${i}/revises`, 'revision of a bound record must belong to the same party')
     }
   }
-  const outcomeKeys = new Set<string>()
-  for (const [i, { party, work_id, attempt, checked_at }] of value.outcomes.entries()) {
-    const key = JSON.stringify([party, work_id, attempt, checked_at])
-    if (outcomeKeys.has(key)) throw new ScoringInputError(`outcomes/${i}`, 'duplicate outcome ref')
-    outcomeKeys.add(key)
+  const outcomeIds = new Set<string>()
+  for (const [i, outcome] of value.outcomes.entries()) {
+    const id = outcomeRefId(outcome)
+    if (outcomeIds.has(id)) throw new ScoringInputError(`outcomes/${i}`, 'duplicate outcome ref')
+    outcomeIds.add(id)
   }
   return value
 }

@@ -1,4 +1,4 @@
-import { currentHeads, ScoringInputError, type Fact, type ScoreInput } from './inputs.ts'
+import { currentHeads, outcomeRefId, ScoringInputError, type Fact, type ScoreInput } from './inputs.ts'
 import { levelFor, milestonesFor, type Milestone, type StableMerge } from './levels.ts'
 import type { Level, ScoreRules } from './rules.ts'
 
@@ -123,8 +123,7 @@ export function scoreParty(input: ScoreInput, rules: ScoreRules, { party, asOf }
     .sort((a, b) => Date.parse(a.checked_at) - Date.parse(b.checked_at) || cmp(a.checked_at, b.checked_at))
   for (const outcome of outcomes) {
     const key = attemptKey(outcome)
-    const { work_id, attempt, checked_at } = outcome
-    if (!verified.has(key)) verified.set(key, { kind: 'outcome', id: `${work_id}#${attempt}@${checked_at}` })
+    if (!verified.has(key)) verified.set(key, { kind: 'outcome', id: outcomeRefId(outcome) })
   }
   const seen = new Set<string>()
   const stable: StableMerge[] = []

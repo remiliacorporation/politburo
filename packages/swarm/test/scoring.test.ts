@@ -54,6 +54,7 @@ function mergedOnly(size = 1): ScoreInput {
 test('GATE: under-reporting spend ties or beats full reporting for the same merged work', () => {
   const a = seeded(701)
   const b = seeded(701, 'B')
+  for (const outcome of b.outcomes) outcome.checked_at = new Date(Date.parse(outcome.checked_at) + 1).toISOString()
   for (const row of [...a.spend, ...b.spend]) row.tokens.input_total = 10_000_000
   b.spend.shift()
   b.spend[0]!.coverage.state = 'partial'
@@ -191,12 +192,22 @@ test('malformed spend is accepted or reported outside the offending field', () =
   }
 })
 
-test('two outcome records with the same party, work, attempt, and timestamp share a ref', () => {
+test('two outcome records sharing an emitted ref are accepted', () => {
   const input = mergedOnly()
   const outcome = input.outcomes[0]!
-  assert.throws(() => parseScoreInput({ ...input, outcomes: [outcome, { ...outcome, evidence: 'other' }] }), {
-    name: 'ScoringInputError', message: /outcomes\/1:.*duplicate outcome ref/,
-  })
+  const cases: [string, OutcomeRecord[]][] = [
+    ['same tuple', [outcome, { ...outcome, evidence: 'other' }]],
+    ['delimiter collision', [
+      { ...outcome, work_id: 'x#y', attempt: 'z' },
+      { ...outcome, work_id: 'x', attempt: 'y#z' },
+    ]],
+    ['different parties', [outcome, { ...outcome, party: 'B' }]],
+  ]
+  for (const [label, outcomes] of cases) {
+    assert.throws(() => parseScoreInput({ ...input, outcomes }), {
+      name: 'ScoringInputError', message: /outcomes\/1:.*duplicate outcome ref/,
+    }, label)
+  }
 })
 
 test('a misspelled score setting is accepted or reported at the wrong path', () => {
