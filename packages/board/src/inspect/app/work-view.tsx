@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { attentionFor } from './attention-store.ts'
 import * as board from './board.ts'
+import { useHoldPosition } from './hold-position.ts'
 import { here, Link, useTypeToFocus } from './nav.tsx'
 import { keepOrder } from './needs.ts'
 import { nameOf, type State } from './store.ts'
@@ -16,6 +17,9 @@ const RULES: Record<WorkGroup, string> = {
   waiting: 'Held, parked, or not ready to claim.',
   done: 'The task is completed, failed, or canceled.',
 }
+
+const taskIdOf = (node: Node | null) =>
+  (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('[data-task-id]')?.dataset.taskId
 
 export function Work({ state, now, lead }: { state: State; now: number; lead: ReactNode }) {
   useTypeToFocus('main')
@@ -37,6 +41,12 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   const list = useRef<HTMLDivElement>(null)
   const focused = useRef<string | undefined>(undefined)
   const hovered = useRef(false)
+  const hoveredId = useRef<string | undefined>(undefined)
+  const selection = list.current?.ownerDocument.getSelection()
+  const selectedId = selection && !selection.isCollapsed
+    ? [selection.anchorNode, selection.focusNode].map((node) => list.current?.contains(node) ? taskIdOf(node) : undefined).find(Boolean)
+    : undefined
+  useHoldPosition(list, focused.current ?? hoveredId.current ?? selectedId)
   const release = (target: EventTarget | null) => {
     const el = list.current
     if (!el || hovered.current || (target instanceof Node && el.contains(target))) return
@@ -74,7 +84,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
         <p role="status">{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
         <div ref={list} tabIndex={-1} aria-label="Work board tasks"
           onFocus={(event) => {
-            focused.current = (event.target as HTMLElement).closest<HTMLElement>('[data-task-id]')?.dataset.taskId
+            focused.current = taskIdOf(event.target)
             setFrozen(true)
           }}
           onBlur={(event) => {
@@ -82,7 +92,12 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
             release(event.relatedTarget)
           }}
           onMouseEnter={() => { hovered.current = true; setFrozen(true) }}
-          onMouseLeave={() => { hovered.current = false; release(document.activeElement) }}>
+          onMouseOver={(event) => { hoveredId.current = taskIdOf(event.target as Node) }}
+          onMouseLeave={() => {
+            hovered.current = false
+            hoveredId.current = undefined
+            release(document.activeElement)
+          }}>
           {groups.map(({ group, title, rows }) => (
             <section key={group} className="home-queue">
               <h2>{title} ({rows.length}) <small>{RULES[group]}</small></h2>

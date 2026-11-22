@@ -16,6 +16,7 @@ afterEach(async () => {
   await close?.()
   root = undefined
   close = undefined
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   localStorage.clear()
   document.head.replaceChildren()
@@ -34,11 +35,13 @@ async function workBoard() {
     await api.close()
   }
   const token = await personToken('u_reader', BOARD_URL)
-  const client = createBoardClient({ url: BOARD_URL, token, profile: null, fetch: (input, init) => api.fetch(new Request(input, init)) })
+  const clientFor = (token: string) => createBoardClient({ url: BOARD_URL, token, profile: null, fetch: (input, init) => api.fetch(new Request(input, init)) })
+  const client = clientFor(token)
   return {
     create: (n: number, text: string, options: { claim?: boolean; priority?: 'urgent' } = {}) =>
       client.tasks.create('work', { text, labels: { 'work.id': `wp-${n}`, party: 'blue' }, ...options }),
     client,
+    actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
     async open() {
       browser.setViewport({ width: 1280, height: 900 })
       browser.setURL(`http://work-${++visit}.test/work`)
@@ -109,4 +112,45 @@ it('keeps a focused row in place when urgent work arrives, then reorders on blur
 
   reading.blur()
   await vi.waitFor(() => expect(titles()).toEqual(['Urgent arrival', 'Earlier task', 'Reading this task']))
+})
+
+it('/work holds a focused row at the same viewport offset during live regrouping, but does not scroll after blur', async () => {
+  const { create, actor, open } = await workBoard()
+  const worker = await actor('u_worker')
+  const { task: first } = await create(1, 'First ready task')
+  await create(2, 'Reading this task')
+  await open()
+  await vi.waitFor(() => {
+    expect(headings()).toEqual(['Ready to pull'])
+    expect(titles()).toEqual(['First ready task', 'Reading this task'])
+  })
+
+  const scroll = document.querySelector<HTMLElement>('main .work-view')!
+  scroll.scrollTop = 20
+  const blockHeight = 40
+  const getRect = Element.prototype.getBoundingClientRect
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (!this.matches('li[data-task-id]') || !scroll.contains(this)) return getRect.call(this)
+    // happy-dom has no layout: model the list as equal-height headings and rows.
+    const blocks = [...scroll.querySelectorAll('section h2, section li[data-task-id]')]
+    return new DOMRect(0, blocks.indexOf(this) * blockHeight - scroll.scrollTop, 100, blockHeight)
+  })
+  const reading = taskLinks()[1]!
+  const row = reading.closest('li')!
+  flushSync(() => reading.focus())
+  expect(document.activeElement).toBe(reading)
+  const top = row.getBoundingClientRect().top
+
+  const claim = await worker.tasks.claim(first.id)
+  await vi.waitFor(() => expect(headings()).toEqual(['Running', 'Ready to pull']))
+  expect(scroll.scrollTop).toBe(20 + blockHeight)
+  expect(row.getBoundingClientRect().top).toBe(top)
+  expect(document.activeElement).toBe(reading)
+
+  flushSync(() => reading.blur())
+  expect(document.activeElement).toBe(document.body)
+  await claim.release()
+  await vi.waitFor(() => expect(headings()).toEqual(['Ready to pull']))
+  expect(scroll.scrollTop).toBe(20 + blockHeight)
+  expect(row.getBoundingClientRect().top).toBe(top - blockHeight)
 })

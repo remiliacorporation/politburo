@@ -47,6 +47,10 @@ Read and operate the board in your browser:
   while the board's clock moves forward. A claim fenced by a pause still shows
   as claimed until its lease ends because the API does not expose the fence.
   Select a task to open its thread.
+- **Read the Work board.** Work (`/work`) groups open tasks by who acts next:
+  needs you, repair or reconcile, ready to review, running, ready to pull, and
+  waiting or parked. Each row says why the task is in its group. The row you
+  are reading stays where it is when live updates change the rows above it.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what

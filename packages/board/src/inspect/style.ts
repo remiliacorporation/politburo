@@ -516,7 +516,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .needs-view li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding-block: 3px; overflow-wrap: anywhere; }
 .needs-view small { color: var(--muted); }
 .work-view > * { max-width: none; }
-.work-view > [tabindex] { overflow-x: auto; }
+.work-view > [tabindex] { overflow-x: auto; overflow-y: hidden; }
 .work-view li { flex-wrap: nowrap; white-space: nowrap; }
 .work-view li > * { flex: none; }
 .work-view h2 small { margin-inline-start: 4px; font-weight: normal; }
