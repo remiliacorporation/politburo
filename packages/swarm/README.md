@@ -9,3 +9,8 @@ sections 3 and 4.
 pnpm --filter @remilia/politburo-swarm build
 node packages/swarm/dist/cli.js config show
 ```
+
+## sync agent skills
+
+Run `swarm skills sync --dir ./agent-skills --party party.yaml` to install skills.
+Use `--repo` for repo overrides, `--dry-run` to preview, or `--json` for file actions.
