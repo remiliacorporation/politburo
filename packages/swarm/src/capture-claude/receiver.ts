@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { isIPv4 } from 'node:net'
+import type { Readable } from 'node:stream'
 import { createGunzip } from 'node:zlib'
 import { parseOtlpLogs } from './otlp.ts'
 import { reconcile } from './reconcile.ts'
-import { buildRecord } from './record.ts'
+import { buildRecord, conflictSuccessor } from './record.ts'
 import type { SessionRegistry } from './registry.ts'
 import type { SpendWriter } from './writer.ts'
 
@@ -16,47 +16,49 @@ interface ReceiverOptions {
   now?: () => Date
   maxBodyBytes?: number
   requestTimeoutMs?: number
-  allowRemote?: boolean
 }
 
 const localHostHeader = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?$/i
 
-async function readBody(req: IncomingMessage, compressed: boolean, limit: number): Promise<Buffer | null> {
-  if (!compressed && Number(req.headers['content-length']) > limit) return null
-  const gzip = compressed ? createGunzip() : null
-  if (gzip) {
-    req.once('error', (error) => gzip.destroy(error))
-    req.pipe(gzip)
-  }
-  const stream = gzip ?? req
+async function readLimited(stream: Readable, limit: number): Promise<Buffer | null> {
   const chunks: Buffer[] = []
   let size = 0
+  // Don't let an early iterator return destroy the HTTP socket before the 413.
+  for await (const chunk of stream.iterator({ destroyOnReturn: false })) {
+    const bytes: Buffer = chunk
+    size += bytes.length
+    if (size > limit) return null
+    chunks.push(bytes)
+  }
+  return Buffer.concat(chunks, size)
+}
+
+async function readBody(req: IncomingMessage, compressed: boolean, limit: number): Promise<Buffer | null> {
+  if (Number(req.headers['content-length']) > limit) return null
+  let body: Buffer | null
   try {
-    // Don't let an early iterator return destroy the HTTP socket before the 413.
-    for await (const chunk of stream.iterator({ destroyOnReturn: false })) {
-      const bytes: Buffer = chunk
-      size += bytes.length
-      if (size > limit) return null
-      chunks.push(bytes)
-    }
-    return Buffer.concat(chunks, size)
+    body = await readLimited(req, limit)
   } finally {
-    if (gzip) {
-      req.unpipe(gzip)
-      gzip.destroy()
-    }
     req.pause()
+  }
+  // Verify the wire size before inflating, and enforce the same limit on the output.
+  if (body === null || !compressed) return body
+  const gzip = createGunzip()
+  try {
+    gzip.end(body)
+    return await readLimited(gzip, limit)
+  } finally {
+    gzip.destroy()
   }
 }
 
 export function createReceiver({
   registry, ledger, quarantine, host = '127.0.0.1', port = 0, now = () => new Date(),
-  maxBodyBytes = 1_048_576, requestTimeoutMs = 10_000, allowRemote = false,
+  maxBodyBytes = 1_048_576, requestTimeoutMs = 10_000,
 }: ReceiverOptions) {
   const localhost = host.toLowerCase() === 'localhost'
-  const loopback = localhost || host === '::1' || (isIPv4(host) && host.startsWith('127.'))
-  if (!loopback && !allowRemote) throw new Error('receiver host must be loopback')
-  const counters = { accepted: 0, attributed: 0, quarantined: 0, rejected: 0, malformed: 0 }
+  if (!localhost && host !== '::1' && host !== '127.0.0.1') throw new Error('receiver host must be loopback')
+  const counters = { accepted: 0, attributed: 0, quarantined: 0, rejected: 0, malformed: 0, conflicts: 0 }
 
   async function receive(req: IncomingMessage, res: ServerResponse) {
     const reply = (status: number, body: string) => {
@@ -97,16 +99,16 @@ export function createReceiver({
         const envelope = registry.lookup(fact.nativeSession)
         const [resolved] = reconcile([fact], []).records
         const record = buildRecord(resolved!, envelope, now())
-        // Keep the session reversible even when it contains a path separator.
-        const session = fact.nativeSession.replace(/%/g, '%25').replace(/\//g, '%2F')
-        record.evidence_ref = `claude/${session}/${fact.requestId ?? fact.responseId}`
-        if (envelope === null) {
-          quarantine.append(record)
-          counters.quarantined++
-        } else {
-          ledger.append(record)
-          counters.attributed++
+        const writer = envelope === null ? quarantine : ledger
+        if (writer.append(record) === 'differs') {
+          const original = writer.existing(record.dedupe_key)
+          if (!original) throw new Error('conflicting record has no original')
+          const result = writer.append(conflictSuccessor(original, record, 'capture-claude receiver'))
+          if (result === 'differs') throw new Error('conflict successor differs')
+          if (result === 'written') counters.conflicts++
         }
+        if (envelope === null) counters.quarantined++
+        else counters.attributed++
         // A deduped append is also a successful durable acceptance.
         counters.accepted++
       }

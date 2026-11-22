@@ -1,6 +1,6 @@
 import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
-import { object } from './facts.ts'
+import { identifier, object } from './facts.ts'
 import type { Envelope } from './record.ts'
 
 export interface SessionRegistry {
@@ -38,8 +38,9 @@ function readBindings(path: string): Map<string, unknown> {
 
 export function fileRegistry(path: string): SessionRegistry {
   return {
-    lookup: (nativeSession) => envelopeOf(readBindings(path).get(nativeSession)),
+    lookup: (nativeSession) => identifier(nativeSession) === null ? null : envelopeOf(readBindings(path).get(nativeSession)),
     bind(nativeSession, envelope) {
+      if (identifier(nativeSession) === null) throw new Error('invalid native session')
       const next = envelopeOf(envelope)
       if (!next) throw new Error('invalid session envelope')
       // Exclusive temp file serializes read/modify/rename across bind processes.
