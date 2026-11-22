@@ -1,3 +1,11 @@
+export class InputError extends Error {}
+
+export function checkMailbox(id: unknown): asserts id is string {
+  if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id)) {
+    throw new InputError('invalid mailbox id: expected 1–64 lowercase letters, digits, dots, underscores or hyphens, starting with a letter or digit')
+  }
+}
+
 export type Urgency = 'p0' | 'p1' | 'p2' | 'p3'
 
 export type MailMessage = {

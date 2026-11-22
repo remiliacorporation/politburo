@@ -3,13 +3,13 @@ import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { parseConfigText } from '../config/load.ts'
 import { exceptionDigest, type MessageHeader, type RolloutAck } from './digest.ts'
-import type { MailPort } from './mail-port.ts'
-import { affectedMailboxes, changedPaths, isConfigObject, policyId, policyNotices, readSent } from './notices.ts'
+import { InputError, type MailPort } from './mail-port.ts'
+import { isConfigObject, planNotices, policyId, policyNotices } from './notices.ts'
 
 const options = {
   notices: {
     previous: { type: 'string' }, next: { type: 'string' }, version: { type: 'string' },
-    mailboxes: { type: 'string' }, sent: { type: 'string' }, 'dry-run': { type: 'boolean' },
+    mailboxes: { type: 'string' }, 'dry-run': { type: 'boolean' },
   },
   show: {
     headers: { type: 'string' }, repo: { type: 'string' }, from: { type: 'string' },
@@ -18,18 +18,21 @@ const options = {
 } as const
 
 class Misuse extends Error {}
-class InputError extends Error {}
 
 function isHeader(value: unknown): value is MessageHeader {
-  return isConfigObject(value) && typeof value.id === 'string' &&
-    ['p0', 'p1', 'p2', 'p3'].some((urgency) => urgency === value.urgency) &&
-    typeof value.class === 'string' && typeof value.state === 'string' &&
-    typeof value.createdAt === 'string' && typeof value.summary === 'string' &&
-    (value.expires === undefined || typeof value.expires === 'string')
+  if (!isConfigObject(value) || typeof value.id !== 'string') return false
+  for (const key of ['createdAt', 'expires']) {
+    if (typeof value[key] !== 'string' && !(key === 'expires' && value[key] === undefined)) {
+      throw new InputError(`invalid ${key} for header ${JSON.stringify(value.id)}`)
+    }
+  }
+  return ['p0', 'p1', 'p2', 'p3'].some((urgency) => urgency === value.urgency) &&
+    typeof value.class === 'string' && typeof value.state === 'string' && typeof value.summary === 'string'
 }
 
 function isAck(value: unknown): value is RolloutAck {
   return isConfigObject(value) && typeof value.mailbox === 'string' &&
+    (value.record === undefined || typeof value.record === 'string') &&
     Number.isSafeInteger(value.version) && typeof value.acked === 'boolean' && typeof value.noticeAt === 'string'
 }
 
@@ -72,20 +75,11 @@ export async function run(argv: string[], {
       const next = await load(nextPath, 'next config')
       const mailboxes = await load(mailboxesPath, 'mailboxes')
       if (!isConfigObject(previous) || !isConfigObject(next)) throw new InputError('expected config objects')
-      if (!isConfigObject(mailboxes) || !Object.values(mailboxes).every((id) => typeof id === 'string' && id.length > 0)) {
-        throw new InputError('expected reader names mapped to mailbox ids')
-      }
-      const readers = mailboxes as Record<string, string>
-      const sentPath = typeof values.sent === 'string' ? values.sent : undefined
-      const affected = affectedMailboxes(changedPaths(previous, next), readers)
-      if (mail) {
-        const { sent } = await policyNotices({ version, previous, next, mailboxes: readers, mail, sentPath, now })
-        const ids = new Set(sent)
-        for (const box of affected) stdout(`${box}  ${ids.has(policyId(box, version)) ? 'sent' : 'already sent'}`)
-      } else {
-        const { ids } = await readSent(sentPath)
-        for (const box of affected) stdout(`${box}  ${ids.has(policyId(box, version)) ? 'already sent' : 'would send'}`)
-      }
+      if (!isConfigObject(mailboxes)) throw new InputError('expected reader names mapped to mailbox ids')
+      const { affected } = planNotices(previous, next, mailboxes)
+      const result = mail && await policyNotices({ version, previous, next, mailboxes, mail })
+      const sent = new Set(result?.sent)
+      for (const box of affected) stdout(`${box}  ${!result ? 'would send' : sent.has(policyId(box, version)) ? 'sent' : 'already sent'}`)
     } else {
       const repo = required('repo'), from = required('from'), to = required('to')
       if (!(Date.parse(from) < Date.parse(to))) throw new Misuse('expected a valid window with --from before --to')

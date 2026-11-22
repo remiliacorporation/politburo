@@ -1,28 +1,15 @@
-import { appendFile, readFile } from 'node:fs/promises'
 import { isDeepStrictEqual } from 'node:util'
-import type { MailPort } from './mail-port.ts'
+import schema from '../config/schema.json' with { type: 'json' }
+import { checkMailbox, InputError, type MailPort } from './mail-port.ts'
 
-// The five reader groups in the party config table, keyed by mailbox-map name.
+// Reader groups from design/swarm-party-config.md, including the field table.
 const readerPaths = {
-  dispatch: ['tiers.shares', 'tiers.models.core', 'tiers.models.spawner', 'tiers.models.mob', 'tiers.models.sprite', 'limits', 'setup'],
-  mail: ['mail', 'secretary', 'tiers.models.adviser', 'tiers.models.classifier'],
-  claims: ['claims', 'review'],
-  watch: ['heartbeat_minutes', 'trackers'],
-  ui: ['party.name', 'party.colour', 'labels', 'names'],
-} as const
-
-type Readers = Record<string, string>
-
-export function affectedMailboxes(changed: string[], readers: Readers): string[] {
-  const affected = new Set<string>()
-  for (const path of changed) {
-    const matches = Object.entries(readerPaths).filter(([, prefixes]) =>
-      prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}.`)))
-    if (!matches.length) return [...new Set(Object.values(readers))].sort()
-    for (const [reader] of matches) if (Object.hasOwn(readers, reader)) affected.add(readers[reader]!)
-  }
-  return [...affected].sort()
-}
+  dispatch: [['tiers', 'shares'], ...['core', 'spawner', 'mob', 'sprite'].map((tier) => ['tiers', 'models', tier]), ['limits'], ['setup']],
+  mail: [['mail'], ['secretary'], ['heartbeat_minutes'], ['tiers', 'models', 'adviser'], ['tiers', 'models', 'classifier']],
+  claims: [['claims'], ['review']],
+  watch: [['heartbeat_minutes'], ['trackers']],
+  ui: [['party', 'name'], ['party', 'colour'], ['labels'], ['names']],
+} satisfies Record<string, string[][]>
 
 export function isConfigObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object') return false
@@ -30,65 +17,73 @@ export function isConfigObject(value: unknown): value is Record<string, unknown>
   return proto === Object.prototype || proto === null
 }
 
-export function changedPaths(previous: unknown, next: unknown): string[] {
-  const paths = new Set<string>()
-  function visit(left: unknown, right: unknown, path: string) {
+type Shape = { [keyword: string]: unknown; properties?: Record<string, Shape>; $ref?: string; then?: Shape; patternProperties?: object }
+type Change = { path: string[]; unknown?: boolean }
+const definitions: Record<string, Shape> = schema.definitions
+
+function changes(previous: unknown, next: unknown): Change[] {
+  const found: Change[] = []
+  function visit(left: unknown, right: unknown, path: string[], shape: Shape) {
     if (isDeepStrictEqual(left, right)) return
+    if (shape.$ref) shape = definitions[shape.$ref.split('/').at(-1)!]!
+    const fields = shape.properties ?? shape.then?.properties
     const a = isConfigObject(left) ? left : undefined
     const b = isConfigObject(right) ? right : undefined
     const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})])
-    if (!keys.size || (!a && left !== undefined) || (!b && right !== undefined)) paths.add(path)
+    if (shape.patternProperties || !keys.size || (!a && left !== undefined) || (!b && right !== undefined)) {
+      found.push({ path })
+      return
+    }
     for (const key of keys) {
-      visit(a && Object.hasOwn(a, key) ? a[key] : undefined,
-        b && Object.hasOwn(b, key) ? b[key] : undefined, path ? `${path}.${key}` : key)
+      const child = /^[a-z][a-z0-9_]*$/.test(key) && fields && Object.hasOwn(fields, key) ? fields[key] : undefined
+      const l = a && Object.hasOwn(a, key) ? a[key] : undefined
+      const r = b && Object.hasOwn(b, key) ? b[key] : undefined
+      if (child) visit(l, r, [...path, key], child)
+      else if (!isDeepStrictEqual(l, r)) found.push({ path, unknown: true })
     }
   }
-  visit(previous, next, '')
-  return [...paths].sort()
+  visit(previous, next, [], schema)
+  return found
 }
 
-export function policyId(mailbox: string, version: number): string {
-  return `policy:${mailbox}:v${version}`
-}
+type Readers = Record<string, unknown>
+const isPrefix = (prefix: string[], path: string[]) => prefix.every((key, i) => key === path[i])
 
-export async function readSent(path?: string) {
-  const ids = new Set<string>()
-  let text = ''
-  if (path) {
-    try { text = await readFile(path, 'utf8') } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+export function planNotices(previous: unknown, next: unknown, readers: Readers) {
+  const entries = Object.entries(readers).map(([reader, mailbox]) => {
+    if (!Object.hasOwn(readerPaths, reader)) throw new InputError(`unrecognized reader name ${JSON.stringify(reader)}`)
+    checkMailbox(mailbox)
+    return [reader, mailbox] as const
+  })
+  const affected = new Set<string>()
+  const paths = new Set<string>()
+  for (const { path, unknown } of changes(previous, next)) {
+    if (path.length) paths.add(path.join('.'))
+    const matches = unknown ? [] : Object.entries(readerPaths).filter(([, prefixes]) =>
+      prefixes.some((prefix) => isPrefix(prefix, path) || isPrefix(path, prefix)))
+    for (const [reader, mailbox] of entries) {
+      if (!matches.length || matches.some(([name]) => name === reader)) affected.add(mailbox)
     }
   }
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue
-    try {
-      const entry = JSON.parse(line)
-      if (typeof entry?.id === 'string' && typeof entry.at === 'string') ids.add(entry.id)
-    } catch { /* A torn record is a cache miss; the port still deduplicates. */ }
-  }
-  return { ids, needsNewline: !!text && !text.endsWith('\n') }
+  return { paths: [...paths].sort(), affected: [...affected].sort() }
 }
 
-export async function policyNotices({ version, previous, next, mailboxes, mail, sentPath, now = () => new Date() }: {
-  version: number; previous: unknown; next: unknown; mailboxes: Readers; mail: MailPort
-  sentPath?: string; now?: () => Date
+export function policyId(mailbox: string, version: number, record = 'party'): string {
+  return `policy:${mailbox}:${record}:v${version}`
+}
+
+export async function policyNotices({ version, record = 'party', previous, next, mailboxes, mail }: {
+  version: number; record?: string; previous: unknown; next: unknown; mailboxes: Readers; mail: MailPort
 }): Promise<{ sent: string[]; skipped: string[] }> {
-  const paths = changedPaths(previous, next)
-  const recorded = await readSent(sentPath)
+  const { paths, affected } = planNotices(previous, next, mailboxes)
   const sent: string[] = [], skipped: string[] = []
-  for (const mailbox of affectedMailboxes(paths, mailboxes)) {
-    const id = policyId(mailbox, version)
-    if (recorded.ids.has(id)) { skipped.push(id); continue }
+  for (const mailbox of affected) {
+    const id = policyId(mailbox, version, record)
     const { landed } = await mail.post({
       id, mailbox, class: 'policy', urgency: 'p1',
-      block: { schema: 'swarm-policy@1', data: { version, changed_paths: paths } },
-      text: `party config v${version} changed: ${paths.join(', ')}. fetch the committed version from the config thread on the party board.`,
+      block: { schema: 'swarm-policy@1', data: { record, version, changed_paths: paths } },
+      text: `config ${record} v${version} changed: ${paths.join(', ') || 'unspecified fields'}. fetch this committed record from the config thread on the party board.`,
     })
-    if (sentPath) {
-      const line = JSON.stringify({ id, at: now().toISOString() })
-      await appendFile(sentPath, `${recorded.needsNewline ? '\n' : ''}${line}\n`, { flush: true })
-      recorded.needsNewline = false
-    }
     ;(landed === 'new' ? sent : skipped).push(id)
   }
   return { sent, skipped }
