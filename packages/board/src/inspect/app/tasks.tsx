@@ -8,7 +8,7 @@ import { Composer } from './composer.tsx'
 import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
-import { isTask, nameOf, placesUnder, readFilter, shownMessage, taskMatches, taskState, TASK_FILTER_STATES, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
+import { nameOf, placesUnder, readFilter, taskScope, tasks, taskState, TASK_FILTER_STATES, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
 import { firstLine } from './words.ts'
@@ -17,31 +17,23 @@ const PRIORITIES = [...TaskPriority.options].reverse()
 
 const setFilter = (changes: Record<string, string | string[] | null>) => navigate(here({ params: changes }), true)
 
-export function Tasks(props: { state: State; viewer: Viewer; lead: ReactNode; where: Where; known: KnownLabels }) {
-  const { state, viewer, where } = props
+export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: ReactNode; where: Where; known: KnownLabels }) {
+  const { state, viewer, where, now } = props
   const mayPost = (channel: string) => viewer.may('post', channel)
   const writable = Object.keys(state.channels).filter(mayPost).sort()
   useTypeToFocus('main')
   const query = where.params.toString()
   const filter = useMemo(() => readFilter(where.params), [query])
-  // Priority filters the loaded pages; it does not change the board's query or pagination.
-  const { priority, ...boardFilter } = filter
-  const key = JSON.stringify(boardFilter)
-  const scope = useMemo(() => Symbol(), [key])
-  useEffect(() => board.openTaskList(scope, boardFilter), [scope])
-  useEffect(() => { board.refreshTaskList() }, [where])
-  const list = state.taskList?.scope === scope ? state.taskList : undefined
-  const refused = list?.refused
-  const read = list?.read
-  const now = useTaskClock(read?.roots)
+  const { priority } = filter
+  const inScope = state.taskScope === taskScope(filter.channel)
+  const refused = inScope ? state.tasksRefused : null
+  const accepted = inScope ? state.openTaskMe : null
   const latest = useMemo(() => {
-    if (!read) return []
-    const iso = new Date(now).toISOString()
-    const roots = [...read.roots.values()].map((root) => shownMessage(state, root, iso))
-      .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, now, state.status))
-    const eligible = state.status?.paused ? { ...read.viewer, may: () => false } : read.viewer
-    return claimFirst(roots, eligible, now)
-  }, [read, filter, now, state])
+    if (!accepted) return []
+    const viewer = board.viewerOf(accepted)
+    const eligible = state.status?.paused ? { ...viewer, may: () => false } : viewer
+    return claimFirst(tasks(state, filter, now), eligible, now)
+  }, [accepted, filter, now, state])
   const [frozen, setFrozen] = useState<{ query: string; ids: string[] } | null>(null)
   const rowList = useRef<HTMLDivElement>(null)
   const hovered = useRef(false)
@@ -75,14 +67,9 @@ export function Tasks(props: { state: State; viewer: Viewer; lead: ReactNode; wh
     }
   }, [frozen, query, rows])
 
-  // A task can wait for one this list doesn't hold (a completed one, say): its thread says its state.
-  const missing = [...new Set(rows.flatMap((row) => row.task.needs))].filter((id) => !state.messages[id]).slice(0, 30)
-  useEffect(() => {
-    for (const id of missing) void board.loadThread(id)
-  }, [missing.join(' ')])
-
-  const owners = [...new Set(Object.values(state.messages).flatMap((m) => (isTask(m) ? [m.task.owner] : [])))]
-  const assignees = [...new Set(Object.values(state.messages).flatMap((m) => (isTask(m) && m.task.for ? [m.task.for] : [])))]
+  const scopeRows = accepted ? tasks(state, { state: 'all', label: [] }, now) : []
+  const owners = [...new Set(scopeRows.map(({ task }) => task.owner))]
+  const assignees = [...new Set(scopeRows.flatMap(({ task }) => task.for ? [task.for] : []))]
   const chips: { key: string; text: string; drop: Record<string, string | string[] | null> }[] = [
     ...(filter.state !== 'open' ? [{ key: 'state', text: `state ${filter.state}`, drop: { state: null } }] : []),
     ...(filter.channel ? [{ key: 'channel', text: `in #${filter.channel}`, drop: { channel: null } }] : []),
@@ -115,12 +102,12 @@ export function Tasks(props: { state: State; viewer: Viewer; lead: ReactNode; wh
         ))}
       </nav>
       <TaskPage rows={rows} query={query}>
-        {refused?.tooWide ? (
+        {refused && state.tasksTooWide ? (
           <Places channels={Object.keys(state.channels)} under={filter.channel} />
         ) : refused ? (
-          <p className="empty error">{refused.text}</p>
-        ) : !read ? (
-          <p className="empty" role="status">loading all {list?.loading ?? 0} so far</p>
+          <p className="empty error">{refused}</p>
+        ) : !accepted || state.tasksLoading ? (
+          <p className="empty" role="status">loading all {state.tasksLoading ?? 0} so far</p>
         ) : rows.length === 0 && pending.length === 0 ? (
           <p className="empty">{chips.length > 0 ? 'no tasks match' : 'no open tasks'}</p>
         ) : null}
@@ -227,21 +214,6 @@ function Places({ channels, under }: { channels: string[]; under: string | undef
       </div>
     </>
   )
-}
-
-/** Re-arm one display clock, including claims that are not yet in the Ready tab. No board reads. */
-function useTaskClock(roots: ReadonlyMap<string, TaskRoot> | undefined) {
-  const [now, tick] = useState(Date.now)
-  let next = now + 30_000
-  for (const { task } of roots?.values() ?? []) {
-    const expiry = task.state === 'claimed' && task.claim ? Date.parse(task.claim.until) : NaN
-    if (expiry > now && expiry < next) next = expiry
-  }
-  useEffect(() => {
-    const timer = setTimeout(() => tick(Date.now()), Math.max(0, next + 1000 - Date.now()))
-    return () => clearTimeout(timer)
-  }, [next, now])
-  return now
 }
 
 /** One task: its state, what it says, and the one thing about it that matters now. Opens its thread. */

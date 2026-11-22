@@ -18,7 +18,7 @@ const ids = (rows: TaskRoot[]) => rows.map((row) => row.id)
 
 it('filters to normal priority within the requested state and channel tree', () => {
   const state = merge(initialState, [root(1, 'normal'), root(2, 'urgent'), root(3, 'normal', { state: 'completed' }), { ...root(4, 'normal'), channel: 'other' }, { ...root(5, 'normal'), channel: 'work/review' }])
-  expect(ids(tasks(state, { state: 'ready', label: [], channel: 'work/', priority: 'normal' }, now))).toEqual(['1', '5'])
+  expect(ids(tasks({ ...state, openTaskRoots: state.messages }, { state: 'ready', label: [], channel: 'work/', priority: 'normal' }, now))).toEqual(['1', '5'])
 })
 
 it('parses a priority URL filter alongside state and channel and ignores unknown priorities', () => {

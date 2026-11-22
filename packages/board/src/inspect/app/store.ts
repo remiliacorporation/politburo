@@ -1,8 +1,8 @@
+import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../../contract/schemas.ts'
 import type { ActorView, BoardStatus, BlockView, BoardEventView, ChannelView, Discovery, GrantView, Me, MessageView, RegistrationView, ScheduleView, SchemaView, TaskView, ThreadsPage } from '../../api/routes.ts'
 // `@vercel/board/schemas`, in an app of yours.
 import { findBlocks } from '../../contract/blocks.ts'
 import { canonicalEmoji } from '../../contract/emoji.ts'
-import { DEFAULT_TASK_PRIORITY, TaskPriority } from '../../contract/schemas.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { confirmAttention, needsAttentionAnswer, reconcileAttention, type AttentionState } from './attention-store.ts'
 import { ago, shownName } from './words.ts'
@@ -58,8 +58,6 @@ export type State = AttentionState & {
   channels: Record<string, ChannelView>
   /** Messages as the board last showed them, by ID. Of two views of one, the higher `version` wins. */
   messages: Record<string, MessageView>
-  threadDenials: ReadonlyMap<string, number>
-  threadPane?: { id: string; as: number; status: 'loading' | 'ready' | 'missing'; error?: string; messages: Record<string, MessageView> } | undefined
   ops: Record<string, { id: string; op: Op }[]>
   pending: Pending[]
   actors: Record<string, ActorView>
@@ -69,7 +67,17 @@ export type State = AttentionState & {
   control: Extract<BoardEventView, { type: 'work.control' }> | null
   /** Whether every open task is loaded, so the page can count them. */
   tasksCounted: boolean
-  taskList?: TaskList | undefined
+  /** Membership of the last accepted complete open-task read, with live updates to its members only. */
+  openTaskRoots: Record<string, MessageView>
+  /** Permissions read with that membership, never used to decide write identity. */
+  openTaskMe: Me | null
+  taskScope: string | null
+  tasksLoading: number | null
+  tasksTooWide: boolean
+  threadDenials: ReadonlyMap<string, number>
+  /** The result of the open pane's own read, independent of cached messages. */
+  paneThread: { id: string; identity: number; result: 'loading' | 'readable' | { refused: string }; messages: Record<string, MessageView>; refreshError?: string } | null
+  openTaskAttentionRefusals: Record<string, string>
   /** Each opened channel's listing, or null on a board whose thread pages have no `older`: it loads by messages. */
   listings: Record<string, Listing | null>
   /** The board's schema registry, once it's read: what a block's fields mean. */
@@ -90,7 +98,6 @@ export const initialState: State = {
   discovery: null,
   channels: {},
   messages: {},
-  threadDenials: new Map(),
   ops: {},
   pending: [],
   actors: {},
@@ -99,6 +106,14 @@ export const initialState: State = {
   statusRefused: null,
   control: null,
   tasksCounted: false,
+  openTaskRoots: {},
+  openTaskMe: null,
+  taskScope: null,
+  tasksLoading: null,
+  tasksTooWide: false,
+  threadDenials: new Map(),
+  paneThread: null,
+  openTaskAttentionRefusals: {},
   tasksRefused: null,
   attention: {},
   attentionUnsupported: false,
@@ -170,15 +185,20 @@ export function newest(known: Record<string, MessageView>, views: MessageView[])
 }
 // #endregion
 
-const rootId = (message: MessageView) => message.re ?? message.id
+export const threadId = (message: MessageView) => message.re ?? message.id
 
-export function readableAt(state: State, id: string, read: number): boolean {
-  return (state.threadDenials.get(id) ?? -1) < read
+/** Remove roots and replies, fencing out reads already on the wire. */
+export function evictThreads(state: State, ids: ReadonlySet<string>, generation: number): State {
+  if (!ids.size) return state
+  const threadDenials = new Map(state.threadDenials)
+  for (const id of ids) threadDenials.set(id, generation)
+  const messages = Object.fromEntries(Object.entries(state.messages).filter(([, message]) => !ids.has(threadId(message))))
+  return { ...state, messages, threadDenials }
 }
 
-/** Takes in readable message views, the newer of each, and settles the changes they confirm. */
-export function merge(state: State, views: MessageView[], read = 0): State {
-  views = views.filter((view) => readableAt(state, rootId(view), read))
+/** Takes in message views, the newer of each, and settles the changes they confirm. */
+export function merge(state: State, views: MessageView[], generation = 0): State {
+  views = views.filter((view) => (state.threadDenials.get(threadId(view)) ?? -1) < generation)
   const messages = newest(state.messages, views)
   if (messages === state.messages) return state
   let ops = state.ops
@@ -196,20 +216,6 @@ export function merge(state: State, views: MessageView[], read = 0): State {
     }
   }
   return reconcileAttention({ ...state, messages, ops }, views)
-}
-
-/** A fresh thread read refused the old view. Drop its messages and any Tasks membership. */
-export function forgetThread(state: State, id: string, read: number, error: string): State {
-  if (!readableAt(state, id, read)) return state
-  const threadDenials = new Map(state.threadDenials).set(id, read)
-  const messages = Object.fromEntries(Object.entries(state.messages).filter(([, m]) => rootId(m) !== id))
-  const pane = state.threadPane
-  state = { ...state, threadDenials, messages, ...(pane?.id === id ? { threadPane: { ...pane, status: 'missing', error, messages: {} } } : {}) }
-  const list = state.taskList
-  if (!list?.read?.roots.has(id)) return state
-  const roots = new Map(list.read.roots)
-  roots.delete(id)
-  return { ...state, messages, taskList: { ...list, read: { ...list.read, roots } } }
 }
 
 // #region guide inspector/pending.ts
@@ -233,8 +239,8 @@ function activity(state: State, root: string, row: Row): Pick<MessageView, 'crea
  * Takes in a page of a channel's threads: one row per thread, the newer where a thread is listed already. The first
  * page read and every older one set where the next older page starts; the first page read again leaves it.
  */
-export function mergeThreads(state: State, channel: string, page: ThreadsPage, which: 'first' | 'older', read = 0): State {
-  const next = merge(state, page.threads.flatMap((t) => (t.last ? [t.message, t.last] : [t.message])), read)
+export function mergeThreads(state: State, channel: string, page: ThreadsPage, which: 'first' | 'older', generation = 0): State {
+  const next = merge(state, page.threads.flatMap((t) => (t.last ? [t.message, t.last] : [t.message])), generation)
   const listing = listingOf(next, channel)
   const rows = { ...listing?.rows }
   for (const { message, replies, last } of page.threads) {
@@ -283,9 +289,9 @@ function listed(state: State, message: MessageView): State {
  * channel at once, so it never leaves the page while the stream catches up. A reply's thread moves on
  * when the stream brings it, in order, so replies the stream hasn't brought yet still count.
  */
-export function sent(state: State, key: string, message: MessageView, read = 0): State {
-  const next = merge({ ...state, pending: state.pending.filter((p) => p.key !== key) }, [message], read)
-  return message.re === null && readableAt(next, message.id, read) ? listed(next, message) : next
+export function sent(state: State, key: string, message: MessageView): State {
+  const next = merge({ ...state, pending: state.pending.filter((p) => p.key !== key) }, [message])
+  return message.re === null ? listed(next, message) : next
 }
 
 /** The channel of a live reply whose thread its listing doesn't have, so its first page is read again; else null. */
@@ -328,10 +334,9 @@ export function pauseBanner(state: State, now: number): string | null {
 }
 
 /** Folds one live event in: work control, messages, channel counts, listed threads, and actor details. */
-export function applyEvent(state: State, event: BoardEventView, read = 0): State {
+export function applyEvent(state: State, event: BoardEventView, generation = 0): State {
   if (event.type === 'work.control') return applyControl(state, event)
-  if (event.message && !readableAt(state, rootId(event.message), read)) return state
-  let next = event.message ? confirmAttention(merge(state, [event.message], read), event) : state
+  let next = event.message ? confirmAttention(merge(state, [event.message], generation), event) : state
   if (event.type === 'message.posted' && event.message) {
     next = listed(next, event.message)
     // One to send later isn't on its way as a message: nothing that lands now stands for it.
@@ -390,12 +395,11 @@ export function shown(state: State, id: string, now = new Date().toISOString()):
   return message ? shownMessage(state, message, now) : undefined
 }
 
-/** Apply the same overlays to a view that has its own read membership. */
+/** Apply overlays without replacing the root supplied by the accepted read. */
 export function shownMessage(state: State, message: MessageView, now: string): MessageView {
   let out = message
   for (const { op } of state.ops[message.id] ?? []) out = apply(out, op, state.me?.actor ?? '', now)
   const actor = state.actors[message.by.actor]
-  // Who it acts through, and its platform, stay as the board showed them when what it records now doesn't say.
   const via = actor?.via ?? out.author?.via
   const platform = actor?.platform ?? out.author?.platform
   return actor ? { ...out, author: { ...actor, ...(via ? { via } : {}), ...(platform ? { platform } : {}) } } : out
@@ -462,35 +466,14 @@ export function channelRows(state: State, channel: string): { threads: ChannelTh
   return { threads, pending: state.pending.filter((post) => post.channel === channel && post.re === null) }
 }
 
-export function thread(state: State, root: string, now = new Date().toISOString()): Thread | null {
-  return threadFrom(state, state.messages, root, now)
-}
-
-/** Membership comes from this pane's read; an older version cannot replace a newer one it already read. */
-export function acceptPaneRead(state: State, views: MessageView[]): State {
-  const pane = state.threadPane
-  if (!pane) return state
-  const messages = newest({}, views.map((view) => {
-    const previous = pane.messages[view.id]
-    return previous && previous.version > view.version ? previous : view
-  }))
-  return { ...state, threadPane: { ...pane, status: 'ready', messages } }
-}
-
-export function paneThread(state: State, root: string, as: number, now: string): Thread | null {
-  const pane = state.threadPane
-  if (pane?.id !== root || pane.as !== as || pane.status !== 'ready') return null
-  return threadFrom(state, pane.messages, root, now)
-}
-
-function threadFrom(state: State, messages: Record<string, MessageView>, root: string, now: string): Thread | null {
-  const view = messages[root]
+export function thread(state: State, root: string): Thread | null {
+  const view = shown(state, root)
   if (!view) return null
-  const replies = Object.values(messages)
+  const replies = Object.values(state.messages)
     .filter((message) => message.re === root)
     .sort(byWritten)
-    .map((message) => shownMessage(state, message, now))
-  return { root: shownMessage(state, view, now), replies, pending: state.pending.filter((post) => post.re === root) }
+    .map((message) => shown(state, message.id)!)
+  return { root: view, replies, pending: state.pending.filter((post) => post.re === root) }
 }
 
 /** A view's filters, as the board's API takes them: `label` is `key`, `key=value`, or `key=a|b`. */
@@ -608,14 +591,6 @@ export function stateNow(task: TaskView, now: number): TaskState {
 }
 // #endregion
 
-/**
- * A task's state as the page can know it. A claim fenced by a pause is claimable again after
- * resume while its lease is unexpired; the board's API doesn't say so, so such a task shows as claimed.
- */
-export function taskState(task: TaskView, now: number, _status: BoardStatus | null): TaskState {
-  return stateNow(task, now)
-}
-
 /** A root that's a task. */
 export type TaskRoot = MessageView & { task: TaskView }
 export const isTask = (message: MessageView | null | undefined): message is TaskRoot => !!message?.task
@@ -669,31 +644,15 @@ export function moves(state: State, root: TaskRoot, viewer: Viewer, now: number)
   }
 }
 
-/** Which tasks a list shows. `channel` can name a tree with a trailing `/`; `priority` is filtered locally. */
+/** Which tasks a list shows, as the board's API takes them: `channel` is a channel or, with a trailing `/`, it and what's under it. */
+export function taskState(task: TaskView, now: number, _status: BoardStatus | null): TaskState {
+  return stateNow(task, now)
+}
+
+
 export type TaskFilter = { channel?: string; state: 'open' | 'all' | TaskState; label: string[]; owner?: string; for?: string; priority?: TaskPriority }
 
-/** The latest complete read of the Tasks scope. Its roots are the membership. */
-export type TaskList = {
-  scope: symbol
-  loading?: number
-  read?: { roots: ReadonlyMap<string, TaskRoot>; viewer: Viewer }
-  refused?: { text: string; tooWide: boolean }
-}
-
-/** Live views can update members, but never confer membership. */
-export function updateTaskList(state: State, views: MessageView[]): State {
-  const list = state.taskList
-  if (!list?.read) return state
-  const { roots } = list.read
-  let updated: Map<string, TaskRoot> | undefined
-  for (const view of views) {
-    const current = (updated ?? roots).get(view.id)
-    if (!current || current.version >= view.version) continue
-    if (view.deleted) (updated ??= new Map(roots)).delete(view.id)
-    else if (isTask(view)) (updated ??= new Map(roots)).set(view.id, view)
-  }
-  return updated ? { ...state, taskList: { ...list, read: { ...list.read, roots: updated } } } : state
-}
+export const taskScope = (channel?: string) => `all:${channel ?? ''}`
 
 export const TASK_FILTER_STATES = ['open', 'waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled', 'all'] as const
 
@@ -712,7 +671,7 @@ export function readFilter(params: URLSearchParams): TaskFilter {
   }
 }
 
-const inChannel = (channel: string, wanted: string) => (wanted.endsWith('/') ? channel === wanted.slice(0, -1) || channel.startsWith(wanted) : channel === wanted)
+export const inChannel = (channel: string, wanted: string) => (wanted.endsWith('/') ? channel === wanted.slice(0, -1) || channel.startsWith(wanted) : channel === wanted)
 
 /** Where a task list can look: a tree (`work/`, it and what's under it) or one channel, and how many of your channels it holds. */
 export type TaskPlace = { place: string; channels: number }
@@ -754,18 +713,18 @@ export function taskMatches(root: TaskRoot, filter: TaskFilter, now: number, sta
   return filter.label.every((label) => hasLabel(root.labels, label))
 }
 
-/** The loaded tasks a filter keeps, in age order for the home view. */
+/** Rows from the accepted membership, with local filters and display overlays. */
 export function tasks(state: State, filter: TaskFilter, now: number, through?: MessageView): TaskRoot[] {
-  return Object.values(state.messages)
+  const iso = new Date(now).toISOString()
+  return Object.values(state.openTaskRoots).map((root) => shownMessage(state, root, iso))
     .filter((root): root is TaskRoot => isTask(root) && taskMatches(root, filter, now, state.status))
-    .filter((root) => !through || byWritten(root, through) <= 0)
-    .map((root) => shown(state, root.id) as TaskRoot).sort(byWritten)
+    .filter((root) => !through || byWritten(root, through) <= 0).sort(byWritten)
 }
 
 /** How many loaded tasks are in each state, treating a lapsed claim as ready. */
 export function taskCounts(state: State, now: number): Record<TaskState, number> {
   const counts = { ready: 0, claimed: 0, waiting: 0, blocked: 0, failed: 0, completed: 0, canceled: 0 }
-  for (const root of Object.values(state.messages)) {
+  for (const root of Object.values(state.openTaskRoots)) {
     if (isTask(root) && !root.deleted) counts[stateNow(root.task, now)]++
   }
   return counts
@@ -773,7 +732,7 @@ export function taskCounts(state: State, now: number): Record<TaskState, number>
 
 /** How many tasks are open, once every open one is loaded. */
 export const openTasks = (state: State): number | null =>
-  state.tasksCounted ? Object.values(state.messages).filter((m) => isTask(m) && !m.deleted && OPEN_STATES.includes(m.task.state)).length : null
+  state.tasksCounted ? Object.values(state.openTaskRoots).filter((m) => isTask(m) && !m.deleted && OPEN_STATES.includes(m.task.state)).length : null
 
 // --- blocks and schemas -------------------------------------------------------------------
 

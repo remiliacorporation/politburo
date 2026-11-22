@@ -7,6 +7,7 @@ import { setEditing } from './chrome.ts'
 import { Composer } from './composer.tsx'
 import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
+import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
 import { here, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
@@ -16,7 +17,7 @@ import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
-import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, paneThread, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
+import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
 
@@ -167,7 +168,7 @@ function PauseControl({ paused }: { paused: boolean }) {
 export function App() {
   const state = board.useBoard()
   const where = useLocation()
-  const now = useNow()
+  const now = useNow(state.openTaskRoots)
   const [failed, setFailed] = useState<string | null>(null)
   const sidebar = useSidebar()
   const pane = usePane()
@@ -217,7 +218,11 @@ export function App() {
     if (naming) return
     const read = () => void board.loadStatus()
     addEventListener('popstate', read)
-    return () => removeEventListener('popstate', read)
+    const stopTasks = board.watchTaskReads()
+    return () => {
+      stopTasks()
+      removeEventListener('popstate', read)
+    }
   }, [naming])
 
   // Old thread links open the thread pane.
@@ -245,7 +250,8 @@ export function App() {
     const title = current.view === 'channel' ? `#${current.channel}`
       : current.view === 'settings' ? `${current.section} · settings`
       : current.view === 'missing' ? 'nothing here'
-      : current.view === 'home' ? 'HANDOFFS'
+      : current.view === 'needs' ? 'Needs action'
+      : current.view === 'handoffs' ? 'HANDOFFS'
       : current.view === 'presidium' ? 'PRESIDIUM'
       : current.view
     document.title = `${title} · ${named}`
@@ -325,12 +331,13 @@ export function App() {
         </nav>
         <main className="main" inert={narrow && (nav || where.thread !== null)}>
           <HeaderActions.Provider value={paneIsFront ? null : headerActions}>
-            {current.view === 'home' && <Home key={identity} state={state} viewer={viewer} now={now} lead={expand} />}
+            {current.view === 'needs' && <NeedsAction key={identity} state={state} now={now} lead={expand} />}
+            {current.view === 'handoffs' && <Home key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'presidium' && <Presidium key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'channel' && (
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
-            {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} lead={expand} where={where} known={known} />}
+            {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
             {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
             {current.view === 'missing' && (
@@ -345,7 +352,7 @@ export function App() {
           <aside className="pane" aria-label="Thread" inert={nav}>
             <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
             <HeaderActions.Provider value={paneIsFront ? headerActions : null}>
-              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} lead={narrow ? headerLead : null} />
+              <ThreadPane key={`${identity}:${where.thread}`} id={where.thread} state={state} viewer={viewer} now={now} known={known} lead={narrow ? headerLead : null} />
             </HeaderActions.Provider>
           </aside>
         )}
@@ -474,11 +481,13 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
 
 function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
   const { id, state, viewer } = props
+  const fileDraft = useState<File[]>([])
   useTypeToFocus('thread')
   const identity = board.getIdentity()
   useEffect(() => board.openThreadPane(id), [id, identity])
-  const pane = state.threadPane?.id === id && state.threadPane.as === identity ? state.threadPane : undefined
-  const t = useMemo(() => paneThread(state, id, identity, new Date(props.now).toISOString()), [state, id, identity, props.now])
+  const read = state.paneThread?.id === id && state.paneThread.identity === identity ? state.paneThread : null
+  const refused = typeof read?.result === 'object' ? read.result.refused : null
+  const t = read?.result === 'readable' ? threadOf({ ...state, messages: read.messages }, id) : null
   // Where the thread's copies are, on the platforms it syncs with.
   const [synced, setSynced] = useState<SyncedView['targets']>([])
   useEffect(() => {
@@ -549,9 +558,10 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       )}
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
         {!t ? (
-          <p className="empty">{pane?.status === 'missing' ? pane.error ?? 'no such thread' : 'loading…'}</p>
+          <p className={refused === null ? 'empty' : 'error'}>{refused ?? 'loading…'}</p>
         ) : (
           <>
+            {read?.refreshError && <p className="error" role="status">could not refresh: {read.refreshError}</p>}
             <Messages messages={[t.root]} now={props.now} options={options} />
             <div className="divider">{t.replies.length === 1 ? '1 reply' : `${t.replies.length} replies`}</div>
             <Messages messages={t.replies} now={props.now} options={options} after={t.root} />
@@ -562,6 +572,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       {t && viewer.may('post', t.root.channel) && (
         <Composer
           scope={`thread:${id}`}
+          fileDraft={fileDraft}
           role="thread"
           placeholder="reply to thread…"
           known={props.known}

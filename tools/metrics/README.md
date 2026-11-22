@@ -17,7 +17,8 @@ the repository containing the script, `HEAD`, and `main` at
 `https://github.com/vercel/board.git`. Fetches into a disposable clone without
 hardlinking source objects. Clone and fetch get 120 seconds each; other Git
 commands get 60 seconds each. The overall deadline is 360 seconds. All of
-these deadlines escalate to SIGKILL after five seconds.
+these deadlines escalate to SIGKILL after five seconds. Fetch has its own
+process group so a timeout also stops its Git remote helper.
 
 Renames within `packages/board/src` count only added lines, attributed to the
 destination. A file moved into that scope from elsewhere counts all its lines.
@@ -74,8 +75,9 @@ The judge starts children with an allowlisted environment and a temporary home.
 It kills child process groups, then uses a per-run marker in `/proc` to kill and
 verify removal of detached descendants that inherited the marker. This is cleanup,
 not a sandbox. Node's own diagnostics and startup hooks are outside the script's
-control. Run Node with trusted startup settings; the judge refuses to run if
-`NODE_DEBUG` is non-empty.
+control. A child that starts a new session (for example with `setsid`) and
+clears its environment escapes both cleanup methods. Run Node with trusted
+startup settings; the judge refuses to run if `NODE_DEBUG` is non-empty.
 
 ```json
 {
@@ -103,5 +105,6 @@ Both scripts exit `0` with exactly one JSON document on stdout, or `1` with
 empty stdout and one `error: <reason>` line on stderr. The judge never replays
 raw child logs.
 
-Run `node --test tools/metrics/test/`. The offline real-board tests reuse the
+Run `pnpm test:metrics` from the repository root. This suite is separate from
+`pnpm check`. The offline real-board tests reuse the
 built `packages/board/dist/cli.mjs` and skip if it is missing.

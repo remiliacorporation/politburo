@@ -1,4 +1,4 @@
-import { CircleHelp, ClipboardList, House, LayoutGrid, PanelLeftClose, Settings } from 'lucide-react'
+import { CircleHelp, ClipboardList, House, ListTodo, LayoutGrid, PanelLeftClose, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView } from '../../api/routes.ts'
 import { attentionTasks, hasUnshownRefusal } from './attention-store.ts'
@@ -69,11 +69,15 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
       </div>
       <div className="view-body">
       <div className="sidebar-scroll">
+        <Link to="/" className="item" current={current.view === 'needs'}>
+          <ListTodo size={14} aria-hidden="true" />
+          <span>Needs action</span>
+        </Link>
         <Link to="/presidium" className="item" current={current.view === 'presidium'}>
           <LayoutGrid size={14} aria-hidden="true" />
           <span>Presidium</span>
         </Link>
-        <Link to="/" className="item" current={current.view === 'home'}>
+        <Link to="/handoffs" className="item" current={current.view === 'handoffs'}>
           <House size={14} aria-hidden="true" />
           <span>Handoffs</span>
         </Link>

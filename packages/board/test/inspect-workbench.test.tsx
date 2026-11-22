@@ -120,6 +120,445 @@ function lane(title: string) {
 
 const mainText = () => document.querySelector('main')?.textContent
 
+it('shows loading before the empty Needs action sentence on an empty board', async () => {
+  const { open } = await workbench()
+  const listed = Promise.withResolvers<void>()
+  releaseGates.push(() => listed.resolve())
+  await open('/', { transport: async (request, send) => {
+    if (routePath(request) === '/tasks') await listed.promise
+    return send()
+  } })
+  await vi.waitFor(() => {
+    expect(document.querySelector('main h1')?.textContent).toBe('Needs action')
+    expect(mainText()).toContain('loading…')
+    expect(mainText()).not.toContain('nothing needs anyone')
+  })
+  listed.resolve()
+  await vi.waitFor(() => expect(mainText()).toContain('nothing needs anyone'))
+  link('Handoffs').click()
+  await vi.waitFor(() => expect(document.querySelector('main h1')?.textContent).toBe('HANDOFFS'))
+  expect(location.pathname).toBe('/handoffs')
+})
+
+it('renders the three Needs action groups with ordered thread links', async () => {
+  const { client, as, open } = await workbench({ attentionResponders: responders })
+  const { id: decisionId } = await hold(client, 'Approve wording', 'Ship it?')
+  const { task: lapsed } = await client.tasks.create('work', { text: 'Overdue urgent', priority: 'urgent' })
+  const lease = await client.tasks.claim(lapsed.id, { lease: 30 })
+  const worker = as('worker')
+  const { task: stalled } = await client.tasks.create('work', { text: 'Overdue assigned', for: (await worker.me()).actor })
+  const stalledLease = await worker.tasks.claim(stalled.id, { lease: 30 })
+  const { task: normal } = await client.tasks.create('work', { text: 'Normal work' })
+  const { task: high } = await client.tasks.create('work', { text: 'High work', priority: 'high' })
+  vi.setSystemTime(Math.max(Date.parse(lease.until), Date.parse(stalledLease.until)) + 12 * 60_000)
+  await open()
+  await vi.waitFor(() => {
+    expect([...document.querySelectorAll('main section h2')].map((heading) => heading.textContent)).toEqual([
+      'Open decisions', 'Stalled or overdue claims', 'Ready work',
+    ])
+    const linksIn = (title: string) => [...lane(title).querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')])
+    expect(linksIn('Open decisions')).toEqual([['Approve wording', `/?thread=${decisionId}`]])
+    expect(linksIn('Stalled or overdue claims')).toEqual([['Overdue assigned', `/?thread=${stalled.id}`]])
+    expect(linksIn('Ready work')).toEqual([['Overdue urgent', `/?thread=${lapsed.id}`], ['High work', `/?thread=${high.id}`], ['Normal work', `/?thread=${normal.id}`]])
+    expect(link('Overdue urgent').closest('li')?.textContent).toContain('lease ended 12m ago')
+  })
+})
+
+it.each(['list omission', 'thread 404'] as const)('removes a revoked Needs action row after a %s', async (read) => {
+  const { api, open } = await workbench({ attentionResponders: responders })
+  const target = { kind: 'project' as const, project: 'prj_reader' }
+  const token = await deploymentToken('dpl_reader', target.project, 'production')
+  await api.revokeGrant('g2')
+  const { grant } = await api.createGrant({ principals: [target], can: { work: 'all' } })
+  await api.createGrant({ principals: [target], can: { keep: 'all' } })
+  const viewer = createBoardClient({ url: BOARD_URL, token, profile: null, fetch: (input, init) => api.fetch(new Request(input, init)) })
+  // A decision is shown even without label access, so refreshing /me alone cannot hide it.
+  const id = read === 'list omission' ? (await hold(viewer, 'Private queue', 'Continue?')).id
+    : (await viewer.tasks.create('work', { text: 'Private queue' })).task.id
+  await viewer.tasks.create('keep', { text: 'Public queue' })
+  await open('/', { token })
+  const row = await vi.waitFor(() => link('Private queue', lane(read === 'list omission' ? 'Open decisions' : 'Ready work')))
+  if (read === 'thread 404') {
+    row.click()
+    await vi.waitFor(() => expect(threadPane()?.textContent).toContain('Private queue'))
+    document.querySelector<HTMLButtonElement>('button[aria-label="Close thread"]')!.click()
+    await vi.waitFor(() => expect(threadPane()).toBeNull())
+  }
+  await api.revokeGrant(grant.id)
+  await vi.waitFor(() => expect(viewer.thread(id)).rejects.toMatchObject({ status: 404 }))
+  if (read === 'list omission') {
+    link('Handoffs').click()
+    await vi.waitFor(() => expect(location.pathname).toBe('/handoffs'))
+    link('Needs action').click()
+  } else {
+    row.focus()
+    row.click()
+  }
+  await vi.waitFor(() => {
+    expect(lane('Ready work').textContent).toContain('Public queue')
+    expect(mainText()).not.toContain('Private queue')
+    if (read === 'thread 404') {
+      expect(threadPane()).not.toBeNull()
+      expect(threadPane()?.textContent).not.toContain('Private queue')
+    }
+  })
+})
+
+const openTasksRead = (request: Request) => routePath(request) === '/tasks' && new URL(request.url).searchParams.get('state') === 'open'
+
+async function grantedWorkbench() {
+  const bench = await workbench({ attentionResponders: responders })
+  const target = { kind: 'project' as const, project: 'prj_reader' }
+  const token = await deploymentToken('dpl_reader', target.project, 'production')
+  const { api } = bench
+  await api.revokeGrant('g2')
+  await api.createGrant({ principals: [target], can: { keep: 'all' } })
+  const viewer = createBoardClient({ url: BOARD_URL, token, profile: null, fetch: (input, init) => api.fetch(new Request(input, init)) })
+  return { ...bench, token, target, viewer }
+}
+
+it('evicts a focused decision when its delayed attention read is refused', async () => {
+  const { api, open, target, token, viewer } = await grantedWorkbench()
+  const { grant } = await api.createGrant({ principals: [target], can: { work: 'all' } })
+  const task = await hold(viewer, 'Private decision', 'Continue?')
+  await viewer.tasks.create('keep', { text: 'Neighbor' })
+  const requested = gate()
+  const release = gate()
+  await open('/', { token, transport: async (request, send) => {
+    if (attentionRead(request)) {
+      requested.resolve()
+      await release.promise
+    }
+    return send()
+  } })
+  const row = await vi.waitFor(() => link('Private decision', lane('Open decisions')))
+  row.focus()
+  await requested.promise
+  await api.revokeGrant(grant.id)
+  await vi.waitFor(() => expect(viewer.tasks.attention(task.id)).rejects.toMatchObject({ status: 404 }))
+  release.resolve()
+  await vi.waitFor(() => {
+    expect(mainText()).not.toContain('Private decision')
+    expect(mainText()).toContain(`message not found: #${task.id}`)
+    expect(document.activeElement).toBe(link('Neighbor', lane('Ready work')))
+  })
+})
+
+it('re-reads an already open thread when revalidation removes its task', async () => {
+  const { api, open, target, token, viewer } = await grantedWorkbench()
+  const { grant } = await api.createGrant({ principals: [target], can: { work: 'all' } })
+  const { task } = await viewer.tasks.create('work', { text: 'Private open thread' })
+  await viewer.tasks.create('keep', { text: 'Still readable' })
+  let revalidating = false
+  const release = gate()
+  await open('/', { token, transport: async (request, send) => {
+    const response = await send()
+    if (revalidating && routePath(request) === `/messages/${task.id}`) await release.promise
+    return response
+  } })
+  const row = await vi.waitFor(() => link('Private open thread', lane('Ready work')))
+  row.click()
+  await vi.waitFor(() => expect(threadPane()?.textContent).toContain('Private open thread'))
+  await api.revokeGrant(grant.id)
+  await vi.waitFor(() => expect(viewer.thread(task.id)).rejects.toMatchObject({ status: 404 }))
+  revalidating = true
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => {
+    expect(lane('Ready work').textContent).toContain('Still readable')
+    expect(mainText()).not.toContain('Private open thread')
+    expect(threadPane()?.textContent).not.toContain('Private open thread')
+    expect(threadPane()?.textContent).toContain('loading…')
+  })
+  release.resolve()
+  await vi.waitFor(() => {
+    expect(threadPane()?.textContent).not.toContain('Private open thread')
+    expect(threadPane()?.textContent).toContain(`message not found: #${task.id}`)
+    expect(location.search).toBe(`?thread=${task.id}`)
+  })
+})
+
+it('does not render a deleted task from the first list snapshot', async () => {
+  const { client, open } = await workbench()
+  const { task } = await client.tasks.create('work', { text: 'Deleted during first read' })
+  await client.tasks.create('work', { text: 'Survives first read' })
+  const sampled = gate()
+  const release = gate()
+  const consumed = gate()
+  let deletionDelivered = false
+  await open('/', { transport: async (request, send) => {
+    if (openTasksRead(request)) {
+      const response = await send()
+      sampled.resolve()
+      await release.promise
+      return response
+    }
+    if (routePath(request) !== '/events') return send()
+    if (deletionDelivered) consumed.resolve()
+    const response = await send()
+    if (response.ok) {
+      const { events } = await response.clone().json() as { events: { type: string; message?: { id: string } }[] }
+      deletionDelivered ||= events.some((event) => event.type === 'message.deleted' && event.message?.id === task.id)
+    }
+    return response
+  } })
+  await sampled.promise
+  await client.delete(task.id)
+  await consumed.promise
+  release.resolve()
+  await vi.waitFor(() => {
+    expect(lane('Ready work').textContent).toContain('Survives first read')
+    expect(mainText()).not.toContain('Deleted during first read')
+  })
+})
+
+it('renders claim-next order as soon as a lease lapses, including assignment and age ties', async () => {
+  const { client, as, open } = await workbench()
+  const worker = as('worker')
+  const { actor } = await worker.me()
+  const { task: urgent } = await client.tasks.create('work', { text: 'Lapsed urgent', priority: 'urgent' })
+  const lease = await client.tasks.claim(urgent.id, { lease: 30 })
+  const { task: first } = await client.tasks.create('work', { text: 'Older normal' })
+  const { task: second } = await client.tasks.create('work', { text: 'Newer normal' })
+  const { task: assigned } = await client.tasks.create('work', { text: 'Assigned normal', for: actor })
+  const expiry = Date.parse(lease.until)
+  const ready = () => [...lane('Ready work').querySelectorAll('a')].map((row) => row.getAttribute('href'))
+  const before = [assigned.id, first.id, second.id].map((id) => `/?thread=${id}`)
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  vi.setSystemTime(expiry - 10_000)
+  await open('/', { profile: 'worker' })
+  await vi.waitFor(() => expect(ready()).toEqual(before))
+  await act(async () => vi.advanceTimersByTimeAsync(expiry - Date.now() - 1))
+  expect(ready()).toEqual(before)
+  await act(async () => vi.advanceTimersByTimeAsync(1_001))
+  const rendered = ready()
+  const taken: string[] = []
+  for (let next = await worker.tasks.claim({ channel: 'work' }); next; next = await worker.tasks.claim({ channel: 'work' })) {
+    taken.push(`/?thread=${next.task.id}`)
+  }
+  expect(taken).toEqual([`/?thread=${urgent.id}`, ...before])
+  expect(rendered).toEqual(taken)
+})
+
+it('revalidates on window focus and does not re-admit a revoked row from a delayed frame', async () => {
+  const { api, open, target, token, viewer } = await grantedWorkbench()
+  const { grant } = await api.createGrant({ principals: [target], can: { work: 'all' } })
+  const task = await hold(viewer, 'Private work', 'Proceed?')
+  await viewer.tasks.create('keep', { text: 'Other work' })
+  const queued = Promise.withResolvers<void>()
+  let delivered = false
+  await open('/', { token, transport: async (request, send) => {
+    if (routePath(request) !== '/events') return send()
+    if (delivered) queued.resolve() // The next poll starts after the previous events were queued for paint.
+    const response = await send()
+    if (response.ok) {
+      const page = await response.clone().json() as { events: { message?: { id: string; text: string } }[] }
+      delivered ||= page.events.some(({ message }) => message?.id === task.id && message.text === 'Private work, edited')
+    }
+    return response
+  } })
+  const row = await vi.waitFor(() => link('Private work', lane('Open decisions')))
+  row.focus()
+  await act(async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())) })
+  const frames: FrameRequestCallback[] = []
+  const frame = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((run) => frames.push(run))
+  try {
+    await viewer.edit(task.id, 'Private work, edited')
+    await queued.promise
+    expect(frames.length).toBeGreaterThan(0)
+    await api.revokeGrant(grant.id)
+    await vi.waitFor(() => expect(viewer.thread(task.id)).rejects.toMatchObject({ status: 404 }))
+    window.dispatchEvent(new Event('focus'))
+    await vi.waitFor(() => {
+      expect(mainText()).not.toContain('Private work')
+      expect(document.activeElement).toBe(link('Other work', lane('Ready work')))
+    })
+    frame.mockRestore()
+    await act(async () => { for (const run of frames) run(performance.now()) })
+    expect(mainText()).not.toContain('Private work')
+  } finally {
+    frame.mockRestore()
+  }
+})
+
+it('revalidates Needs action when the live feed reconnects after an outage', async () => {
+  const { api, open, target, token, viewer } = await grantedWorkbench()
+  const { grant } = await api.createGrant({ principals: [target], can: { work: 'all' } })
+  const { task } = await viewer.tasks.create('work', { text: 'Private until reconnect' })
+  await viewer.tasks.create('keep', { text: 'Still visible' })
+  const fail = Promise.withResolvers<void>()
+  releaseGates.push(() => fail.resolve())
+  let first = true
+  await open('/', { token, transport: async (request, send) => {
+    if (!isFeed(request) || !first) return send()
+    first = false
+    await fail.promise
+    return Response.json({ error: { code: 'unavailable', message: 'Feed unavailable' } }, { status: 503 })
+  } })
+  await vi.waitFor(() => link('Private until reconnect', lane('Ready work')))
+  await api.revokeGrant(grant.id)
+  await vi.waitFor(() => expect(viewer.thread(task.id)).rejects.toMatchObject({ status: 404 }))
+  fail.resolve()
+  await vi.waitFor(() => {
+    expect(lane('Ready work').textContent).toContain('Still visible')
+    expect(mainText()).not.toContain('Private until reconnect')
+  })
+})
+
+it('discards an older list snapshot when a later revalidation is requested', async () => {
+  const { api, open, target, token, viewer } = await grantedWorkbench()
+  const { grant } = await api.createGrant({ principals: [target], can: { work: 'all' } })
+  const { task } = await viewer.tasks.create('work', { text: 'Outdated snapshot' })
+  await viewer.tasks.create('keep', { text: 'Fresh snapshot' })
+  const sampled = Promise.withResolvers<void>()
+  const first = Promise.withResolvers<void>()
+  const resampled = Promise.withResolvers<void>()
+  const next = Promise.withResolvers<void>()
+  releaseGates.push(() => first.resolve(), () => next.resolve())
+  let initial = true
+  await open('/', { token, transport: async (request, send) => {
+    if (!openTasksRead(request)) return send()
+    const before = initial
+    initial = false
+    const response = await send()
+    if (before) {
+      sampled.resolve()
+      await first.promise
+    } else {
+      resampled.resolve()
+      await next.promise
+    }
+    return response
+  } })
+  await sampled.promise
+  await api.revokeGrant(grant.id)
+  await vi.waitFor(() => expect(viewer.thread(task.id)).rejects.toMatchObject({ status: 404 }))
+  window.dispatchEvent(new Event('focus'))
+  await act(async () => { first.resolve(); await resampled.promise })
+  expect(mainText()).toContain('loading…')
+  expect(mainText()).not.toContain('Outdated snapshot')
+  next.resolve()
+  await vi.waitFor(() => {
+    expect(lane('Ready work').textContent).toContain('Fresh snapshot')
+    expect(mainText()).not.toContain('Outdated snapshot')
+  })
+})
+
+it('refreshes label access with the accepted read, matching claim-next without hiding readable decisions', async () => {
+  const { api, open, target, token, viewer } = await grantedWorkbench()
+  await api.createGrant({ principals: [target], can: { work: ['read', 'post'] } })
+  const { grant } = await api.createGrant({ principals: [target], can: { work: ['label'] } })
+  const { id } = await hold(viewer, 'Readable decision', 'Continue?')
+  await viewer.tasks.create('work', { text: 'Needs label' })
+  await viewer.tasks.create('keep', { text: 'Still claimable' })
+  const list = Promise.withResolvers<void>()
+  const me = Promise.withResolvers<void>()
+  releaseGates.push(() => list.resolve())
+  let revalidating = false
+  await open('/', { token, transport: async (request, send) => {
+    const response = await send()
+    if (revalidating && routePath(request) === '/me') me.resolve()
+    if (revalidating && openTasksRead(request)) await list.promise
+    return response
+  } })
+  const row = await vi.waitFor(() => link('Needs label', lane('Ready work')))
+  row.focus()
+  await api.revokeGrant(grant.id)
+  await vi.waitFor(() => expect(viewer.tasks.claim({ channel: 'work' })).rejects.toMatchObject({ status: 403 }))
+  expect((await viewer.thread(id)).message.text).toBe('Readable decision')
+  revalidating = true
+  document.dispatchEvent(new Event('visibilitychange'))
+  await act(async () => { await me.promise })
+  expect(link('Needs label', lane('Ready work'))).toBe(row)
+  list.resolve()
+  await vi.waitFor(() => {
+    expect(lane('Ready work').textContent).toContain('Still claimable')
+    expect(mainText()).not.toContain('Needs label')
+    expect(lane('Open decisions').textContent).toContain('Readable decision')
+  })
+})
+
+it('shows tasks created after the first list snapshot only once a follow-up read accepts them', async () => {
+  const { client, open } = await workbench()
+  await client.tasks.create('work', { text: 'In first snapshot' })
+  const sampled = Promise.withResolvers<void>()
+  const first = Promise.withResolvers<void>()
+  const next = Promise.withResolvers<void>()
+  releaseGates.push(() => first.resolve(), () => next.resolve())
+  let initial = true
+  await open('/', { transport: async (request, send) => {
+    if (!openTasksRead(request)) return send()
+    if (!initial) {
+      const response = await send()
+      await next.promise
+      return response
+    }
+    initial = false
+    const response = await send()
+    sampled.resolve()
+    await first.promise
+    return response
+  } })
+  await sampled.promise
+  await client.tasks.create('work', { text: 'Created during first read' })
+  first.resolve()
+  await vi.waitFor(() => expect(lane('Ready work').textContent).toContain('In first snapshot'))
+  expect(mainText()).not.toContain('Created during first read')
+  next.resolve()
+  await vi.waitFor(() => expect(lane('Ready work').textContent).toContain('Created during first read'))
+  await client.tasks.create('work', { text: 'Created after first read' })
+  await vi.waitFor(() => expect(lane('Ready work').textContent).toContain('Created after first read'))
+})
+
+it('removes a focused deleted row, focuses its neighbor and holds the remaining order until blur', async () => {
+  const { client, as, open } = await workbench()
+  await client.tasks.create('work', { text: 'Previous' })
+  const { task: removed } = await client.tasks.create('work', { text: 'Reading' })
+  await client.tasks.create('work', { text: 'Next' })
+  const { task: promoted } = await client.tasks.create('work', { text: 'Promoted' })
+  await open()
+  const names = () => [...lane('Ready work').querySelectorAll('a')].map((a) => a.textContent)
+  const reading = await vi.waitFor(() => link('Reading', lane('Ready work')))
+  reading.focus()
+  await as('worker').tasks.priority(promoted.id, 'urgent')
+  await vi.waitFor(() => expect(link('Promoted').closest('li')?.textContent).toContain('urgent'))
+  expect(names()).toEqual(['Previous', 'Reading', 'Next', 'Promoted'])
+  expect(document.activeElement).toBe(reading)
+  await as().delete(removed.id)
+  await vi.waitFor(() => {
+    expect(names()).toEqual(['Previous', 'Next', 'Promoted'])
+    expect(document.activeElement).toBe(link('Next', lane('Ready work')))
+  })
+  link('Next', lane('Ready work')).blur()
+  await vi.waitFor(() => expect(names()).toEqual(['Promoted', 'Previous', 'Next']))
+})
+
+it('shows attention refusals alongside rows and clears membership on a refused task list', async () => {
+  const { client, open } = await workbench({ attentionResponders: responders })
+  await hold(client, 'A decision', 'Continue?')
+  await client.tasks.create('work', { text: 'Still ready' })
+  let refuseTasks = false
+  const refuse = (message: string) => Response.json({ error: { code: 'unavailable', message } }, { status: 503 })
+  await open('/', { transport: async (request, forward) => {
+    if (attentionRead(request)) return refuse('Attention read unavailable')
+    if (refuseTasks && routePath(request) === '/tasks' && new URL(request.url).searchParams.get('state') === 'open') return refuse('Task list unavailable')
+    return forward()
+  } })
+  await vi.waitFor(() => {
+    expect(mainText()).toContain('Attention read unavailable')
+    expect(link('A decision', lane('Open decisions'))).toBeDefined()
+    expect(link('Still ready', lane('Ready work'))).toBeDefined()
+  })
+  link('Handoffs').click()
+  await vi.waitFor(() => expect(location.pathname).toBe('/handoffs'))
+  refuseTasks = true
+  link('Needs action').click()
+  await vi.waitFor(() => {
+    expect(mainText()).toContain('Task list unavailable')
+    expect(mainText()).not.toContain('A decision')
+    expect(mainText()).not.toContain('Still ready')
+  })
+})
+
 it('shows normal priority and lets the reader set and remove the URL priority filter', async () => {
   const { client, open } = await workbench()
   await client.tasks.create('work', { text: 'Check copy' })
@@ -549,15 +988,234 @@ it('shows urgent before older normal work in Handoffs Runnable', async () => {
   const { client, open } = await workbench()
   await client.tasks.create('work', { text: 'Normal Handoff' })
   await client.tasks.create('work', { text: 'Urgent Handoff', priority: 'urgent' })
-  await open()
+  await open('/handoffs')
   await vi.waitFor(() => expect([...lane('Runnable').querySelectorAll('.handoff-title')].map((a) => a.textContent))
     .toEqual(['Urgent Handoff', 'Normal Handoff']), taskRead)
 }, 30_000)
 
+const runnableTitles = () => [...lane('Runnable').querySelectorAll('.handoff-title')].map((row) => row.textContent)
+
+it('does not let a reaction from an overlapping poll restore an omitted Handoff', async () => {
+  const { client, open, secret, revoke } = await revocableTasks()
+  const polling = gate()
+  const sampled = gate()
+  const release = gate()
+  await open('/handoffs', { transport: async (request, send) => {
+    if (routePath(request) !== '/events') return send()
+    const result = send()
+    if (Number(new URL(request.url).searchParams.get('wait')) > 0) polling.resolve()
+    const response = await result
+    if (!response.ok) return response
+    const { events } = await response.clone().json() as { events: { type: string }[] }
+    if (events.some(({ type }) => type === 'reaction.added')) {
+      sampled.resolve()
+      await release.promise
+    }
+    return response
+  } })
+  await vi.waitFor(() => expect(runnableTitles()).toContain('Private task'))
+  await polling.promise
+  await client.react(secret.id, 'eyes')
+  await sampled.promise
+  await revoke()
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(runnableTitles()).toEqual(['Shared task']))
+  const frames: FrameRequestCallback[] = []
+  const frame = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((run) => frames.push(run))
+  try {
+    release.resolve()
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0))
+    frame.mockRestore()
+    await act(async () => { for (const flush of frames) flush(performance.now()) })
+    expect(runnableTitles()).toEqual(['Shared task'])
+    expect(mainText()).not.toContain('Private task')
+  } finally { frame.mockRestore() }
+})
+
+it('does not apply a retained Handoff edit from a poll dispatched before its accepted read', async () => {
+  const { client, open, publicTask, revoke } = await revocableTasks()
+  const polling = gate()
+  const list = gate()
+  const accept = gate()
+  const sampled = gate()
+  const deliver = gate()
+  const recheck = gate()
+  let read = 0
+  let revalidating = false
+  await open('/handoffs', { transport: async (request, send) => {
+    if (routePath(request) === '/tasks' && revalidating) {
+      if (++read > 1) await recheck.promise
+      const response = await send()
+      list.resolve()
+      await accept.promise
+      return response
+    }
+    if (routePath(request) !== '/events') return send()
+    const result = send()
+    if (Number(new URL(request.url).searchParams.get('wait')) > 0) polling.resolve()
+    const response = await result
+    if (!response.ok) return response
+    const { events } = await response.clone().json() as { events: { type: string }[] }
+    if (events.some(({ type }) => type === 'message.edited')) {
+      sampled.resolve()
+      await deliver.promise
+    }
+    return response
+  } })
+  await vi.waitFor(() => expect(runnableTitles()).toContain('Private task'))
+  await polling.promise
+  await revoke()
+  revalidating = true
+  window.dispatchEvent(new Event('focus'))
+  await list.promise
+  await client.edit(publicTask.id, 'Edited during the older poll')
+  await sampled.promise
+  accept.resolve()
+  await vi.waitFor(() => expect(runnableTitles()).toEqual(['Shared task']))
+  const frames: FrameRequestCallback[] = []
+  const frame = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((run) => frames.push(run))
+  try {
+    deliver.resolve()
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0))
+    frame.mockRestore()
+    await act(async () => { for (const flush of frames) flush(performance.now()) })
+    expect(runnableTitles()).toEqual(['Shared task'])
+  } finally { frame.mockRestore() }
+  recheck.resolve()
+  await vi.waitFor(() => expect(runnableTitles()).toEqual(['Edited during the older poll']))
+})
+
+it('evicts a revoked task from Handoffs and the already loaded channel', async () => {
+  const { open, revoke } = await revocableTasks()
+  await open('/c/secret')
+  await vi.waitFor(() => expect(mainText()).toContain('Private task'))
+  link('Handoffs').click()
+  await vi.waitFor(() => expect(runnableTitles()).toContain('Private task'))
+  await revoke()
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(runnableTitles()).toEqual(['Shared task']))
+  history.pushState(null, '', '/c/secret')
+  window.dispatchEvent(new PopStateEvent('popstate'))
+  await vi.waitFor(() => expect(document.querySelector('main h1')?.textContent).toBe('#secret'))
+  expect(mainText()).not.toContain('Private task')
+})
+
+it('orders Handoffs with the refreshed label grant and matches claim-next', async () => {
+  const { admin, as, open } = await revocableTasks()
+  const worker = as('worker')
+  await worker.tasks.create('limited', { text: 'Urgent but no longer claimable', priority: 'urgent' })
+  await admin.createGrant({ principals: [{ kind: 'everyone' }], can: { limited: ['read'] } })
+  const { grant } = await admin.createGrant({ principals: [{ kind: 'user', userId: 'u_reader' }], can: { limited: ['label'] } })
+  await open('/handoffs', { profile: 'worker' })
+  await vi.waitFor(() => expect(runnableTitles()[0]).toBe('Urgent but no longer claimable'))
+  await admin.revokeGrant(grant.id)
+  await expect(worker.tasks.claim({ channel: 'limited' })).rejects.toMatchObject({ status: 403 })
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(runnableTitles()[0]).toBe('Shared task'))
+  const first = runnableTitles()[0]
+  expect((await worker.tasks.claim({ channel: 'work' }))?.task.text).toBe(first)
+})
+
+it('says more loading in Runnable until the urgent task on page two is read', async () => {
+  const { as, open } = await workbench()
+  const worker = as('worker')
+  for (let offset = 0; offset < 200; offset += 50)
+    await worker.tasks.createMany('work', Array.from({ length: 50 }, (_, i) => ({ text: `Normal handoff ${offset + i}` })))
+  await worker.tasks.create('work', { text: 'Urgent handoff', priority: 'urgent' })
+  const release = gate()
+  await open('/handoffs', { profile: 'worker', transport: async (request, send) => {
+    if (routePath(request) === '/tasks' && new URL(request.url).searchParams.has('after')) await release.promise
+    return send()
+  } })
+  await vi.waitFor(() => expect(lane('Runnable').textContent).toContain('more loading'))
+  expect(runnableTitles()).toEqual([])
+  release.resolve()
+  await vi.waitFor(() => expect(runnableTitles()).toHaveLength(201), taskRead)
+  expect(runnableTitles()[0]).toBe((await worker.tasks.claim({ channel: 'work' }))?.task.text)
+}, 30_000)
+
+it('ignores a superseded thread success released after a newer real 404', async () => {
+  const { open, secret, revoke } = await revocableTasks()
+  const sampled = gate()
+  const release = gate()
+  const delivered = gate()
+  let held = false
+  await open(`/handoffs?thread=${secret.id}`, { transport: async (request, send) => {
+    const response = await send()
+    if (!held && routePath(request) === `/messages/${secret.id}`) {
+      held = true
+      expect(response.status).toBe(200)
+      sampled.resolve()
+      await release.promise
+      delivered.resolve()
+    }
+    return response
+  } })
+  await sampled.promise
+  await revoke()
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(threadPane()?.textContent).toContain('message not found'))
+  await act(async () => { release.resolve(); await delivered.promise })
+  expect(threadPane()?.textContent).toContain('message not found')
+  expect(document.body.textContent).not.toContain('Private task')
+})
+
+it('keeps unsent reply text and attachments through a 503 and recovery', async () => {
+  const { client, open } = await workbench()
+  const { task } = await client.tasks.create('work', { text: 'Thread with a draft' })
+  await client.tasks.create('elsewhere', { text: 'Different task scope' })
+  let outage = false
+  await open(`/handoffs?thread=${task.id}`, { transport: async (request, send) => {
+    if (outage && routePath(request) === `/messages/${task.id}`)
+      return Response.json({ error: { code: 'unavailable', message: 'temporary outage' } }, { status: 503 })
+    return send()
+  } })
+  const draft = await vi.waitFor(() => {
+    const textarea = threadPane()?.querySelector('textarea')
+    expect(textarea).toBeDefined()
+    return textarea!
+  })
+  draft.focus()
+  await act(async () => {
+    typeInto(draft, 'Draft text')
+    const picker = threadPane()!.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(picker, 'files', { value: [new File(['draft contents'], 'notes.txt', { type: 'text/plain' })] })
+    picker.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(threadPane()?.textContent).toContain('notes.txt')
+  outage = true
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => expect(threadPane()?.textContent).toContain('temporary outage'))
+  expect(threadPane()?.querySelector('textarea')).toBe(draft)
+  expect(draft.value).toBe('Draft text')
+  expect(threadPane()?.textContent).toContain('notes.txt')
+  outage = false
+  await client.reply(task.id, 'New reply after recovery')
+  await vi.waitFor(() => expect(threadPane()?.textContent).toContain('New reply after recovery'))
+  expect(document.activeElement).toBe(draft)
+  expect(draft.value).toBe('Draft text')
+  expect(threadPane()?.textContent).toContain('notes.txt')
+
+  // A scope change can also hide the pane while it rechecks access.
+  outage = true
+  history.pushState(null, '', `/tasks?channel=elsewhere&thread=${task.id}`)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+  await vi.waitFor(() => {
+    expect(threadPane()?.textContent).toContain('temporary outage')
+    expect(threadPane()?.querySelector('textarea')).toBeNull()
+  })
+  outage = false
+  window.dispatchEvent(new Event('focus'))
+  await vi.waitFor(() => {
+    expect(threadPane()?.querySelector('textarea')?.value).toBe('Draft text')
+    expect(threadPane()?.textContent).toContain('notes.txt')
+  })
+})
+
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {
   const { api, as, open } = await workbench()
   const { task } = await api.tasks.create('work', { text: 'Review the release' })
-  await open()
+  await open('/handoffs')
   const reading = await vi.waitFor(() => link('Review the release', lane('Runnable')))
   reading.focus()
   expect(document.activeElement).toBe(reading)
@@ -580,7 +1238,7 @@ it('shows a completed task and its result in the Delivered lane', async () => {
   const { api, open } = await workbench()
   const { task } = await api.tasks.create('work', { text: 'Publish the release notes' })
   await (await api.tasks.claim(task.id)).complete('Release notes are live')
-  await open()
+  await open('/handoffs')
   await vi.waitFor(() => {
     const delivered = lane('Delivered')
     expect(link('Publish the release notes', delivered)).toBeDefined()
@@ -604,7 +1262,7 @@ it('PRESIDIUM shows totals from all task pages', async () => {
 it('typing over Handoffs focuses the open thread reply', async () => {
   const { api, open } = await workbench()
   const { task } = await api.tasks.create('work', { text: 'Check the build' })
-  await open(`/?thread=${task.id}`)
+  await open(`/handoffs?thread=${task.id}`)
   const reply = await vi.waitFor(() => {
     const field = document.querySelector<HTMLTextAreaElement>('textarea[placeholder="reply to thread…"]')
     expect(field).not.toBeNull()
@@ -1003,7 +1661,7 @@ it('shows live pause detail on every view and lets the manager resume with a rea
   await client.pause('maintenance window')
   const me = await client.me()
   await vi.waitFor(() => expect(banner().textContent).toMatch(new RegExp(`^paused by ${me.name}, .+ ago: maintenance window$`)))
-  for (const [path, title] of [['/presidium', 'PRESIDIUM'], ['/c/work', '#work'], ['/tasks', 'tasks'], ['/attention', 'attention'], ['/settings/access', 'settings'], ['/', 'HANDOFFS']]) {
+  for (const [path, title] of [['/presidium', 'PRESIDIUM'], ['/c/work', '#work'], ['/tasks', 'tasks'], ['/attention', 'attention'], ['/settings/access', 'settings'], ['/handoffs', 'HANDOFFS']]) {
     document.querySelector<HTMLAnchorElement>(`.sidebar a[href="${path}"]`)!.click()
     await vi.waitFor(() => expect(document.querySelector('main h1')?.textContent).toBe(title))
     expect(banner().hidden).toBe(false)
@@ -1308,7 +1966,7 @@ it('opens Attention from the sidebar, counts only holds, escapes questions, and 
   const b = await hold(client, 'Second draft', 'Use the second draft?')
   const release = gate()
   const reads: string[] = []
-  await open('/', { transport: async (r, send) => {
+  await open('/handoffs', { transport: async (r, send) => {
     const response = await send()
     if (attentionRead(r)) {
       reads.push(r.url)
@@ -1521,7 +2179,7 @@ it('flags an unseen 404 off-view, renders its words, then unlocks the same reque
   choice(a.id)!.click()
   expect(await writing.promise).toBe(404)
   link('Handoffs').click()
-  await vi.waitFor(() => expect(location.pathname).toBe('/'))
+  await vi.waitFor(() => expect(location.pathname).toBe('/handoffs'))
   releaseWrite.resolve()
   await vi.waitFor(() => expect(inboxLink().textContent).toContain('refused'))
   expect(reads).toBe(1)
@@ -1600,7 +2258,7 @@ it.each(['before', 'after'] as const)('ignores a superseded read that arrives %s
   } })
   await pending[0]!.captured.promise
   link('Handoffs').click()
-  await vi.waitFor(() => expect(location.pathname).toBe('/'))
+  await vi.waitFor(() => expect(location.pathname).toBe('/handoffs'))
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(Date.parse(a.attention.expiresAt) + 1)
   inboxLink().click()

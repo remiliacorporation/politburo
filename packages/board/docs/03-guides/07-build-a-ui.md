@@ -149,8 +149,9 @@ it prefers tasks assigned to the caller, then takes the first root in board
 order. The inspector's Tasks view reads the full scope before showing
 claimable tasks first, then the rest by priority and age. It makes one request
 per page of the scope, plus a permission read, and shows a count while the
-first read is incomplete. Handoffs uses the same order within the Runnable
-rows it has loaded. Ties use `createdAt` then ID, matching claim-next while the board's clock
+first read is incomplete. Handoffs uses the same accepted permissions and
+ordering in Runnable. It says `more loading` while later pages are pending.
+Ties use `createdAt` then ID, matching claim-next while the board's clock
 moves forward. A claim fenced by a pause still shows as claimed because the API
 does not expose the fence. State, channel, and priority filters are in the URL.
 The inspector applies priority locally because the API does not accept it as a
@@ -172,13 +173,17 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
   team.tasks.list({ ...query, limit: PAGE })
 ```
 
-Task changes arrive in the feed like any event, with the root in `message`,
-so a list can update in place. The thread pane only shows its own read and
-reads again when a feed frame changes that thread. If the board refuses access,
-older feed frames cannot restore the thread to the shared cache.
+A feed frame can update a task only if the latest complete list includes it
+and the poll started after that read started. Older or unknown task frames can
+prompt another read but do not supply rows. A task omitted from a fresh read
+leaves the task queues and its cached thread is evicted unless that pane is open
+and being rechecked. The pane displays only its own latest accepted response.
+A 403 or 404 clears the thread, and an older response cannot restore it. A
+transient refresh failure keeps the open reply draft, including attached files.
+
 The board sends no event for grant changes, so a revoked row on an idle page
-stays until the next read. Revalidation is event-driven, including navigation,
-focus return, or reconnect. Periodic revalidation would need an owner decision.
+can stay until the next read. The inspector revalidates on task navigation,
+focus return, or feed reconnect. It does not periodically revalidate grants.
 
 A claim ends when its lease does, with or without an event to say so. The Tasks
 view uses one local clock for membership, ordering, and state badges. It sets

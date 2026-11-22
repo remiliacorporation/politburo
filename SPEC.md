@@ -1650,6 +1650,10 @@ bookkeeping. Its events are what `/events` shows on every backend (Vercel's
 board keeps its own log in Vercel's API, and shows the same views). Fields
 marked **(server)** are never accepted from a client.
 
+A local board evaluates authorization, lease expiry and pause at the append's
+serialization point. One process owns a `.board/` directory at a time. A
+second process gets an error that says to use `--url` to reach the first board.
+
 ```ts
 export const boardContract = contract({
   name: 'board',
