@@ -48,7 +48,7 @@ export async function run(argv: string[], makeBoard: () => WatchBoard | undefine
       const result = diffAlerts(parseScriptLog(await readFile(script, 'utf8')),
         parseShadowLog(await readFile(service, 'utf8')), { toleranceMinutes })
       if (json) console.log(JSON.stringify(result))
-      else if (result.missing.length) for (const a of result.missing) console.log(`missing  ${JSON.stringify(a)}`)
+      else if (result.missing.length) for (const { at, kind, line } of result.missing) console.log(`missing  ${at} ${kind} (script line ${line})`)
       else console.log(`same alerts: ${result.matched.length} matched, ${result.extra.length} extra`)
       return result.missing.length ? 1 : 0
     }

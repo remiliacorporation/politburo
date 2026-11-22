@@ -1,7 +1,6 @@
-import { spawnSync as spawnSwarm } from 'node:child_process'
-import { test as routingTest } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,10 +25,10 @@ function tempDir(t: TestContext) {
   return dir
 }
 
-function runDiff(script: string, service: string) {
+function runDiff(script: string, service: string, ...flags: string[]) {
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval',
     "import { run } from './src/watch/cli.ts'; process.exitCode = await run(process.argv.slice(1))",
-    '--', 'diff', '--script', script, '--service', service], {
+    '--', 'diff', '--script', script, '--service', service, ...flags], {
     cwd: new URL('../', import.meta.url), encoding: 'utf8',
   })
   if (result.error) throw result.error
@@ -55,15 +54,14 @@ test('the watch never alerts less than the script: a dropped alert slips past th
   assert.deepEqual(diffAlerts(script, alerts).missing, [])
 
   const withoutStalls = await replay(frames, { periodMinutes: 24 * 60 })
-  assert.deepEqual(diffAlerts(script, withoutStalls).missing.map(({ key }) => key),
-    ['stall:missed:work:stalled', 'stall:missed:work:late'])
+  assert.deepEqual(diffAlerts(script, withoutStalls).missing.map(({ line }) => line), [1, 3])
   const dir = tempDir(t)
   const scriptPath = join(dir, 'script.log'), servicePath = join(dir, 'service.jsonl')
   writeFileSync(scriptPath, scriptLog)
   writeFileSync(servicePath, withoutStalls.map((alert) => JSON.stringify(alert)).join('\n'))
   const missing = runDiff(scriptPath, servicePath)
   assert.equal(missing.status, 1, missing.stderr)
-  assert.match(missing.stdout, /^missing  .*"key":"stall:missed:work:stalled"/m)
+  assert.match(missing.stdout, /^missing  2026-01-01T02:05:00.000Z stall \(script line 1\)$/m)
 
   writeFileSync(servicePath, alerts.map((alert) => JSON.stringify(alert)).join('\n') + '\n')
   await jsonlSink(servicePath)({ at: iso(720), kind: 'pr', key: 'pr:9:opened:open', text: 'pr #9 opened' })
@@ -72,40 +70,66 @@ test('the watch never alerts less than the script: a dropped alert slips past th
   assert.match(extras.stdout, /\b[1-9]\d* extra\b/)
 })
 
+test('diff pairs occurrences once, in timestamp order within each kind and key', () => {
+  const a = (m: number) => ({ at: iso(m), kind: 'stall' as const, key: 'a', text: '' })
+  const dup = diffAlerts([a(0), a(0)], [a(0)], { toleranceMinutes: 0 })
+  assert.deepEqual(dup.missing.map(({ line }) => line), [2])
+  const result = diffAlerts([a(5), a(1)], [a(0), a(10), a(8), { ...a(1), kind: 'pr' }, { ...a(1), key: 'b' }],
+    { toleranceMinutes: 5 })
+  assert.deepEqual(result.missing, [])
+  assert.deepEqual(result.extra.map(({ line }) => line), [2, 4, 5])
+})
+
+test('diff CLI never republishes raw fields from missing, matched, or extra alerts', (t) => {
+  const dir = tempDir(t), script = join(dir, 'script'), service = join(dir, 'service')
+  const key = randomUUID(), text = `https://example:${randomUUID()}@example.invalid/`
+  writeFileSync(script, `${iso(0)}\tstall\t${key}\t${text}\n${iso(5)}\tpr\t${key}\t${text}\n`)
+  writeFileSync(service, ['stall', 'slowdown'].map((kind) => JSON.stringify({ at: iso(0), kind, key, text })).join('\n'))
+  const plain = runDiff(script, service), json = runDiff(script, service, '--json')
+  for (const result of [plain, json]) {
+    assert.equal(result.status, 1)
+    assert.equal([key, text].some((value) => result.stdout.includes(value) || result.stderr.includes(value)), false)
+  }
+  assert.equal(plain.stdout, `missing  ${iso(5)} pr (script line 2)\n`)
+  assert.deepEqual(JSON.parse(json.stdout), { missing: [{ at: iso(5), kind: 'pr', line: 2 }],
+    matched: [{ at: iso(0), kind: 'stall', line: 1 }], extra: [{ at: iso(0), kind: 'slowdown', line: 2 }] })
+  writeFileSync(service, JSON.stringify({ at: '2026-02-30T00:00:00Z', kind: 'stall', key, text }))
+  assert.equal(runDiff(script, service, '--json').stdout, '{"error":"invalid shadow alert at line 1"}\n')
+})
+
 test('PR transitions: opening, passing checks, or changing head gets lost or is logged twice', async () => {
   // Fake the GitHub PR feed and clock.
   let prs: Awaited<ReturnType<PrSource['list']>> = [draft]
   const alerts: ShadowAlert[] = [], head = 'b'.repeat(40)
   const log = prLog({ async list() { return prs } }, collect(alerts), { now: () => start })
   await log.poll()
-  prs = [{ ...draft, state: 'open', checks: 'pass', head }]
+  prs = [{ ...draft, state: 'open', checks: 'pass', head }, { ...draft, number: 8, state: 'open' }]
   await log.poll()
-  const expected = ['pr:7:state:open', 'pr:7:checks:pass', `pr:7:head:${head}`].sort()
+  const expected = ['pr:7:state:open', 'pr:7:checks:pass', `pr:7:head:${head}`, 'pr:8:opened:open'].sort()
   assert.deepEqual(alerts.map(({ key }) => key).sort(), expected)
   await log.poll()
   assert.deepEqual(alerts.map(({ key }) => key).sort(), expected)
 })
 
-test('PR restart: a known PR is re-announced or a new PR is silently baselined', async (t) => {
-  // Fake the GitHub PR feed and clock; use a real state file across instances.
-  let prs: Awaited<ReturnType<PrSource['list']>> = [draft]
-  const source = { async list() { return prs } }
+test('PR restart: an omitted PR is forgotten, persisted changes are missed, or a closed PR stays tracked', async (t) => {
+  // Fake GitHub responses; use a real checkpoint across instances.
+  const other = { ...draft, number: 8 }
+  let prs: Awaited<ReturnType<PrSource['list']>> = [draft, other]
+  const source = { async list() { return prs } }, alerts: ShadowAlert[] = []
   const options = { statePath: join(tempDir(t), 'prs.json'), now: () => start }
-  await prLog(source, collect([]), options).poll()
-  prs = [draft, { ...draft, number: 8, state: 'open' }]
-  const alerts: ShadowAlert[] = []
-  await prLog(source, collect(alerts), options).poll()
-  assert.deepEqual(alerts.map(({ key }) => key), ['pr:8:opened:open'])
+  const log = prLog(source, collect(alerts), options)
+  await log.poll()
+  prs = [{ ...other, state: 'closed' }]
+  await log.poll() // PR 7 fell out of the snapshot, but only PR 8 explicitly closed.
+  prs = [{ ...draft, checks: 'pass' }, { ...other, state: 'open' }]
+  const restarted = prLog(source, collect(alerts), options)
+  await restarted.poll()
+  await restarted.poll()
+  assert.deepEqual(alerts.map(({ key }) => key), ['pr:8:state:closed', 'pr:7:checks:pass', 'pr:8:opened:open'])
 })
 
-test('service error isolation: a failed board read stops later polls or leaks an env value or stack', async (t) => {
-  const previous = process.env.FAKE_SECRET_VALUE
-  const canary = 'synthetic-watch-canary'
-  process.env.FAKE_SECRET_VALUE = canary
-  t.after(() => {
-    if (previous === undefined) delete process.env.FAKE_SECRET_VALUE
-    else process.env.FAKE_SECRET_VALUE = previous
-  })
+test('service error isolation: a failed board read prevents recovery or leaks a response or stack', async () => {
+  const canary = randomUUID()
   const stop = new AbortController(), alerts: ShadowAlert[] = []
   let minute = 0
   // Fake board/GitHub I/O, clock and sleep; the board fails only at the first tick.
@@ -114,21 +138,52 @@ test('service error isolation: a failed board read stops later polls or leaks an
     board: {
       async status() {
         if (minute === 0) {
-          const error = new Error(`board response echoed ${process.env.FAKE_SECRET_VALUE}`)
+          const error = new Error(`board response echoed ${canary}`)
           error.stack += '\n    at fakeBoardStackFrame (board.ts:1:1)'
           throw error
         }
         return { paused: false }
       },
       async poll() { return { cursor: String(minute), events: [] } },
-      agents: { async list() { return { agents: [] } } },
+      agents: { async list() { return { agents: [agent('late', -60)] } } },
     },
     prs: { async list() { return [{ ...draft, state: minute === 0 ? 'draft' : 'open' }] } },
   })
   const output = JSON.stringify(alerts)
-  assert.equal(output.includes(canary), false, 'an alert includes the fake env value')
+  assert.equal(output.includes(canary), false, 'an alert includes remote response text')
   assert.equal(/fakeBoardStackFrame|"stack":/.test(output), false, 'an alert includes a stack')
-  assert.deepEqual(alerts.map(({ key, at }) => [key, at]), [['watch:error:stall', iso(0)], ['pr:7:state:open', iso(5)]])
+  assert.deepEqual(alerts.map(({ key, at }) => [key, at]), [
+    ['watch:error:stall', iso(0)], ['stall:missed:work:late', iso(5)], ['pr:7:state:open', iso(5)],
+  ])
+})
+
+test('hung watch parts time out independently, and shutdown interrupts an in-flight read', { timeout: 2000 }, async () => {
+  const stop = new AbortController(), alerts: ShadowAlert[] = [], signals: (AbortSignal | undefined)[] = []
+  const hang = (signal?: AbortSignal) => { signals.push(signal); return new Promise<never>(() => {}) }
+  let tick = 0
+  await watchService({ signal: stop.signal, deadlineMs: 10, sink: collect(alerts), now: () => time(tick),
+    async sleep() { tick++ },
+    board: {
+      async status(signal) {
+        if (tick === 1) return { paused: false }
+        if (tick === 2) setTimeout(() => stop.abort(), 0)
+        return hang(signal)
+      },
+      async poll(_query, signal) {
+        if (tick === 0) return hang(signal)
+        return { cursor: 'next', events: [] }
+      },
+      agents: { async list() { return { agents: [agent('late', -60)] } } },
+    },
+    prs: { async list(signal) { return tick === 0 ? [draft] : hang(signal) } },
+  })
+  assert.deepEqual(alerts.map(({ key, at }) => [key, at]), [
+    ['watch:error:stall', iso(0)], ['watch:error:slowdown', iso(0)],
+    ['stall:missed:work:late', iso(1)], ['watch:error:pr', iso(1)],
+  ])
+  assert.equal(new Set(signals).size, 4)
+  assert.ok(signals.every((signal) => signal?.aborted))
+  assert.equal(signals[3]?.reason, stop.signal.reason)
 })
 
 test('JSONL sink: appending an alert overwrites history or writes unreadable lines', async (t) => {
@@ -142,9 +197,14 @@ test('JSONL sink: appending an alert overwrites history or writes unreadable lin
   assert.deepEqual(parseShadowLog(readFileSync(path, 'utf8')), alerts)
 })
 
-test('script log parsing: an unknown kind is accepted or its line number is lost', () => {
-  const log = `${iso(0)}\tstall\tstall:quiet:work\tquiet\n${iso(5)}\tbogus\tunknown\tbad kind\n`
-  assert.throws(() => parseScriptLog(log), /invalid script alert at line 2\b/)
+test('script parsing rejects unknown kinds, bare CR, local times and impossible dates without echoing rows', () => {
+  const row = `${iso(0)}\tstall\tquiet\tquiet`, canary = randomUUID()
+  for (const bad of [`${iso(5)}\tbogus\tkey\t${canary}`, `${row}\r${row}`,
+    ...['2026-01-01T00:00:00', '2026-02-30T00:00:00Z'].map((at) => `${at}\tstall\tkey\t${canary}`)]) {
+    assert.throws(() => parseScriptLog(`${row}\r\n${bad}\n`), { message: 'invalid script alert at line 2' })
+  }
+  const offset = parseScriptLog(`${row.replace(iso(0), '2025-12-31T19:00:00-05:00')}\r\n`)
+  assert.equal(diffAlerts(offset, parseScriptLog(row), { toleranceMinutes: 0 }).matched.length, 1)
 })
 
 test('paused board: silence or a stale heartbeat raises a stall alert during a pause', async () => {
@@ -156,6 +216,15 @@ test('paused board: silence or a stale heartbeat raises a stall alert during a p
     [['stall:missed:work:worker', iso(70)], ['stall:quiet:work', iso(70)]])
 })
 
+test('stall replay replaces unsafe board agent ids and roles with opaque tokens', async () => {
+  const id = `agent/${randomUUID()}`, role = `${randomUUID()} ${randomUUID()}`
+  const opaque = (value: string) => `agent-${createHash('sha256').update(value).digest('hex').slice(0, 12)}`
+  const alerts = await replay([{ t: time(65), paused: false, events: [], agents: [{ ...agent(id, 0), role }] }])
+  assert.equal([id, role].some((value) => JSON.stringify(alerts).includes(value)), false)
+  assert.deepEqual(alerts.map(({ key }) => key === `stall:missed:work:${opaque(id)}`), [true])
+  assert.ok(alerts[0]?.text.includes(`Agent ${opaque(id)} (${opaque(role)})`))
+})
+
 test('slowdown episodes: sustained low activity spams alerts or recovery never re-arms them', () => {
   // Fake the clock and feed counts: two low windows, recovery, then another pair of low windows.
   const detector = slowdownDetector()
@@ -164,13 +233,12 @@ test('slowdown episodes: sustained low activity spams alerts or recovery never r
   assert.deepEqual(alerts.map(({ key, at }) => [key, at]), [['slowdown:board', iso(210)], ['slowdown:board', iso(450)]])
 })
 
-routingTest('swarm watch reaches its area: a bad subcommand is the area\'s misuse, not an unknown command', () => {
-  const result = spawnSwarm(process.execPath, ['src/cli.ts', 'watch', 'bogus'], {
+test('swarm watch reaches its area: a bad subcommand reports the exact watch misuse', () => {
+  const result = spawnSync(process.execPath, ['src/cli.ts', 'watch', 'bogus'], {
     cwd: new URL('../', import.meta.url),
     encoding: 'utf8',
   })
   if (result.error) throw result.error
-  if (result.status !== 2 || /unknown command/.test(result.stderr)) {
-    throw new Error(`not routed to watch: ${result.status} ${result.stderr}`)
-  }
+  assert.equal(result.status, 2)
+  assert.equal(result.stderr, 'error: expected watch diff, replay, or run\n')
 })
