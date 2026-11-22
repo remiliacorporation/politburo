@@ -1,0 +1,60 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { parseArgs } from 'node:util'
+import { commandPorts } from './commands.ts'
+import { apply, plan, rollback, type Context } from './cutover.ts'
+import { currentTag, CutoverError, newTag } from './ports.ts'
+
+const usage = 'usage: swarm cutover <plan|apply|rollback> <tag> [flags]'
+
+export async function run([action, tag, ...args]: string[]): Promise<number> {
+  if (action === '--help' && tag === undefined) { console.log(usage); return 0 }
+  const string = { type: 'string' } as const, boolean = { type: 'boolean' } as const
+  const options = { execute: boolean, gate: string, 'rename-to': string, rollback: boolean,
+    'budget-seconds': string, 'gate-max-age-days': string, 'state-dir': string, commands: string, json: boolean }
+  let json = false
+  const fail = (error: CutoverError, code: number) => {
+    if (json) console.log(JSON.stringify({ reason: error.reason, headline: error.headline }))
+    else console.error(`error: ${error.headline}`)
+    return code
+  }
+  const controller = new AbortController()
+  try {
+    const { values: v } = parseArgs({ args, options })
+    json = v.json ?? false
+    if (!tag || !currentTag.test(tag) || (action !== 'plan' && action !== 'apply' && action !== 'rollback')) {
+      return fail(new CutoverError('usage', usage), 2)
+    }
+    const budgetMs = Number(v['budget-seconds'] ?? 300) * 1000
+    const gateMaxAgeDays = Number(v['gate-max-age-days'] ?? 14)
+    if (!(budgetMs > 0 && budgetMs <= 2_147_483_647) || !Number.isFinite(gateMaxAgeDays) ||
+        gateMaxAgeDays < 0 || v['gate-max-age-days'] === '' || (v.rollback && action !== 'plan') ||
+        (v['rename-to'] !== undefined && !newTag.test(v['rename-to']))) {
+      return fail(new CutoverError('usage', 'invalid cutover flags'), 2)
+    }
+    const execute = action !== 'plan' && v.execute
+    if (execute && action === 'apply' && !v.gate) throw new CutoverError('gate_missing', 'a gate decision file is required (--gate)')
+    if (execute && v.commands === undefined) throw new CutoverError('no_commands', 'execution requires --commands')
+    const ctx: Context = { ports: await commandPorts(tag, v.commands, controller.signal), clock: Date,
+      stateDir: v['state-dir'] ?? join(homedir(), '.swarm', 'cutover'), budgetMs, gateMaxAgeDays,
+      gateFile: v.gate, renameTo: v['rename-to'], rollback: action === 'rollback' || v.rollback }
+    if (execute) {
+      const result = await (action === 'rollback' ? rollback : apply)(tag, ctx)
+      console.log(json ? JSON.stringify(result) : `${result.message}  ${result.elapsedMs} ms`)
+    } else {
+      const steps = await plan(tag, ctx), dryRun = action !== 'plan'
+      if (json) console.log(JSON.stringify({ dryRun, ...(dryRun && { message: 'dry run' }), steps }))
+      else {
+        if (dryRun) console.log('dry run')
+        for (const s of steps) console.log(`${s.do ? 'do  ' : 'skip'}  ${s.step}  ${s.why}`)
+      }
+    }
+    return 0
+  } catch (error) {
+    if (error instanceof CutoverError) return fail(error, 1)
+    if (error instanceof TypeError && (error as NodeJS.ErrnoException).code?.startsWith('ERR_PARSE_ARGS')) {
+      return fail(new CutoverError('usage', 'invalid cutover flags'), 2)
+    }
+    return fail(new CutoverError('cutover_failed', 'cutover failed'), 1)
+  } finally { controller.abort() }
+}

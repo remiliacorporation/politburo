@@ -105,7 +105,6 @@ export async function apply(tag: string, ctx: Context) {
   if (health !== 'running') {
     try { await op.start(service) } catch (error) {
       if (error instanceof CutoverError && error.reason === 'budget_exceeded') throw error
-      const failed = () => new CutoverError('service_start_failed', 'service failed to start; automatic rollback incomplete')
       try {
         // A failed start command can still have started the service.
         if (await op.status(service).catch(ignorePortFailure) !== 'stopped') await op.stop(service)
@@ -114,7 +113,7 @@ export async function apply(tag: string, ctx: Context) {
         await op.finish(s, 'files', 'apply_rolled_back')
       } catch (recovery) {
         if (recovery instanceof CutoverError && recovery.reason === 'budget_exceeded') throw recovery
-        throw failed()
+        throw new CutoverError('service_start_failed', 'service failed to start; automatic rollback incomplete')
       }
       throw new CutoverError('service_start_failed', 'service failed to start; automatically rolled back')
     }

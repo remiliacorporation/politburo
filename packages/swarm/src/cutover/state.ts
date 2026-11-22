@@ -34,7 +34,7 @@ export async function readState(stateDir: string, tag: string): Promise<State> {
       (s.pending !== undefined && s.pending !== 'applying' && s.pending !== 'rolling_back') ||
       (s.renameTo !== undefined && (typeof s.renameTo !== 'string' || !newTag.test(s.renameTo))) ||
       (s.gate !== undefined && (!hasOnly(s.gate, 'file sha256 by at') ||
-        !['file', 'sha256', 'by', 'at'].every((key) => typeof (s.gate as Gate)[key as keyof Gate] === 'string'))) ||
+        [s.gate.file, s.gate.sha256, s.gate.by, s.gate.at].some((field) => typeof field !== 'string'))) ||
       !Array.isArray(s.history) || !s.history.every((h: unknown) => hasOnly(h, 'at event detail') &&
         typeof h.at === 'string' && typeof h.event === 'string' && (h.detail === undefined || typeof h.detail === 'string'))) {
     throw new CutoverError('state_invalid', 'cutover state has invalid or unknown fields')
