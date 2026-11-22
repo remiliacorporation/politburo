@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { runParty } from './party/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm party <list|show|add|remove|member|jockey> ...\n       registry file: --registry FILE or SWARM_REGISTRY'
 
 class ReadError extends Error {}
 
@@ -41,6 +42,7 @@ function main(args: string[]): number {
     console.log(usage)
     return 0
   }
+  if (command === 'party') return runParty(args.slice(1))
   if (command === undefined) return misuse('missing command')
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
