@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { allocMain } from './rollout/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm alloc <serial|name> ...'
 
 class ReadError extends Error {}
 
@@ -42,6 +43,7 @@ function main(args: string[]): number {
     return 0
   }
   if (command === undefined) return misuse('missing command')
+  if (command === 'alloc') return allocMain(args.slice(1))
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {
