@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { RequestFact } from './facts.ts'
+import { buckets, type RequestFact } from './facts.ts'
 import type { Resolved } from './reconcile.ts'
 
 export type Envelope = {
@@ -41,20 +41,49 @@ export type SpendRecord = {
   }
 } & ({ revises: null } | { revises: string; actor: string; reason: string })
 
+export function tokenFingerprint(tokens: SpendRecord['tokens']): string {
+  return JSON.stringify(buckets.map((key) => tokens[key]))
+}
+
+function conflictDedupeKey(key: string, source: string, tokens: SpendRecord['tokens']): string {
+  return `${key}:conflict:${source}:${tokenFingerprint(tokens)}`
+}
+
+export function conflictSuccessor(original: { record_id: string }, record: SpendRecord, actor: string): SpendRecord {
+  const source = record.source === 'claude_local_request' ? 'otlp'
+    : record.source === 'claude_local_transcript' ? 'transcript' : record.source
+  return {
+    ...record, dedupe_key: conflictDedupeKey(record.dedupe_key, source, record.tokens),
+    revises: original.record_id, actor, reason: 'conflicting report',
+    coverage: { ...record.coverage, state: 'conflict' },
+  }
+}
+
+function evidencePrefix(nativeSession: string): string {
+  return `claude/${nativeSession.replace(/%/g, '%25').replace(/\//g, '%2F')}/`
+}
+
+export function sessionFromEvidenceRef(ref: string): string | null {
+  const session = /^claude\/([^/]+)\/[^/]+$/.exec(ref)?.[1]
+  if (session === undefined || /%(?!25|2F)/.test(session)) return null
+  return session.replace(/%25|%2F/g, (escape) => escape === '%25' ? '%' : '/')
+}
+
 export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelope | null, now: Date): SpendRecord {
-  const id = fact.requestId ?? fact.responseId
-  const eventKey = `${fact.nativeSession}:${id}`
-  const conflictKey = state === 'mismatch' ? `claude:${eventKey}:conflict:${fact.source}` : null
+  const id = [fact.requestId ?? '', fact.responseId ?? ''].map(encodeURIComponent).join(':')
+  const eventKey = `${encodeURIComponent(fact.nativeSession)}:${id}`
+  const dedupeKey = `claude:${eventKey}`
+  const conflictKey = state === 'mismatch' ? conflictDedupeKey(dedupeKey, fact.source, fact.tokens) : null
   const field_quality: Record<string, string> = { amount: 'unknown' }
   for (const [key, value] of Object.entries(fact.tokens)) {
     field_quality[`tokens.${key}`] = value === null ? 'unknown' : quality
   }
   return {
-    record_id: randomUUID(), dedupe_key: conflictKey ?? `claude:${eventKey}`, revises: null,
+    record_id: randomUUID(), dedupe_key: conflictKey ?? dedupeKey, revises: null,
     envelope,
     source: fact.source === 'otlp' ? 'claude_local_request' : 'claude_local_transcript',
     source_version: 'capture-claude@1', source_event_key: conflictKey ?? eventKey,
-    evidence_ref: `claude/${fact.nativeSession}/${id}`,
+    evidence_ref: `${evidencePrefix(fact.nativeSession)}${id}`,
     provider: 'anthropic', requested_route: 'claude-local', actual_model: fact.model, auth_class: null,
     tokens: { ...fact.tokens }, amount: null, basis: 'unknown',
     occurred: fact.occurred, received: now.toISOString(), started: null, ended: null,

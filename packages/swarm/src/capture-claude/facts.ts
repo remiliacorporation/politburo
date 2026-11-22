@@ -15,6 +15,10 @@ export type RequestFact = {
   occurred: string | null
 }
 
+export const buckets: (keyof RequestFact['tokens'])[] = [
+  'input_uncached', 'input_total', 'output', 'cache_read', 'cache_write', 'reasoning',
+]
+
 export function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -27,6 +31,10 @@ export function list(value: unknown): unknown[] {
 
 export function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
+}
+
+export function identifier(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value) ? value : null
 }
 
 export function count(value: unknown): number | null {
