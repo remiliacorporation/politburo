@@ -7,17 +7,17 @@ function integer(name: string, value: string, min: number) {
   return n
 }
 
-export function seeds() {
+export function seeds(defaultCount = 100) {
   const { DST_SEED, DST_SEEDS } = process.env
   return DST_SEED !== undefined ? [integer('DST_SEED', DST_SEED, 0)]
-    : Array.from({ length: integer('DST_SEEDS', DST_SEEDS ?? '100', 1) }, (_, seed) => seed)
+    : Array.from({ length: integer('DST_SEEDS', DST_SEEDS ?? String(defaultCount), 1) }, (_, seed) => seed)
 }
 
 export type Run = { violations: string[]; trace: string[] }
 
-export async function checkSeeds(run: (seed: number) => Promise<Run>) {
+export async function checkSeeds(run: (seed: number) => Promise<Run>, defaultCount?: number) {
   const failures: { seed: number; violations: string[]; trace: string[] }[] = []
-  for (const seed of seeds()) {
+  for (const seed of seeds(defaultCount)) {
     const { violations, trace } = await run(seed)
     if (violations.length) failures.push({ seed, violations, trace })
   }
