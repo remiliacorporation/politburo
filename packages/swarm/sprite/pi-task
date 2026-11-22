@@ -1,0 +1,22 @@
+#!/bin/bash
+set -u
+if [ $# -lt 1 ] || [ ! -s "$1" ]; then echo "usage: pi-task <task-file> [max-seconds]" >&2; exit 2; fi
+task=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); max=${2:-2400}; idle=${PI_IDLE_SECONDS:-180}
+log=${PI_TASK_LOG:-/tmp/pi-task-$(date +%s).jsonl}
+fingerprint() { printf '%s %s' "$(wc -c < "$log")" "$({ git diff; git ls-files -o --exclude-standard; } 2>/dev/null | cksum)"; }
+pi-auth-ensure 2>/dev/null; setsid pi -p --mode json ${PI_SESSION_DIR:+--session-dir "$PI_SESSION_DIR"} --model "${PI_MODEL:-fallback/codex-cursor}" --thinking "${PI_THINKING:-medium}" -- "$(cat "$task")" </dev/null >"$log" 2>"$log.err" &
+pid=$!; echo "$pid" > "$log.pid"; start=$(date +%s); last=$start; prev=""; why=""
+echo "pi-task: pid $pid, log $log, idle limit ${idle}s, max ${max}s" >&2
+while kill -0 "$pid" 2>/dev/null; do
+  sleep 5; now=$(date +%s); cur=$(fingerprint)
+  if [ "$cur" != "$prev" ]; then prev=$cur; last=$now; fi
+  if [ $((now-last)) -ge "$idle" ]; then why="idle: no output and no file change for ${idle}s"; rc=125
+  elif [ $((now-start)) -ge "$max" ]; then why="timeout after ${max}s"; rc=124; fi
+  if [ -n "$why" ]; then kill -TERM -- "-$pid" 2>/dev/null; sleep 5; kill -KILL -- "-$pid" 2>/dev/null; break; fi
+done
+if [ -z "$why" ]; then wait "$pid"; rc=$?; else { wait "$pid"; } 2>/dev/null; fi
+echo "pi-task: rc=$rc secs=$(( $(date +%s)-start ))${why:+ ($why)}"
+node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n");let t="",m="";for(const x of l){try{const e=JSON.parse(x);if(e.type==="message_end"&&e.message&&e.message.role==="assistant"){m=e.message.provider?e.message.provider+"/"+e.message.model:m;t=(e.message.content||[]).filter(c=>c.type==="text").map(c=>c.text).join("\n")||t}}catch{}}console.log("pi-task: model "+(m||"none"));console.log(t||"(no reply)")' "$log"
+git diff --stat 2>/dev/null | tail -n 1
+[ "$rc" -ne 0 ] && tail -n 5 "$log.err" >&2
+exit "$rc"
