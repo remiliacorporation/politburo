@@ -6,11 +6,19 @@ import { ago, firstLine, until } from './words.ts'
 
 export type SwarmRecords = {
   source: 'fixtures'
-  parties: Record<string, { name: string; colour: string; openClaimLimit?: number }>
+  parties: Record<string, {
+    name: string
+    colour: string
+    openClaimLimit?: number
+    labels?: { party_board?: string; repo_view?: string; mob_view?: string }
+  }>
   observations: Record<string, Observation>
 }
 
 export type Observation = {
+  attempt?: string | number
+  branch?: string
+  handoffReason?: string
   urls?: { source?: string; pr?: string; evidence?: string }
   pr?: { number: number; state: 'draft' | 'open' | 'merged' | 'closed'; checks: 'pass' | 'fail' | 'pending' | 'none' | 'unknown'; head?: string }
   spend?: { tokens: number | null; coverage: 'complete' | 'partial' | 'unknown' | 'stale' }
@@ -50,6 +58,9 @@ export type WorkRow = {
   claimText: string | null
   leaseLive: boolean
   evidenceStale: boolean
+  attempt?: Observation['attempt']
+  branch?: Observation['branch']
+  handoffReason?: Observation['handoffReason']
   pr?: Observation['pr']
   urls?: Observation['urls']
   prText: string
@@ -127,6 +138,19 @@ function own<T>(record: Record<string, T> | undefined, key: string | undefined):
   return record && key !== undefined && Object.hasOwn(record, key) ? record[key] : undefined
 }
 
+export function partyOf(records: SwarmRecords | null, partyId: string | null) {
+  return own(records?.parties, partyId ?? undefined)
+}
+
+export function labelsOf(records: SwarmRecords | null, partyId: string | null, boardName = 'board') {
+  const party = partyOf(records, partyId)
+  return {
+    partyBoard: { label: party?.labels?.party_board ?? 'Standing Committee', subtitle: `Standing Committee: ${party?.name ?? partyId ?? 'party'} board` },
+    repoView: { label: party?.labels?.repo_view ?? 'Presidium', subtitle: `Presidium: ${boardName} repo` },
+    mobView: { label: party?.labels?.mob_view ?? 'Cell', subtitle: 'Cell: one mob view' },
+  }
+}
+
 export function projectWork(state: State, records: SwarmRecords | null, viewer: Viewer | null, now: number) {
   const buckets = new Map<WorkGroup, WorkRow[]>(GROUPS.map(([group]) => [group, []]))
   for (const root of Object.values(state.openTaskRoots)) {
@@ -147,6 +171,9 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
       claimText: claimText(root.task.claim, now),
       leaseLive: obs?.leaseLive === true,
       evidenceStale: obs?.evidenceStale === true,
+      attempt: obs?.attempt,
+      branch: obs?.branch,
+      handoffReason: obs?.handoffReason,
       pr: obs?.pr,
       urls: obs?.urls,
       prText: prText(obs?.pr, group),

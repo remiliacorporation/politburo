@@ -807,7 +807,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
   .task-where { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
 }
 
-/* --- presidium and wordmark --- */
+/* --- wordmark --- */
 .brand .wordmark {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 700 1rem/1.25rem 'Avenir Next Condensed', 'Arial Narrow', 'Liberation Sans Narrow', sans-serif;
@@ -815,11 +815,6 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
   letter-spacing: .06em;
 }
 .brand .wordmark:hover { color: var(--accent); }
-.presidium-board { padding: 12px; margin-bottom: 8px; background: var(--shade); border-radius: 4px; overflow-wrap: anywhere; }
-.presidium-board h2 { margin: 0 0 4px; font-size: 1rem; }
-.presidium-address { font: var(--metadata); }
-.presidium-counts { display: flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; margin: 8px 0 0; padding: 0; }
-.presidium-counts a { white-space: nowrap; }
 
 .handoffs-view { padding-block: 5px 8px; }
 .handoffs-view > * + * { margin-block-start: 6px; }

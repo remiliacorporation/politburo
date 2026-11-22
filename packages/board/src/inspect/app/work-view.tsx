@@ -8,7 +8,9 @@ import { nameOf, type State } from './store.ts'
 import { Header } from './ui.tsx'
 import { filterParams, filterWork, readFilter, SAVED_VIEWS } from './work-filter.ts'
 import { keyAction } from './work-keys.ts'
-import { homeOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
+import { workScope, workScopeUrl, type WorkRoute } from './work-scope.ts'
+import { homeOf, labelsOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
+import { boardWords } from './words.ts'
 
 const RULES: Record<WorkGroup, string> = {
   needs: 'A person must answer a request or fix a contract.',
@@ -36,11 +38,26 @@ function webUrl(raw?: string): string | undefined {
   } catch { /* Not an absolute link. */ }
 }
 
-export function Work({ state, now, lead }: { state: State; now: number; lead: ReactNode }) {
+export function Work({ state, now, lead, route }: { state: State; now: number; lead: ReactNode; route: WorkRoute }) {
   useEffect(board.openNeeds, [])
   const { params, thread } = useLocation()
+  const records = board.swarmRecords()
+  const where = boardWords(state.discovery)
+  const { party, partyId, title, subtitle } = workScope(route, params, records, where.name)
+  const repoView = route.view === 'presidium'
+  const cellView = route.view === 'cell'
+  const allParties = params.get('parties') === 'all'
+  const parentParty = cellView ? params.get('party') ?? partyId : partyId
+  const scopedParty = route.view === 'party' || (repoView && !allParties) ? partyId : null
+  const unknownParty = route.view === 'party' && !party
   const peekId = params.get('peek')
-  const urlFilter = readFilter(params)
+  // In repo and mob views, `party` chooses the repo view rather than filtering its rows.
+  const filterPartyKey = repoView || cellView ? 'filterParty' : 'party'
+  const filterQuery = new URLSearchParams(params)
+  filterQuery.delete('party')
+  const partyFacet = params.get(filterPartyKey)
+  if (partyFacet !== null) filterQuery.set('party', partyFacet)
+  const urlFilter = readFilter(filterQuery)
   const [text, setText] = useState(urlFilter.text)
   // Only URL navigation can resync this draft, not a new board snapshot.
   useEffect(() => setText(urlFilter.text), [urlFilter.text])
@@ -71,10 +88,18 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
     if (focusPeek.current === peekId && peekId !== null) heading.current?.focus({ preventScroll: true })
     focusPeek.current = null
   }, [peekId])
-  const records = board.swarmRecords()
   const viewer = useMemo(() => state.openTaskMe && board.viewerOf(state.openTaskMe), [state.openTaskMe])
-  const latest = useMemo(() => projectWork(state, records, viewer, now), [state, records, viewer, now])
-  const errors = new Set(viewer ? Object.values(state.openTaskAttentionRefusals) : [])
+  const projected = useMemo(() => projectWork(state, records, viewer, now), [state, records, viewer, now])
+  const claimant = route.view === 'cell' ? route.cell : undefined
+  const latest = useMemo(() => {
+    if (!unknownParty && scopedParty === null && claimant === undefined) return projected
+    const groups = projected.groups.map((group) => ({
+      ...group,
+      rows: unknownParty ? [] : filterWork(group.rows, { text: '', party: scopedParty ?? undefined, claimant }),
+    }))
+    return { groups, rows: groups.flatMap(({ rows }) => rows) }
+  }, [projected, unknownParty, scopedParty, claimant])
+  const errors = new Set(viewer && latest === projected ? Object.values(state.openTaskAttentionRefusals) : [])
   const readStatus = state.tasksRefused ?? (state.tasksCounted ? null : 'loading…')
   const statusClass = state.tasksRefused === null ? undefined : 'error'
   for (const { root } of latest.rows) {
@@ -135,7 +160,14 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   const selectedRow = shown.find(({ root }) => root.id === selectedId)
   const home = homeOf(shown, null, now)
   // Health describes the whole scope, regardless of view, filters, or collapse.
-  const { health } = useMemo(() => homeOf(latest.rows, records, now), [latest, records, now])
+  const { health } = useMemo(() => {
+    const scopedRecords = unknownParty ? null : scopedParty !== null && party && records
+      ? { ...records, parties: { [scopedParty]: party } } : records
+    return homeOf(latest.rows, scopedRecords, now)
+  }, [latest, records, now, party, scopedParty, unknownParty])
+  const capacity = health.perParty.find((entry) => entry.party.id === partyId)
+  const empty = unknownParty ? 'no party with that id'
+    : cellView && latest.rows.length === 0 ? 'nothing claimed by this cell' : null
   const peeked = peekId === null ? undefined : rowsById.get(peekId)
   const focusQueueRow = (id: string) => list.current?.querySelector<HTMLElement>(queueRow(id))?.focus()
   const queueHeading = (group: WorkGroup | 'queue') => list.current?.querySelector<HTMLElement>(`#work-queue-${group}`)
@@ -237,12 +269,15 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
     const index = before.indexOf(id)
     const next = [id, ...before.slice(index + 1), ...before.slice(0, Math.max(0, index)).reverse(), ...ids]
       .find((candidate) => ids.includes(candidate))
-    const selector = target.matches('button') ? ' button' : target.matches('a') ? ' a' : ''
+    const selector = target.matches('button') ? ' button' : target.matches('a.text-link') ? ' a.text-link' : target.matches('a') ? ' a' : ''
     const replacement = next === undefined ? null : el.querySelector<HTMLElement>(`${queueRow(next)}${selector}`)
+      ?? el.querySelector<HTMLElement>(queueRow(next))
     ;(replacement ?? el).focus({ preventScroll: true })
   })
   const showRow = (row: WorkRow, area: 'home' | 'queue', detail?: ReactNode) => (
-    <Row key={row.root.id} {...{ row, state, area, detail }} current={selection === `${area}:${row.root.id}`}
+    <Row key={row.root.id} {...{ row, state, area, detail }} cellDetail={cellView}
+      claimantLink={row.claimant ? workScopeUrl(`/cell/${encodeURIComponent(row.claimant)}`, params,
+        parentParty ?? row.party?.id) : undefined} current={selection === `${area}:${row.root.id}`}
       expanded={peekId === row.root.id} openPeek={(id, from) => {
         setSelection(`${area}:${id}`)
         if (peekId === id) closePeek()
@@ -253,8 +288,28 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
 
   return (
     <>
-      <Header title="Work" live={state.live} lead={lead} />
+      <Header title={title} meta={subtitle} live={state.live} lead={lead}>
+        {repoView && party && <span className="meta"><PartyName party={party} />
+          {readStatus === null && capacity && <> · {capacity.active} / {capacity.party.openClaimLimit ?? 'limit unknown'} active</>}
+        </span>}
+      </Header>
       <div className={`page home-view needs-view work-view${peekId === null ? '' : ' with-peek'}${comfortable ? ' comfortable' : ''}`}>
+        {route.view === 'party' && <p className="faint">shared queues stay on each repo board; this inspector reaches one board</p>}
+        {cellView && <p><Link className="text-link" to={workScopeUrl('/presidium', params, parentParty)}>
+          back to {labelsOf(records, partyId).repoView.label}
+        </Link></p>}
+        {repoView && !records && <p>{where.name}{where.at && <span className="faint"> · {where.at}</span>}</p>}
+        {repoView && records && <div className="work-controls">
+          {!party && <>
+            <span>{params.has('party') ? 'no party with that id; choose a party:' : 'choose a party:'}</span>
+            {Object.entries(records.parties).map(([id, entry]) => (
+              <Link key={id} className="text-link" to={here({ params: { party: id, parties: null, peek: null } })}>{entry.name}</Link>
+            ))}
+          </>}
+          {party && <Link className="text-link" to={here({ params: { parties: allParties ? null : 'all', peek: null } })}>
+            {allParties ? 'this party' : 'all parties'}
+          </Link>}
+        </div>}
         <nav className="work-controls" aria-label="Saved work views">
           {Object.entries(SAVED_VIEWS).map(([key, { title }]) => (
             <Link key={key} className="text-link" current={key === view} to={here({ params: { view: key } })}>{title}</Link>
@@ -276,11 +331,11 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
         </div>
         {chips.length > 0 && <div className="work-controls" aria-label="Active work filters">
           {chips.map(([key, value]) => (
-            <Link key={key} className="text-link" title={`remove ${key} filter`} to={here({ params: { [key]: null } })}>{key}: {value} (remove)</Link>
+            <Link key={key} className="text-link" title={`remove ${key} filter`} to={here({ params: { [key === 'party' ? filterPartyKey : key]: null } })}>{key}: {value} (remove)</Link>
           ))}
         </div>}
         {help && <KeyHelp row={selectedRow} />}
-        {readStatus === null && (
+        {readStatus === null && !cellView && !unknownParty && (
           <>
             {filtering && <p role="status">{shown.length} of {scope.length} rows</p>}
             <p className="work-counts">
@@ -291,7 +346,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
             </p>
           </>
         )}
-        <p role="status">{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
+        <p role="status" className={repoView && !records ? 'faint' : undefined}>{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
         {/* Handle list shortcuts before the document-level type-to-focus listener. */}
         <div className="work-layout" onKeyDown={(event) => onKey(event.nativeEvent, event.target instanceof Element ? event.target : null)}>
           <div ref={list} tabIndex={-1} aria-label="Work board tasks" className="work-list"
@@ -312,7 +367,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
               hoveredKey.current = undefined
               release(document.activeElement)
             }}>
-            {readStatus === null && (
+            {readStatus === null && !cellView && !unknownParty && (
               <>
                 {inView('needs') && <HomeSection id="work-needs" title="Needs you" empty="nothing needs you" present={!!home.needs.length}>
                   {!collapsed.has('needs') && <ul role="list">{home.needs.map((row) => showRow(row, 'home'))}</ul>}
@@ -340,7 +395,9 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
             )}
             <div className="home-queue work-queue">
               <h2 id="work-queue-queue" tabIndex={-1}>Queue</h2>
-              {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p> : (
+              {unknownParty ? <p role="status">{empty}</p>
+                : readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p>
+                : empty ? <p role="status">{empty}</p> : (
                 <>
                   {groups.map(({ group, rows }) => (
                     <section key={group}>
@@ -458,8 +515,9 @@ function Peek({ row, state, heading, close }: {
   )
 }
 
-export function Row({ row, state, area, detail, current, expanded, openPeek }: {
-  row: WorkRow; state: State; area: 'home' | 'queue'; detail?: ReactNode; current?: boolean; expanded: boolean; openPeek: (id: string, from: HTMLElement) => void
+export function Row({ row, state, area, detail, current, expanded, openPeek, claimantLink, cellDetail }: {
+  row: WorkRow; state: State; area: 'home' | 'queue'; detail?: ReactNode; current?: boolean; expanded: boolean
+  openPeek: (id: string, from: HTMLElement) => void; claimantLink?: string; cellDetail?: boolean
 }) {
   const { root, party } = row
   return (
@@ -468,12 +526,19 @@ export function Row({ row, state, area, detail, current, expanded, openPeek }: {
       <small>{row.workId}</small>
       <Link to={here({ thread: root.id })}>{row.title || `Task #${root.id}`}</Link>
       <small><PartyName party={party} /></small>
-      <small>{row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</small>
+      <small>{row.claimant && claimantLink ? <Link className="text-link" to={claimantLink}>{nameOf(state, row.claimant)}</Link>
+        : row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</small>
       <small>{row.group === 'running' ? detail ?? row.reason : row.reason}</small>
       {row.group !== 'running' && detail && <small>{detail}</small>}
-      {row.claimText && <small title={root.task.claim?.until}>{row.claimText}</small>}
-      <small>{row.prText}</small>
-      <small>{row.spendText === 'unknown' ? 'spend unknown' : row.spendText}</small>
+      {cellDetail && <small>attempt {row.attempt ?? 'unknown'}</small>}
+      {row.claimText && <small title={root.task.claim?.until}>{row.claimText}
+        {cellDetail && root.task.claim && <> · board time <time dateTime={root.task.claim.until}>{root.task.claim.until}</time></>}
+      </small>}
+      <small>{row.branch && cellDetail ? `branch ${row.branch}` : row.prText}</small>
+      <small>{row.spendText === 'unknown' ? 'spend unknown' : row.spendText}
+        {cellDetail && row.spendText === 'unknown' && ` · ${row.spend?.coverage ?? 'unknown'} coverage`}
+      </small>
+      {cellDetail && <small>last handoff reason: {row.handoffReason ?? 'unknown'}</small>}
       <TrackerBadges trackers={row.trackers} />
       {row.overlapText && <small>{row.overlapText}</small>}
       <button type="button" aria-expanded={expanded} aria-controls={expanded ? 'work-peek' : undefined} onClick={(event) => openPeek(root.id, event.currentTarget)}>peek</button>
