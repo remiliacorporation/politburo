@@ -1,0 +1,6 @@
+#!/bin/bash
+d=/tmp/sprites; n=${1:?usage: sprite-stop <name>}
+for f in "$d/$n.jsonl.pid" "$d/$n.pid"; do [ -s "$f" ] && kill -TERM -- "-$(cat "$f")" 2>/dev/null; done
+sleep 3
+for f in "$d/$n.jsonl.pid" "$d/$n.pid"; do [ -s "$f" ] && kill -KILL -- "-$(cat "$f")" 2>/dev/null; done
+[ -f "$d/$n.rc" ] || echo 137 > "$d/$n.rc"; echo "sprite $n stopped"
