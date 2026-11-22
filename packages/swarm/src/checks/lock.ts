@@ -2,14 +2,20 @@ import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-const script = 'open(my $f, ">>", $ARGV[0]) or exit 3; flock($f, LOCK_EX|LOCK_NB) or exit 75; print "held\n"; $|=1; <STDIN>; exit 0'
+const script = 'sysopen(my $f, $ARGV[0], O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW|O_NONBLOCK) or exit 3; flock($f, LOCK_EX|LOCK_NB) or exit 75; print "held\n"; $|=1; <STDIN>; exit 0'
 
 export class LockError extends Error {}
 export type LockResult = { ok: true; release(): Promise<void> } | { ok: false; reason: 'busy' }
 
-export function tryAcquire(path: string, start = spawn): Promise<LockResult> {
+export function lockFile(path: string) {
   if (!path) throw new LockError('missing check lock path')
-  const helper = start('perl', ['-MFcntl=:flock', '-e', script, resolve(path)], {
+  const file = resolve(path)
+  if (/\.(?:owner|json)$/.test(file)) throw new LockError('check lock path cannot end in .owner or .json')
+  return file
+}
+
+export function tryAcquire(path: string, start = spawn): Promise<LockResult> {
+  const helper = start('perl', ['-MFcntl=:flock,:DEFAULT', '-e', script, lockFile(path)], {
     stdio: ['pipe', 'pipe', 'ignore'],
   })
   const input = helper.stdin!

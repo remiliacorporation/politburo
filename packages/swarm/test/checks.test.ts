@@ -1,14 +1,13 @@
-import { spawnSync as spawnSwarm } from 'node:child_process'
-import { test as routingTest } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, fork, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chownSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { acquire, tryAcquire } from '../src/checks/lock.ts'
 import { checkAndPush } from '../src/checks/checkAndPush.ts'
+import { exec } from '../src/checks/exec.ts'
 import { liveSprites, retireCheck } from '../src/checks/retire.ts'
 
 process.env.GIT_CONFIG_GLOBAL = '/dev/null'
@@ -25,10 +24,10 @@ function git(cwd: string, ...args: string[]) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 
-function fixture(t: TestContext) {
+function fixture(t: TestContext, format = 'sha1') {
   const dir = tempDir(t), repo = join(dir, 'repo'), remote = join(dir, 'origin.git')
-  git(dir, 'init', '--template=', '-b', 'main', repo)
-  git(dir, 'init', '--template=', '--bare', '-b', 'main', remote)
+  git(dir, 'init', '--template=', `--object-format=${format}`, '-b', 'main', repo)
+  git(dir, 'init', '--template=', `--object-format=${format}`, '--bare', '-b', 'main', remote)
   git(repo, 'config', 'user.name', 'Fixture')
   git(repo, 'config', 'user.email', 'fixture@example.invalid')
   git(repo, 'remote', 'add', 'origin', remote)
@@ -83,13 +82,86 @@ test('check lock: never breaks for a live holder and releases after its parent d
   }
 })
 
-test('passing check: does not push the wrong SHA or lose its pass record', async (t) => {
-  const f = fixture(t)
+test('lock refuses reserved suffixes and status-directory paths before writing', async (t) => {
+  const f = fixture(t), { statusDir } = f.options
+  const alias = join(f.dir, 'alias')
+  mkdirSync(statusDir)
+  symlinkSync(statusDir, alias)
+  symlinkSync(join(statusDir, 'target.json'), join(f.dir, 'linked-lock'))
+  const tryLock = async (path: string) => {
+    const result = await tryAcquire(path)
+    if (result.ok) await result.release()
+  }
+  for (const path of [join(f.dir, 'lock.owner'), join(f.dir, 'lock.json')]) {
+    await assert.rejects(tryLock(path), /cannot end in/)
+    await assert.rejects(checkAndPush({ ...f.options, lockPath: path }), /cannot end in/)
+    assert.ok(!existsSync(path))
+  }
+  await assert.rejects(tryLock(join(f.dir, 'linked-lock')), /cannot open check lock file/)
+  assert.ok(!existsSync(join(statusDir, 'target.json')))
+  for (const path of [join(statusDir, 'lock'), join(alias, 'lock')]) {
+    await assert.rejects(checkAndPush({ ...f.options, lockPath: path }), /inside the status directory/)
+    assert.ok(!existsSync(path))
+  }
+})
+
+test('passing check preserves the owner inode, keeps argv out of records, and pushes the checked SHA', async (t) => {
+  const f = fixture(t), token = fakeToken(), owner = `${f.options.lockPath}.owner`
+  const file = join(f.dir, token)
+  symlinkSync(process.execPath, file)
+  writeFileSync(owner, 'old owner\n')
+  const inode = statSync(owner).ino
   git(f.repo, 'switch', '--detach') // Local main still points at the base.
   const sha = f.commit()
-  assert.deepEqual(await checkAndPush(f.options), { status: 'pushed', sha })
+  assert.deepEqual(await checkAndPush({ ...f.options, command: [file, '-e', '', token] }), { status: 'pushed', sha })
   f.expectRemote(sha)
+  assert.equal(statSync(owner).ino, inode, 'owner was replaced instead of updated')
+  assert.equal(statSync(f.options.statusDir).mode & 0o777, 0o700)
   assert.equal(f.state(sha), 'pass')
+  for (const path of [owner, join(f.options.statusDir, `${sha}.json`)]) {
+    const record = readFileSync(path, 'utf8')
+    assert.ok(!record.includes(token), 'record exposed argv')
+    assert.equal(JSON.parse(record).command, 'check (3 args)')
+  }
+})
+
+test('status directory refuses final symlinks, including a late swap, and foreign ownership', async (t) => {
+  const f = fixture(t), sha = f.commit(), { statusDir } = f.options
+  const target = join(f.dir, 'unrelated'), marker = join(target, `${sha}.json`)
+  mkdirSync(target)
+  writeFileSync(marker, 'unrelated')
+  symlinkSync(target, statusDir)
+  const invalidDir = /real directory owned by the current user/
+  await assert.rejects(checkAndPush({ ...f.options, statusDir: `${statusDir}/` }), invalidDir)
+  assert.ok(!existsSync(f.options.lockPath))
+  rmSync(statusDir)
+  mkdirSync(statusDir)
+  await assert.rejects(checkAndPush({ ...f.options, run: async () => {
+    rmSync(statusDir, { recursive: true })
+    symlinkSync(target, statusDir)
+    return { stdout: '', exitCode: 0 }
+  } }), invalidDir)
+  assert.equal(readFileSync(marker, 'utf8'), 'unrelated')
+  const foreign = process.getuid?.() === 0 ? target : '/usr'
+  if (foreign === target) chownSync(target, 65534, 65534)
+  await assert.rejects(checkAndPush({ ...f.options, statusDir: foreign }), invalidDir)
+  f.expectRemote()
+})
+
+test('status files are replaced atomically and never named with a SHA-256 ID', async (t) => {
+  const f = fixture(t), sha = f.commit(), old = join(f.dir, 'old-status')
+  const path = join(f.options.statusDir, `${sha}.json`)
+  mkdirSync(f.options.statusDir)
+  writeFileSync(path, 'old status')
+  linkSync(path, old)
+  assert.equal((await checkAndPush(f.options)).status, 'pushed')
+  assert.equal(readFileSync(old, 'utf8'), 'old status')
+  assert.equal(f.state(sha), 'pass')
+  const wide = fixture(t, 'sha256')
+  wide.commit()
+  await assert.rejects(checkAndPush(wide.options), /40-character commit sha/)
+  assert.ok(!existsSync(wide.options.statusDir))
+  wide.expectRemote()
 })
 
 test('failing check: does not advance origin or mark the SHA as passing', async (t) => {
@@ -108,13 +180,26 @@ test('check changes HEAD: does not push either commit or miss head_changed', asy
   f.expectRemote()
 })
 
-test('private diff: does not push or expose the matched text in the result', async (t) => {
-  const f = fixture(t), token = fakeToken()
-  f.commit(token)
-  const result = await checkAndPush(f.options)
-  assert.equal(result.status, 'refused_privacy')
-  assert.ok(!JSON.stringify(result).includes(token), 'result exposed matched text')
+test('late HEAD change in statusSink stops the push', async (t) => {
+  const f = fixture(t), sha = f.commit()
+  const result = await checkAndPush({ ...f.options, statusSink: () => { f.commit('late change') } })
+  assert.notEqual(f.head(), sha)
+  assert.deepEqual(result, { status: 'head_changed', sha })
   f.expectRemote()
+})
+
+test('HEAD moving at push time cannot replace the captured SHA on origin', async (t) => {
+  const f = fixture(t), sha = f.commit()
+  git(f.repo, 'commit', '--allow-empty', '-m', 'not checked')
+  const unchecked = f.head()
+  git(f.repo, 'update-ref', 'HEAD', sha)
+  const result = await checkAndPush({ ...f.options, git: (argv, options) => {
+    if (argv[1] === 'push') git(f.repo, 'update-ref', 'HEAD', unchecked)
+    return exec(argv, options)
+  } })
+  assert.deepEqual(result, { status: 'pushed', sha })
+  assert.equal(f.head(), unchecked)
+  f.expectRemote(sha)
 })
 
 test('dirty worktree: does not push a check of uncommitted inputs', async (t) => {
@@ -168,26 +253,80 @@ test('retire fetch failure: does not authorize retirement from cached origin ref
   assert.equal((await retireCheck({ worktrees: [f.repo], runningSprites: () => liveSprites(join(f.dir, 'sprites')) })).ok, false)
 })
 
-test('check preflight CLI: does not exit zero, omit the finding location, or echo matched text', (t) => {
-  const f = fixture(t), token = fakeToken()
-  f.commit(token)
-  const cli = new URL('../src/checks/cli.ts', import.meta.url).href
-  const result = spawnSync(process.execPath, ['--input-type=module', '--eval',
-    `import { run } from ${JSON.stringify(cli)}; process.exitCode = await run(process.argv.slice(1))`,
-    '--', 'preflight', '--repo', f.repo, '--base', f.base], { encoding: 'utf8', timeout: 5000 })
-  if (result.error) throw result.error
-  assert.ok(!(result.stdout + result.stderr).includes(token), 'CLI exposed matched text')
-  assert.equal(result.status, 1)
-  assert.equal(result.stdout, 'github-token sample.txt:1\n')
-  assert.equal(result.stderr, '')
+test('retire rejects unpushed local tips, failed inventory, and an empty inventory', async (t) => {
+  const f = fixture(t)
+  const check = (run = exec) => retireCheck({ worktrees: [f.repo], exec: run, runningSprites: () => [] })
+  const sha = f.commit()
+  git(f.repo, 'branch', 'unpublished', sha)
+  git(f.repo, 'update-ref', 'HEAD', f.base)
+  git(f.repo, 'restore', '--source=HEAD', '--staged', '--worktree', 'sample.txt')
+  const result = await check()
+  assert.equal(result.worktrees[0]?.onOrigin, true)
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.branches.map(({ name, onOrigin }) => [name, onOrigin]), [['main', true], ['unpublished', false]])
+  git(f.repo, 'branch', '-D', 'unpublished')
+  assert.equal((await check()).ok, true)
+  assert.equal((await check((argv, options) => argv.at(-1) === 'refs/heads'
+    ? Promise.resolve({ stdout: 'refs/heads/main ' + f.base, exitCode: 1 }) : exec(argv, options))).ok, false)
+  git(f.repo, 'switch', '--detach')
+  git(f.repo, 'branch', '-D', 'main')
+  assert.equal((await check()).ok, false)
 })
 
-routingTest('swarm check reaches its area: a bad subcommand is the area\'s misuse, not an unknown command', () => {
-  const result = spawnSwarm(process.execPath, ['src/cli.ts', 'check', 'bogus'], {
-    cwd: new URL('../', import.meta.url),
-    encoding: 'utf8',
+function checkCli(...args: string[]) {
+  const result = spawnSync(process.execPath, ['src/cli.ts', 'check', ...args], {
+    cwd: new URL('../', import.meta.url), encoding: 'utf8', timeout: 5000,
   })
   if (result.error) throw result.error
+  return result
+}
+
+test('preflight refuses credentials added then removed from outgoing history, including merges', async (t) => {
+  for (const merge of [false, true]) {
+    const f = fixture(t), token = fakeToken()
+    if (merge) {
+      git(f.repo, 'branch', 'side')
+      git(f.repo, 'commit', '--allow-empty', '-m', 'main parent')
+      const side = git(f.repo, 'commit-tree', 'HEAD^{tree}', '-p', f.base, '-m', 'side parent')
+      git(f.repo, 'update-ref', 'refs/heads/side', side)
+      git(f.repo, 'merge', '--no-commit', '--no-ff', 'side')
+    }
+    f.commit(token)
+    f.commit('base')
+    assert.equal((await checkAndPush(f.options)).status, 'refused_privacy', `push, merge=${merge}`)
+    f.expectRemote()
+    const cli = checkCli('preflight', '--repo', f.repo, '--base', f.base)
+    assert.ok(!(cli.stdout + cli.stderr).includes(token), 'CLI exposed matched text')
+    assert.equal(cli.status, 1, `preflight, merge=${merge}`)
+    assert.match(cli.stdout, /^github-token sample\.txt:1\n/)
+  }
+})
+
+test('finding paths cannot expose private text in results, text, or JSON', async (t) => {
+  const f = fixture(t), token = fakeToken()
+  writeFileSync(join(f.repo, `${token}.txt`), `${['npm', 'Q'.repeat(36)].join('_')}\n`)
+  git(f.repo, 'add', '.')
+  f.commit(token)
+  const result = await checkAndPush(f.options)
+  assert.ok(!JSON.stringify(result).includes(token), 'result exposed a private path')
+  assert.equal(result.status, 'refused_privacy')
+  assert.ok(result.findings.some(({ file }) => file === '[redacted]'))
+  for (const args of [[], ['--json']]) {
+    const cli = checkCli('preflight', '--repo', f.repo, '--base', f.base, ...args)
+    assert.ok(!(cli.stdout + cli.stderr).includes(token), 'preflight exposed a private path')
+    assert.equal(cli.status, 1)
+    assert.ok(cli.stdout.includes('[redacted]'))
+  }
+  const cli = checkCli('run', '--repo', f.repo, '--branch', 'main', '--lock', f.options.lockPath,
+    '--status-dir', f.options.statusDir, '--', ...f.options.command)
+  assert.ok(!(cli.stdout + cli.stderr).includes(token), 'check run exposed a private path')
+  assert.equal(cli.status, 1)
+  assert.match(cli.stderr, /npm-token \[redacted\]:1/)
+  f.expectRemote()
+})
+
+test('swarm check reaches its area: a bad subcommand is the area\'s misuse, not an unknown command', () => {
+  const result = checkCli('bogus')
   if (result.status !== 2 || /unknown command/.test(result.stderr)) {
     throw new Error(`not routed to check: ${result.status} ${result.stderr}`)
   }

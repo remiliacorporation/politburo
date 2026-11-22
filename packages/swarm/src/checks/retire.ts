@@ -31,34 +31,37 @@ export async function retireCheck({ worktrees, exec, runningSprites = liveSprite
   exec?: Exec
   runningSprites?: () => string[] | Promise<string[]>
 }, { now = () => new Date() } = {}) {
-  const first = worktrees[0]
-  const commonDir = (git: ReturnType<typeof gitAt>) => git('rev-parse', '--path-format=absolute', '--git-common-dir')
-  const fetchedDir = first === undefined ? null : await (async () => {
-    const git = gitAt(first, exec)
+  const contains = async (git: ReturnType<typeof gitAt>, sha: string) => {
+    const refs = await git('for-each-ref', '--format=%(refname) %(symref)', '--contains', sha, 'refs/remotes/origin/')
+      .catch(() => null)
+    return refs === null ? null : refs.split('\n').some((ref) => ref.endsWith(' '))
+  }
+  const inventory = async (git: ReturnType<typeof gitAt>, repo: string) => {
     await git('fetch', '--prune', '--no-tags', '--', 'origin', '+refs/heads/*:refs/remotes/origin/*')
-    return commonDir(git)
-  })().catch(() => null)
-
-  const branches = new Set<string>()
+    const refs = await git('for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads')
+    const rows = []
+    for (const ref of refs.trim().split('\n').filter(Boolean)) {
+      const [name, sha] = ref.split(' ')
+      rows.push({ repo, name: name!.slice('refs/heads/'.length), onOrigin: await contains(git, sha!) })
+    }
+    return rows
+  }
+  const repos = new Map<string, Awaited<ReturnType<typeof inventory>>>()
   const evidence = []
   for (const path of worktrees) {
     const git = gitAt(path, exec)
+    const repo = (await git('rev-parse', '--path-format=absolute', '--git-common-dir').catch(() => '')).replace(/\n$/, '')
+    if (repo && !repos.has(repo)) repos.set(repo, await inventory(git, repo).catch(() => []))
     const head = await readHead(git).catch(() => null)
     const clean = await isClean(git).catch(() => null)
-    let onOrigin: boolean | null = null
-    if (head && fetchedDir && await commonDir(git).catch(() => null) === fetchedDir) {
-      const refs = await git('branch', '-r', '--contains', head, '--no-color').catch(() => null)
-      if (refs !== null) {
-        const matches = refs.split('\n').map((ref) => ref.trim()).filter((ref) => /^origin\/\S+$/.test(ref))
-        for (const match of matches) branches.add(match)
-        onOrigin = matches.length > 0
-      }
-    }
+    const onOrigin = head && repos.get(repo)?.length ? await contains(git, head) : null
     evidence.push({ path, head, onOrigin, clean })
   }
+  const branches = [...repos.values()].flat()
   const clean = evidence.some((row) => row.clean === false) ? false :
     evidence.length > 0 && evidence.every((row) => row.clean === true) ? true : null
   const sprites = await Promise.resolve().then(runningSprites).catch(() => ['unknown'])
-  const ok = clean === true && evidence.every((row) => row.onOrigin === true) && sprites.length === 0
-  return { ok, branches: [...branches].sort(), worktrees: evidence, clean, sprites, checkedAt: now().toISOString() }
+  const ok = clean === true && evidence.every((row) => row.onOrigin === true) &&
+    branches.every((row) => row.onOrigin === true) && sprites.length === 0
+  return { ok, branches, worktrees: evidence, clean, sprites, checkedAt: now().toISOString() }
 }
