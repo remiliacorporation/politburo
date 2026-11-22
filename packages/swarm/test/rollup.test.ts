@@ -136,6 +136,14 @@ test('conflict heads count as coverage gaps, never as known tokens or amounts', 
   assert.deepEqual(totals.amounts, [], 'disputed settled charges do not enter known amounts')
   assert.equal(totals.amount_unknown_records, 1)
   assert.equal(totals.coverage.conflict, 1)
+
+  const tokenOnly = dispatch('token-only')
+  ledger.createDispatch(tokenOnly)
+  const disputedTokens = record('disputed-tokens', tokenOnly.envelope, 9)
+  ingest(ledger, { ...disputedTokens, basis: 'not_applicable', coverage: { state: 'conflict',
+    field_quality: { ...disputedTokens.coverage.field_quality, amount: 'not_applicable' } } })
+  assert.equal(rollupBy(ledger, 'party')[0]!.totals.amount_unknown_records, 1,
+    'a disputed record with no applicable amount adds no unknown amount')
 })
 
 test('token subtotals throw instead of rounding past the safe integer range', (t) => {

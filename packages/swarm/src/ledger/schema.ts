@@ -41,7 +41,7 @@ CREATE TABLE intents (
   created TEXT NOT NULL
 ) STRICT;
 ${sealed('intents')}
-${noReplace('intents', 'intent_id')}
+${noReplace('intents', 'intent_id', 'execution_id')}
 
 CREATE TABLE intent_events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,6 +51,7 @@ CREATE TABLE intent_events (
   detail TEXT
 ) STRICT;
 ${sealed('intent_events')}
+${noReplace('intent_events', 'seq')}
 
 CREATE TABLE records (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +97,7 @@ CREATE TABLE records (
 ) STRICT;
 CREATE INDEX records_execution ON records(execution_id);
 ${sealed('records')}
-${noReplace('records', 'record_id', 'dedupe_key')}
+${noReplace('records', 'seq', 'record_id', 'dedupe_key', 'revises')}
 
 -- A correction keeps the charge where it was booked: it may bind an unbound
 -- observation, and otherwise stays on the same dispatch. Reassignment moves nothing.

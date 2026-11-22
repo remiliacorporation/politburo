@@ -68,7 +68,7 @@ function aggregate(executions: readonly Execution[], unbound: readonly SpendReco
       for (const tally of buckets) {
         if (r.coverage.field_quality[`tokens.${tally.bucket}`] !== 'not_applicable') tally.unknown_records++
       }
-      amountUnknown++
+      if (r.basis !== 'not_applicable') amountUnknown++
       return
     }
     for (const tally of buckets) {

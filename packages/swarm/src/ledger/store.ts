@@ -160,6 +160,10 @@ export function openLedger(path: string): Ledger {
   function confirm(id: string, fence: string, at: string, which: 'reservation_confirmed' | 'claim_confirmed') {
     validateId(fence, 'fence')
     return change(id, at, view => {
+      // The intent is immutable, so a reservation can only be confirmed if one was bound at creation.
+      if (which === 'reservation_confirmed' && view.intent.reservation_ref === null) {
+        fail('not_ready', 'the intent has no reservation to confirm')
+      }
       if (view.intent.fence !== fence) fail('stale_fence', 'the fence does not match the intent')
       active(view)
       return view[which] ? null : which
@@ -228,12 +232,10 @@ export function openLedger(path: string): Ledger {
           if (!equal(existing.intent, i)) fail('intent_exists', 'the intent id has different content')
           return existing
         }
-        try {
-          insert('intents', i)
-        } catch (error) {
-          if (sqliteCode(error) === 2067) fail('intent_exists', 'the execution already has an intent')
-          throw error
+        if (get('SELECT 1 FROM intents WHERE execution_id=?', i.execution_id)) {
+          fail('intent_exists', 'the execution already has an intent')
         }
+        insert('intents', i)
         return { intent: { ...i }, state: 'pending', reservation_confirmed: false, claim_confirmed: false }
       })
     },

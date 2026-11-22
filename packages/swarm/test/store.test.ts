@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { test, type TestContext } from 'node:test'
-import { ingest, openLedger, rollupLevel, type Intent } from '../src/ledger/index.ts'
+import { correct, ingest, openLedger, rollupLevel, type Intent } from '../src/ledger/index.ts'
 import { dispatch, memory, record, seedHierarchy, time } from './support.ts'
 
 function ledgerPath(t: TestContext): string {
@@ -31,6 +31,8 @@ test('a second connection cannot update, delete or replace ledger history', (t) 
     ingest(ledger, r)
     ledger.beginIntent(i)
     ledger.confirmReservation('intent', 'fence-2', time)
+    correct(ledger, { revises: r.record_id, record_id: 'fix', dedupe_key: 'fix-key', actor: 'auditor',
+      reason: 'late report', received: time, changes: { status: 'failed' } })
   } finally {
     ledger.close()
   }
@@ -61,6 +63,18 @@ test('a second connection cannot update, delete or replace ledger history', (t) 
        99, basis, received, status, coverage_state, field_quality FROM records WHERE record_id = 'original'`)
     assert.throws(() => replaceRecord.run(r.record_id, 'new-key'), refused, 'REPLACE cannot reuse a record id')
     assert.throws(() => replaceRecord.run('new-record', r.dedupe_key), refused, 'REPLACE cannot reuse a dedupe key')
+    assert.throws(() => db.exec(`INSERT OR REPLACE INTO intents
+      SELECT 'other-intent', execution_id, board_id, task_id, claim_epoch, 'rewritten', reservation_ref, created
+      FROM intents WHERE intent_id = 'intent'`), refused, 'REPLACE cannot take an execution\'s intent by its execution id')
+    assert.throws(() => db.exec(`INSERT OR REPLACE INTO intent_events (seq, intent_id, event, at)
+      SELECT seq, intent_id, 'compensated', at FROM intent_events WHERE seq = 1`), refused,
+    'REPLACE cannot rewrite an intent event by its row id')
+    assert.throws(() => db.exec(`INSERT OR REPLACE INTO records
+      (record_id, dedupe_key, revises, actor, reason, execution_id, source, source_version, source_event_key,
+       evidence_ref, output, basis, received, status, coverage_state, field_quality)
+      SELECT 'sneaky', 'sneaky-key', revises, actor, reason, execution_id, source, source_version, source_event_key,
+       evidence_ref, 99, basis, received, status, coverage_state, field_quality FROM records WHERE record_id = 'fix'`),
+    refused, 'REPLACE cannot take a correction\'s place by what it revises')
   } finally {
     db.close()
   }
@@ -113,6 +127,10 @@ test('pending dispatches reject premature, stale, ambiguous and closed changes w
     ledger.beginIntent(j)
     assert.throws(() => ledger.beginIntent(intent('another-intent')), { code: 'intent_exists' },
       'one execution cannot have two intents')
+    ledger.createDispatch(dispatch('unbound'))
+    ledger.beginIntent({ ...intent('no-reservation', 'unbound'), reservation_ref: null })
+    assert.throws(() => ledger.confirmReservation('no-reservation', 'fence-2', time), { code: 'not_ready' },
+      'an intent with no reservation bound at creation cannot confirm one')
     assert.throws(() => ledger.markLaunched(i.intent_id, time), { code: 'not_ready' })
     assert.throws(() => ledger.markAmbiguous(i.intent_id, time), { code: 'not_ready' },
       'an unconfirmed intent cannot be marked ambiguous and reconciled as launched')
