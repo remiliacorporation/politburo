@@ -46,27 +46,27 @@ export const namePool = Object.freeze([
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u
 
 /** Pick the first pool name not in use. Pass the names of everything alive that holds one. */
-export function pickName(inUse: Iterable<string>, pool: readonly string[] = namePool): string {
+export function pickName(inUse: Iterable<string>): string {
   const used = new Set<string>()
   for (const name of inUse) {
     if (typeof name !== 'string') throw new TypeError('each in-use name must be a string')
     if (CONTROL_OR_FORMAT.test(name)) throw new RangeError('in-use names must not contain control or format characters')
     used.add(name)
   }
-  for (const name of pool) {
+  for (const name of namePool) {
     if (!used.has(name)) return name
   }
-  throw new Error(`name pool is exhausted (${pool.length} names)`)
+  throw new Error(`name pool is exhausted (${namePool.length} names)`)
 }
 
 /** A spawner's title: `<TAG> <NAME>`, with the name from the pool. */
-export function spawnerTitle(tag: string, name: string, pool: readonly string[] = namePool): string {
+export function spawnerTitle(tag: string, name: string): string {
   if (typeof tag !== 'string') throw new TypeError('spawner tag must be a string')
   if (CONTROL_OR_FORMAT.test(tag)) throw new RangeError('spawner tag must not contain control or format characters')
   if (!tag || /[\s\p{White_Space}]/u.test(tag)) {
     throw new RangeError('spawner tag must be nonempty and contain no whitespace')
   }
-  if (!pool.includes(name)) {
+  if (!namePool.some((candidate) => candidate === name)) {
     throw new RangeError('spawner name must be in the pool')
   }
   return `${tag} ${name}`

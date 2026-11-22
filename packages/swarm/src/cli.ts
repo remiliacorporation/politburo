@@ -5,7 +5,10 @@ import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { allocMain } from './rollout/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm alloc <serial|name> ...'
+const usage = `usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]
+       swarm alloc serial [--dir DIR] [--json]
+       swarm alloc name <spawner|secretary|species|item> [JOB]
+         --in-use NAME [--in-use NAME ...] [--json] [--party FILE] [--repo FILE]`
 
 class ReadError extends Error {}
 

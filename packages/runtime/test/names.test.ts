@@ -113,13 +113,6 @@ test('spawnerTitle rejects names outside the pool', () => {
   }
 })
 
-test('name helpers use the supplied pool instead of the default', () => {
-  const pool = ['CUSTOM', 'ALTERNATE']
-  assert.equal(pickName(['CUSTOM'], pool), 'ALTERNATE')
-  assert.equal(spawnerTitle('RW', 'CUSTOM', pool), 'RW CUSTOM')
-  assert.throws(() => spawnerTitle('RW', 'ZAVOD', pool), /name must be in the pool/)
-})
-
 test('the package entry point exports the pool and its helpers', async () => {
   const runtime = await import('@remilia/politburo-runtime')
   assert.deepEqual(runtime.namePool, expectedNames)

@@ -35,7 +35,7 @@ export function allocMain(args: string[]): number {
       options: {
         json: { type: 'boolean' },
         dir: { type: 'string' },
-        'in-use': { type: 'string' },
+        'in-use': { type: 'string', multiple: true },
         party: { type: 'string' },
         repo: { type: 'string' },
       } as const,
@@ -66,9 +66,15 @@ export function allocMain(args: string[]): number {
         return fail(numbered ? `${kind} requires one job` : `${kind} takes no job`, 2)
       }
       const input = values['in-use']
-      if (input === undefined) return fail('name requires --in-use (use an empty string for no names)', 2)
-      const used = input === '' ? [] : input.split(',')
+      if (input === undefined) return fail('name requires --in-use (repeat for each name; use an empty string for no names)', 2)
+      const used = input.length === 1 && input[0] === '' ? [] : input
       const config = loadConfig({ party: readLayer(values.party), repo: readLayer(values.repo) })
+      const { spawners, secretaries, mob_species: mob, sprite_items: items } = config.names
+      const pools = [spawners, secretaries, mob.boss, ...Object.values(mob.passive),
+        ...Object.values(mob.neutral), ...Object.values(mob.hostile), ...Object.values(items)] as string[][]
+      const invalid = (name: string) => /[\p{Cc}\p{Cf}\s\p{White_Space},]/u.test(name)
+      if (used.some((name) => !name || invalid(name))) return fail('invalid --in-use name', 1)
+      if (pools.some((pool) => pool.some(invalid))) return fail('invalid configured pool name', 1)
       const name = kind === 'spawner' ? allocateSpawnerName(config, used)
         : kind === 'secretary' ? allocateSecretaryName(config, used)
         : kind === 'species' ? allocateMobSpecies(config, job!, used)

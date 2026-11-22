@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -27,7 +27,7 @@ function run(args: string[], env?: NodeJS.ProcessEnv) {
   return node(['src/cli.ts', 'alloc', ...args], env)
 }
 
-function atClaimTwo(dir: string, fault: 'race' | 'kill') {
+function patchedSerial(dir: string, fault: string) {
   return node(['--input-type=module', '-e', `
     import { spawnSync } from 'node:child_process'
     import fs from 'node:fs'
@@ -35,23 +35,53 @@ function atClaimTwo(dir: string, fault: 'race' | 'kill') {
     import { join } from 'node:path'
     const [dir, fault] = process.argv.slice(1)
     const claim = join(dir, 'serials', '2')
+    const counter = join(dir, 'mob-serial.txt')
     const write = fs.writeFileSync
-    // Keep the real filesystem and inject the fault at the claim write boundary.
-    fs.writeFileSync = (path, ...args) => {
-      if (path === claim && fault === 'race') {
-        const other = spawnSync(process.execPath, ['src/cli.ts', 'alloc', 'serial', '--dir', dir], {
-          encoding: 'utf8', timeout: 3000,
-        })
-        if (other.error) throw other.error
-        if (other.status !== 0) throw new Error(other.stderr || 'competing allocator failed')
-        process.stdout.write(other.stdout)
+    const rename = fs.renameSync
+    let failure
+    function compete(expected) {
+      const other = spawnSync(process.execPath, ['src/cli.ts', 'alloc', 'serial', '--dir', dir], {
+        encoding: 'utf8', timeout: 4500,
+      })
+      if (other.status !== 0 || other.stdout !== expected) {
+        failure = other.error || new Error(other.stderr || 'competing allocator did not claim ' + expected)
+        throw failure
       }
+      return other.stdout
+    }
+    // Keep the real filesystem; inject faults at the write and publish boundaries.
+    fs.writeFileSync = (path, ...args) => {
+      if (path === claim && fault === 'race') process.stdout.write(compete('2\\n'))
       write(path, ...args)
       if (path === claim && fault === 'kill') process.kill(process.pid, 'SIGKILL')
+      if ((path === claim && fault === 'malformed') ||
+          (path.includes('.mob-serial-') && fault === 'late-malformed')) write(counter, 'broken')
+    }
+    fs.renameSync = (from, to) => {
+      if (to === counter && fault === 'rename-fails') throw new Error('injected rename failure')
+      if (to === counter && fault === 'kill-holder') process.kill(process.pid, 'SIGKILL')
+      if (to === counter && fault === 'publish' && fs.readFileSync(from, 'utf8') === '2\\n') {
+        compete('3\\n')
+        const before = Number(fs.readFileSync(counter, 'utf8'))
+        rename(from, to)
+        // Check the published version before the first writer can repair it.
+        if (Number(fs.readFileSync(counter, 'utf8')) < before) failure = new Error('mirror went backwards')
+        return
+      }
+      rename(from, to)
+    }
+    if (fault === 'recover') {
+      let spins = 0
+      Atomics.wait = () => {
+        if (++spins > 1) throw new Error('dead owner delayed the mirror beyond one spin')
+      }
     }
     syncBuiltinESMExports()
     const { allocateSerial } = await import('./src/index.ts')
-    console.log(allocateSerial(dir))
+    const serial = allocateSerial(dir)
+    // Don't let the best-effort mirror catch hide a test failure.
+    if (failure) throw failure
+    console.log(serial)
   `, dir, fault])
 }
 
@@ -84,7 +114,7 @@ test('SIGKILL after a claim does not block the next writer or let it reuse the c
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const counter = join(dir, 'mob-serial.txt')
-  const child = atClaimTwo(dir, 'kill')
+  const child = patchedSerial(dir, 'kill')
   assert.equal(child.signal, 'SIGKILL', child.stderr || 'did not reach the post-claim crash point')
   assert.equal(readFileSync(counter, 'utf8'), '1\n')
   const survivor = run(['serial', '--dir', dir])
@@ -96,7 +126,7 @@ test('SIGKILL after a claim does not block the next writer or let it reuse the c
 test('two writers that choose the same serial cannot both return it', (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
-  const result = atClaimTwo(dir, 'race')
+  const result = patchedSerial(dir, 'race')
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, '2\n3\n')
 })
@@ -125,10 +155,61 @@ test('a malformed live counter is overwritten or issues a claim', (t) => {
   assert.ok(stderr.includes(counter))
   assert.equal(stdout, '')
   assert.equal(readFileSync(counter, 'utf8'), 'abc')
+  assert.deepEqual(readdirSync(dir), ['mob-serial.txt'])
   writeFileSync(counter, '0\n')
   const repaired = run(['serial', '--dir', dir])
   assert.equal(repaired.status, 0, repaired.stderr)
   assert.equal(repaired.stdout, '1\n')
+})
+
+test('out-of-order publish lowers the mirror before repair', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const result = patchedSerial(dir, 'publish')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '2\n')
+  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '3\n')
+})
+
+test('a dead mirror lock owner delays allocation beyond one spin', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  assert.equal(patchedSerial(dir, 'kill-holder').signal, 'SIGKILL')
+  const result = patchedSerial(dir, 'recover')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '3\n')
+  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '3\n')
+})
+
+for (const [fault, expected] of [['malformed', 'broken'], ['late-malformed', 'broken'], ['rename-fails', '1\n']] as const) {
+  test(`a ${fault} mirror fault loses the claimed serial or alters the counter`, (t) => {
+    const dir = tempDir(t)
+    assert.equal(allocateSerial(dir), 1)
+    const result = patchedSerial(dir, fault)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, '2\n')
+    assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), expected)
+  })
+}
+
+for (const name of ['serials', 'mob-serial.txt']) {
+  test(`unsafe ${name} path is accepted or written through`, (t) => {
+    const dir = tempDir(t)
+    const target = tempDir(t)
+    const path = join(dir, name)
+    symlinkSync(name === 'serials' ? target : join(target, name), path)
+    assert.throws(() => allocateSerial(dir), (error: Error) => error.message.includes(path))
+    assert.deepEqual(readdirSync(dir), [name])
+    assert.deepEqual(readdirSync(target), [])
+  })
+}
+
+test('stray claim names inflate the next serial or wedge allocation', (t) => {
+  const dir = tempDir(t)
+  const claims = join(dir, 'serials')
+  mkdirSync(claims)
+  for (const name of ['3', '0007', '1e3', '99999999999999999999', 'tmp-9']) writeFileSync(join(claims, name), '')
+  assert.equal(allocateSerial(dir), 4)
 })
 
 test('an out-of-band counter advance is ignored by the next allocation', (t) => {
@@ -163,19 +244,32 @@ test('spawner or secretary allocation ignores the first free configured name', (
   assert.equal(allocateSecretaryName(config, new Set(['Peggy', 'Dawn'])), 'Joan')
 })
 
-test('name CLI ignores a party pool replacement or repo override', (t) => {
+test('name CLI ignores repeated --in-use flags or configured pool overrides', (t) => {
   const dir = tempDir(t)
   const party = join(dir, 'party.yaml')
   const repo = join(dir, 'repo.json')
-  writeFileSync(party, 'names:\n  spawners: [CUSTOM, ALTERNATE, ZAVOD]\n')
+  writeFileSync(party, 'names:\n  spawners: [CUSTOM, ZAVOD, ALTERNATE]\n')
   writeFileSync(repo, JSON.stringify({ names: { spawners: ['REPO'] } }))
-  const args = ['name', 'spawner', '--in-use', 'CUSTOM,ZAVOD', '--party', party]
+  const args = ['name', 'spawner', '--in-use', 'CUSTOM', '--in-use', 'ZAVOD', '--party', party]
   const plain = run(args)
   assert.equal(plain.status, 0, plain.stderr)
   assert.equal(plain.stdout, 'ALTERNATE\n')
   const json = run([...args, '--repo', repo, '--json'])
   assert.equal(json.status, 0, json.stderr)
   assert.deepEqual(JSON.parse(json.stdout), { name: 'REPO' })
+})
+
+test('name CLI prints output or succeeds with unsafe pool or --in-use names', (t) => {
+  const party = join(tempDir(t), 'party.json')
+  for (const bad of ['A\u001bB', 'A\u202eB', 'A\u00a0B', 'A,B']) {
+    writeFileSync(party, JSON.stringify({ names: { spawners: ['SAFE', bad] } }))
+    for (const flags of [['--in-use', bad], ['--in-use', '', '--party', party]]) {
+      const result = run(['name', 'spawner', ...flags])
+      assert.equal(result.status, 1, JSON.stringify({ bad, flags, ...result }))
+      assert.match(result.stderr, /^error: [^\n]+\n$/)
+      assert.equal(result.stdout, '')
+    }
+  }
 })
 
 test('an exhausted spawner or secretary pool returns a name or hides which pool ran out', () => {
