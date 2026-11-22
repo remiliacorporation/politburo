@@ -244,18 +244,11 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         <dd>{nameOf(state, task.owner)}</dd>
         <dt>priority</dt>
         <dd>{task.priority}</dd>
-        {task.claim?.binding && (
-          <>
-            <dt>base commit</dt>
-            <dd><Sha value={task.claim.binding.baseCommit} /></dd>
-          </>
-        )}
-        {task.handoff && (
-          <>
-            <dt>handoff commit</dt>
-            <dd><Sha value={task.handoff.commit} /></dd>
-          </>
-        )}
+        {/* Keep these rows in place when a live claim or handoff adds a commit above the feed. */}
+        <dt>base commit</dt>
+        <dd>{task.claim?.binding ? <Sha value={task.claim.binding.baseCommit} /> : '—'}</dd>
+        <dt>handoff commit</dt>
+        <dd>{task.handoff ? <Sha value={task.handoff.commit} /> : '—'}</dd>
         {task.for && (
           <>
             <dt>for</dt>

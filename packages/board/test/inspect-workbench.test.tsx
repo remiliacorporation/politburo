@@ -155,6 +155,57 @@ it('shows a short head label with the full commit on hover', async () => {
   })
 })
 
+it('shows a grouped message time relatively with its local timestamp on hover', async () => {
+  const { client, open } = await workbench()
+  await client.post('work', 'First update')
+  const grouped = await client.post('work', 'Second update')
+  vi.setSystemTime(Date.parse(grouped.createdAt) + 75_000)
+  await open('/c/work')
+  const row = await vi.waitFor(() => {
+    const message = [...document.querySelectorAll('main .message')].find((el) => el.textContent?.includes('Second update'))
+    expect(message).toBeDefined()
+    return message!
+  })
+  row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+  await vi.waitFor(() => {
+    const time = row.querySelector('.gutter time')
+    expect(time?.textContent).toBe('1m ago')
+    expect(time?.getAttribute('datetime')).toBe(grouped.createdAt)
+    expect(time?.getAttribute('title')).toBe(new Date(grouped.createdAt).toLocaleString())
+  })
+})
+
+it('fills reserved task-card commit facts with short hashes on a live handoff', async () => {
+  const { client, open } = await workbench()
+  const baseCommit = 'abcdef0123456789abcd'.repeat(2)
+  const handoffCommit = 'fedcba9876543210fedc'.repeat(2)
+  const actor = { principal: 'vercel:user:u_reader', actor: 'vercel:user:u_reader' }
+  const { task } = await client.tasks.create('work', 'Review the packet')
+  const claim = await client.tasks.claim(task.id, { binding: {
+    controller: actor, owner: actor, provider: 'fixture', model: 'fixture', session: 'review',
+    branch: 'work/review', worktree: '/fixture/review', baseCommit,
+  } })
+  await client.reply(task.id, 'Reply to keep in view')
+  await open(`/?thread=${task.id}`)
+  const facts = () => [...document.querySelectorAll('.pane .task-card dt')]
+  const fact = (label: string) => facts().find((el) => el.textContent === label)?.nextElementSibling
+  const expectCommit = (label: string, hash: string, short: string) => {
+    const row = fact(label)
+    expect(row?.textContent, label).toBe(short)
+    expect(row?.querySelector(`[title="${hash}"]`)?.textContent).toBe(short)
+  }
+  const before = await vi.waitFor(() => {
+    expect(document.querySelector('.pane .feed')?.textContent).toContain('Reply to keep in view')
+    expectCommit('base commit', baseCommit, 'abcdef0')
+    return facts().map((el) => el.textContent)
+  })
+  await claim.handoff({ commit: handoffCommit, packetPath: 'handoffs/review.md', sha256: 'd'.repeat(64) })
+  await vi.waitFor(() => {
+    expectCommit('handoff commit', handoffCommit, 'fedcba9')
+    expect(facts().map((el) => el.textContent)).toEqual(before)
+  })
+})
+
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {
   const { api, as, open } = await workbench()
   const { task } = await api.tasks.create('work', { text: 'Review the release' })
@@ -895,6 +946,18 @@ async function hold(client: ReturnType<typeof createBoardClient>, text: string, 
   const { attention } = await client.tasks.ask(task.id, request)
   return { id: task.id, attention, request }
 }
+
+it('shows the attention deadline relatively with its local timestamp on hover', async () => {
+  const { client, open } = await workbench({ attentionResponders: responders })
+  const { id, attention: { expiresAt } } = await hold(client, 'Draft for review', 'Ship the draft?')
+  vi.setSystemTime(Date.parse(expiresAt) - 45_000)
+  await open('/attention')
+  await vi.waitFor(() => {
+    const time = decision(id)?.querySelector(`time[datetime="${expiresAt}"]`)
+    expect(time?.textContent).toBe('45s left')
+    expect(time?.getAttribute('title')).toBe(new Date(expiresAt).toLocaleString())
+  })
+})
 
 function press(target: HTMLElement, key: string) {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })

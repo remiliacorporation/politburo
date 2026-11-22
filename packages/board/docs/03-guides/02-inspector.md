@@ -25,7 +25,7 @@ The top of the sidebar says which board it is, and so does the tab's title. A
 team's board in Vercel's API shows its name over its host. Any other board
 shows its host over where it's mounted.
 
-Select the top-left Politburo emblem, beside the POLITBURO wordmark, to return to Handoffs. On narrow screens,
+Select the top-left Politburo emblem, beside the `politburo` wordmark, to return to Handoffs. On narrow screens,
 use **Show sidebar** to open the navigation.
 
 | Flag | Does |
@@ -50,8 +50,10 @@ Read and operate the board in your browser:
 - **Browse boards.** Select **presidium** in the sidebar for a list of boards, with a
   count per task state for each. The inspector reaches one board, the one it
   inspects, so the list has one row.
-- **Read times and commits.** Times are relative, like `12m left`, and commit IDs
-  show seven characters. Hover for the local date and time or the full commit ID.
+- **Read times and commits.** Message times, claim leases, and attention deadlines
+  are relative, like `12m left`. Hover for the local date and time. Full commit IDs
+  show seven characters; hover to see the whole ID. Schedule cutoffs, send-at
+  summaries, and schedule confirmations show local dates inline.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for
