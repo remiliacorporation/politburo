@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from
 import { keyAction, selectionAfter, type Selection } from './attention-keys.ts'
 import * as board from './board.ts'
 import { Ago, here, Link, RelativeTime, useTypeToFocus } from './nav.tsx'
-import { Sha } from './sha.tsx'
 import { attentionFor, attentionRows, NO_ATTENTION } from './attention-store.ts'
 import type { State, TaskRoot, Viewer } from './store.ts'
 import { Header } from './ui.tsx'
@@ -99,10 +98,8 @@ function AttentionRow({ root, state, viewer, now, selected, onSelect }: { root: 
             ))}
           </ol>
           <p className="attention-meta">
-            <span>commit <Sha value={attention.commit} /></span>
-            <span>{expired ? 'expiry was' : 'expires ·'}{' '}
-              <RelativeTime iso={attention.expiresAt}>{expired ? `${ago(attention.expiresAt, now)} ago` : left(attention.expiresAt, now)}</RelativeTime>
-            </span>
+            {expired ? 'expired' : 'expires ·'}{' '}
+            <RelativeTime iso={attention.expiresAt}>{expired ? `${ago(attention.expiresAt, now)} ago` : left(attention.expiresAt, now)}</RelativeTime>
           </p>
         </>
       )}

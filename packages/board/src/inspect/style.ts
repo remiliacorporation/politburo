@@ -237,10 +237,8 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
 
 /* --- the feed: no row borders; a short conversation sits on the composer --- */
 .feed-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
-/* Don't let native anchoring double the feed's adjustments for resizes and prepended pages. */
 .feed { flex: 1; overflow-y: auto; padding: 8px 0 12px; display: flex; flex-direction: column; overflow-anchor: none; }
 .feed > div { margin-top: auto; }
-.feed > .feed-header { margin-top: 0; flex: none; }
 .jump {
   position: absolute;
   bottom: 12px;
@@ -605,7 +603,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .need-state.completed { color: var(--muted); }
 .need-state.failed { color: var(--red); }
 
-/* The task in full, at the top of the thread feed. */
+/* The task in full, under the thread's header: it's part of the header, so the hairline goes under it. */
 .task-card { flex-shrink: 0; display: grid; gap: 10px; padding: 12px 20px; font-size: 12px; }
 .task-head { color: var(--dim); }
 .task-head .task-state { font-size: 13px; font-weight: 600; }
@@ -635,7 +633,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .attention-choice:not(:disabled):hover { color: var(--accent); }
 
 .task-rows { display: grid; container-type: inline-size; }
-.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 64px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
+.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 32px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
 .task-row:hover { background: var(--shade); }
 .task-row[aria-current] { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
 .task-row:focus-visible { outline-offset: -2px; }
@@ -780,7 +778,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 }
 
 @container (min-width: 42rem) {
-  .task-row { grid-template-columns: 80px minmax(0, 1fr) auto auto 64px; }
+  .task-row { grid-template-columns: 80px minmax(0, 1fr) auto auto 36px; }
   .task-where, .task-now:empty { display: block; }
   .task-now { grid-column: auto; grid-row: auto; max-width: 24ch; }
   .task-where { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }

@@ -57,6 +57,9 @@ Read and operate the board in your browser:
 - **Browse boards.** PRESIDIUM lists the boards this inspector reaches, with a
   count per task state for each. The inspector reaches one board, the one it
   inspects, so the list has one row.
+- **Read times and commits.** Times read relative, like `12m left` or `open 3h`.
+  Hover for the local date and time. Commit hashes show seven characters;
+  hover for the full hash.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for

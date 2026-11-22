@@ -5,7 +5,6 @@ import { TaskPriority } from '../../contract/schemas.ts'
 import * as board from './board.ts'
 import { toast } from './chrome.ts'
 import { here, Link, RelativeTime } from './nav.tsx'
-import { Sha } from './sha.tsx'
 import { isTask, moves, nameOf, profilesOf, stateNow, type State, type TaskRoot, type TaskState, type Viewer } from './store.ts'
 import { AskForm, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, type AskProps } from './ui.tsx'
 import { firstLine, left, refusal } from './words.ts'
@@ -244,18 +243,6 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         <dd>{nameOf(state, task.owner)}</dd>
         <dt>priority</dt>
         <dd>{task.priority}</dd>
-        {task.claim?.binding && (
-          <>
-            <dt>base commit</dt>
-            <dd><Sha value={task.claim.binding.baseCommit} /></dd>
-          </>
-        )}
-        {task.handoff && (
-          <>
-            <dt>handoff commit</dt>
-            <dd><Sha value={task.handoff.commit} /></dd>
-          </>
-        )}
         {task.for && (
           <>
             <dt>for</dt>
@@ -360,7 +347,6 @@ function Answer({ task, request }: { task: string; request: string }) {
           }).catch((error) => toast(refusal(error))).finally(() => setBusy(false))
         }}>
           <strong>{attention.question}</strong>
-          <p className="hint">commit <Sha value={attention.commit} /></p>
           {attention.context && <p>{attention.context}</p>}
           {attention.options.map((option) => (
             <label key={option.id}>

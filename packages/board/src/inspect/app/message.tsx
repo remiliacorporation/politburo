@@ -377,7 +377,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
       >
         <div className="gutter">
           {continued ? (
-            <span {...nativeMenu}>{active && <Ago iso={m.createdAt} className="gutter-time" />}</span>
+            <span {...nativeMenu}><Ago iso={m.createdAt} now={options.now} className="gutter-time" /></span>
           ) : (
             <span className="avatar-wrap">
               <Avatar name={name} />

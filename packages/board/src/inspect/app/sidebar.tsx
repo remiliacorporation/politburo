@@ -61,7 +61,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
       <div className="brand">
         <HomeEmblem onNavigate={onHome} />
         <Link to="/" className="wordmark" title={where.at ? `${where.name} · ${where.at}` : where.name} onNavigate={onHome}>
-          politburo
+          POLITBURO
         </Link>
         <button type="button" className="tool" title="Hide sidebar" aria-label="Hide sidebar" onClick={onCollapse}>
           <PanelLeftClose size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -75,11 +75,11 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
         </Link>
         <Link to="/presidium" className="item" current={current.view === 'presidium'}>
           <LayoutGrid size={14} aria-hidden="true" />
-          <span>presidium</span>
+          <span>Presidium</span>
         </Link>
         <Link to="/handoffs" className="item" current={current.view === 'handoffs'}>
           <House size={14} aria-hidden="true" />
-          <span>handoffs</span>
+          <span>Handoffs</span>
         </Link>
         <Link to="/tasks" className="item" current={current.view === 'tasks'}>
           <ClipboardList size={14} aria-hidden="true" />

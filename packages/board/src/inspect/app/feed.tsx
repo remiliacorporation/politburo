@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useToasts } from './chrome.ts'
 
 // --- the scrolling list --------------------------------------------------------------
@@ -14,14 +14,10 @@ export function Feed(props: {
   /** The last thing shown, as a key: when it changes, something new came in below. */
   last: string
   older?: () => Promise<boolean>
-  /** Thread facts scroll with the messages but stay at the top of a short feed. */
-  header?: ReactNode
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const header = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
-  const hasHeader = props.header != null
   const pinned = useRef(true)
   const restore = useRef<{ height: number; top: number } | null>(null)
   const loading = useRef(false)
@@ -55,27 +51,16 @@ export function Feed(props: {
     lastSeen.current = props.last
   }, [props.first, props.last])
 
-  // Task facts, reactions, edits, and images can resize without changing the list.
-  useLayoutEffect(() => {
-    const el = ref.current!
-    const facts = header.current
-    const measure = () => facts?.getBoundingClientRect().height ?? 0
-    let height = measure()
+  // Reactions, edits, and images change heights without changing the list.
+  useEffect(() => {
     const observer = new ResizeObserver(() => {
-      const next = measure()
-      const delta = next - height
-      height = next
-      if (restore.current) return
-      if (pinned.current) el.scrollTop = el.scrollHeight
-      // Keep the replies at the same offset, even at scrollTop 0. A thread that
-      // fits in the viewport has no scroll range and nothing to anchor.
-      else if (delta && el.scrollHeight > el.clientHeight) el.scrollTop += delta
+      if (pinned.current && !restore.current) ref.current!.scrollTop = ref.current!.scrollHeight
     })
     observer.observe(content.current!)
-    if (facts) observer.observe(facts, { box: 'border-box' })
-    observer.observe(el)
+    // And the list itself: what sits above a thread comes and goes.
+    observer.observe(ref.current!)
     return () => observer.disconnect()
-  }, [hasHeader])
+  }, [])
 
   return (
     <div className="feed-wrap">
@@ -84,9 +69,7 @@ export function Feed(props: {
         ref={ref}
         onScroll={() => {
           const el = ref.current!
-          const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
-          // A thread reader who scrolled up even a little is no longer pinned.
-          pinned.current = hasHeader ? remaining <= 1 : remaining < 48
+          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
           el.toggleAttribute('data-pinned', pinned.current)
           if (pinned.current) setBehind(false)
           if (el.scrollTop < 240 && props.older && !loading.current && !done.current) {
@@ -104,7 +87,6 @@ export function Feed(props: {
           }
         }}
       >
-        {hasHeader && <div className="feed-header" ref={header}>{props.header}</div>}
         <div ref={content}>{props.children}</div>
       </div>
       {behind && (
