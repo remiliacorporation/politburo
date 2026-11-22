@@ -241,6 +241,13 @@ that is harmless. A client that wrote a blob and never posted leaves the same
 orphan. This order is a property of today's write path, not of the backup
 script: re-check it if the write path changes.
 
+Two limits of the script. Do not start or stop a board while its backup runs:
+a read-only open can still create an empty `-wal` file beside the database if
+the board shuts down between the script's checks and its open. The backup then
+fails without publishing; SQLite should reuse or discard the empty file, which
+is unverified on macOS. And an upload in flight is copied wherever it is. Such
+a partial blob is not in the snapshot's messages, so nothing references it.
+
 A backup contains database snapshots, attachments, and the manifest, not
 `.lock`, live WAL sidecars, env files, or separate access configuration. It is
 not a coordinated snapshot across boards or services. Relay, ledger, secretary,
@@ -284,6 +291,8 @@ board data needs `--replace`, which moves the old directory aside, never deletes
 
 - [ ] **[host: not run]** Pick the newest published backup. Restore it into an
   absent second dir under a private scratch parent writable by the drill user.
+  Backup directories are `0700` and owned by the board user: run the drill as
+  that user, or as root and then hand the tree to the drill user.
 
   ```bash
   /opt/politburo/bin/node /opt/politburo/current/tools/host/board-restore.mjs --backup '{{BACKUP_DIR}}' --dir '{{DRILL_DIR}}'
@@ -327,7 +336,9 @@ board data needs `--replace`, which moves the old directory aside, never deletes
 2. **[host: not run]** Restore with `--replace`, as root, because the target's
    parent is root-owned. The restored files then belong to root: hand the tree
    to the board user (next block) before starting the board. The old directory
-   is kept beside it as `.replaced-...`; it stays root-owned and private.
+   is kept beside it as `.replaced-...`. Renaming does not change owner, so it
+   stays owned by the board user; tighten it with `chown` if the old data
+   should be out of that account's reach.
 
    ```bash
    sudo /opt/politburo/bin/node /opt/politburo/current/tools/host/board-restore.mjs --backup '{{BACKUP_DIR}}' --dir '/var/lib/politburo/board-{{BOARD_ID}}' --replace
@@ -375,7 +386,9 @@ installer on the Mac Studio. Confirm the service user names, name the FileVault
 unlock owner and recovery procedure, and pick the encrypted off-machine and
 offline backup targets.
 
-This repo supplies tools and templates only. CI starts no host service. This
+This repo supplies tools and templates only. CI starts no host service. The
+backup tests start disposable loopback boards as test fixtures, like the
+existing CLI end-to-end tests; they install and load nothing. This
 work does not install anything or perform a cutover.
 
 ## Acceptance on the Mac Studio

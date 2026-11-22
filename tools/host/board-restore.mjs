@@ -67,7 +67,7 @@ async function verifyBackup(backup) {
     await integrityCheck(join(files, entry.path), entry.path)
   }
   if (databases.size) throw new Error('backup contains a database not listed in the manifest')
-  return manifest.files
+  return { files: manifest.files, databases: new Set(manifest.databases.map((entry) => entry.path)) }
 }
 
 async function lockTarget(dir, replace, expected) {
@@ -103,7 +103,7 @@ async function lockTarget(dir, replace, expected) {
 
 async function restore({ backup, dir, replace }) {
   backup = await realpath(backup)
-  const files = await verifyBackup(backup)
+  const { files, databases } = await verifyBackup(backup)
   const requested = resolve(dir)
   const target = join(await intendedPath(dirname(requested)), basename(requested))
   if (contains(target, backup) || contains(backup, target)) {
@@ -122,6 +122,8 @@ async function restore({ backup, dir, replace }) {
       await mkdir(dirname(to), { recursive: true })
       await privateCopy(await regularFile(join(backup, 'files'), entry.path), to)
       await verifyFile(to, entry)
+      // Check the bytes that will be installed, not the backup's copy, which can change.
+      if (databases.has(entry.path)) await integrityCheck(to, entry.path)
     }
     const info = await statIfPresent(target)
     if (info) {

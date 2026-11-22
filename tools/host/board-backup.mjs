@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
-  chmod, copyFile, lstat, mkdir, open, readdir, realpath, rename, rm, writeFile,
+  chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile,
 } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -129,15 +129,29 @@ async function* manifestFiles(dir, prefix = '') {
   }
 }
 
-async function prune(out, keep, source) {
+const BACKUP_NAME = /^backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z$/
+
+async function publishedBackup(dir) {
+  try {
+    const manifest = JSON.parse(await readFile(join(dir, 'MANIFEST.json'), 'utf8'))
+    return manifest?.version === 1 && Array.isArray(manifest.files) && Array.isArray(manifest.databases)
+  } catch {
+    return false
+  }
+}
+
+// Only directories this script published (its timestamped name and a version 1
+// manifest) are candidates, and the backup just written is never one of them.
+async function prune(out, keep, source, current) {
   const backups = []
   for (const entry of await readdir(out, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith('backup-')) continue
+    if (!entry.isDirectory() || !BACKUP_NAME.test(entry.name)) continue
     const dir = join(out, entry.name)
-    if (contains(dir, source)) continue
-    if ((await statIfPresent(join(dir, 'MANIFEST.json')))?.isFile()) backups.push(entry.name)
+    if (dir === current || contains(dir, source)) continue
+    if (await publishedBackup(dir)) backups.push(entry.name)
   }
-  for (const older of backups.sort().reverse().slice(keep)) {
+  // The newest `keep` includes the one just written, so keep one fewer older one.
+  for (const older of backups.sort().reverse().slice(keep - 1)) {
     await rm(join(out, older), { recursive: true })
   }
 }
@@ -185,7 +199,7 @@ async function makeBackup(dir, out, keep) {
     throw error
   }
   console.log(`backup  ${complete}\ndatabases  ${databases.size}  files  ${files.length}`)
-  if (keep !== undefined) await prune(out, keep, source)
+  if (keep !== undefined) await prune(out, keep, source, complete)
 }
 
 export async function runCli(options, required, run) {
