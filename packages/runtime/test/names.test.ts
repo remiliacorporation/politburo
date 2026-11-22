@@ -113,7 +113,7 @@ test('spawnerTitle rejects names outside the pool', () => {
   }
 })
 
-test('name helpers ignore a supplied custom pool', () => {
+test('name helpers use the supplied pool instead of the default', () => {
   const pool = ['CUSTOM', 'ALTERNATE']
   assert.equal(pickName(['CUSTOM'], pool), 'ALTERNATE')
   assert.equal(spawnerTitle('RW', 'CUSTOM', pool), 'RW CUSTOM')

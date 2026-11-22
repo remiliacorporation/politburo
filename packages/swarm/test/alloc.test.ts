@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, watch, writeFileSync } from 'node:fs'
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -17,12 +17,42 @@ function tempDir(t: TestContext) {
   return dir
 }
 
-function run(args: string[], env?: NodeJS.ProcessEnv) {
-  const result = spawnSync(process.execPath, ['src/cli.ts', 'alloc', ...args], {
-    cwd, encoding: 'utf8', timeout: 5000, env,
-  })
+function node(args: string[], env?: NodeJS.ProcessEnv) {
+  const result = spawnSync(process.execPath, args, { cwd, encoding: 'utf8', timeout: 5000, env })
   if (result.error) throw result.error
   return result
+}
+
+function run(args: string[], env?: NodeJS.ProcessEnv) {
+  return node(['src/cli.ts', 'alloc', ...args], env)
+}
+
+function atClaimTwo(dir: string, fault: 'race' | 'kill') {
+  return node(['--input-type=module', '-e', `
+    import { spawnSync } from 'node:child_process'
+    import fs from 'node:fs'
+    import { syncBuiltinESMExports } from 'node:module'
+    import { join } from 'node:path'
+    const [dir, fault] = process.argv.slice(1)
+    const claim = join(dir, 'serials', '2')
+    const write = fs.writeFileSync
+    // Keep the real filesystem and inject the fault at the claim write boundary.
+    fs.writeFileSync = (path, ...args) => {
+      if (path === claim && fault === 'race') {
+        const other = spawnSync(process.execPath, ['src/cli.ts', 'alloc', 'serial', '--dir', dir], {
+          encoding: 'utf8', timeout: 3000,
+        })
+        if (other.error) throw other.error
+        if (other.status !== 0) throw new Error(other.stderr || 'competing allocator failed')
+        process.stdout.write(other.stdout)
+      }
+      write(path, ...args)
+      if (path === claim && fault === 'kill') process.kill(process.pid, 'SIGKILL')
+    }
+    syncBuiltinESMExports()
+    const { allocateSerial } = await import('./src/index.ts')
+    console.log(allocateSerial(dir))
+  `, dir, fault])
 }
 
 async function collect(child: ChildProcess) {
@@ -50,42 +80,38 @@ test('concurrent CLI allocations duplicate or skip serials or leave the live cou
   assert.equal(readFileSync(counter, 'utf8'), '4300\n')
 })
 
-test('SIGKILL during allocation blocks the next writer or lets it reuse a claim', async (t) => {
+test('SIGKILL after a claim does not block the next writer or let it reuse the claim', (t) => {
   const dir = tempDir(t)
-  const claims = join(dir, 'serials')
-  let last = allocateSerial(dir)
-  assert.equal(last, 1)
-  const returned = new Set([last])
-  for (let i = 0; i < 3; i++) {
-    // Kill a busy allocator as soon as we observe it creating a claim. The next
-    // writer continues against the very same files, without any cleanup.
-    let interrupted = false
-    const watcher = watch(claims, (event, name) => {
-      if (event === 'rename' && name === String(last + 1)) interrupted = child.kill('SIGKILL') || interrupted
-    })
-    const child = spawn(process.execPath, ['--input-type=module', '-e', `
-      import { writeSync } from 'node:fs'
-      import { allocateSerial } from './src/rollout/serial.ts'
-      for (;;) writeSync(1, allocateSerial(process.argv[1]) + '\\n')
-    `, dir], { cwd, timeout: 5000, killSignal: 'SIGKILL' })
-    try {
-      const { signal, stdout, stderr } = await collect(child)
-      assert.equal(signal, 'SIGKILL', stderr)
-      assert.ok(interrupted, 'did not observe a claim before killing the allocator')
-      for (const line of stdout.trim().split('\n').filter(Boolean)) {
-        assert.ok(!returned.has(Number(line)), `reused ${line}`)
-        returned.add(Number(line))
-      }
-    } finally {
-      watcher.close()
-    }
-    const highest = Math.max(...readdirSync(claims).map(Number))
-    const survivor = run(['serial', '--dir', dir])
-    assert.equal(survivor.status, 0, survivor.stderr)
-    last = highest + 1
-    assert.equal(survivor.stdout, `${last}\n`)
-    assert.ok(!returned.has(last), `reused ${last}`)
-    returned.add(last)
+  assert.equal(allocateSerial(dir), 1)
+  const counter = join(dir, 'mob-serial.txt')
+  const child = atClaimTwo(dir, 'kill')
+  assert.equal(child.signal, 'SIGKILL', child.stderr || 'did not reach the post-claim crash point')
+  assert.equal(readFileSync(counter, 'utf8'), '1\n')
+  const survivor = run(['serial', '--dir', dir])
+  assert.equal(survivor.status, 0, survivor.stderr)
+  assert.equal(survivor.stdout, '3\n')
+  assert.equal(readFileSync(counter, 'utf8'), '3\n')
+})
+
+test('two writers that choose the same serial cannot both return it', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const result = atClaimTwo(dir, 'race')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '2\n3\n')
+})
+
+test('a counter reader opened before allocation sees a whole, unchanged version', (t) => {
+  const dir = tempDir(t)
+  const counter = join(dir, 'mob-serial.txt')
+  writeFileSync(counter, '999\n')
+  const reader = openSync(counter, 'r')
+  try {
+    assert.equal(allocateSerial(dir), 1000)
+    assert.equal(readFileSync(reader, 'utf8'), '999\n')
+    assert.equal(readFileSync(counter, 'utf8'), '1000\n')
+  } finally {
+    closeSync(reader)
   }
 })
 
@@ -98,8 +124,11 @@ test('a malformed live counter is overwritten or issues a claim', (t) => {
   assert.match(stderr, /^error: /)
   assert.ok(stderr.includes(counter))
   assert.equal(stdout, '')
-  assert.deepEqual(readdirSync(join(dir, 'serials')), [])
   assert.equal(readFileSync(counter, 'utf8'), 'abc')
+  writeFileSync(counter, '0\n')
+  const repaired = run(['serial', '--dir', dir])
+  assert.equal(repaired.status, 0, repaired.stderr)
+  assert.equal(repaired.stdout, '1\n')
 })
 
 test('an out-of-band counter advance is ignored by the next allocation', (t) => {
