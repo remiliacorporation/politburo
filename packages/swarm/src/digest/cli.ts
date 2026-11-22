@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { parseConfigText } from '../config/load.ts'
-import { exceptionDigest, type MessageHeader, type RolloutAck } from './digest.ts'
+import { exceptionDigest, windowBound, type MessageHeader, type RolloutAck } from './digest.ts'
 import { InputError, type MailPort } from './mail-port.ts'
 import { isConfigObject, planNotices, policyId, policyNotices } from './notices.ts'
 
@@ -53,9 +53,9 @@ export async function run(argv: string[], {
     try { ({ values } = parseArgs({ args, options: options[action] })) } catch {
       throw new Misuse('invalid digest options')
     }
-    function required(key: string): string {
+    function required(key: string, allowEmpty = false): string {
       const value = values[key]
-      if (typeof value !== 'string' || !value) throw new Misuse(`missing --${key}`)
+      if (typeof value !== 'string' || (!allowEmpty && !value)) throw new Misuse(`missing --${key}`)
       return value
     }
     async function load(path: string, label: string): Promise<unknown> {
@@ -81,8 +81,10 @@ export async function run(argv: string[], {
       const sent = new Set(result?.sent)
       for (const box of affected) stdout(`${box}  ${!result ? 'would send' : sent.has(policyId(box, version)) ? 'sent' : 'already sent'}`)
     } else {
-      const repo = required('repo'), from = required('from'), to = required('to')
-      if (!(Date.parse(from) < Date.parse(to))) throw new Misuse('expected a valid window with --from before --to')
+      const repo = required('repo'), from = required('from', true), to = required('to', true)
+      if (!(windowBound(from, 'from') < windowBound(to, 'to'))) {
+        throw new Misuse('expected a valid window with --from before --to')
+      }
       const headers = await load(required('headers'), 'headers')
       const acks = typeof values.acks === 'string' ? await load(values.acks, 'ack ledger') : []
       if (!Array.isArray(headers) || !headers.every(isHeader)) throw new InputError('expected message headers')

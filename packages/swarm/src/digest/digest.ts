@@ -19,18 +19,18 @@ function projectHeader({ id, urgency, class: kind, state, createdAt, expires, su
   return { id, urgency, class: kind, state, createdAt, ...(expires === undefined ? {} : { expires }), summary }
 }
 
-function timestamp(value: unknown, field: string, id: string): number {
-  const syntax = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i
+function timestamp(value: unknown, field: string, id?: string): number {
+  const syntax = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?Z$/
   if (typeof value === 'string' && syntax.test(value)) {
-    const at = Date.parse(value), day = new Date(`${value.slice(0, 10)}T00:00:00Z`)
-    if (Number.isFinite(at) && Number.isFinite(+day) && day.toISOString().startsWith(value.slice(0, 10))) return at
+    const at = Date.parse(value)
+    // Date.parse can normalize an impossible date into the following month.
+    if (Number.isFinite(at) && new Date(at).toISOString().slice(0, 10) === value.slice(0, 10)) return at
   }
-  throw new InputError(`invalid ${field} for header ${JSON.stringify(id)}`)
+  throw new InputError(`invalid ${field}${id === undefined ? '' : ` for header ${JSON.stringify(id)}`}`)
 }
 
-function windowBound(value: string, bound: 'from' | 'to'): number {
-  if (/:\d{1,2}\.\d{4}/.test(value)) throw new InputError(`invalid window ${bound}: fractional seconds exceed three digits`)
-  return Date.parse(value)
+export function windowBound(value: string, bound: 'from' | 'to'): number {
+  return timestamp(value, `window ${bound}`)
 }
 
 export function exceptionDigest({ repo, window, headers, acks = [], now }: {

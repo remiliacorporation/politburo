@@ -114,6 +114,8 @@ test('digest window and counts: ineligible mail is counted or p3 gets a row', ()
 test('digest rejects malformed timestamps and expiry on p0/p1, naming even filtered headers', () => {
   for (const [bad, field] of [
     [header('bad-created', 'p2', { createdAt: '2026-02-30T21:01:00Z' }), 'createdAt'],
+    [header('offset-created', 'p2', { createdAt: '2026-11-20T21:01:00+00:00' }), 'createdAt'],
+    [header('lowercase-expiry', 'p3', { expires: '2026-11-20t21:30:00z' }), 'expires'],
     [header('bad-expiry', 'p3', { expires: '', state: 'handled' }), 'expires'],
     ...(['p0', 'p1'] as const).map((urgency) => [header(`urgent-${urgency}`, urgency, { expires: now }), 'expires'] as const),
   ] as const) {
@@ -171,15 +173,36 @@ test('notice and overdue ack identity: two repo records at v1 collide or lose th
   assert.deepEqual(digest.items.map(({ class: kind, urgency }) => [kind, urgency]), [['policy', 'p1'], ['policy', 'p1']])
 })
 
-test('digest rejects sub-millisecond window bounds instead of colliding delivery ids', async () => {
+const invalidBounds = [
+  ['to', '2026-11-20 21:30:000.0001Z'], ['to', '2026-11-20 21:30:000.0009Z'],
+  ['to', '2026-11-20T21:30:00.0001Z'], ['to', '2026-11-20T21:30:00.0009Z'],
+  ['from', '2026-11-20T21:00:00.0001Z'], ['from', '2026-11-20 21:00:00Z'],
+  ['from', '2026-11-20T21:00:00+01:00'], ['from', '2026-02-30T21:00:00Z'],
+  ['from', '2026-11-20T21:00:00.Z'], ['to', ''],
+] as const
+
+test('digest rejects non-UTC-ISO window bounds instead of colliding delivery ids', async () => {
   const headers = [header('outage', 'p0')], digest = exceptionDigest({ ...args, headers })
   const mail = memoryMail()
-  for (const bounds of [{ ...window, to: '2026-11-20T21:30:00.0001Z' },
-    { ...window, to: '2026-11-20T21:30:00.0009Z' }, { ...window, from: '2026-11-20T21:00:00.0001Z' }]) {
-    assert.throws(() => exceptionDigest({ ...args, window: bounds, headers }), /invalid window/)
-    await assert.rejects(postDigest({ mailbox: 'shared-inbox', mail, digest: { ...digest, window: bounds } }), /invalid window/)
+  for (const [bound, value] of invalidBounds) {
+    const bounds = { ...window, [bound]: value }, error = { message: `invalid window ${bound}` }
+    assert.throws(() => exceptionDigest({ ...args, window: bounds, headers }), error, JSON.stringify(value))
+    await assert.rejects(postDigest({ mailbox: 'shared-inbox', mail, digest: { ...digest, window: bounds } }),
+      error, JSON.stringify(value))
   }
   assert.deepEqual(mail.messages, [])
+})
+
+test('digest show names the invalid --from or --to bound and prints no digest', async () => {
+  const out: string[] = [], err: string[] = []
+  const io = { read: async () => '[]', stdout: (line: string) => out.push(line), stderr: (line: string) => err.push(line) }
+  for (const [bound, value] of invalidBounds) {
+    const bounds = { ...window, [bound]: value }
+    const status = await run(['show', '--repo', args.repo, '--headers', 'headers.json',
+      '--from', bounds.from, '--to', bounds.to], io)
+    assert.deepEqual([status, err.pop()], [1, `error: invalid window ${bound}`], JSON.stringify(value))
+  }
+  assert.deepEqual(out, [])
 })
 
 test('digest delivery: repo or window ids collide, retries duplicate, or extra fields serialize', async () => {
@@ -276,7 +299,8 @@ test('swarm digest reaches its handler: exact misuse and successful show --json'
   assert.equal(bad.stderr.trimEnd(), 'error: expected digest notices or show')
   const path = join(tempDir(t), 'headers.json')
   writeFileSync(path, JSON.stringify([header('outage', 'p0')]))
-  const show = () => spawn('show', '--json', '--repo', args.repo, '--from', window.from, '--to', window.to, '--headers', path)
+  const show = () => spawn('show', '--json', '--repo', args.repo, '--from', '2026-11-20T21:00:00.0Z',
+    '--to', '2026-11-20T21:30:00.00Z', '--headers', path)
   const good = show()
   assert.equal(good.status, 0, good.stderr)
   assert.deepEqual(JSON.parse(good.stdout).act_on, ['outage'])
