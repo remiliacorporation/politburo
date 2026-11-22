@@ -1,0 +1,218 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test, type TestContext } from 'node:test'
+import { buildRecord, jsonlWriter, parseOtlpLogs, parseTranscript, reconcile, type Envelope } from '../src/capture-claude/index.ts'
+
+const session = 'native-1'
+const now = new Date('2026-11-22T12:00:07Z')
+const envelope: Envelope = {
+  party: 'default', repo: 'acme/web', work_id: 'work-1', attempt: 'att-1', tier: 'spawner',
+  parent: null, session: 'sess-1', trace: { id: 'tr-1', execution_id: 'exec-1' },
+}
+
+function log(attributes: Record<string, object> = {}) {
+  return {
+    timeUnixNano: '1795348806000000123',
+    attributes: Object.entries({
+      'event.name': { stringValue: 'claude_code.api_request' },
+      'session.id': { stringValue: session },
+      request_id: { stringValue: 'req-1' },
+      'message.id': { stringValue: 'msg-1' },
+      model: { stringValue: 'claude-example' },
+      input_tokens: { intValue: '240' },
+      output_tokens: { intValue: 91 },
+      cache_read_tokens: { intValue: 0 },
+      ...attributes,
+    }).map(([key, value]) => ({ key, value })),
+  }
+}
+
+function batch(...logRecords: object[]) {
+  return { resourceLogs: [{ scopeLogs: [{ logRecords }] }] }
+}
+
+function assistant(usage?: object, requestId = 'req-1', id = 'msg-1') {
+  return {
+    type: 'assistant', requestId, timestamp: '2026-11-22T13:00:06+01:00',
+    message: { id, model: 'claude-example', usage },
+  }
+}
+
+function transcript(...rows: object[]) {
+  return parseTranscript(rows.map((row) => JSON.stringify(row)).join('\n'), session).facts
+}
+
+function spendPath(t: TestContext) {
+  const dir = mkdtempSync(join(tmpdir(), 'capture-claude-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  return join(dir, 'spend.jsonl')
+}
+
+test('OTLP preserves reported zero and leaves missing or malformed counts null', () => {
+  const { facts } = parseOtlpLogs(batch(log(), log({
+    input_tokens: { intValue: -1 }, output_tokens: { doubleValue: 1.5 }, cache_read_tokens: { stringValue: '12' },
+  })))
+  assert.deepEqual(facts[0]?.tokens, {
+    input_uncached: 240, input_total: null, output: 91, cache_read: 0, cache_write: null, reasoning: null,
+  })
+  assert.equal(facts[0]?.occurred, '2026-11-22T12:00:06.000Z')
+  assert.deepEqual(facts[1]?.tokens, {
+    input_uncached: null, input_total: null, output: null, cache_read: null, cache_write: null, reasoning: null,
+  })
+})
+
+test('transcript numeric strings stay unknown and reported zero stays zero', () => {
+  const [row] = transcript(assistant({ input_tokens: '12', output_tokens: 0 }))
+  assert.equal(row?.tokens.input_uncached, null)
+  assert.equal(row?.tokens.output, 0)
+  assert.equal(row?.tokens.cache_read, null)
+  assert.equal(row?.occurred, '2026-11-22T12:00:06.000Z')
+})
+
+test('OTLP accepts a body-named request and rejects a request without a session', () => {
+  const named = { ...log({ 'event.name': {} }), body: { stringValue: 'api_request' } }
+  const { facts, rejected } = parseOtlpLogs(batch(named, log({ 'session.id': {} })))
+  assert.equal(rejected, 1)
+  assert.deepEqual(facts.map((fact) => fact.nativeSession), [session])
+})
+
+test('OTLP tool_result events produce no request facts', () => {
+  const unrelated = log({ 'event.name': { stringValue: 'tool_result' } })
+  assert.deepEqual(parseOtlpLogs(batch(unrelated)), { facts: [], rejected: 0 })
+})
+
+test('prompt text, account data, tool input, and paths stay out of facts and JSONL', (t) => {
+  const { facts } = parseOtlpLogs(batch(log({
+    prompt: { stringValue: 'private prompt' }, 'user.email': { stringValue: 'fixture@example.test' },
+  })))
+  const row = assistant({ output_tokens: 5 }, 'req-2', 'msg-2')
+  const rows = transcript({ ...row, cwd: '/private/fixture', message: { ...row.message, content: [
+    { text: 'private response' }, { input: { command: 'private tool input' } },
+  ] } })
+  const path = spendPath(t)
+  const writer = jsonlWriter(path)
+  for (const item of reconcile(facts, rows).records) writer.append(buildRecord(item, envelope, now))
+  const persisted = readFileSync(path, 'utf8')
+  assert.equal(facts.length, 1)
+  assert.equal(rows.length, 1)
+  assert.deepEqual(persisted.trimEnd().split('\n').map((line) => JSON.parse(line).tokens.output), [91, 5])
+  const serialized = JSON.stringify({ facts, rows }) + persisted
+  for (const secret of ['private prompt', 'fixture@example.test', '/private/fixture', 'private response', 'private tool input']) {
+    assert.ok(!serialized.includes(secret), `captured ${secret}`)
+  }
+})
+
+test('transcript counts each response once without combining usage snapshots', () => {
+  const rows = transcript(
+    assistant({ input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 100 }),
+    assistant({ input_tokens: 8, output_tokens: 9 }),
+    assistant({ input_tokens: 2, output_tokens: 4 }),
+    assistant({ output_tokens: 1 }, 'req-1', 'msg-2'),
+  )
+  assert.deepEqual(rows.map(({ responseId, tokens }) => [responseId, tokens.input_uncached, tokens.output, tokens.cache_read]), [
+    ['msg-1', 8, 9, null], ['msg-2', null, 1, null],
+  ])
+})
+
+test('transcript preserves identified usage gaps but skips user and anonymous empty rows', () => {
+  const rows = transcript(assistant(), assistant(undefined, '', ''), {
+    ...assistant({ output_tokens: 12 }, 'req-2', 'msg-2'), type: 'user',
+  })
+  assert.deepEqual(rows.map((fact) => [fact.responseId, fact.tokens]), [['msg-1', {
+    input_uncached: null, input_total: null, output: null, cache_read: null, cache_write: null, reasoning: null,
+  }]])
+})
+
+test('transcript counts a truncated JSON line and reads both neighbours', () => {
+  const before = assistant({ output_tokens: 3 })
+  const after = assistant({ output_tokens: 5 }, 'req-2', 'msg-2')
+  const { facts, badLines } = parseTranscript([
+    JSON.stringify(before), '{"type":"assistant","message":{"usage":{"output_tokens":', JSON.stringify(after), '',
+  ].join('\n'), session)
+  assert.equal(badLines, 1)
+  assert.deepEqual(facts.map((fact) => [fact.responseId, fact.tokens.output]), [['msg-1', 3], ['msg-2', 5]])
+})
+
+test('transcript skips synthetic model rows even when they report tokens', () => {
+  const row = assistant({ output_tokens: 10 })
+  assert.deepEqual(transcript({ ...row, message: { ...row.message, model: '<synthetic>' } }), [])
+})
+
+test('reconciliation counts a matched or replayed request once and keeps uncovered requests', () => {
+  const payload = batch(log())
+  const otlp = [...parseOtlpLogs(payload).facts, ...parseOtlpLogs(payload).facts]
+  const rows = transcript(assistant({ output_tokens: 91 }, '', 'msg-1'), assistant({ output_tokens: 5 }, 'req-2', 'msg-1'))
+  const { records, counters } = reconcile(otlp, rows)
+  assert.deepEqual(counters, { matched: 1, mismatched: 0, transcriptOnly: 1, otlpOnly: 0 })
+  assert.deepEqual(records.map(({ state, fact }) => [state, fact.source, fact.requestId]), [
+    ['matched', 'otlp', 'req-1'], ['transcript_only', 'transcript', 'req-2'],
+  ])
+  assert.deepEqual(reconcile(otlp, []).records.map((row) => row.state), ['otlp_only'])
+  assert.deepEqual(reconcile(otlp, rows.slice(1)).records.map((row) => row.state), ['otlp_only', 'transcript_only'])
+  const [matched, uncovered] = records.map((row) => buildRecord(row, envelope, now))
+  assert.equal(matched?.coverage.state, 'closed_reconciled')
+  assert.equal(matched?.dedupe_key, 'claude:native-1:req-1')
+  assert.equal(matched?.tokens.output, 91)
+  assert.equal(matched?.tokens.cache_read, 0)
+  assert.equal(matched?.coverage.field_quality['tokens.cache_read'], 'provider_reported')
+  assert.equal(matched?.tokens.cache_write, null)
+  assert.equal(matched?.coverage.field_quality['tokens.cache_write'], 'unknown')
+  assert.equal(uncovered?.source, 'claude_local_transcript')
+  assert.equal(uncovered?.coverage.state, 'partial')
+})
+
+test('reconciliation keeps distinct conflicting OTLP facts and drops their replays', () => {
+  const disagreement = log({ output_tokens: { intValue: 90 } })
+  const { facts } = parseOtlpLogs(batch(log(), disagreement, disagreement))
+  const result = reconcile(facts, [])
+  assert.equal(result.counters.mismatched, 1)
+  assert.deepEqual(result.records.map(({ state, fact }) => [state, fact.tokens.output]), [
+    ['mismatch', 91], ['mismatch', 90],
+  ])
+})
+
+test('an unbound session stays unattributed', () => {
+  const [resolved] = reconcile(parseOtlpLogs(batch(log())).facts, []).records
+  const record = buildRecord(resolved!, null, now)
+  assert.equal(record.envelope, null)
+  assert.equal(record.coverage.state, 'unattributed')
+  assert.equal(record.received, now.toISOString())
+})
+
+test('JSONL retains both sides of a cross-source conflict and replay adds no lines', (t) => {
+  const path = spendPath(t)
+  const appendMismatch = () => {
+    const { facts } = parseOtlpLogs(batch(log()))
+    const rows = transcript(assistant({ output_tokens: 90 }))
+    const writer = jsonlWriter(path)
+    for (const item of reconcile(facts, rows).records) writer.append(buildRecord(item, envelope, now))
+  }
+  appendMismatch()
+  const first = readFileSync(path, 'utf8')
+  const lines = first.trimEnd().split('\n')
+  assert.equal(lines.length, 2, 'one persisted line per conflicting source')
+  const records = lines.map((line) => JSON.parse(line))
+  assert.deepEqual(records.map((record) => [record.source, record.tokens.output, record.coverage.state]), [
+    ['claude_local_request', 91, 'conflict'], ['claude_local_transcript', 90, 'conflict'],
+  ])
+  const keys = ['claude:native-1:req-1:conflict:otlp', 'claude:native-1:req-1:conflict:transcript']
+  assert.deepEqual(records.map((record) => record.dedupe_key), keys)
+  assert.deepEqual(records.map((record) => record.source_event_key), keys)
+  appendMismatch()
+  assert.equal(readFileSync(path, 'utf8'), first)
+})
+
+test('JSONL counts undisputed spend once before and after reopening', (t) => {
+  const path = spendPath(t)
+  const [resolved] = reconcile(parseOtlpLogs(batch(log())).facts, []).records
+  const writer = jsonlWriter(path)
+  writer.append(buildRecord(resolved!, envelope, now))
+  const first = readFileSync(path, 'utf8')
+  assert.equal(JSON.parse(first).tokens.output, 91)
+  writer.append(buildRecord(resolved!, envelope, now))
+  assert.equal(readFileSync(path, 'utf8'), first, 'replay with the same writer')
+  jsonlWriter(path).append(buildRecord(resolved!, envelope, now))
+  assert.equal(readFileSync(path, 'utf8'), first, 'replay after reopening')
+})
