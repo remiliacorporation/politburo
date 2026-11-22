@@ -15,11 +15,13 @@ async function fixture(t: TestContext) {
   t.after(() => backend.close())
   const team = board({ backend, url: BOARD_URL, authenticate: oidcTokens({ local: testLocal }) })
   const { principal } = await team.me()
-  const state = { commit: A, now: 100 }
+  const state = { commit: A, handoffId: 'handoff-a', now: 100 }
+  const landed: Parameters<Dispatcher['landed']>[0][] = []
   // Stand-in for party roles, artifact verification and settlement, not for the board.
   const dispatcher: Dispatcher = {
-    inspect: async (_, { actor }) => ({ role: actor as Role, checks, commit: state.commit, claimCutoff: 1000, enabled: ['publication'] }),
-    attest: async () => 'verified-ci', jockey: async () => 'verified-jockey', landed: async () => {},
+    inspect: async (_, { actor }) => ({ role: actor as Role, checks, commit: state.commit, claimCutoff: 1000,
+      handoffId: state.handoffId, enabled: ['publication'], prerequisite: false }),
+    attest: async () => 'verified-ci', jockey: async () => 'verified-jockey', landed: async move => { landed.push(move) },
   }
   const serviceFor = (handle = team) => createStageService({ board: handle, principal, dispatcher, now: () => state.now })
   const service = serviceFor()
@@ -40,9 +42,12 @@ async function fixture(t: TestContext) {
     async function scope() {
       for (const [to, role] of [['proposed', 'dispatcher'], ['scoped', 'scoper']] as const) assert.deepEqual(await move(to, role), { ok: true, round: 1 })
     }
-    return { id, thread, labels, move, draft, attest, enterReview, scope }
+    async function readyForApproval() {
+      await scope(); await enterReview(); await attest('tests'); await attest('review'); await attest('publication')
+    }
+    return { id, thread, labels, move, draft, attest, enterReview, scope, readyForApproval }
   }
-  return { team, principal, state, service, serviceFor, root }
+  return { team, principal, state, service, serviceFor, root, dispatcher, landed }
 }
 
 // Design §3, independent of the implementation's move table.
@@ -76,7 +81,6 @@ test('illegal or ungated moves do not land and refused moves do not change label
       state.commit = A
       let stage: Stage | 'new' = 'new', round = 0, head: string | null = null
       for (let i = 0; i < 24; i++) {
-        const before = JSON.stringify(await r.labels())
         const to: Stage = rng() < .7 ? forward[stage] : pick(Object.keys(forward).slice(1) as Stage[])
         const actor = rng() < .7 ? (['implementing', 'review'].includes(to) || stage === 'new' ? 'dispatcher' : 'scoper') : pick(roles)
         const reason = pick([undefined, 'retry after finding', ' '])
@@ -92,6 +96,7 @@ test('illegal or ungated moves do not land and refused moves do not change label
             : await r.attest(gate, rng() < .8 ? 'pass' : 'fail', binding)
           evidence.push(step.evidence = record)
         }
+        const before = JSON.stringify(await r.labels())
         const result = await r.move(to, actor, reason)
         trace.push(result)
         const { message, replies } = await r.thread()
@@ -177,7 +182,8 @@ test('an override cannot replace submission or outlive its candidate or a later 
   await waive()
   state.commit = B
   await r.attest('submission'); await r.attest('tests')
-  assert.deepEqual(await r.move('done', 'scoper'), { ok: false, reason: 'gate_closed', gate: 'review', status: 'missing' })
+  assert.deepEqual(await r.move('done', 'scoper'), { ok: false, reason: 'head_changed' })
+  assert.deepEqual(await r.move('repair', 'reviewer', 'new finding'), { ok: false, reason: 'head_changed' })
   state.commit = A
   assert.deepEqual(await r.move('repair', 'reviewer', 'new finding'), { ok: true, round: 2 })
   await r.enterReview(2); await r.attest('tests', 'pass', r.draft('tests', 2))
@@ -192,7 +198,8 @@ test('a newer fail, stale commit, expired pass or missing publication blocks a f
   await r.attest('review')
   state.commit = B
   await r.attest('submission'); await r.attest('tests')
-  assert.deepEqual(await r.move('approved', 'scoper'), blocked('review', 'missing'))
+  assert.deepEqual(await r.move('approved', 'scoper'), { ok: false, reason: 'head_changed' })
+  state.commit = A
   await r.attest('review', 'pass', { ...r.draft('review'), expiresAt: 300 })
   assert.equal((await r.move('approved', 'scoper')).ok, true)
   assert.deepEqual(await r.move('done', 'scoper'), { ...blocked('publication', 'missing'), reason: 'release_gate_closed' })
@@ -204,6 +211,85 @@ test('a newer fail, stale commit, expired pass or missing publication blocks a f
   await r.attest('tests', 'pass', { ...r.draft('tests'), expiresAt: 300 })
   assert.equal((await r.move('done', 'scoper')).ok, true)
   assert.equal((await r.labels())['work.stage'], 'done')
+})
+
+test('passes for a replacement commit cannot complete an approved candidate', async t => {
+  const { root, state } = await fixture(t), r = await root()
+  await r.readyForApproval()
+  assert.equal((await r.move('approved', 'scoper')).ok, true)
+  state.commit = B; state.handoffId = 'handoff-b'
+  for (const gate of ['submission', 'tests', 'review', 'publication'] as const) await r.attest(gate)
+  const before = await r.labels()
+  assert.deepEqual(await r.move('done', 'scoper'), { ok: false, reason: 'head_changed' })
+  assert.deepEqual(await r.labels(), before)
+})
+
+test('missing enabled or prerequisite facts cannot land approval or completion', async t => {
+  const { root, dispatcher } = await fixture(t), r = await root()
+  await r.readyForApproval()
+  const inspect = dispatcher.inspect
+  for (const to of ['approved', 'done'] as const) {
+    for (const missing of ['enabled', 'prerequisite'] as const) {
+      // @ts-expect-error Deliberately exercise an invalid adapter at runtime.
+      dispatcher.inspect = async (...args) => {
+        const { enabled, prerequisite, ...rest } = (await inspect(...args))!
+        return missing === 'enabled' ? { ...rest, prerequisite } : { ...rest, enabled }
+      }
+      assert.deepEqual(await r.move(to, 'scoper'), { ok: false, reason: 'gate_closed' })
+    }
+    dispatcher.inspect = inspect
+    if (to === 'approved') assert.equal((await r.move(to, 'scoper')).ok, true)
+  }
+})
+
+test('a newer fail from another service invalidates the final move CAS', { timeout: 5000 }, async t => {
+  const { root, serviceFor, dispatcher } = await fixture(t), r = await root()
+  await r.readyForApproval()
+  const inspect = dispatcher.inspect
+  const atFinal = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+  let checks = 0
+  dispatcher.inspect = async (...args) => {
+    const facts = await inspect(...args)
+    if (++checks === 2) { atFinal.resolve(); await release.promise }
+    return facts
+  }
+  const moving = r.move('approved', 'scoper')
+  await atFinal.promise
+  const before = await r.labels()
+  try {
+    await serviceFor().admitEvidence(r.id, { ...r.draft('review'), verdict: 'fail',
+      artifactRef: { attachmentId: 'artifact', sha256: 'f'.repeat(64) } })
+  } finally { release.resolve() }
+  assert.deepEqual(await moving, { ok: false, reason: 'stage_conflict' })
+  assert.deepEqual(await r.labels(), { ...before, 'work.ev': String(Number(before['work.ev']) + 1) })
+})
+
+test('an edited or deleted landed receipt cannot authorize the next move', async t => {
+  const { team, root } = await fixture(t)
+  for (const tamper of [async (id: string, text: string) => team.edit(id, `${text}\nEdited`), (id: string) => team.delete(id)]) {
+    const r = await root()
+    assert.equal((await r.move('proposed', 'dispatcher')).ok, true)
+    const before = await r.labels()
+    const receipt = (await r.thread()).replies.find(reply => reply.id === before['work.move'])!
+    await tamper(receipt.id, receipt.text)
+    assert.deepEqual(await r.move('scoped', 'scoper'), { ok: false, reason: 'stage_conflict' })
+    assert.deepEqual(await r.labels(), before)
+  }
+})
+
+test('cancel, rejection and reopen cannot skip or duplicate dispatcher settlement', async t => {
+  const { root, landed, dispatcher } = await fixture(t), r = await root()
+  assert.equal((await r.move('proposed', 'dispatcher')).ok, true)
+  for (const [from, to] of [['proposed', 'rejected'], ['rejected', 'proposed'], ['proposed', 'canceled']] as const) {
+    landed.length = 0
+    assert.equal((await r.move(to, 'scoper', 'operator decision')).ok, true)
+    assert.deepEqual(landed.map(move => [move.taskId, move.from, move.to]), [[r.id, from, to]])
+  }
+  const other = await root()
+  await other.scope()
+  dispatcher.landed = async () => { throw new Error('settlement unavailable') }
+  await assert.rejects(other.move('canceled', 'scoper', 'operator decision'), { message: 'landed_failed' })
+  assert.equal((await other.labels())['work.stage'], 'canceled')
 })
 
 test('pause and park block forward moves without blocking the canceled stage', async t => {

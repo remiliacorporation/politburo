@@ -59,6 +59,7 @@ export function decideMove({ stage, round, to, actor, reason, root, gates, now }
   for (const check of rule.checks ?? []) {
     if (root.checks?.[check] !== true) return refuse(to === 'done' && check === 'handoff_missing' ? 'gate_closed' : check)
   }
+  if ((to === 'approved' || to === 'done') && (root.enabled === undefined || root.prerequisite === undefined)) return refuse('gate_closed')
   for (const gate of rule.gates ?? []) {
     if (gate !== 'submission' && gate !== 'tests' && gate !== 'review' && !root.enabled?.includes(gate)) continue
     const status = gateStatus(gates, { taskId: root.taskId, round: round!, commit: root.commit ?? '', gate, now })

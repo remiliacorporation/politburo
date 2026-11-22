@@ -1,19 +1,20 @@
 import { isDeepStrictEqual } from 'node:util'
 import { block, BoardError, type board as openBoard, type MessageView } from '@vercel/board'
-import { gates, isEvidence, type Attestation, type Evidence, type Override } from './evidence.ts'
+import { fullCommit, gates, isEvidence, type Attestation, type Evidence, type Override } from './evidence.ts'
 import { decideMove, refuse, stages, type MoveResult, type MoveRoot, type Role, type Stage } from './stages.ts'
 
 type Board = ReturnType<typeof openBoard>
 type Draft<T extends Evidence> = Omit<T, 'id' | 'taskId' | 'author' | 'at' | 'kind'>
 type Request = { actor: string; reason?: string; requestId?: string }
-type Facts = Omit<MoveRoot, 'taskId' | 'paused' | 'parked'> & { role: Role; scopeRef?: string; handoffId?: string; generation?: number }
+type Facts = Omit<MoveRoot, 'taskId' | 'paused' | 'parked'> & Required<Pick<MoveRoot, 'enabled' | 'prerequisite'>> &
+  { role: Role; scopeRef?: string; handoffId?: string; generation?: number }
 
-// Adapter boundary for unlanded party roles, claim admission, review holds, artifact verification and settlement.
+// Only the host's verified party-role adapter may implement this interface.
 export interface Dispatcher {
   inspect(root: MessageView, request: { actor: string; from: Stage | null; to: Stage }): Promise<Facts | null>
   attest(root: MessageView, draft: Draft<Attestation>): Promise<string | null>
   jockey(root: MessageView, who: string, draft: Draft<Override>): Promise<string | null>
-  landed(move: { taskId: string; requestId: string; receiptId: string; to: 'implementing' | 'done'; round: number }): Promise<void>
+  landed(move: { taskId: string; requestId: string; receiptId: string; from: Stage | null; to: Stage; round: number }): Promise<void>
 }
 
 const moveSchema = 'swarm-move'
@@ -37,6 +38,8 @@ const labels = (root: MessageView) => ({
   'work.stage': root.labels['work.stage'] ?? null, 'work.round': root.labels['work.round'] ?? null,
   'work.move': root.labels['work.move'] ?? null,
 })
+const evidenceCounter = (root: MessageView) => root.labels['work.ev'] ?? null
+const labelConflict = (error: unknown) => error instanceof BoardError && error.status === 409 && error.code === 'label_conflict'
 const state = (root: MessageView) => {
   const { 'work.stage': stage, 'work.round': round, 'work.move': move } = labels(root)
   return { stage: stages.find(value => value === stage) ?? null, round: round === null ? null : Number(round), move }
@@ -86,14 +89,26 @@ export function createStageService({ board, principal, dispatcher, now = Date.no
     if (!author?.trim()) throw new Error('forbidden')
     const record: Evidence = { ...binding, ...fields, author, at: now() }
     if (!isEvidence(record)) throw new TypeError('invalid evidence')
+    let counter = evidenceCounter(root)
+    for (let attempt = 0; ; attempt++) {
+      const n = Number(counter ?? 0)
+      if (!Number.isSafeInteger(n) || n < 0 || n === Number.MAX_SAFE_INTEGER) throw new Error('stage_conflict')
+      try {
+        await board.label(taskId, { if: { 'work.ev': counter }, set: { 'work.ev': String(n + 1) } })
+        break
+      } catch (error) {
+        if (!labelConflict(error) || attempt === 3) throw error
+        counter = evidenceCounter(await readRoot(taskId))
+      }
+    }
     await board.reply(taskId, { text: block(`${evidenceSchema}@1`, record), noSync: true })
     return record
   }
 
-  async function admitted(taskId: string) {
+  function admitted(taskId: string, replies: MessageView[]) {
     const records: Evidence[] = []
     const ids = new Set<string>()
-    for (const reply of (await board.thread(taskId)).replies.filter(sealed)) {
+    for (const reply of replies.filter(sealed)) {
       // Dropping a modified verdict alone could revive an older pass.
       if (reply.editedAt || reply.deleted) return []
       const blocks = reply.blocks.filter(item => item.schema === evidenceSchema && item.version === 1)
@@ -117,11 +132,20 @@ export function createStageService({ board, principal, dispatcher, now = Date.no
       if (from.stage === null ? Object.values(expected).some(value => value !== null) :
         !from.move || expected['work.round'] !== String(from.round)) return refuse('stage_conflict')
       async function check(current: MessageView) {
+        // Snapshot evidence before calling the adapter; the label CAS fences later admissions.
+        const { replies } = await board.thread(taskId)
+        const previous = replies.find(reply => reply.id === from.move)
+        const data = previous?.blocks.find(item => item.schema === moveSchema && item.version === 1)?.data
+        if (from.stage !== null && (!previous || !sealed(previous) || previous.re !== taskId || previous.editedAt || previous.deleted ||
+          data?.to !== from.stage || data.round !== from.round)) return { decision: refuse('stage_conflict'), facts: null }
+        const evidence = admitted(taskId, replies)
         const facts = await dispatcher!.inspect(current, { actor: request.actor, from: from.stage, to })
         if (!facts) return { decision: refuse('forbidden'), facts }
+        if ((from.stage === 'review' || from.stage === 'approved') && (to === 'approved' || to === 'done' || to === 'repair') &&
+          (!fullCommit(data?.commit) || facts.commit !== data.commit)) return { decision: refuse('head_changed'), facts }
         const { paused } = await board.status()
         const decision = decideMove({ stage: from.stage, round: from.round, to, actor: { id: request.actor, role: facts.role },
-          ...(request.reason === undefined ? {} : { reason: request.reason }), gates: await admitted(taskId), now: now(),
+          ...(request.reason === undefined ? {} : { reason: request.reason }), gates: evidence, now: now(),
           root: { ...facts, taskId, paused, parked: Boolean(current.task?.parked) },
         })
         return { decision, facts }
@@ -144,9 +168,10 @@ export function createStageService({ board, principal, dispatcher, now = Date.no
       if (!final.decision.ok) return final.decision
       if (!sameRefs(final.facts)) return refuse('stage_conflict')
       try {
-        await board.label(taskId, { if: expected, set: { 'work.stage': to, 'work.round': String(decision.round), 'work.move': reply.id } })
+        await board.label(taskId, { if: { ...expected, 'work.ev': evidenceCounter(root) },
+          set: { 'work.stage': to, 'work.round': String(decision.round), 'work.move': reply.id } })
       } catch (error) {
-        if (!(error instanceof BoardError) || error.status !== 409 || error.code !== 'label_conflict') throw error
+        if (!labelConflict(error)) throw error
         await read(taskId)
         return refuse('stage_conflict')
       }
@@ -156,7 +181,12 @@ export function createStageService({ board, principal, dispatcher, now = Date.no
         if (state(landed).move !== reply.id || landed.revision !== root.revision || !recheck.decision.ok || !sameRefs(recheck.facts)) {
           throw new Error(to === 'done' ? 'completion_pending' : 'admission_refused')
         }
-        await dispatcher.landed({ taskId, requestId: receipt.id, receiptId: reply.id, to, round: decision.round })
+      }
+      try {
+        await dispatcher.landed({ taskId, requestId: receipt.id, receiptId: reply.id, from: from.stage, to, round: decision.round })
+      } catch (error) {
+        if (to === 'implementing' || to === 'done') throw error
+        throw new Error('landed_failed', { cause: error })
       }
       return decision
     })
