@@ -108,6 +108,54 @@ for (const [condition, override, headline] of [
   })
 }
 
+test('apply rejects a gate with an impossible calendar date before touching processes', async (t) => {
+  const f = rehearsal(t)
+  f.ctx.clock = { now: () => Date.parse('2025-03-03T12:00:00Z') }
+  writeFileSync(f.gateFile, JSON.stringify({ ...f.gate, at: '2025-02-30T12:00:00Z' }))
+  const serviceStatus = t.mock.method(f.ctx.ports.service, 'status')
+  const oldStatus = t.mock.method(f.ctx.ports.oldLoop, 'status')
+  await assert.rejects(apply(tag, f.ctx), { reason: 'gate_invalid' })
+  assert.deepEqual(f.events, [])
+  assert.equal(serviceStatus.mock.callCount() + oldStatus.mock.callCount(), 0)
+})
+
+test('rollback is refused while apply is starting the service for the same tag', async (t) => {
+  const f = rehearsal(t)
+  const entered = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>()
+  const service = f.ctx.ports.service, start = service.start
+  service.start = async (tag) => {
+    entered.resolve()
+    await gate.promise
+    await start(tag)
+  }
+  const applying = apply(tag, { ...f.ctx, budgetMs: 5000 })
+  try {
+    await Promise.race([entered.promise, applying])
+    await assert.rejects(rollback(tag, f.ctx), { reason: 'locked', headline: /another cutover for pb is running/ })
+    assert.equal(f.running.oldLoop, false)
+    assert.ok(!f.events.some((e) => e.action === 'oldLoop.start'))
+  } finally {
+    gate.resolve()
+    assert.equal((await applying).message, 'applied')
+  }
+  assert.equal(existsSync(join(f.ctx.stateDir, `${tag}.lock`)), false)
+  f.assertNoOverlap()
+})
+
+test('apply takes over a lock left by a dead cutover', async (t) => {
+  const f = rehearsal(t, 'files', 'applying')
+  const lock = join(f.ctx.stateDir, `${tag}.lock`)
+  const deadPid = process.pid + 1
+  writeFileSync(lock, String(deadPid))
+  const kill = process.kill
+  t.mock.method(process, 'kill', (pid: number, signal: number) => {
+    if (pid === deadPid && signal === 0) throw Object.assign(new Error('no such process'), { code: 'ESRCH' })
+    return kill(pid, signal)
+  })
+  assert.equal((await apply(tag, f.ctx)).message, 'applied')
+  assert.equal(existsSync(lock), false)
+})
+
 test('apply does not overlap the loops or repeat a completed handoff', async (t) => {
   const f = rehearsal(t)
   assert.equal((await apply(tag, f.ctx)).message, 'applied')
@@ -143,7 +191,8 @@ test('apply does not touch either loop when the bridge reports stale files', asy
     await assert.rejects(apply(tag, f.ctx), { reason: 'bridge_not_current' })
     assert.equal(f.events.at(-1)?.action, `bridge.${outcome}`)
     assert.deepEqual(f.running, { oldLoop: true, service: false })
-    assert.equal(existsSync(f.ctx.stateDir), false)
+    assert.equal(existsSync(f.stateFile), false)
+    assert.equal(existsSync(join(f.ctx.stateDir, `${tag}.lock`)), false)
   }
   assert.deepEqual(f.events.map((e) => e.action), ['bridge.stale', 'bridge.fail'])
   f.assertNoOverlap()
@@ -154,7 +203,7 @@ test('apply does not leave the old loop down when service start fails', async (t
   f.controls.failStart = 'service'
   await assert.rejects(apply(tag, f.ctx), { reason: 'service_start_failed', headline: /automatically rolled back/ })
   assert.deepEqual(f.events.map((e) => e.action), [
-    'bridge.current', 'oldLoop.stop', 'service.start failed', 'bridge.current', 'oldLoop.start',
+    'bridge.current', 'oldLoop.stop', 'service.start failed', 'service.stop', 'bridge.current', 'oldLoop.start',
   ])
   assert.equal(f.events.find((e) => e.action === 'oldLoop.start')?.current, true)
   assert.deepEqual(f.running, { oldLoop: true, service: false })
@@ -207,6 +256,36 @@ test('rollback does not overlap the loops, start on stale files, or misreport el
   assert.equal(f.state().pending, undefined)
 })
 
+for (const pending of ['applying', 'rolling_back'] as const) {
+  test(`rollback stops a delayed service start after a stopped status with pending ${pending}`, async (t) => {
+    const f = rehearsal(t, 'files', pending)
+    f.running.oldLoop = false
+    const service = f.ctx.ports.service, status = service.status
+    service.status = async (tag) => {
+      const observed = await status(tag)
+      service.status = status
+      // The timed-out start lands just after status sampled a stopped service.
+      f.running.service = true
+      return observed
+    }
+    assert.equal((await rollback(tag, f.ctx)).message, 'rolled back')
+    assert.ok(f.events.some((e) => e.action === 'service.stop'))
+    assert.equal(f.events.find((e) => e.action === 'oldLoop.start')?.service, false)
+    f.assertNoOverlap()
+  })
+}
+
+test('rollback stops an unknown service before a stale drain when the old loop is running', async (t) => {
+  const f = rehearsal(t)
+  f.running.service = true
+  f.ctx.ports.service.status = async () => f.running.service ? 'unknown' : 'stopped'
+  f.controls.sync = () => 'stale'
+  await assert.rejects(rollback(tag, f.ctx), { reason: 'files_stale' })
+  assert.deepEqual(f.events.map((e) => e.action), ['service.stop', 'bridge.stale'])
+  assert.deepEqual(f.running, { oldLoop: true, service: false })
+  f.assertNoOverlap()
+})
+
 test('rollback does not start the old loop on a stale final drain and does not get stuck on retry', async (t) => {
   const f = rehearsal(t, 'service')
   f.controls.sync = () => f.running.service ? 'current' : 'stale'
@@ -240,7 +319,7 @@ test('rollback does not start the old loop on a stale final drain and does not g
   }
   const failure = JSON.parse(output.join('\n'))
   assert.equal(failure.reason, 'files_stale')
-  assert.match(failure.headline, /rollback pb --execute/)
+  assert.match(failure.headline, /swarm cutover rollback pb --execute with the same --commands and --state-dir/)
   assert.deepEqual(f.events.map((e) => e.action), ['bridge.current', 'service.stop', 'bridge.stale'])
   assert.deepEqual(f.running, { oldLoop: false, service: false })
   assert.equal(f.state().mode, 'service')
@@ -249,7 +328,7 @@ test('rollback does not start the old loop on a stale final drain and does not g
   f.controls.sync = () => 'current'
   const retry = f.events.length
   assert.equal((await rollback(tag, f.ctx)).message, 'rolled back')
-  assert.deepEqual(f.events.slice(retry).map((e) => e.action), ['bridge.current', 'oldLoop.start'])
+  assert.deepEqual(f.events.slice(retry).map((e) => e.action), ['service.stop', 'bridge.current', 'oldLoop.start'])
   assert.equal(f.events.find((e) => e.action === 'oldLoop.start')?.current, true)
   assert.deepEqual(f.running, { oldLoop: true, service: false })
   assert.equal(f.state().mode, 'files')

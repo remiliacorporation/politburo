@@ -1,6 +1,6 @@
-import { verifyGate } from './gate.ts'
-import { CutoverError, newTag, type Clock, type Ports, type ProcessPort } from './ports.ts'
-import { readState, writeState, type State } from './state.ts'
+import { verifyGate, type Gate } from './gate.ts'
+import { CutoverError, newTag, type Clock, type Health, type Ports, type ProcessPort } from './ports.ts'
+import { readState, withStateLock, writeState, type State } from './state.ts'
 export { CutoverError } from './ports.ts'
 
 export interface Context {
@@ -70,17 +70,21 @@ function ignorePortFailure(error: unknown): undefined {
   if (!(error instanceof CutoverError) || error.reason !== 'port_failed') throw error
 }
 
+function needsServiceStop(s: State, health: Health) {
+  return health !== 'stopped' || s.pending !== undefined || s.mode !== 'files'
+}
+
 export async function plan(tag: string, ctx: Context) {
   const { call, status } = session(tag, ctx), { ports: p } = ctx
   const s = await readState(ctx.stateDir, tag)
   const [service, old, bridge] = await Promise.all([status(p.service), status(p.oldLoop), call(() => p.bridge.status(tag))])
   const step = (step: string, needed: boolean, why: string) => ({ step, do: needed, why })
   if (ctx.rollback) {
-    const needed = s.mode !== 'files' || !!s.pending || service !== 'stopped' || old !== 'running'
-    const both = service === 'running' && old === 'running'
-    const stop = step('service.stop', service !== 'stopped', `service ${service}`)
+    const stopNeeded = needsServiceStop(s, service)
+    const needed = stopNeeded || old !== 'running'
+    const stop = step('service.stop', stopNeeded, `service ${service}`)
     return [step('record rollback', needed, needed ? 'rollback needed' : 'already rolled back'),
-      ...(both ? [stop] : [step('bridge.sync', service !== 'stopped', `service ${service}`), stop]),
+      ...(old === 'running' && service !== 'stopped' ? [stop] : [step('bridge.sync', service !== 'stopped', `service ${service}`), stop]),
       step('bridge.sync (final)', needed, bridge.current ? 'confirm files after stop' : 'files not confirmed current'),
       step('oldLoop.start', old !== 'running', `old loop ${old}`), step('record files mode', needed, `mode ${s.mode}`)]
   }
@@ -92,9 +96,13 @@ export async function plan(tag: string, ctx: Context) {
 }
 
 export async function apply(tag: string, ctx: Context) {
-  const op = session(tag, ctx), { service, oldLoop } = ctx.ports
   const gate = await verifyGate(tag, ctx.gateFile, ctx.clock, ctx.gateMaxAgeDays)
   if (ctx.renameTo !== undefined && !newTag.test(ctx.renameTo)) throw new CutoverError('invalid_tag', 'invalid rename tag')
+  return withStateLock(ctx.stateDir, tag, () => applyLocked(tag, ctx, gate))
+}
+
+async function applyLocked(tag: string, ctx: Context, gate: Gate) {
+  const op = session(tag, ctx), { service, oldLoop } = ctx.ports
   const s = await readState(ctx.stateDir, tag)
   const old = await op.status(oldLoop), health = await op.status(service)
   if (!s.pending && s.mode === 'service' && health === 'running' && old === 'stopped') return op.report('already applied')
@@ -107,7 +115,7 @@ export async function apply(tag: string, ctx: Context) {
       if (error instanceof CutoverError && error.reason === 'budget_exceeded') throw error
       try {
         // A failed start command can still have started the service.
-        if (await op.status(service).catch(ignorePortFailure) !== 'stopped') await op.stop(service)
+        await op.stop(service)
         await op.sync()
         await op.start(oldLoop)
         await op.finish(s, 'files', 'apply_rolled_back')
@@ -122,15 +130,20 @@ export async function apply(tag: string, ctx: Context) {
 }
 
 export async function rollback(tag: string, ctx: Context) {
+  return withStateLock(ctx.stateDir, tag, () => rollbackLocked(tag, ctx))
+}
+
+async function rollbackLocked(tag: string, ctx: Context) {
   const op = session(tag, ctx), { service, oldLoop } = ctx.ports
   const s = await readState(ctx.stateDir, tag)
   const health = await op.status(service), old = await op.status(oldLoop)
-  if (!s.pending && s.mode === 'files' && health === 'stopped' && old === 'running') return op.report('already rolled back')
+  const stopNeeded = needsServiceStop(s, health)
+  if (!stopNeeded && old === 'running') return op.report('already rolled back')
   s.pending = 'rolling_back'
   await writeState(ctx.stateDir, s)
-  if (health !== 'stopped' && !(health === 'running' && old === 'running')) await op.sync()
-  if (health !== 'stopped') await op.stop(service)
-  await op.sync('files_stale', `files are stale; fix the bridge, then re-run swarm cutover rollback ${tag} --execute`)
+  if (health !== 'stopped' && old !== 'running') await op.sync()
+  if (stopNeeded) await op.stop(service)
+  await op.sync('files_stale', `files are stale; fix the bridge, then re-run swarm cutover rollback ${tag} --execute with the same --commands and --state-dir`)
   if (old !== 'running') await op.start(oldLoop)
   return op.report('rolled back', await op.finish(s, 'files', 'rolled_back'))
 }

@@ -22,6 +22,12 @@ export async function verifyGate(tag: string, file: string | undefined, clock: C
   if (typeof gate.at !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(gate.at) || !Number.isFinite(Date.parse(gate.at))) {
     throw invalid('requires an ISO date-time in at')
   }
+  const year = Number(gate.at.slice(0, 4)), month = Number(gate.at.slice(5, 7)), day = Number(gate.at.slice(8, 10))
+  // A 400-year shift preserves leap years and avoids Date.UTC's 1900 offset for years 0–99.
+  const date = new Date(Date.UTC(year + 400, month - 1, day))
+  if (date.getUTCFullYear() !== year + 400 || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw invalid('has an impossible calendar date')
+  }
   const age = clock.now() - Date.parse(gate.at)
   if (age < 0) throw invalid('is dated in the future')
   if (age > maxAgeDays * 86_400_000) throw invalid('is too old')
