@@ -46,12 +46,12 @@ export async function admit({ guard, wake, ledger, capacity, rules, request }: {
   try {
     for (const rule of rules) {
       const name = `${rule.scope}/${rule.dimension}/${rule.window}`
-      if (!Object.hasOwn(request.amounts, rule.dimension)) {
+      const hasAmount = Object.hasOwn(request.amounts, rule.dimension)
+      if (!hasAmount) {
         if (!admitsUnknown(rule)) return refuse({ admitted: false, reason: 'budget_unknown' })
         warnings.push(`budget ${name}: request amount unknown`)
-        continue
       }
-      const amount = request.amounts[rule.dimension]!
+      const amount = hasAmount ? request.amounts[rule.dimension]! : 0
       if (!Number.isFinite(amount) || amount < 0) throw new RangeError('invalid budget amount')
       const spent = await ledger.committed(rule)
       if (spent === 'unknown') {

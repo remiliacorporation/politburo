@@ -59,21 +59,21 @@ function fixture(t: TestContext, committed: number | 'unknown' = 0) {
 
 test('usage stop: dispatch stops early, misses the threshold, or stays blocked after reset', async () => {
   // Fake provider windows and clock.
-  const time = clock()
   const window = { usedFraction: 0, resetAt: 100 }
   const source = { read: () => window }
   for (const [stopPercent, below, at] of [
     [undefined, 0.999, 1], [100, 0.9999999999999999, 1], [90, 0.8999999999999999, 0.9],
     [95, 0.9499999999999998, 0.95],
   ] as const) {
+    const time = clock(window.resetAt - 1)
     const guard = stopGuard({ source, now: time.now, ...(stopPercent === undefined ? {} : { stopPercent }) })
     window.usedFraction = below
     assert.deepEqual(await guard.check(), { allowed: true }, `below ${stopPercent ?? 100}%`)
     window.usedFraction = at
-    assert.deepEqual(await guard.check(), { allowed: false, resetAt: 100 })
+    assert.deepEqual(await guard.check(), { allowed: false, resetAt: window.resetAt })
+    await time.tick(window.resetAt)
+    assert.deepEqual(await guard.check(), { allowed: true }, `at reset for ${stopPercent ?? 100}%`)
   }
-  await time.tick(100)
-  assert.deepEqual(await stopGuard({ source, now: time.now }).check(), { allowed: true })
 })
 
 test('stop percent validation: zero and fractions stop in an active window; invalid numbers throw', async () => {
@@ -190,11 +190,15 @@ test('unknown spend: strict admits or admit_warn silently treats missing spend a
   await result.release()
 })
 
-test('missing request amount: strict bypasses an applicable rule or admit_warn is silent', async (t) => {
+test('missing request amount: strict bypasses the rule or admit_warn skips a warning or hard limit', async (t) => {
   const { launch } = fixture(t)
   const missing = { ...rule, dimension: 'cost', missing_data_policy: 'strict' } as const
   assert.deepEqual(await launch('strict', 3, missing), { admitted: false, reason: 'budget_unknown' })
-  const result = await launch('warn', 3, { ...missing, missing_data_policy: 'admit_warn' })
+  const warn = { ...missing, missing_data_policy: 'admit_warn' } as const
+  const over = { ...warn, hard: 10 }
+  assert.deepEqual(await fixture(t, 11).launch('over', 3, over),
+    { admitted: false, reason: 'budget_hard', rule: over })
+  const result = await launch('warn', 3, warn)
   assert.equal(result.admitted, true)
   assert.deepEqual(result.warnings, ['budget party/cost/day: request amount unknown'])
   await result.release()
