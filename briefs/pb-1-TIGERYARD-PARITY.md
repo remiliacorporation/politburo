@@ -163,3 +163,4 @@ descriptor.
 - Tigeryard holds the reverse study, from its side, at
   `docs/research/vercel-board-feature-parity.md`. It was used as a
   cross-check.
+LIMITS (read before starting sprites): run up to 5 sprites in parallel with separate jobs, but only ONE `pnpm check` at a time on this VM, always through the slot: `flock -w 1800 /tmp/pnpm-check.lock env VITEST_MAX_WORKERS=2 NODE_OPTIONS=--max-old-space-size=2048 pnpm check` (flock is released if the process dies; two parallel full builds were OOM-killed with exit 137 before). Sprites run targeted `vitest run <file>` and the package typecheck, not the full check; the mob runs the full check once per head. Never start two builds at once. If a sprite or this session stops with a usage-limit or 'limit reached' error, that is infrastructure: wait for the spawner's resume message or press Try again; do not retry in a loop. If `sprite-watch` reports no event for 180 s, re-run it once before treating the sprite as failed.
