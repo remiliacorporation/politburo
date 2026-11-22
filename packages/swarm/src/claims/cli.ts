@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util'
 import { BoardError, board } from '@vercel/board'
+import { defaultConfig } from '../config/load.ts'
 import { claimStatus, type ClaimStatus } from './admission.ts'
 
 const usage = 'usage: swarm claims status --channel CHANNEL --party PARTY [--json]'
@@ -45,7 +46,8 @@ export async function claimsMain([action, ...flags]: string[]): Promise<number> 
   }
   if (!values.channel?.trim() || !values.party?.trim()) return misuse('specify --channel and --party')
   try {
-    const claims = await claimStatus(board(), values.channel, values.party, Date.now)
+    const handle = board()
+    const claims = await claimStatus(handle, values.channel, values.party, defaultConfig().claims, Date.now, (await handle.me()).actor)
     if (values.json) console.log(JSON.stringify({ claims }))
     else printStatus(claims)
     return 0

@@ -55,11 +55,13 @@ test('claims status must list the live HTTP board claim and its hard end in text
   const team = board({ backend, authenticate: async () => ({
     id: 'swarm:person:dispatcher-red', kind: 'person', handle: 'dispatcher-red',
   }) })
-  // Only reads cross HTTP; writes are seeded through the in-process handle.
   const server = createServer(async (req, res) => {
-    if (req.method !== 'GET') { res.writeHead(405).end(); return }
     try {
-      const result = await team.fetch(new Request(`http://${req.headers.host}${req.url}`))
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(chunk as Buffer)
+      const init: RequestInit = { method: req.method, headers: req.headers as Record<string, string> }
+      if (chunks.length) init.body = Buffer.concat(chunks)
+      const result = await team.fetch(new Request(`http://${req.headers.host}${req.url}`, init))
       const body = Buffer.from(await result.arrayBuffer())
       res.writeHead(result.status, Object.fromEntries(result.headers)).end(body)
     } catch {
@@ -70,15 +72,20 @@ test('claims status must list the live HTTP board claim and its hard end in text
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await backend.close()
   })
-  const { task } = await team.tasks.create(channel, 'Work item')
-  const red = createClaims({ board: team, channel, party: 'red', config: defaultConfig().claims,
-    validate: async () => ({ result: 'invalid' }) })
-  const claim = await red.claim(task.id)
-  assert.ok(claim.ok)
   await once(server.listen(0, '127.0.0.1'), 'listening')
   const address = server.address()
   assert.ok(address && typeof address !== 'string')
   const url = `http://127.0.0.1:${address.port}`
+  // Seed as the same HTTP caller the CLI will be, through the default handle on BOARD_URL.
+  const before = process.env.BOARD_URL
+  process.env.BOARD_URL = url
+  t.after(() => { if (before === undefined) delete process.env.BOARD_URL; else process.env.BOARD_URL = before })
+  const dispatcher = board()
+  const { task } = await dispatcher.tasks.create(channel, 'Work item')
+  const red = createClaims({ board: dispatcher, channel, party: 'red', config: defaultConfig().claims,
+    validate: async () => ({ result: 'invalid' }) })
+  const claim = await red.claim(task.id)
+  assert.ok(claim.ok)
   const text = await claims(t, statusFlags, url)
   assert.equal(text.status, 0, text.stderr)
   const row = text.stdout.split('\n').find((line) => line.startsWith(`${task.id} `))
