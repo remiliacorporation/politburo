@@ -1,14 +1,15 @@
 import type { Board } from '@vercel/board'
 import {
-  compareInstants, inspectMailBlock, labelMail, matchesMailKey, readableMailKey, readMailRoots, type MailRoot,
+  inspectMailBlock, labelMail, matchesMailKey, readableMailKey, readMailRoots, type MailRoot,
 } from './inbox.ts'
-import { MAIL_LABELS, MAIL_STATES, MailError, type MailMessage } from './message.ts'
-import { matchesMailBlock, postMail } from './send.ts'
+import { MAIL_LABELS, MAIL_STATES, MAIL_URGENCIES, MailError, type MailMessage } from './message.ts'
+import { postMail } from './send.ts'
 
 export type RelayOptions = {
   source: { name: string; board: Pick<Board, 'channel' | 'reply' | 'label'>; outbox: string }
   boards: Record<string, Board>
   now: () => Date
+  timeoutMs?: number
 }
 
 export type RelayReport = { delivered: number; pending: number; rejected: number; down: string[] }
@@ -16,7 +17,7 @@ export type RelayReport = { delivered: number; pending: number; rejected: number
 type Delivery = { root: MailRoot; message: MailMessage; key: string; channel: string }
 
 const { state } = MAIL_LABELS
-const { open, forwarded, rejected, expired } = MAIL_STATES
+const { open, forwarded, rejected } = MAIL_STATES
 
 function isPending(root: MailRoot) {
   return root.labels[state] === undefined || root.labels[state] === open
@@ -29,13 +30,13 @@ function route(root: MailRoot, now: Date, source: string) {
   const readable = readableMailKey(root)
   if (readable !== undefined && !matchesMailKey(readable, message.id)) return { reason: 'invalid_post_key' }
   const slash = message.to.indexOf('/')
-  return {
-    root, message, name: message.to.slice(0, slash), channel: message.to.slice(slash + 1),
-    key: readable ?? `mail:${source}:${message.id}`,
-  }
+  // The mail contract already requires nonempty slug segments (and forbids NUL).
+  const channel = message.to.slice(slash + 1)
+  if (channel.length > 512) return { reason: 'destination_refused' }
+  return { root, message, name: message.to.slice(0, slash), channel, key: readable ?? `mail:${source}:${root.id}` }
 }
 
-export function createRelay({ source, boards, now }: RelayOptions) {
+export function createRelay({ source, boards, now, timeoutMs = 10_000 }: RelayOptions) {
   function setState(root: MailRoot, next: string) {
     return labelMail(source.board, root.id, root.labels[state] ?? null, { [state]: next })
   }
@@ -46,23 +47,26 @@ export function createRelay({ source, boards, now }: RelayOptions) {
     return await setState(root, rejected) ? 'rejected' : 'pending'
   }
 
-  async function reconcile(board: Board, { root, message, key, channel }: Delivery, clock: string) {
-    const pastExpiry = message.expires !== undefined && compareInstants(message.expires, clock) <= 0
+  async function reconcile(board: Board, { root, message, key, channel }: Delivery) {
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      if (pastExpiry) {
-        // Don't send expired mail, but still finish a receipt if a previous pass landed it.
-        const landed = await board.posted(key)
-        return landed.channel === channel && landed.re === null && matchesMailBlock(landed, message)
-          ? { landed } as const : { result: 'id_collision' } as const
-      }
-      // A sender with only post cannot forge swarm.delivery: the relay has label rights.
-      const landed = await postMail(board, channel, message, key, { 'swarm.delivery': `${source.name}:${root.id}` })
+      // The handle can't cancel post. A late write is reconciled with the same key on retry.
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('destination timed out')), timeoutMs)
+      })
+      const landed = await Promise.race([
+        postMail(board, channel, message, key, { 'swarm.delivery': `${source.name}:${root.id}` }), deadline,
+      ])
       return { landed } as const
     } catch (error) {
       if (error instanceof MailError && error.reason === 'id_collision') return { result: 'id_collision' } as const
-      if (pastExpiry && error && typeof error === 'object' && 'status' in error && error.status === 404 &&
-          'code' in error && error.code === 'post_not_found') return { result: 'expired' } as const
+      const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined
+      if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        return { result: 'destination_refused' } as const
+      }
       return { result: 'down' } as const
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -79,37 +83,42 @@ export function createRelay({ source, boards, now }: RelayOptions) {
         else if (!Object.hasOwn(boards, entry.name)) invalid.push({ root, reason: 'unknown_board' })
         else deliveries.push(entry)
       }
-      deliveries.sort((a, b) => a.message.urgency.localeCompare(b.message.urgency))
-      const queues = new Map<string, Delivery[]>()
-      for (const entry of deliveries) {
-        const queue = queues.get(entry.name)
-        if (queue) queue.push(entry)
-        else queues.set(entry.name, [entry])
-      }
-
-      // Independent queues keep a slow destination from holding up another board.
-      const at = clock.toISOString()
-      const down = await Promise.all([...queues].map(async ([name, queue]) => {
-        const board = boards[name]!
-        for (const [index, entry] of queue.entries()) {
-          const { root, channel } = entry
-          const { landed, result } = await reconcile(board, entry, at)
-          if (landed) {
-            await source.board.reply(root.id, {
-              id: `delivery:${root.id}`, text: `delivered to ${name}/${channel}: ${landed.id}`, noSync: true,
-            })
-            report[await setState(root, forwarded) ? 'delivered' : 'pending']++
-          } else if (result === 'id_collision') {
-            report[await reject(root, result)]++
-          } else if (result === 'expired') {
-            if (!await setState(root, expired)) report.pending++
-          } else {
-            report.pending += queue.length - index
-            return name
+      const down = new Set<string>()
+      for (const urgency of MAIL_URGENCIES) {
+        const queues = new Map<string, Delivery[]>()
+        for (const entry of deliveries) {
+          if (entry.message.urgency !== urgency) continue
+          if (down.has(entry.name)) {
+            report.pending++
+            continue
           }
+          const queue = queues.get(entry.name)
+          if (queue) queue.push(entry)
+          else queues.set(entry.name, [entry])
         }
-      }))
-      report.down = down.filter((name) => name !== undefined)
+
+        // Run boards concurrently within a tier, but wait before starting the next tier.
+        const unavailable = await Promise.all([...queues].map(async ([name, queue]) => {
+          const board = boards[name]!
+          for (const [index, entry] of queue.entries()) {
+            const { root, channel } = entry
+            const { landed, result } = await reconcile(board, entry)
+            if (landed) {
+              await source.board.reply(root.id, {
+                id: `delivery:${root.id}`, text: `delivered to ${name}/${channel}: ${landed.id}`, noSync: true,
+              })
+              report[await setState(root, forwarded) ? 'delivered' : 'pending']++
+            } else if (result === 'down') {
+              report.pending += queue.length - index
+              return name
+            } else {
+              report[await reject(root, result)]++
+            }
+          }
+        }))
+        for (const name of unavailable) if (name !== undefined) down.add(name)
+      }
+      report.down = [...down]
       for (const { root, reason } of invalid) report[await reject(root, reason)]++
       return report
     },

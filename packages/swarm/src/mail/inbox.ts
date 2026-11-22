@@ -28,7 +28,10 @@ export function matchesMailKey(key: string, id: string) {
 }
 
 function matchesKey(root: MailRoot, key: string | undefined, id: string) {
-  if (key !== undefined) return matchesMailKey(key, id)
+  if (key !== undefined) {
+    const delivery = root.labels['swarm.delivery']
+    return matchesMailKey(key, id) || (delivery !== undefined && key === `mail:${delivery}`)
+  }
   // An opaque key can't prove the mailbox scope; fall back to board-authored provenance.
   const by = root.by
   if (!by) return false
@@ -55,7 +58,8 @@ function inspect(root: MailRoot, now: Date): Inspection {
   const { message } = result
   const key = readableMailKey(root)
   if (!matchesKey(root, key, message.id)) return { reason: 'invalid_post_key' }
-  const opaqueId = key === undefined ? JSON.stringify([root.by!.principal, message.id]) : undefined
+  const opaqueId = key === undefined
+    ? JSON.stringify([root.by!.principal, root.labels['swarm.delivery'], message.id]) : undefined
   return { message, opaqueId }
 }
 
