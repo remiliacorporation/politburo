@@ -21,16 +21,16 @@ const valid = await signed()
 const record = { event: 'run finished' }
 const text = JSON.stringify(record)
 
-function request(token: string | null, { method = 'POST', body = text, mediaType = 'application/json' }: {
-  method?: string; body?: BodyInit; mediaType?: string
+function request(token: string | null, { method = 'POST', body = text, mediaType = 'application/json', signal }: {
+  method?: string; body?: BodyInit; mediaType?: string; signal?: AbortSignal
 } = {}) {
   const headers = new Headers({ 'Content-Type': mediaType })
   if (token !== null) headers.set(assertion, token)
-  const init = { method, headers, body: ['GET', 'HEAD'].includes(method) ? null : body, duplex: 'half' as const }
+  const init = { method, headers, body: ['GET', 'HEAD'].includes(method) ? null : body, signal: signal ?? null, duplex: 'half' as const }
   return new Request('https://receiver.invalid/telemetry', init)
 }
 
-function guarded(options: { maxBytes?: number; authenticate?: typeof authenticate } = {}) {
+function guarded(options: Partial<Omit<Parameters<typeof receiver>[0], 'accept'>> = {}) {
   let accepted = false
   const handle = receiver({ authenticate, ...options, accept: () => { accepted = true } })
   return async (req: Request) => {
@@ -72,9 +72,11 @@ for (const [name, changes, status, code, clients] of [
   })
 }
 
-test('a service assertion signed by an untrusted key reaches accept', async () => {
+test('an untrusted signature reaches accept or lets the receiver pull the body', async () => {
   const token = await signed({}, (await generateKeyPair('RS256')).privateKey)
-  await expectCode(await guarded()(request(token)), 401, 'signature')
+  const upload = stream(['{}'])
+  await expectCode(await guarded()(request(token, upload)), 401, 'signature')
+  assert.equal(upload.state.pulled, false)
 })
 
 test('duplicate assertions authenticate or expose more than the error code', async () => {
@@ -113,19 +115,52 @@ test('a body bypasses the byte cap with a false length or an unbounded default',
   assert.equal((await guarded()(req)).status, 413)
 })
 
-test('a stream without a length exceeds the byte cap or is not cancelled on overflow', async () => {
-  const parts = ['{"event":"é', 'é"}']
-  let cancelled = false
-  const stream = new ReadableStream<Uint8Array>({
+function stream(parts: string[], stall = false) {
+  const state = { pulled: false, cancelled: false }
+  const waiting = Promise.withResolvers<void>()
+  const body = new ReadableStream<Uint8Array>({
     pull(controller) {
+      state.pulled = true
       const part = parts.shift()
-      if (part === undefined) controller.close()
-      else controller.enqueue(new TextEncoder().encode(part))
+      if (part !== undefined) controller.enqueue(new TextEncoder().encode(part))
+      else if (stall) waiting.resolve()
+      else controller.close()
     },
-    cancel() { cancelled = true },
+    cancel() { state.cancelled = true },
   }, { highWaterMark: 0 })
-  assert.equal((await guarded({ maxBytes: 14 })(request(valid, { body: stream }))).status, 413)
-  assert.equal(cancelled, true)
+  return { body, state, waiting: waiting.promise }
+}
+
+test('split UTF-8 or whitespace after a complete object bypasses the byte cap or is not cancelled', async () => {
+  for (const parts of [['{"event":"é', 'é"}'], ['{}', ' '.repeat(13)]]) {
+    const upload = stream(parts)
+    assert.equal((await guarded({ maxBytes: 14 })(request(valid, upload))).status, 413)
+    assert.equal(upload.state.cancelled, true)
+  }
+})
+
+test('an unclosed upload never answers 408 or leaves the stream open', async () => {
+  const upload = stream(['{}'], true)
+  await expectCode(await guarded({ uploadMs: 20 })(request(valid, upload)), 408, 'upload_timeout')
+  assert.equal(upload.state.cancelled, true)
+})
+
+test('a full receiver reads another upload, or abort fails to cancel and free the slot', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const upload = stream(['{}'], true)
+  const abort = new AbortController()
+  const handle = receiver({ authenticate, maxConcurrent: 1, accept: () => {} })
+  const pending = handle(request(valid, { ...upload, signal: abort.signal }))
+  await upload.waiting
+  const extra = stream(['{}'])
+  const busy = await handle(request(valid, extra))
+  await expectCode(busy, 503, 'busy')
+  assert.match(busy.headers.get('Retry-After') ?? '', /^[1-9][0-9]*$/)
+  assert.equal(extra.state.pulled, false)
+  abort.abort()
+  await expectCode(await pending, 408, 'upload_timeout')
+  assert.equal(upload.state.cancelled, true)
+  assert.equal((await handle(request(valid))).status, 202)
 })
 
 test('a zero byte budget becomes unbounded or a negative or NaN budget starts', async () => {
@@ -133,10 +168,14 @@ test('a zero byte budget becomes unbounded or a negative or NaN budget starts', 
   for (const maxBytes of [-1, NaN]) assert.throws(() => guarded({ maxBytes }), { message: 'invalid_max_bytes' })
 })
 
-test('a non-JSON media type reaches accept', async () => {
-  for (const mediaType of ['text/plain', 'application/jsonx']) {
-    assert.equal((await guarded()(request(valid, { mediaType }))).status, 415)
+test('a non-JSON, unsupported charset, extra parameter or duplicate Content-Type reaches accept', async () => {
+  const handle = guarded()
+  for (const mediaType of ['text/plain', 'application/jsonx', 'application/json; charset=latin1', 'application/json; x=y']) {
+    assert.equal((await handle(request(valid, { mediaType }))).status, 415)
   }
+  const duplicate = request(valid, { mediaType: 'application/json; charset=utf-8' })
+  duplicate.headers.append('Content-Type', 'application/json')
+  assert.equal((await handle(duplicate)).status, 415)
 })
 
 test('malformed JSON or a non-object JSON value reaches accept', async () => {
