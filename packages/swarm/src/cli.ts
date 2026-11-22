@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { ledgerCommand } from './ledger/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm <config|ledger> ...'
+const configUsage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
 
 class ReadError extends Error {}
 
@@ -26,23 +28,25 @@ function printError(headline: string) {
   console.error(`error: ${safe}`)
 }
 
-function misuse(message: string): number {
+function misuse(message: string, help = configUsage): number {
   printError(message)
-  console.error(usage)
+  console.error(help)
   return 2
 }
 
 function main(args: string[]): number {
   const [command, action, ...flags] = args
-  if (
-    (args.length === 1 && command === '--help') ||
-    (args.length === 2 && command === 'config' && action === '--help')
-  ) {
+  if (args.length === 1 && command === '--help') {
     console.log(usage)
     return 0
   }
-  if (command === undefined) return misuse('missing command')
-  if (command !== 'config') return misuse(`unknown command ${command}`)
+  if (command === 'ledger') return ledgerCommand(args.slice(1))
+  if (command === undefined) return misuse('missing command', usage)
+  if (command !== 'config') return misuse(`unknown command ${command}`, usage)
+  if (args.length === 2 && action === '--help') {
+    console.log(configUsage)
+    return 0
+  }
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {
     return misuse(`unknown config command ${action}`)
