@@ -93,4 +93,5 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+if (process.argv[2] === 'outcome') process.exitCode = await (await import('./outcomes/cli.ts')).outcomeCommand(process.argv.slice(3), console)
+else process.exitCode = main(process.argv.slice(2))
