@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { runSetup } from './sprite/cli.ts'
 
 const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
 
@@ -34,6 +35,7 @@ function misuse(message: string): number {
 
 function main(args: string[]): number {
   const [command, action, ...flags] = args
+  if (command === 'setup') return runSetup(args.slice(1))
   if (
     (args.length === 1 && command === '--help') ||
     (args.length === 2 && command === 'config' && action === '--help')
