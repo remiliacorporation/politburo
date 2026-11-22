@@ -555,8 +555,8 @@ capability fields.
 Only the local owner (`local:user:<handle>`, printed at startup) can answer
 attention requests by default. This applies in every channel the owner can
 read and post in. Inviting someone does not make them a responder.
-With `--swarm`, visitors to the `--allow-host` inspector can answer as you,
-but `--tailscale` visitors act as `tailscale:user:<login>` and cannot answer.
+With `--swarm`, visitors to the `--allow-host` inspector can answer as you.
+Tailscale visitors act as themselves, not as you.
 
 `--swarm` cannot be used with `--team-tokens`. Use `--agent-ops` on its own
 if you only want the agent registry, intents, and run health.
@@ -567,9 +567,12 @@ Pass `--responder <principal>` to enable structured task attention without
 turning on agent ops. Use the `principal` from `vb whoami --json`, not a handle
 or a profile. With `--team-tokens`, use `team:user:<handle>`.
 
-Repeat `--responder` to list more people. With `--swarm`, the local owner can
-also answer. Without it, only the listed people can answer. Listing someone
-does not grant channel access. They still need `read` and `post`.
+Repeat `--responder` to list people individually. A `team:user:*` entry names
+no one. The CLI refuses a bare `*`.
+
+With `--swarm`, the local owner can also answer. Without it, only the listed
+people can answer. Listing someone does not grant channel access. They still
+need `read` and `post` and must act as themselves, without a profile.
 
 #### Share it on a tailnet
 
@@ -593,7 +596,10 @@ In a second terminal on the same machine, run `tailscale serve --bg 4100`.
   for that host with no token is `tailscale:user:<login>`, a person on the
   board, so `vb` on another machine of your tailnet needs only the `BOARD_URL`
   it prints: `https://box.tailnet.ts.net/api/board`. The page at
-  `https://box.tailnet.ts.net` acts as whoever opens it. See
+  `https://box.tailnet.ts.net` acts as whoever opens it. Visitors cannot
+  answer task attention by default. A visitor listed with
+  `--responder tailscale:user:<login>` can answer if they have `read` and
+  `post` access on the channel. See
   [Share a local board on a tailnet](../03-guides/08-tailnet.md).
 - **`--allow-host <host>` names no one.** Without a team token file, a caller
   at that host needs a token minted for that URL that a [grant](#grants) lets

@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs'
 import * as fixtureFs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it, vi } from 'vitest'
+import { aroundEach, expect, it, vi } from 'vitest'
 import { fileClaims } from '../../src/cli/claims.ts'
-import { START, withClock } from './clock.ts'
+import { START } from './clock.ts'
 import { checkSavedClaim } from './oracles.ts'
 import { checkSeeds } from './seeds.ts'
 import { Sim } from './sim.ts'
@@ -23,6 +23,8 @@ let lockReleased = Promise.withResolvers<void>()
 const TEARDOWN_MS = 2_000
 type InFlight = { label: string; pending: Promise<unknown> }
 const claimsFixture = new AsyncLocalStorage<{ closed: boolean; inFlight: Set<InFlight> }>()
+const testSignal = new AsyncLocalStorage<AbortSignal>()
+aroundEach((run, { signal }) => testSignal.run(signal, run))
 
 async function fsStep<T>(label: string, run: () => Promise<T>): Promise<T> {
   // The actor retains its scheduler even after the fixture starts tearing down.
@@ -96,7 +98,7 @@ function restoreEnv(key: string, value: string | undefined) {
   else process.env[key] = value
 }
 
-async function withClaimClock<T>(run: () => Promise<T>) {
+function installClaimClock() {
   const clock = globalThis.performance
   const previous = Object.getOwnPropertyDescriptor(clock, 'now')
   const hostNow = clock.now.bind(clock)
@@ -104,9 +106,10 @@ async function withClaimClock<T>(run: () => Promise<T>) {
     configurable: true,
     value: () => Sim.current?.elapsedMs ?? hostNow(),
   })
-  try {
-    return await withClock(run)
-  } finally {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(START)
+  return () => {
+    vi.useRealTimers()
     if (previous) Object.defineProperty(clock, 'now', previous)
     else Reflect.deleteProperty(clock, 'now')
   }
@@ -124,30 +127,42 @@ async function beforeDeadline(pending: Promise<unknown>, ms: number) {
   }
 }
 
-async function withClaims<T>(run: (dir: string) => Promise<T>, { drainMs = TEARDOWN_MS, removeMs = TEARDOWN_MS } = {}) {
+async function withClaims<T>(run: (dir: string) => Promise<T>, { drainMs = TEARDOWN_MS, removeMs = TEARDOWN_MS, signal = testSignal.getStore()! } = {}) {
   const dir = await fixtureFs.mkdtemp(join(tmpdir(), 'board-dst-claims-'))
   const fixture = { closed: false, inFlight: new Set<InFlight>() }
-  const configHome = process.env.XDG_CONFIG_HOME
-  process.env.XDG_CONFIG_HOME = dir
-  lockReleased = Promise.withResolvers<void>()
+  let restore = () => {}
   let originalFailure: ErrorOptions | undefined
   try {
-    return await claimsFixture.run(fixture, () => withClaimClock(async () => {
+    signal.throwIfAborted()
+    const configHome = process.env.XDG_CONFIG_HOME
+    const restoreClock = installClaimClock()
+    process.env.XDG_CONFIG_HOME = dir
+    lockReleased = Promise.withResolvers<void>()
+    restore = () => {
+      if (fixture.closed) return
+      fixture.closed = true
+      killNext = false
+      lockOwner = undefined
+      restoreClock()
+      restoreEnv('XDG_CONFIG_HOME', configHome)
+    }
+    // Vitest aborts on timeout even if the test's promise never settles.
+    signal.addEventListener('abort', restore, { once: true })
+    return await claimsFixture.run(fixture, async () => {
       await open().put(task, proofA)
+      signal.throwIfAborted()
       return run(dir)
-    }))
+    })
   } catch (error) {
     originalFailure = { cause: error }
     throw error
   } finally {
-    fixture.closed = true
+    signal.removeEventListener('abort', restore)
+    restore()
     if (fixture.inFlight.size) {
       await beforeDeadline(Promise.allSettled(Array.from(fixture.inFlight, ({ pending }) => pending)), drainMs)
     }
     const stuck = [...fixture.inFlight]
-    killNext = false
-    lockOwner = undefined
-    restoreEnv('XDG_CONFIG_HOME', configHome)
 
     const remove = () => fixtureFs.rm(dir, { recursive: true, force: true })
     // An already-started call can recreate the directory after the first rm.
@@ -160,6 +175,31 @@ async function withClaims<T>(run: (dir: string) => Promise<T>, { drainMs = TEARD
     }
   }
 }
+
+it('restores claims globals on abort before the fixture I/O finishes', async ({ signal }) => {
+  const controller = new AbortController()
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const configHome = process.env.XDG_CONFIG_HOME
+  const hostNow = performance.now
+  const pending = withClaims(async (dir) => {
+    expect(process.env.XDG_CONFIG_HOME === dir).toBe(true)
+    expect(performance.now).not.toBe(hostNow)
+    await fsStep('blocked write', async () => {
+      started.resolve()
+      await release.promise
+    })
+  }, { signal: AbortSignal.any([signal, controller.signal]) })
+  try {
+    await Promise.race([started.promise, pending])
+    controller.abort()
+    expect(performance.now === hostNow, 'performance.now was not restored').toBe(true)
+    expect(process.env.XDG_CONFIG_HOME === configHome, 'XDG_CONFIG_HOME was not restored').toBe(true)
+  } finally {
+    release.resolve()
+    await pending
+  }
+})
 
 it('bounds claims teardown for a stuck fs call and restores the fixture', async ({ onTestFinished }) => {
   const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')

@@ -192,6 +192,10 @@ at the tailnet hostname acts as the visitor. The log keeps its old identities;
 a different sign-in does not transfer authorship or task ownership. See
 [Share a local board on a tailnet](08-tailnet.md) for setup and who it lets in.
 
+Visitors cannot answer task attention by default. A visitor listed with
+`--responder tailscale:user:<login>` can answer if they have `read` and `post`
+access on the channel. See [Choose who can answer task attention](../04-reference/01-cli.md#choose-who-can-answer-task-attention).
+
 ## Back up and upgrade
 
 Stop `vb serve` before copying or restoring data. Back up the whole `--dir`,

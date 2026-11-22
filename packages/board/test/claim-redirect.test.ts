@@ -1,10 +1,16 @@
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { http } from '../src/backend-http/index.ts'
 import { board } from '../src/server/index.ts'
 import { createBoardClient } from '../src/client/client.ts'
+import { prepareJoinCredential } from '../src/client/join-config.ts'
+import { connect } from '../src/client/node.ts'
 import { inspector } from '../src/inspect/handler.ts'
+import { startInspector } from '../src/inspect/server.ts'
 import { bearer, BOARD_URL, personToken, testBoard } from './harness.ts'
 
 const servers: Server[] = []
@@ -64,6 +70,17 @@ describe('a claim-bearing request that is answered with a redirect', () => {
       expect(configured.seen[0]?.body).toContain(SECRET)
     },
   )
+
+  it('plain tasks.block refuses redirects when given a claim proof', async () => {
+    const elsewhere = await listen((_, respond) => respond.ok())
+    const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/other`))
+    const client = createBoardClient({ url: configured.url, fetch: globalThis.fetch })
+    const opts = { epoch: 1, token: SECRET, kind: 'needs_input' }
+
+    await expect(client.tasks.block('task-1', 'stuck', opts)).rejects.toMatchObject({ code: 'redirect_refused' })
+    expect(elsewhere.seen).toEqual([])
+    expect(configured.seen.map(({ body }) => JSON.parse(body))).toMatchObject([{ token: SECRET, epoch: 1 }])
+  })
 
   it('a request for a decision that carries a claim\'s proof does not send it to a redirect', async () => {
     const elsewhere = await listen((_, respond) => respond.ok())
@@ -186,6 +203,86 @@ describe('the inspector, which forwards the writes of its page', () => {
     expect(elsewhere.seen).toEqual([])
     expect(configured.seen.filter((one) => one.method === 'POST').map((one) => one.body)).toEqual([JSON.stringify({ epoch: 1, token: SECRET })])
   })
+})
+
+it('the local Node inspector refuses a redirect to a page write', async ({ onTestFinished }) => {
+  const elsewhere = await listen((_, respond) => respond.ok())
+  const configured = await listen((one, respond) => {
+    if (one.method === 'GET') respond.json({ principal: 'local:user:app', profile: null })
+    else respond.redirect(`${elsewhere.url}/other`)
+  })
+  const client = createBoardClient({ url: configured.url, token: 'test', fetch: globalThis.fetch })
+  const page = await startInspector({ client, port: 0, page: '' })
+  onTestFinished(() => page.close())
+  const html = await (await fetch(page.url)).text()
+  const token = /<meta name="inspect-token" content="([^"]+)">/.exec(html)![1]!
+  const body = JSON.stringify({ epoch: 1, token: SECRET })
+  const response = await fetch(`${page.url}/board/tasks/task-1/renew`, {
+    method: 'POST', headers: { 'x-inspect-token': token, origin: page.url, 'content-type': 'application/json' }, body,
+  })
+
+  expect(response.status).toBe(502)
+  expect(JSON.stringify(await response.json())).toContain('answered a claim')
+  expect(elsewhere.seen).toEqual([])
+  expect(configured.seen.filter((one) => one.method === 'POST').map((one) => one.body)).toEqual([body])
+})
+
+for (const kind of ['guarded', 'joined']) it(`the ${kind} Node transport returns the board redirect to a claim write`, async ({ onTestFinished }) => {
+  const elsewhere = await listen((_, respond) => respond.ok())
+  const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/sso-api`))
+  onTestFinished(() => { vi.unstubAllEnvs() })
+  vi.stubEnv('VERCEL', '1')
+  vi.stubEnv('VERCEL_AUTOMATION_BYPASS_SECRET', '')
+  if (kind === 'joined') {
+    const home = await mkdtemp(join(tmpdir(), 'board-claim-redirect-'))
+    onTestFinished(() => rm(home, { recursive: true, force: true }))
+    vi.stubEnv('XDG_CONFIG_HOME', home)
+    vi.stubEnv('BOARD_TOKEN', undefined)
+    const credential = await prepareJoinCredential(configured.url)
+    await credential.save(`vbj_${'a'.repeat(43)}`)
+  }
+  const transport = connect(configured.url, kind === 'guarded' ? { token: 'test' } : {})
+  const client = createBoardClient({ url: configured.url, fetch: transport.fetch })
+
+  await expect(client.tasks.held('t', { epoch: 1, token: SECRET }).renew())
+    .rejects.toMatchObject({ code: 'redirect_refused' })
+  expect(elsewhere.seen).toEqual([])
+  expect(configured.seen.map(({ body }) => JSON.parse(body))).toMatchObject([{ token: SECRET }])
+})
+
+it.each(['tasks.ask', 'tasks.claim next'] as const)('the HTTP handle refuses redirects for %s', async (op) => {
+  const team = testBoard()
+  const token = await personToken('u_julian')
+  const elsewhere = await listen((_, respond) => respond.ok())
+  const configured = await listen((_, respond) => respond.redirect(`${elsewhere.url}/other`))
+  let redirecting = false
+  const send = bearer(async (input, init) => {
+    const request = new Request(input, init)
+    if (redirecting && request.method === 'POST') {
+      return globalThis.fetch(`${configured.url}${new URL(request.url).pathname}`, init)
+    }
+    return team.fetch(request)
+  }, token)
+  const handle = board({ backend: http(BOARD_URL, { fetch: send }) }).as(null)
+  const own = 'A'.repeat(43)
+  const { task } = await handle.tasks.create('work', 'Check the release')
+  const claim = op === 'tasks.ask' ? await handle.tasks.claim(task.id, { token: own }) : undefined
+  redirecting = true
+  const write = claim ? handle.tasks.ask(task.id, {
+    kind: 'awaiting_approval', question: 'Ship it?', context: '', revision: claim.task.revision,
+    commit: 'a'.repeat(40), evidence: [{ message: task.id, revision: claim.task.revision }],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    options: [
+      { id: 'go', label: 'Ship', consequence: 'Release the build', next: 'resume' },
+      { id: 'stop', label: 'Stop', consequence: 'Keep the build', next: 'fail' },
+    ],
+    claim: { epoch: claim.epoch, token: own },
+  }) : handle.tasks.claim({ channel: 'work', token: own })
+
+  await expect(write).rejects.toMatchObject({ code: 'redirect_refused' })
+  expect(elsewhere.seen).toEqual([])
+  expect(configured.seen).toHaveLength(1)
+  expect(configured.seen[0]?.body).toContain(own)
 })
 
 describe('every verb that carries a claim token flags its request', () => {

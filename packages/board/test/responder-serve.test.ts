@@ -71,6 +71,15 @@ it('does not let a listed person answer with read-only access', async ({ onTestF
   expect(await responder.tasks.answer(...pending)).toMatchObject({ attention: { status: 'answered' } })
 })
 
+it('hides attention from a listed responder with no read access', async ({ onTestFinished }) => {
+  const { team, owner, responder, token } = await setup(onTestFinished, { responders: [RESPONDER] })
+  const pending = await ask(owner)
+  const postOnly = caller(team.fetch, token, { 'x-board-can': `${CHANNEL}=post` })
+  expect(await postOnly('POST', `/tasks/${pending[0]}/attention/${pending[1]}/answer`, ANSWER))
+    .toMatchObject({ status: 404, body: { error: { code: 'message_not_found' } } })
+  expect(await responder.tasks.answer(...pending)).toMatchObject({ attention: { status: 'answered' } })
+})
+
 it('keeps the swarm owner and adds the listed responder', async ({ onTestFinished }) => {
   const { owner, responder } = await setup(onTestFinished, { swarm: true, responders: [RESPONDER] })
   expect(await owner.tasks.answer(...await ask(owner))).toMatchObject({
