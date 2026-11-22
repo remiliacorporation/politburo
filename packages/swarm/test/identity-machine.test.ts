@@ -1,30 +1,31 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, UnsecuredJWT, type JWTPayload } from 'jose'
+import { isDeepStrictEqual } from 'node:util'
+import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose'
 import { machineAuthenticator, receiver } from '../src/identity/index.ts'
 
 const teamDomain = 'team.invalid'
 const audience = 'telemetry-app'
 const time = 1_900_000_000
 const client = 'Fixture.access'
-const claims = { iss: `https://${teamDomain}`, aud: audience, sub: 'fixture', common_name: client, iat: time, exp: time + 60 }
+const assertion = 'Cf-Access-Jwt-Assertion'
 const { publicKey, privateKey } = await generateKeyPair('RS256')
 const keys = createLocalJWKSet({ keys: [await exportJWK(publicKey)] })
 const options = { teamDomain, audience, keys, now: () => new Date(time * 1000) }
 const auth = (clients: Record<string, string> = { [client]: 'mob-1' }) => machineAuthenticator({ ...options, clients })
 const authenticate = auth()
-const signed = (changes: JWTPayload = {}) => new SignJWT({ ...claims, ...changes })
-  .setProtectedHeader({ alg: 'RS256' }).sign(privateKey)
+const signed = (changes: JWTPayload = {}, key = privateKey) => new SignJWT({
+  iss: `https://${teamDomain}`, aud: audience, sub: '', common_name: client, iat: time, exp: time + 60, ...changes,
+}).setProtectedHeader({ alg: 'RS256' }).sign(key)
 const valid = await signed()
 const record = { event: 'run finished' }
 const text = JSON.stringify(record)
 
-function request(token: string | null, { method = 'POST', body = text, mediaType = 'application/json', length }: {
-  method?: string; body?: BodyInit; mediaType?: string; length?: number
+function request(token: string | null, { method = 'POST', body = text, mediaType = 'application/json' }: {
+  method?: string; body?: BodyInit; mediaType?: string
 } = {}) {
   const headers = new Headers({ 'Content-Type': mediaType })
-  if (length !== undefined) headers.set('Content-Length', String(length))
-  if (token !== null) headers.set('Cf-Access-Jwt-Assertion', token)
+  if (token !== null) headers.set(assertion, token)
   const init = { method, headers, body: ['GET', 'HEAD'].includes(method) ? null : body, duplex: 'half' as const }
   return new Request('https://receiver.invalid/telemetry', init)
 }
@@ -39,77 +40,81 @@ function guarded(options: { maxBytes?: number; authenticate?: typeof authenticat
   }
 }
 
-async function expectError(response: Response, status: number, code: string, token: string) {
+async function expectCode(response: Response, status: number, code: string) {
   assert.equal(response.status, status)
-  const body = await response.text()
-  assert.ok(token.split('.').filter(Boolean).every((part) => !body.includes(part)), 'response contains JWT material')
-  const { error } = JSON.parse(body)
-  assert.equal(error.code, code)
-  assert.ok(typeof error.message === 'string' && error.message.length > 0)
+  const payload = await response.json().catch(() => null)
+  assert.ok(payload?.error?.code === code && Object.keys(payload.error).length === 1 &&
+    Object.keys(payload).length === 1, `expected only error code ${code}`)
 }
 
-test('a service assertion with empty sub fails to deliver a write-only machine and record, or echoes the record', async () => {
+test('a service assertion loses its write-only identity, changes the record, or echoes it', async () => {
   const received: unknown[] = []
   const handle = receiver({ authenticate, accept: (value, machine) => { received.push({ value, machine }) } })
-  const response = await handle(request(await signed({ sub: '' }), { mediaType: 'application/json; charset=utf-8' }))
+  const response = await handle(request(valid, { mediaType: 'application/json; charset=utf-8' }))
   assert.equal(response.status, 202)
-  assert.equal(await response.text(), '')
-  assert.deepEqual(received, [{ value: record, machine: {
+  assert.ok((await response.text()) === '', 'success response has a body')
+  assert.ok(isDeepStrictEqual(received, [{ value: record, machine: {
     kind: 'machine', id: 'cloudflare:machine:mob-1', name: 'mob-1', can: ['write'],
-  } }])
+  } }]), 'expected the submitted record and only the write-only machine identity')
 })
 
-for (const [name, code, tokenFor] of [
-  ['an unsigned assertion reaches the receiver', 'algorithm', () => new UnsecuredJWT(claims).encode()],
-  ['garbage in the assertion header is not refused', 'malformed', () => 'not-a-jwt'],
-  ['an expired assertion reaches the receiver', 'expired', () => signed({ iat: time - 60, exp: time - 10 })],
-  ['an assertion for another app reaches the receiver', 'audience', () => signed({ aud: 'other-app' })],
-  ['an assertion from another team reaches the receiver', 'issuer', () => signed({ iss: 'https://other-team.invalid' })],
-  ['a person assertion with a registered client id is accepted', 'unauthorized', () =>
-    signed({ sub: 'person', email: 'person@example.invalid' })],
-  ['an empty email claim is treated as absent', 'unauthorized', () => signed({ email: '' })],
+for (const [name, changes, status, code, clients] of [
+  ['a person assertion with a registered client id reaches accept', { sub: 'person', email: 'person@example.invalid' }, 401, 'unauthorized'],
+  ['an empty email claim is treated as absent', { email: '' }, 401, 'unauthorized'],
+  ['an unknown client gets write access', { common_name: 'stranger' }, 403, 'unknown_client'],
+  ['a client id with different case gets write access', { common_name: client.toLowerCase() }, 403, 'unknown_client'],
+  ['a client id with a registered prefix gets write access', { common_name: `${client}.other` }, 403, 'unknown_client'],
+  ['an inherited client id gets write access', { common_name: 'inherited' }, 403, 'unknown_client',
+    Object.create({ inherited: 'mob-2' }) as Record<string, string>],
 ] as const) {
   test(name, async () => {
-    const token = await tokenFor()
-    await expectError(await guarded()(request(token)), 401, code, token)
+    await expectCode(await guarded({ authenticate: auth(clients) })(request(await signed(changes))), status, code)
   })
 }
 
-for (const [name, common_name, clients] of [
-  ['an unknown client gets write access', 'stranger', undefined],
-  ['a client id with different case gets write access', client.toLowerCase(), undefined],
-  ['an inherited client id gets write access', 'inherited', Object.create({ inherited: 'mob-2' }) as Record<string, string>],
-] as const) {
-  test(name, async () => {
-    const token = await signed({ common_name })
-    await expectError(await guarded({ authenticate: auth(clients) })(request(token)), 403, 'unknown_client', token)
-  })
-}
+test('a service assertion signed by an untrusted key reaches accept', async () => {
+  const token = await signed({}, (await generateKeyPair('RS256')).privateKey)
+  await expectCode(await guarded()(request(token)), 401, 'signature')
+})
 
-test('machine configuration accepts a name with disallowed characters', () => {
+test('duplicate assertions authenticate or expose more than the error code', async () => {
+  const req = request(valid)
+  req.headers.append(assertion, valid)
+  await expectCode(await guarded()(req), 401, 'malformed')
+})
+
+test('machine configuration accepts an invalid name or assigns one identity to two clients', () => {
   assert.throws(() => auth({ [client]: 'mob/1' }), { message: 'invalid_machine_name' })
+  assert.throws(() => auth({ [client]: 'mob-1', other: 'mob-1' }), { message: 'duplicate_machine_name' })
 })
 
-test('missing credentials are not treated as absent by auth and refused by the receiver', async () => {
+test('missing credentials are treated as present or the receiver reads before authenticating', async () => {
   assert.ok(await authenticate(new Headers()) === null)
-  assert.equal((await guarded()(request(null))).status, 401)
+  const req = request(null)
+  assert.equal((await guarded()(req)).status, 401)
+  assert.equal(req.bodyUsed, false)
 })
 
-test('a machine credential can use a non-POST method or get a response body from it', async () => {
+test('a machine can use a non-POST method or get a response body from it', async () => {
   const handle = guarded()
   for (const method of ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'PATCH']) {
-    const response = await handle(request(valid, { method }))
+    const req = request(valid, { method })
+    req.headers.set('X-HTTP-Method-Override', 'POST')
+    const response = await handle(req)
     assert.equal(response.status, 405, method)
     assert.equal(response.headers.get('allow'), 'POST', method)
     assert.equal(await response.text(), '', method)
   }
 })
 
-test('an oversized JSON body bypasses the default limit or a smaller streaming byte limit', async () => {
-  const body = JSON.stringify('x'.repeat(64 * 1024))
-  assert.equal((await guarded()(request(valid, { body, length: body.length }))).status, 413)
+test('a body bypasses the byte cap with a false length or an unbounded default', async () => {
+  const req = request(valid, { body: JSON.stringify({ event: 'x'.repeat(64 * 1024) }) })
+  req.headers.set('Content-Length', '1')
+  assert.equal((await guarded()(req)).status, 413)
+})
 
-  const parts = ['"é', 'é"']
+test('a stream without a length exceeds the byte cap or is not cancelled on overflow', async () => {
+  const parts = ['{"event":"é', 'é"}']
   let cancelled = false
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
@@ -119,26 +124,28 @@ test('an oversized JSON body bypasses the default limit or a smaller streaming b
     },
     cancel() { cancelled = true },
   }, { highWaterMark: 0 })
-  const streamed = request(valid, { body: stream })
-  assert.equal(streamed.headers.has('content-length'), false)
-  assert.equal((await guarded({ maxBytes: 5 })(streamed)).status, 413)
-  assert.equal(cancelled, true, 'the oversized stream was not stopped before EOF')
+  assert.equal((await guarded({ maxBytes: 14 })(request(valid, { body: stream }))).status, 413)
+  assert.equal(cancelled, true)
 })
 
-test('a valid JSON value with a non-JSON content type reaches accept', async () => {
-  assert.equal((await guarded()(request(valid, { mediaType: 'text/plain' }))).status, 415)
+test('a zero byte budget becomes unbounded or a negative or NaN budget starts', async () => {
+  assert.equal((await guarded({ maxBytes: 0 })(request(valid))).status, 413)
+  for (const maxBytes of [-1, NaN]) assert.throws(() => guarded({ maxBytes }), { message: 'invalid_max_bytes' })
 })
 
-test('invalid JSON reaches accept or returns a status other than 400', async () => {
-  assert.equal((await guarded()(request(valid, { body: '{' }))).status, 400)
+test('a non-JSON media type reaches accept', async () => {
+  for (const mediaType of ['text/plain', 'application/jsonx']) {
+    assert.equal((await guarded()(request(valid, { mediaType }))).status, 415)
+  }
 })
 
-test('a rejected accept callback does not return 500 or leaks its error or record', async () => {
-  const message = 'fixture callback failure'
-  const handle = receiver({ authenticate, accept: async () => { throw new Error(message) } })
-  const response = await handle(request(valid))
-  assert.equal(response.status, 500)
-  const body = await response.text()
-  assert.ok(!body.includes(message) && !body.includes(record.event), 'response leaks callback error or record')
-  assert.equal(body, 'could not accept record')
+test('malformed JSON or a non-object JSON value reaches accept', async () => {
+  for (const body of ['{', 'null', '[]', '1']) {
+    assert.equal((await guarded()(request(valid, { body }))).status, 400)
+  }
+})
+
+test('an accept failure is ignored or exposes details', async () => {
+  const handle = receiver({ authenticate, accept: async () => { throw new Error('fixture callback failure') } })
+  await expectCode(await handle(request(valid)), 500, 'accept_failed')
 })

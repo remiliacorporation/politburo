@@ -23,7 +23,11 @@ async function readRecord(body: ReadableStream<Uint8Array> | null, maxBytes: num
       }
       text += decoder.decode(value, { stream: true })
     }
-    return { record: JSON.parse(text + decoder.decode()) as unknown }
+    const record: unknown = JSON.parse(text + decoder.decode())
+    if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+      return new Response(null, { status: 400 })
+    }
+    return { record }
   } catch {
     void reader.cancel().catch(() => {})
     return new Response(null, { status: 400 })
@@ -48,7 +52,7 @@ export function receiver({ authenticate, accept, maxBytes = 64 * 1024 }: Receive
       await accept(result.record, machine)
       return new Response(null, { status: 202 })
     } catch {
-      return new Response('could not accept record', { status: 500 })
+      return Response.json({ error: { code: 'accept_failed' } }, { status: 500 })
     }
   }
 }
