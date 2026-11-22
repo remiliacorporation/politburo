@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -116,6 +116,43 @@ test('sync does not write on dry-run, omit skills, or report changes on repeat',
   assert.ok(existsSync(join(dir, 'mob-creation', 'brief-template.md')))
   const reported = install(dir).trimEnd().split('\n').map((line) => line.replace(/^unchanged\s+/, ''))
   assert.deepEqual(reported.sort(), filesUnder(dir).sort())
+})
+
+test('sync does not overwrite a hand-authored skill or write other files without --force', (t) => {
+  const dir = tempDir(t)
+  mkdirSync(join(dir, 'reviewer'))
+  const path = join(dir, 'reviewer/SKILL.md')
+  const original = '# Hand-authored reviewer\n'
+  writeFileSync(path, original)
+  const result = run(dir)
+  assert.equal(result.status, 1)
+  assert.ok(result.stderr.includes(path))
+  assert.deepEqual(readdirSync(dir), ['reviewer'])
+  assert.deepEqual(filesUnder(dir), [path])
+  assert.equal(readFileSync(path, 'utf8'), original)
+  install(dir, '--force')
+  assert.notEqual(readFileSync(path, 'utf8'), original)
+  assert.deepEqual(readdirSync(dir).sort(), skills)
+})
+
+test('sync rejects a name pool that pushes startup text over the token limit without writing', (t) => {
+  const root = tempDir(t)
+  const dir = join(root, 'skills')
+  const pool = Array.from({ length: 10_000 }, (_, i) => `SPECIES_${i}`)
+  assert.equal(run(dir, ...party(root, species(pool))).status, 1)
+  assert.ok(!existsSync(dir) || readdirSync(dir).length === 0)
+})
+
+test('sync does not print newline-injected rows in paths or errors', (t) => {
+  const dir = join(tempDir(t), 'x\ninjected')
+  const stdout = install(dir, '--dry-run')
+  assert.ok(stdout.includes('x\\u000ainjected'))
+  assert.ok(!stdout.includes('\ninjected'))
+  writeFileSync(dir, '')
+  const { status, stderr } = run(dir)
+  assert.equal(status, 1)
+  assert.ok(stderr.includes('x\\u000ainjected'))
+  assert.ok(!stderr.includes('\ninjected'))
 })
 
 test('sync rejects an unknown party field with an error and no writes', (t) => {

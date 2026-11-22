@@ -3,13 +3,16 @@ import { parseArgs } from 'node:util'
 import { ConfigError, loadConfig, parseConfigText } from '../config/load.ts'
 import { syncSkills } from './sync.ts'
 
-const usage = 'usage: swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--json]'
+const usage = 'usage: swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]'
 
-function printError(message: string) {
-  const safe = message.replace(/[\x00-\x1f\x7f-\x9f]/g, (char) =>
+function escapeControls(text: string) {
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, (char) =>
     `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
   )
-  console.error(`error: ${safe}`)
+}
+
+function printError(message: string) {
+  console.error(`error: ${escapeControls(message)}`)
 }
 
 function misuse(message: string): number {
@@ -48,6 +51,7 @@ export function skillsMain(args: string[]): number {
         party: { type: 'string' },
         repo: { type: 'string' },
         'dry-run': { type: 'boolean' },
+        force: { type: 'boolean' },
         json: { type: 'boolean' },
       },
     }))
@@ -59,9 +63,9 @@ export function skillsMain(args: string[]): number {
 
   try {
     const config = loadConfig({ party: readLayer(values.party), repo: readLayer(values.repo) })
-    const files = syncSkills(config, values.dir, values['dry-run'])
+    const files = syncSkills(config, values.dir, values['dry-run'], values.force)
     if (values.json) console.log(JSON.stringify({ files }))
-    else for (const { path, action } of files) console.log(`${action}  ${path}`)
+    else for (const { path, action } of files) console.log(`${action}  ${escapeControls(path)}`)
     return 0
   } catch (error) {
     if (!(error instanceof Error)) throw error
