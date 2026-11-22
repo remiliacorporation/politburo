@@ -259,16 +259,29 @@ test('paused board: silence or a stale heartbeat raises a stall alert during a p
     [['stall:missed:work:worker', iso(70)], ['stall:quiet:work', iso(70)]])
 })
 
-test('stall replay redacts unsafe agent fields without losing the alert for an ID equal to the alias', async () => {
-  const id = `agent/${randomUUID()}`, role = `${randomUUID().slice(0, 8)} ) ${randomUUID().slice(0, 8)}`
+test('watch diff matches a replayed stall by the token of the original ID, not the escaped ID', async (t) => {
+  const [alert] = await replay([{ t: time(65), paused: false, events: [],
+    agents: [{ ...agent('example:agent', 0), role: 'example:role' }],
+  }])
+  const dir = tempDir(t), script = join(dir, 'script.tsv'), service = join(dir, 'service.jsonl')
+  writeFileSync(script, `${iso(65)}\tstall\tstall:missed:work:agent-07897adc7946\tmissed heartbeat\n`)
+  writeFileSync(service, `${JSON.stringify(alert)}\n`)
+  const diff = runDiff(script, service)
+  assert.equal(diff.status, 0, diff.stdout || diff.stderr)
+  assert.match(alert!.text, /^Agent agent-07897adc7946 \(agent-619badd8e8e0\) /)
+})
+
+test('stall replay redacts unsafe fields and gives both colliding IDs distinct keys in original ID order', async () => {
+  const id = `agent/${randomUUID()}`, role = `${randomUUID()} ) ${randomUUID()}`
   const opaque = (value: string) => `agent-${createHash('sha256').update(value).digest('hex').slice(0, 12)}`
   const alias = opaque(id)
   const alerts = await replay([{ t: time(65), paused: false, events: [],
     agents: [{ ...agent(id, 0), role }, { ...agent(alias, 0), role: 'checker' }],
   }])
+  assert.equal(alerts.length, 2)
   assert.equal([id, role].some((value) => JSON.stringify(alerts).includes(value)), false)
-  assert.deepEqual(alerts.map(({ key, text }) => [key, text]), [opaque(role), 'checker'].map((role) => [
-    `stall:missed:work:${alias}`, `Agent ${alias} (${role}) last sent a heartbeat 3900000 ms ago. The limit is 3600000 ms.`,
+  assert.deepEqual(alerts.map(({ key, text }) => [key, text]).sort(), [[alias, 'checker'], [`${alias}-2`, opaque(role)]].map(([label, role]) => [
+    `stall:missed:work:${label}`, `Agent ${label} (${role}) last sent a heartbeat 3900000 ms ago. The limit is 3600000 ms.`,
   ]))
 })
 
