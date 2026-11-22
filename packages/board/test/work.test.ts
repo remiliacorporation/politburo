@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { claimOrder } from '../src/inspect/app/claim-order.ts'
 import { initialState, merge, type State, type TaskRoot, type Viewer } from '../src/inspect/app/store.ts'
+import { filterWork } from '../src/inspect/app/work-filter.ts'
 import { groupOf, homeOf, projectWork, type Observation, type SwarmRecords } from '../src/inspect/app/work.ts'
 
 const now = Date.parse('2026-10-01T12:00:00Z')
@@ -30,6 +31,20 @@ function snapshot(roots: TaskRoot[], cached = roots): State {
 const records = (observations: SwarmRecords['observations']): SwarmRecords => ({ source: 'fixtures', parties: {}, observations })
 const openPassing: Observation['pr'] = { number: 42, state: 'open', checks: 'pass' }
 const claimed = (n: number, offset: number) => task(n, { state: 'claimed', claim: { actor, until: at(offset) } })
+
+it('matches every search term in the same open row, never a cached-only task', () => {
+  const build = { ...claimed(1, 30_000), text: 'Compile assets', labels: { 'work.id': 'wp-1', party: 'blue' } }
+  const notes = { ...task(2), text: 'Publish notes' }
+  const cached = { ...build, id: '3', text: 'Archived build', labels: { ...build.labels, 'work.id': 'wp-3' } }
+  const { rows } = projectWork(snapshot([build, notes], [build, notes, cached]), {
+    ...records({ 'wp-1': { trackers: [{ kind: 'lin', id: 'ENG-812' }] } }),
+    parties: { blue: { name: 'Blue Team', colour: '#00f' } },
+  }, viewer, now)
+  const matches = (text: string) => filterWork(rows, { text }).map(({ workId }) => workId)
+  expect(matches('  WP-1  compile Blue\tworker ENG-812  ')).toEqual(['wp-1'])
+  expect(matches('compile publish')).toEqual([])
+  expect(matches('archived wp-3')).toEqual([])
+})
 
 it('shows each task once in triage order, without empty groups', () => {
   const state = snapshot([task(1), task(2), task(3), claimed(4, 30_000), task(5), task(6, { state: 'waiting', needs: ['5'] })])

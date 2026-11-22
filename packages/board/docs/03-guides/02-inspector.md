@@ -58,6 +58,12 @@ Read and operate the board in your browser:
   Peek (the button on a row, or Space) opens a task's details beside the list
   and puts it in the URL. The list and Peek show loading or the board's refusal
   instead of empty results when the open tasks can't be read.
+  Filter by text, or open a saved view (`?view=attention`, `operations`,
+  `available`, `live`, `review`, `exceptions`). Keys: `j` and `k` move,
+  Enter opens the thread, Space peeks, `/` filters, `g` then `n`, `r`, `u`, `w`
+  or `q` jumps to a group, `[` and `]` collapse and expand it, `o`, `p` and `e`
+  open a row's source, PR and evidence, and `?` lists them. No key claims,
+  releases or accepts work.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what
