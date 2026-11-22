@@ -93,4 +93,4 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+process.exitCode = process.argv[2] === 'claims' ? await (await import('./claims/cli.ts')).claimsMain(process.argv.slice(3)) : main(process.argv.slice(2))
