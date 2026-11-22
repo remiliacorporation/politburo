@@ -125,6 +125,13 @@ export function createBridge({ board, inbox, outbox, dir, tag, now }: BridgeOpti
   if (!isSafeMailSegment(tag)) throw new MailError('invalid_tag')
   const service = createInbox({ board, channel: inbox, now })
   const { state } = MAIL_LABELS
+  // Land the origin with the root so a lost post response cannot cause an echo.
+  const fileSender: Pick<Board, 'post'> = {
+    post: (channel, input) => {
+      const post = typeof input === 'string' ? { text: input } : input
+      return board.post(channel, { ...post, labels: { ...post.labels, [originLabel]: 'file' } })
+    },
+  }
 
   async function directory(side: 'in' | 'out') {
     if (side === 'in') await mkdir(dir, { recursive: true })
@@ -173,8 +180,7 @@ export function createBridge({ board, inbox, outbox, dir, tag, now }: BridgeOpti
         }
         const message = data as MailMessage
         try {
-          const root = await sendMail(board, message.to ? outbox : inbox, message, { scope: tag })
-          await board.label(root.id, { if: { [originLabel]: null }, set: { [originLabel]: 'file' } }).catch(() => {})
+          await sendMail(fileSender, message.to ? outbox : inbox, message, { scope: tag })
           report.imported++
         } catch (error) {
           if (!(error instanceof MailError)) throw error
