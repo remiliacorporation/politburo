@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { request as httpRequest } from 'node:http'
 import { test, type TestContext } from 'node:test'
+import { board } from '@vercel/board'
+import { local } from '@vercel/board/backend-local'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose'
 import { parseMembers } from '../src/identity/index.ts'
 import { serveBoard } from '../src/identity/serve.ts'
@@ -23,9 +27,9 @@ async function sign(claims: JWTPayload = {}, key?: Awaited<typeof keypair>['priv
     .setProtectedHeader({ alg: 'RS256' }).sign(key ?? (await keypair).privateKey)
 }
 
-async function start(t: TestContext, members: unknown[] = [member], dir?: string) {
+async function start(t: TestContext, members: unknown[] = [member, manager], dir?: string, publicHosts = [publicHost]) {
   const keys = createLocalJWKSet({ keys: [await exportJWK((await keypair).publicKey)] })
-  const board = await serveBoard({ dir, memory: dir === undefined, tunnelPort: 0, publicHosts: [publicHost],
+  const board = await serveBoard({ dir, memory: dir === undefined, tunnelPort: 0, publicHosts,
     teamDomain, audience, keys, members: parseMembers({ members }), now: () => now })
   t.after(board.close)
   assert.ok(board.tunnelUrl?.startsWith('http://127.0.0.1:'))
@@ -56,6 +60,31 @@ async function start(t: TestContext, members: unknown[] = [member], dir?: string
   }
 }
 
+async function tempDir(t: TestContext) {
+  const dir = await mkdtemp('test-swarm-board-')
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  return dir
+}
+
+async function onDisk<T>(dir: string, run: (handle: ReturnType<typeof board>) => Promise<T>) {
+  const backend = local({ dir })
+  try { return await run(board({ backend })) } finally { await backend.close() }
+}
+
+function cli(...args: string[]) {
+  const result = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/cli.ts', ...args], {
+    cwd: new URL('../', import.meta.url), encoding: 'utf8', timeout: 5000,
+  })
+  if (result.error) throw result.error
+  return result
+}
+
+async function serveArgs(dir: string, members: unknown[]) {
+  const file = join(dir, 'members.json')
+  await writeFile(file, JSON.stringify({ members }))
+  return ['serve', '--dir', join(dir, 'board'), '--members', file, '--team-domain', teamDomain, '--audience', audience]
+}
+
 const post = { channel: 'work', text: 'a colleague wrote this' }
 
 async function status(reply: Promise<Response>, expected: number, label?: string) {
@@ -79,6 +108,7 @@ test('a signed colleague could post as another actor or read outside the registr
   assert.deepEqual(messages.map(({ by, text }) => [by.actor, by.principal, text]), [[person, person, post.text]])
   const privateMessage = await handle.post('private', 'not for this member')
   await status(request('/messages?channel=private', jwt), 403)
+  await status(request('/messages/?channel=private', jwt), 403)
   await status(request(`/messages/${encodeURIComponent(privateMessage.id)}`, jwt), 404)
 })
 
@@ -115,43 +145,31 @@ test('invalid assertions, alternate credentials, or cross-site writes could reac
   assert.equal((await handle.threads({ channel: 'work' })).threads.length, 0)
 })
 
-test('the owner email could impersonate the owner, or removed members could keep their grants after restart', async (t) => {
-  const dir = await mkdtemp('test-swarm-board-')
+test('the owner email could impersonate the owner, or a registry downgrade could leave excess access after restart', async (t) => {
+  const dir = await tempDir(t)
   const members = [member, manager]
+  const first = await start(t, members, dir)
+  const ownerGrant = { principals: [{ kind: 'user' as const, userId: 'owner' }], can: { '*': 'all' as const } }
+  const { grant } = await first.handle.createGrant(ownerGrant)
+  const jwt = await sign()
+  const before = await sign({ email: managerEmail })
   try {
-    const first = await start(t, members, dir)
-    const ownerGrant = { principals: [{ kind: 'user' as const, userId: 'owner' }], can: { '*': 'all' as const } }
-    const { grant } = await first.handle.createGrant(ownerGrant)
-    const jwt = await sign()
-    try {
-      const memberPrincipals = (await first.handle.grants()).filter(({ id }) => id !== grant.id).flatMap(({ principals }) => principals)
-      assert.deepEqual(memberPrincipals.map((p) => p.kind === 'user' ? p.userId : p.kind).sort(),
-        ['manager.at.company.example', 'owner.at.company.example'])
-      assert.equal((await (await first.request('/me', jwt)).json()).principal, person)
-      await status(first.request('/control/pause', jwt, { reason: 'no manage' }), 403)
-      await status(first.request('/grants', jwt, ownerGrant), 403)
-      await status(first.request('/threads', await sign({ email: 'unknown@company.example' })), 403)
-      await status(first.request('/control/pause', await sign({ email: managerEmail }), { reason: 'explicit manage' }), 200)
-    } finally {
-      await first.close()
-    }
-    const next = await start(t, [{ ...manager, can: { work: ['read'] } }], dir)
-    try {
-      const grants = await next.handle.grants()
-      assert.deepEqual(grants.find(({ id }) => id === grant.id), grant)
-      assert.deepEqual(grants.filter(({ id }) => id !== grant.id).map(({ principals, can }) => ({ principals, can })), [
-        { principals: [{ kind: 'user', email: null, userId: 'manager.at.company.example' }], can: { work: ['read'] } },
-      ])
-      await status(next.request('/threads', jwt), 403)
-      const retained = await sign({ email: managerEmail })
-      await status(next.request('/messages?channel=work', retained), 200)
-      await status(next.request('/messages', retained, post), 403)
-    } finally {
-      await next.close()
-    }
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
+    assert.equal((await (await first.request('/me', jwt)).json()).principal, person)
+    await status(first.request('/control/pause', jwt, { reason: 'no manage' }), 403)
+    await status(first.request('/grants', jwt, ownerGrant), 403)
+    await status(first.request('/threads', await sign({ email: 'unknown@company.example' })), 403)
+    await status(first.request('/control/pause', before, { reason: 'explicit manage' }), 200)
+  } finally { await first.close() }
+  const newAdmin = { ...manager, email: 'new@company.example', can: { '*': ['manage'] } }
+  const next = await start(t, [{ ...manager, can: { work: ['read'] } }, newAdmin], dir)
+  try {
+    assert.ok((await next.handle.grants()).some(({ id }) => id === grant.id))
+    await status(next.request('/control/resume', await sign({ email: newAdmin.email }), { reason: 'new admin' }), 200)
+    await status(next.request('/threads', jwt), 403)
+    await status(next.request('/messages?channel=work', before), 200)
+    await status(next.request('/messages', before, post), 403)
+    await status(next.request('/messages', before, { ...post, channel: 'private' }), 403)
+  } finally { await next.close() }
 })
 
 test('parallel requests can write as the wrong verified colleague', async (t) => {
@@ -183,6 +201,137 @@ test('a colleague with read and post but no manage can answer attention', async 
   const answer = `${path}/${attention.id}/answer`
   await status(request(answer, ordinary, { option: 'proceed', commit }), 403)
   await status(request(answer, responder, { option: 'proceed', commit }), 200)
+})
+
+test('an unexpected broad grant can survive startup or member grants are written before refusal', async (t) => {
+  const dir = await tempDir(t)
+  const args = await serveArgs(dir, [member, manager])
+  const path = join(dir, 'board')
+  const ids = await onDisk(path, async (handle) => {
+    await handle.createGrant({ principals: [{ kind: 'all-users' }], can: { '*': 'all' } })
+    return (await handle.grants()).map(({ id }) => id)
+  })
+  const result = cli(...args, '--tunnel-port', '0', '--public-host', publicHost)
+  assert.equal(result.status, 1)
+  assert.equal(result.stderr, 'error: unexpected_grant\n')
+  assert.equal(result.stdout, '')
+  assert.deepEqual(await onDisk(path, async (handle) => (await handle.grants()).map(({ id }) => id)), ids)
+})
+
+test('an empty registry or one without board-wide manage can strand the board', async (t) => {
+  for (const members of [[], [{ ...member, can: { work: ['manage'] } }]]) {
+    await assert.rejects(serveBoard({ teamDomain, audience, memory: true, members: parseMembers({ members }) }),
+      { message: 'no_administrator' })
+  }
+  const result = cli(...await serveArgs(await tempDir(t), [member]))
+  assert.equal(result.status, 1)
+  assert.equal(result.stderr, 'error: no_administrator\n')
+})
+
+test('a failed replacement write can remove old grants, including the starting grants', async (t) => {
+  const dir = await tempDir(t)
+  const saved = await onDisk(dir, async (handle) => {
+    await handle.as('swarm-members').createGrant({ principals: [{ kind: 'user', userId: 'old' }], can: { '*': 'all' } })
+    return (await handle.grants()).map(({ id }) => id)
+  })
+  const members = new Map(parseMembers({ members: [manager] }))
+  members.set(email, { email, can: {} }) // The board rejects an empty grant supplied through the library.
+  await assert.rejects(serveBoard({ dir, teamDomain, audience, members }), { code: 'invalid_grant' })
+  const grants = await onDisk(dir, (handle) => handle.grants())
+  assert.ok(grants.some(({ principals }) => principals.some((p) => p.kind === 'user' && p.userId === 'manager.at.company.example')))
+  assert.deepEqual(grants.map(({ id }) => id).filter((id) => saved.includes(id)), saved)
+})
+
+test('serve without a tunnel opens or writes the board', async (t) => {
+  const dir = await tempDir(t)
+  const result = cli(...await serveArgs(dir, [manager]))
+  assert.deepEqual([result.status, result.stdout, result.stderr], [0, '', ''])
+  await assert.rejects(stat(join(dir, 'board')), { code: 'ENOENT' })
+})
+
+test('top-level help does not mention serve', () => {
+  assert.match(cli('--help').stdout, /swarm serve --help/)
+})
+
+test('forwarded board can or legacy scope headers change a signed member’s access', async (t) => {
+  const { request } = await start(t)
+  const jwt = await sign()
+  for (const key of ['x-board-can', 'x-board-scope']) {
+    await status(request('/messages', jwt, post, { [key]: 'work=read' }), 201, key)
+    await status(request('/messages', jwt, { ...post, channel: 'private' }, { [key]: '*=all' }), 403, key)
+  }
+})
+
+test('a signed member can redeem a valid invite through the tunnel', async (t) => {
+  const { handle, request } = await start(t, undefined, undefined, [])
+  const { secret } = await handle.createInvite({ name: 'guest' })
+  const response = await request('/invites/redeem/', await sign(), { secret })
+  assert.equal(response.status, 403)
+  assert.equal((await response.json()).error?.code, 'not_on_tunnel')
+  assert.equal((await handle.invites())[0]?.state, 'pending')
+})
+
+test('a board-issued bearer can override a verified Cloudflare person', async (t) => {
+  const { handle, request, tunnelUrl } = await start(t, undefined, undefined, [])
+  const { secret } = await handle.createInvite({ name: 'guest' })
+  const { token, principal } = await handle.join(secret)
+  const headers = { authorization: `Bearer ${token}` }
+  const direct = await handle.fetch(new Request(`${tunnelUrl}/me`, { headers }))
+  assert.equal(direct.status, 200)
+  assert.equal((await direct.json()).principal, principal)
+  const proxied = await request('/me', await sign(), undefined, headers)
+  assert.equal(proxied.status, 200)
+  assert.equal((await proxied.json()).principal, person)
+})
+
+test('production discovery fails or reports the wrong canonical board URL', async (t) => {
+  const previous = process.env.NODE_ENV
+  t.after(() => { if (previous === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous })
+  process.env.NODE_ENV = 'production'
+  for (const hosts of [[publicHost, 'alias.example.test'], []]) {
+    const { request, tunnelUrl } = await start(t, undefined, undefined, hosts)
+    const reply = await request('/', await sign())
+    assert.equal(reply.status, 200)
+    const expected = hosts.length ? `https://${publicHost}` : tunnelUrl
+    const { url, audience } = await reply.json()
+    assert.deepEqual([url, audience], [expected, expected])
+  }
+})
+
+test('unchanged permissions in noncanonical order churn grant IDs across restarts', async (t) => {
+  const dir = await tempDir(t)
+  const members = [{ ...member, can: { work: ['post', 'read', 'post'] } }, manager]
+  const first = await start(t, members, dir)
+  const ids = (await first.handle.grants()).map(({ id }) => id)
+  await first.close()
+  const second = await start(t, members, dir)
+  try {
+    assert.deepEqual((await second.handle.grants()).map(({ id }) => id), ids)
+  } finally { await second.close() }
+})
+
+test('the tunnel strips SSE no-transform or fails to stream the first event', async (t) => {
+  const { handle, tunnelUrl } = await start(t)
+  await handle.post('work', post.text)
+  const abort = new AbortController()
+  try {
+    const reply = await fetch(`${tunnelUrl}/events?after=0&channel=work`, {
+      headers: { accept: 'text/event-stream', 'cf-access-jwt-assertion': await sign() },
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]),
+    })
+    assert.equal(reply.status, 200)
+    assert.match(reply.headers.get('cache-control') ?? '', /\bno-transform\b/)
+    assert.match(reply.headers.get('cache-control') ?? '', /\bno-store\b/)
+    const reader = reply.body!.pipeThrough(new TextDecoderStream()).getReader()
+    let first = ''
+    while (!first.includes(post.text)) {
+      const { value, done } = await reader.read()
+      if (done) break
+      first += value
+    }
+    assert.match(first, /event: board/)
+    assert.ok(first.includes(post.text))
+  } finally { abort.abort() }
 })
 
 test('a service-token assertion could read or post on the board', async (t) => {
