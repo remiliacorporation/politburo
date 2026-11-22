@@ -237,11 +237,10 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
 
 /* --- the feed: no row borders; a short conversation sits on the composer --- */
 .feed-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
+/* Don't let native anchoring double the feed's adjustments for resizes and prepended pages. */
 .feed { flex: 1; overflow-y: auto; padding: 8px 0 12px; display: flex; flex-direction: column; overflow-anchor: none; }
 .feed > div { margin-top: auto; }
-/* Anchor to messages when thread facts change. Channel feeds restore prepended pages in JS. */
-.feed:has(> .feed-header) { overflow-anchor: auto; }
-.feed > .feed-header { margin-top: 0; flex: none; overflow-anchor: none; }
+.feed > .feed-header { margin-top: 0; flex: none; }
 .jump {
   position: absolute;
   bottom: 12px;

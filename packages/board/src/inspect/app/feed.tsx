@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useToasts } from './chrome.ts'
 
 // --- the scrolling list --------------------------------------------------------------
@@ -55,14 +55,25 @@ export function Feed(props: {
     lastSeen.current = props.last
   }, [props.first, props.last])
 
-  // Reactions, edits, and images change heights without changing the list.
-  useEffect(() => {
+  // Task facts, reactions, edits, and images can resize without changing the list.
+  useLayoutEffect(() => {
+    const el = ref.current!
+    const facts = header.current
+    const measure = () => facts?.getBoundingClientRect().height ?? 0
+    let height = measure()
     const observer = new ResizeObserver(() => {
-      if (pinned.current && !restore.current) ref.current!.scrollTop = ref.current!.scrollHeight
+      const next = measure()
+      const delta = next - height
+      height = next
+      if (restore.current) return
+      if (pinned.current) el.scrollTop = el.scrollHeight
+      // Keep the replies at the same offset, even at scrollTop 0. A thread that
+      // fits in the viewport has no scroll range and nothing to anchor.
+      else if (delta && el.scrollHeight > el.clientHeight) el.scrollTop += delta
     })
     observer.observe(content.current!)
-    if (header.current) observer.observe(header.current)
-    observer.observe(ref.current!)
+    if (facts) observer.observe(facts, { box: 'border-box' })
+    observer.observe(el)
     return () => observer.disconnect()
   }, [hasHeader])
 
@@ -74,7 +85,7 @@ export function Feed(props: {
         onScroll={() => {
           const el = ref.current!
           const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
-          // A thread reader who scrolled up even a little relies on native anchoring, not a jump to the end.
+          // A thread reader who scrolled up even a little is no longer pinned.
           pinned.current = hasHeader ? remaining <= 1 : remaining < 48
           el.toggleAttribute('data-pinned', pinned.current)
           if (pinned.current) setBehind(false)

@@ -211,6 +211,72 @@ it('shows commit facts in the thread feed only when there is a commit', async ()
   await vi.waitFor(() => expectCommit('handoff commit', handoffCommit, 'fedcba9'))
 })
 
+it.each([
+  { position: 'at the top', before: 0, after: 120 },
+  { position: 'mid-thread', before: 200, after: 320 },
+  { position: 'at the bottom', before: 600, after: 750 },
+])('anchors the reader $position when a live hold grows the task card', async ({ before, after }) => {
+  const { client, open } = await workbench()
+  const { task } = await client.tasks.create('work', 'Review the release')
+  await client.reply(task.id, 'Release notes are ready')
+  const reason = 'Hold for the release window'
+  const resizes = new Map<Element, () => void>()
+  // Happy DOM doesn't lay out the page. Supply measurements and deliver the resize
+  // notification only to observers that actually subscribed to the facts wrapper.
+  const original = ResizeObserver
+  vi.stubGlobal('ResizeObserver', class implements ResizeObserver {
+    private targets = new Set<Element>()
+    private notify: () => void
+    constructor(callback: ResizeObserverCallback) {
+      this.notify = () => callback([], this)
+    }
+    observe(target: Element) {
+      this.targets.add(target)
+      resizes.set(target, this.notify)
+    }
+    unobserve(target: Element) {
+      this.targets.delete(target)
+      resizes.delete(target)
+    }
+    disconnect() {
+      for (const target of this.targets) this.unobserve(target)
+    }
+  })
+  try {
+    await open(`/?thread=${task.id}`)
+    const feed = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLElement>('.pane .feed')!
+      expect(el?.textContent).toContain('Release notes are ready')
+      expect(document.querySelector('.live')?.textContent).toBe('live')
+      return el
+    })
+    const facts = feed.querySelector<HTMLElement>('.feed-header')!
+    const parked = () => facts.textContent?.includes(reason)
+    const resize = resizes.get(facts)
+    expect(resize, 'task facts are observed').toBeDefined()
+    facts.getBoundingClientRect = () => new DOMRect(0, 0, 400, parked() ? 220 : 100)
+    // Include 30px of concurrent content growth so pinning must use the new bottom,
+    // not just the task card delta. As in the browser, scrollTop clamps to the range.
+    const bottom = () => parked() ? 750 : 600
+    let top = before
+    Object.defineProperties(feed, {
+      clientHeight: { value: 300 },
+      scrollHeight: { get: () => 300 + bottom() },
+      scrollTop: { get: () => top, set: (value: number) => { top = Math.min(value, bottom()) } },
+    })
+    resize!()
+    feed.scrollTop = before
+    feed.dispatchEvent(new Event('scroll'))
+
+    await client.tasks.park(task.id, reason)
+    await vi.waitFor(() => expect(parked()).toBe(true))
+    resize!()
+    expect(feed.scrollTop).toBe(after)
+  } finally {
+    vi.stubGlobal('ResizeObserver', original)
+  }
+})
+
 it('keeps a focused Handoff in its original lane when another reader claims it', async () => {
   const { api, as, open } = await workbench()
   const { task } = await api.tasks.create('work', { text: 'Review the release' })

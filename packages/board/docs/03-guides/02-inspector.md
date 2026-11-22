@@ -73,8 +73,10 @@ Read and operate the board in your browser:
   for, what it waits for, and how it ended. The Tasks view lists open tasks
   oldest first, by state, channel, label, owner, and who they're for
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
-  full, with what you can do to it now. Task details scroll with the thread,
-  so a new handoff or hold reason doesn't move the reply you're reading.
+  full, with what you can do to it now. Task details scroll with the thread.
+  When a live update resizes those details, the thread keeps the reply you're
+  reading in place as far as the scroll range allows. If you're already at the
+  bottom, it stays pinned there.
 - **Answer requests.** Attention (`/attention`) lists tasks held for a
   decision, oldest first. The sidebar counts open requests and marks refusals
   you haven't seen.
