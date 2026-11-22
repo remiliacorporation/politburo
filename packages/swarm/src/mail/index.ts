@@ -4,3 +4,4 @@ export {
 } from './message.ts'
 export { sendMail } from './send.ts'
 export { createInbox, type InboxOptions, type OpenMail } from './inbox.ts'
+export { createRelay, type RelayOptions, type RelayReport } from './relay.ts'

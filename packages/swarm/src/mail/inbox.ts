@@ -1,6 +1,6 @@
 import type { Board } from '@vercel/board'
 import { MAIL_LABELS, MAIL_STATES, labelsFor, validateMessage, type MailMessage } from './message.ts'
-import { boardConflict, samePayload } from './send.ts'
+import { boardConflict, mailBlock, samePayload } from './send.ts'
 
 export type InboxOptions = {
   board: Pick<Board, 'channel' | 'label' | 'reply'> & Partial<Pick<Board, 'thread'>>
@@ -8,7 +8,7 @@ export type InboxOptions = {
   now: () => Date
 }
 export type OpenMail = { messageId: string; message: MailMessage }
-type Root = Awaited<ReturnType<ReturnType<Board['channel']>['messages']>>['messages'][number]
+export type MailRoot = Awaited<ReturnType<ReturnType<Board['channel']>['messages']>>['messages'][number]
 
 const { state } = MAIL_LABELS
 const { open, handled, forwarded, expired, rejected } = MAIL_STATES
@@ -18,12 +18,19 @@ const remoteThread = /^thr_[0-9a-f-]{36}$/
 
 // MessageView.id is the mutation ref. A local root's thread is its event key, but
 // handles can hash that key and Vercel exposes a server thread ID instead.
-const postKey = (root: Root) => [root.thread, root.id].find((value) => value?.startsWith('mail:'))
+export function readableMailKey(root: MailRoot) {
+  return [root.thread, root.id].find((value) => value?.startsWith('mail:'))
+}
 
-function matchesKey(root: Root, key: string | undefined, id: string) {
+export function matchesMailKey(key: string, id: string) {
+  const split = key.indexOf(':', 'mail:'.length)
+  return split > 'mail:'.length && !!key.slice('mail:'.length, split).trim() && key.slice(split + 1) === id
+}
+
+function matchesKey(root: MailRoot, key: string | undefined, id: string) {
   if (key !== undefined) {
-    const split = key.indexOf(':', 'mail:'.length)
-    return split > 'mail:'.length && !!key.slice('mail:'.length, split).trim() && key.slice(split + 1) === id
+    const delivery = root.labels['swarm.delivery']
+    return matchesMailKey(key, id) || (delivery !== undefined && key === `mail:${delivery}`)
   }
   // An opaque key can't prove the mailbox scope; fall back to board-authored provenance.
   const by = root.by
@@ -35,25 +42,32 @@ function matchesKey(root: Root, key: string | undefined, id: string) {
     (by.actor === by.principal && /^board:client(?::[a-z0-9_-]+)?$/.test(by.actor)))
 }
 
-function inspect(root: Root, now: Date) {
-  const [entry] = root.blocks
-  if (root.blocks.length !== 1 || entry?.schema !== 'swarm-message' || entry.version !== 1) {
-    return { reason: 'invalid_block' } as const
-  }
+export function inspectMailBlock(root: MailRoot, now: Date) {
+  const entry = mailBlock(root)
+  if (!entry) return { reason: 'invalid_block' } as const
   const [reason] = validateMessage(entry.data, { now })
-  if (reason !== undefined) return { reason } as const
-  const message = entry.data as MailMessage
-  const key = postKey(root)
-  if (!matchesKey(root, key, message.id)) return { reason: 'invalid_post_key' } as const
-  const opaqueId = key === undefined ? JSON.stringify([root.by!.principal, message.id]) : undefined
-  return { message, opaqueId } as const
+  return reason === undefined ? { message: entry.data as MailMessage } as const : { reason } as const
 }
 
-const tuple = (root: Root, { from, ref, class: kind }: MailMessage) =>
+type Inspection = { message: MailMessage; opaqueId: string | undefined; reason?: never } |
+  { reason: string; message?: never; opaqueId?: never }
+
+function inspect(root: MailRoot, now: Date): Inspection {
+  const result = inspectMailBlock(root, now)
+  if (!result.message) return result
+  const { message } = result
+  const key = readableMailKey(root)
+  if (!matchesKey(root, key, message.id)) return { reason: 'invalid_post_key' }
+  const opaqueId = key === undefined
+    ? JSON.stringify([root.by!.principal, root.labels['swarm.delivery'], message.id]) : undefined
+  return { message, opaqueId }
+}
+
+const tuple = (root: MailRoot, { from, ref, class: kind }: MailMessage) =>
   JSON.stringify([root.by?.principal, root.labels['swarm.delivery'], from, ref, kind])
 const submillis = (at: string) => (at.match(/\.\d{3}(\d+)/)?.[1] ?? '').replace(/0+$/, '')
 
-function compareInstants(a: string, b: string) {
+export function compareInstants(a: string, b: string) {
   const millis = Date.parse(a) - Date.parse(b)
   if (millis) return millis
   // Date.parse truncates fractions to milliseconds, but admission distinguishes strictly newer mail.
@@ -67,40 +81,43 @@ function isExpired(message: MailMessage, now: Date) {
     compareInstants(message.expires, now.toISOString()) <= 0
 }
 
-export function createInbox({ board, channel, now }: InboxOptions) {
-  async function roots(): Promise<Root[]> {
-    const inbox = board.channel(channel)
-    const found = new Map<string, Root>()
-    // Without a cursor the handle starts at the newest page, not the beginning.
-    let after = '0'
-    for (;;) {
-      const page = await inbox.messages({ after, limit: 100 })
-      for (const root of page.messages) {
-        if (root.re === null && !root.deleted) found.set(root.id, root)
-      }
-      if (page.cursor === after) return [...found.values()]
-      after = page.cursor
+export async function readMailRoots(board: Pick<Board, 'channel'>, channel: string): Promise<MailRoot[]> {
+  const inbox = board.channel(channel)
+  const found = new Map<string, MailRoot>()
+  // Without a cursor the handle starts at the newest page, not the beginning.
+  let after = '0'
+  for (;;) {
+    const page = await inbox.messages({ after, limit: 100 })
+    for (const root of page.messages) {
+      if (root.re === null && !root.deleted) found.set(root.id, root)
     }
+    if (page.cursor === after) return [...found.values()]
+    after = page.cursor
   }
+}
 
-  async function label(id: string, expected: string | null, set: Record<string, string>) {
-    try {
-      await board.label(id, { if: { [state]: expected }, set })
-      return true
-    } catch (error) {
-      if (boardConflict(error, 'label_conflict')) return false
-      throw error
-    }
+export async function labelMail(board: Pick<Board, 'label'>, id: string, expected: string | null, set: Record<string, string>) {
+  try {
+    await board.label(id, { if: { [state]: expected }, set })
+    return true
+  } catch (error) {
+    if (boardConflict(error, 'label_conflict')) return false
+    throw error
   }
+}
+
+export function createInbox({ board, channel, now }: InboxOptions) {
+  const roots = () => readMailRoots(board, channel)
+  const label = (id: string, expected: string | null, set: Record<string, string>) => labelMail(board, id, expected, set)
 
   async function reject(id: string, expected: string | null, reason: string, other?: string) {
     await board.reply(id, {
-      id: `reject:${id}:${reason}`, text: other === undefined ? reason : `${reason}: ${other}`,
+      id: `reject:${id}:${reason}`, text: other === undefined ? reason : `${reason}: ${other}`, noSync: true,
     })
     return label(id, expected, { [state]: rejected })
   }
 
-  async function inspectOpen(root: Root, clock: Date) {
+  async function inspectOpen(root: MailRoot, clock: Date) {
     if (root.labels[state] !== open) return
     const { message } = inspect(root, clock)
     if (!message) return
@@ -119,7 +136,7 @@ export function createInbox({ board, channel, now }: InboxOptions) {
       type Candidate = { id: string; message: MailMessage; state: string }
       const seen = new Map<string, Candidate[]>()
       const ids = new Map<string, { id: string; message: MailMessage }>()
-      const remember = (root: Root, message: MailMessage, status: string) => {
+      const remember = (root: MailRoot, message: MailMessage, status: string) => {
         if (message.urgency === 'p0') return
         const key = tuple(root, message)
         const group = seen.get(key) ?? []
