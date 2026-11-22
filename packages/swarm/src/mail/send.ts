@@ -9,17 +9,31 @@ export async function sendMail(board: Pick<Board, 'post'>, channel: string, mess
   }
 
   // Scope namespaces sender IDs when mailboxes share a board; reserve ':' as its delimiter.
-  const id = `mail:${scope}:${message.id}`
-  const landed = await board.post(channel, { id, text: block(MAIL_SCHEMA, message) }).catch((error: unknown) => {
+  return postMail(board, channel, message, `mail:${scope}:${message.id}`)
+}
+
+type MailRoot = Awaited<ReturnType<Board['post']>>
+
+export function mailBlock({ blocks }: Pick<MailRoot, 'blocks'>) {
+  const [entry] = blocks
+  return blocks.length === 1 && entry?.schema === 'swarm-message' && entry.version === 1 ? entry : undefined
+}
+
+export function matchesMailBlock(root: Pick<MailRoot, 'blocks'>, message: MailMessage) {
+  const entry = mailBlock(root)
+  const entries = Object.entries(message)
+  return entry !== undefined && Object.keys(entry.data).length === entries.length &&
+    entries.every(([key, value]) => entry.data[key] === value)
+}
+
+export async function postMail(
+  board: Pick<Board, 'post'>, channel: string, message: MailMessage, id: string, labels?: Record<string, string>,
+) {
+  const landed = await board.post(channel, { id, text: block(MAIL_SCHEMA, message), ...(labels && { labels }) }).catch((error: unknown) => {
     if (boardConflict(error, 'duplicate_id')) throw new MailError('id_collision')
     throw error
   })
-  const [entry] = landed.blocks
-  const entries = Object.entries(message)
-  if (landed.blocks.length !== 1 || entry?.schema !== 'swarm-message' || entry.version !== 1 ||
-      Object.keys(entry.data).length !== entries.length || !entries.every(([key, value]) => entry.data[key] === value)) {
-    throw new MailError('id_collision')
-  }
+  if (!matchesMailBlock(landed, message)) throw new MailError('id_collision')
   return landed
 }
 
