@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import {
-  compilePacket, createShadow, handlePush, runShadow, scorecard, unknownLedger,
+  compilePacket, createShadow, handlePush, handleRetire, runShadow, scorecard, unknownLedger,
   type CasePacket, type DecisionRecord, type RetireFacts, type SwarmMessage,
 } from '../src/secretary/index.ts'
 
@@ -79,7 +79,7 @@ test('invalid and unparseable files are logged with reasons, never forwarded', a
   await writeFile(join(inbox, 'no-header.md'), 'No fenced header')
   await put('missing-ref', { ref: undefined, urgency: 'p0' })
   await runShadow(opts, start + 30 * minute)
-  assert.deepEqual((await records()).map((r) => [r.kind,
+  assert.deepEqual((await records()).filter((r) => r.kind !== 'ingest').map((r) => [r.kind,
     'file' in r && basename(r.file), 'reason' in r && r.reason]).sort(), [
     ['reject', 'missing-ref.md', 'missing_field:ref'], ['reject', 'no-header.md', 'no_header'],
   ])
@@ -120,6 +120,7 @@ test('p0 forwards alone at receipt despite a failed handler, a throwing waker an
     }
     return { delivered: true, detail: 'sent' }
   } } })
+  t.after(() => service.close())
   await service.tick(now)
   assert.deepEqual(packets.map((p) => [p.lane, p.items.map(({ id }) => id)]), [
     ['p0_now', ['first-p0']], ['p0_now', ['next-p0']],
@@ -127,7 +128,7 @@ test('p0 forwards alone at receipt despite a failed handler, a throwing waker an
   const log = await records()
   assert.deepEqual(log.filter((r) => r.kind === 'lane').map((r) => r.at), [now, now])
   assert.deepEqual(log.filter((r) => r.kind === 'wake').map((r) => [r.ids, r.delivered, r.detail]), [
-    [['first-p0'], false, 'wake failed: [redacted]'], [['next-p0'], true, 'sent'],
+    [['first-p0'], false, 'error:Error'], [['next-p0'], true, 'sent'],
   ])
   const sla = await scorecard({ records: log, ledger: unknownLedger, tag, sinceMs: start, untilMs: now + 2 * minute })
   assert.equal(sla.late_p0, 0)
@@ -136,19 +137,20 @@ test('p0 forwards alone at receipt despite a failed handler, a throwing waker an
   assert.deepEqual(packets.filter((p) => p.lane === 'p1_batch').map((p) => p.items.map(({ id }) => id)), [['pending']])
 })
 
-test('restart after a thrown wake before receipt append finishes every forward exactly once', async (t) => {
-  const { opts, root, out, put, records, text } = await mailbox(t)
+test('wake must be idempotent by wakeId: restart retries with the same ID after archival', async (t) => {
+  const { opts, root, inbox, out, put, records, text } = await mailbox(t)
   await put('first', { urgency: 'p0' })
   await put('second', { urgency: 'p0' })
   const saved = join(root, 'interrupted-output')
-  const packets: CasePacket[] = []
-  const interrupted = await createShadow({ ...opts, waker: { async wake(packet) {
-    packets.push(packet)
-    // A thrown waker alone is recoverable and normally logs a failure receipt.
-    // Move the journal out of reach to also simulate process loss before that write.
-    await rename(out, saved)
-    throw new Error('interrupted wake')
-  } } })
+  const calls: string[] = []
+  const deliveries: string[] = []
+  const options = { ...opts, waker: { async wake(packet: CasePacket) {
+    calls.push(packet.packetId)
+    if (!deliveries.includes(packet.packetId)) deliveries.push(packet.packetId)
+    if (calls.length === 1) await rename(out, saved)
+    return { delivered: true, detail: 'sent' }
+  } } }
+  const interrupted = await createShadow(options)
   const now = start + 30 * minute
   try { await assert.rejects(interrupted.tick(now), { code: 'ENOENT' }) }
   finally { await rename(saved, out) }
@@ -158,17 +160,16 @@ test('restart after a thrown wake before receipt append finishes every forward e
   assert.deepEqual(partial.filter((r) => r.kind === 'lane').flatMap((r) => r.items.map(({ id }) => id)), ['first'])
   assert.equal(partial.filter((r) => r.kind === 'wake').length, 0)
 
-  const options = { ...opts, waker: { async wake(packet: CasePacket) {
-    packets.push(packet)
-    return { delivered: true, detail: 'sent' }
-  } } }
-  await (await createShadow(options)).tick(now + 1)
+  await rm(join(inbox, 'second.md'))
+  await interrupted.close()
+  await runShadow(options, now + 1)
   const log = await records()
   const lanes = log.filter((r) => r.kind === 'lane')
   assert.deepEqual(lanes.map((r) => r.items.map(({ id }) => id)), [['first'], ['second']])
   assert.deepEqual(log.filter((r) => r.kind === 'wake').map((r) => [r.wakeId, r.ids, r.delivered]),
     lanes.map((r) => [r.wakeId, r.items.map(({ id }) => id), true]))
-  assert.deepEqual(packets.map((p) => p.packetId), [lanes[0]?.wakeId, lanes[0]?.wakeId, lanes[1]?.wakeId])
+  assert.deepEqual(calls, [lanes[0]?.wakeId, lanes[0]?.wakeId, lanes[1]?.wakeId])
+  assert.deepEqual(deliveries, lanes.map(({ wakeId }) => wakeId))
   const after = await text()
   assert.ok(after.startsWith(before), 'restart preserves the original decisions')
   assert.equal(log.filter((r) => r.kind === 'accept').length, 2)
@@ -195,6 +196,7 @@ test('repeated ticks and restart do not append or rebatch already forwarded mail
   const calls = wakes.map((p) => p.packetId)
   assert.equal(calls.length, 3)
   await service.tick(start + 31 * minute)
+  await service.close()
   await runShadow(options, start + 32 * minute)
   // The reader may no longer see all the mail that went into a completed digest.
   await rm(join(inbox, 'first.md'))
@@ -236,14 +238,15 @@ test('retry is allowed once and only for a listed transient code', () => {
 })
 
 test('packet cap drops the lowest urgency and newest first', () => {
-  const large = { ref: 'x'.repeat(5_000) }
+  const escaped = '\0'.repeat(200)
+  const large = { ref: escaped, from: escaped, summary: escaped }
   const packet = compilePacket({ tag, lane: 'p1_batch', now: start, missing: ['job'], items: [
-    header('quiet', { ...large, urgency: 'p3' }), header('old', large),
-    header('new', large), header('urgent', { ...large, urgency: 'p0' }),
+    header('quiet', { ...large, urgency: 'p3' }), header('old', large), header('middle', large),
+    header('later', large), header('newest', large), header('urgent', { urgency: 'p0' }),
   ] })
   const serialized = JSON.stringify(packet)
   assert.ok(serialized.length <= 12_800)
-  assert.deepEqual(packet.items.map(({ id }) => id), ['urgent', 'old'])
+  assert.deepEqual(packet.items.map(({ id }) => id), ['urgent', 'old', 'middle', 'later'])
   assert.equal(packet.omitted, 2)
   assert.deepEqual(packet.missing, ['job'])
 })
@@ -263,6 +266,7 @@ test('scorecard finds a late p1 and a missed p0 using receipt deadlines, not sen
   await put('late', { urgency: 'p1' })
   await put('timely', { urgency: 'p1' }, start + 2 * minute)
   const service = await createShadow(opts)
+  t.after(() => service.close())
   await service.tick(start + 11 * minute)
   await put('missed', { urgency: 'p0' }, start + 12 * minute)
   await put('on-time', { urgency: 'p0' }, start + 14 * minute)
@@ -295,7 +299,7 @@ test('mail content and evidence errors cannot leak credentials or bodies into an
   ] as const) {
     assert.doesNotMatch(serialized, /ghp_fake_(?:header|evidence)_fixture|private body pointer fixture|"body"/, label)
   }
-  assert.deepEqual(log.map((r) => r.kind).sort(), ['accept', 'digest', 'lane', 'reject', 'verdict', 'wake'])
+  assert.deepEqual(log.map((r) => r.kind).sort(), ['accept', 'digest', 'ingest', 'ingest', 'lane', 'reject', 'verdict', 'wake'])
   assert.deepEqual(log.filter((r) => r.kind === 'verdict').map((r) => [r.id, r.action, r.reason, r.missing]),
     [['alert', 'hold', 'unknown', ['evidence']]])
   assert.equal(packets.length, 1)
@@ -310,4 +314,188 @@ test('compilePacket strips raw bodies and redacts free text even before shadow s
     from: 'Bearer [redacted]', ref: 'password=[redacted]', summary: 'review [redacted]', at: item.at }])
   assert.deepEqual(packet.act_on, ['[redacted]'])
   assert.deepEqual(packet.missing, ['token=[redacted]'])
+})
+
+test('restart forwards archived pending mail and rejects reuse of its ID', async (t) => {
+  const { opts, inbox, put, records } = await mailbox(t)
+  await put('pending', { urgency: 'p1', id: 'ghp_fake_archived' })
+  await runShadow(opts, start)
+  await rm(join(inbox, 'pending.md'))
+  await put('collision', { id: 'ghp_fake_archived', ref: 'other', urgency: 'p0' }, start + minute)
+  await runShadow(opts, start + 10 * minute)
+  const log = await records()
+  assert.deepEqual(log.flatMap((r) => r.kind === 'reject' ? [r.reason] : []), ['id_collision'])
+  assert.deepEqual(log.flatMap((r) => r.kind === 'wake' ? [r.lane] : []), ['p1_batch'])
+})
+
+test('restart rolls late mail into the next open digest window', async (t) => {
+  const { opts, inbox, put, records } = await mailbox(t)
+  await put('first')
+  await runShadow(opts, start)
+  await runShadow(opts, start + 30 * minute)
+  await rm(join(inbox, 'first.md'))
+  await put('late')
+  await runShadow(opts, start + 31 * minute)
+  await runShadow(opts, start + 60 * minute)
+  assert.deepEqual((await records()).flatMap((r) => r.kind === 'digest' ? [r.act_on] : []), [['first'], ['late']])
+})
+
+test('recovery from only the ingest batch preserves the entire due tick', async (t) => {
+  const { opts, inbox, out, put, text } = await mailbox(t)
+  await put('a', { urgency: 'p1' })
+  await put('b', { urgency: 'p1' })
+  const now = start + 30 * minute
+  await runShadow(opts, now)
+  const uninterrupted = await text()
+  const log = join(out, 'decisions.jsonl')
+  await writeFile(log, uninterrupted.split('\n').filter((line) => line && JSON.parse(line).kind === 'ingest')
+    .map((line) => line + '\n').join(''))
+  await rm(inbox, { recursive: true })
+  await runShadow(opts, now + minute)
+  assert.equal(await text(), uninterrupted)
+})
+
+test('startup truncates a torn tail but refuses a corrupt complete line', async (t) => {
+  const { opts, out, put, text } = await mailbox(t)
+  await put('a')
+  await runShadow(opts, start)
+  const before = await text()
+  const log = join(out, 'decisions.jsonl')
+  await appendFile(log, '{"torn":"é')
+  await runShadow(opts, start)
+  assert.equal(await text(), before)
+  await appendFile(log, '{broken}\n')
+  await assert.rejects(createShadow(opts), SyntaxError)
+  await writeFile(log, before)
+  await runShadow(opts, start)
+})
+
+test('retry on the same instance rebuilds and records the failed tick wake', async (t) => {
+  const { opts, root, out, inbox, put, records } = await mailbox(t)
+  await put('alert', { urgency: 'p0' })
+  const saved = join(root, 'saved')
+  let first = true
+  const service = await createShadow({ ...opts, waker: { async wake() {
+    if (first) { first = false; await rename(out, saved) }
+    return { delivered: true, detail: 'sent' }
+  } } })
+  try { await assert.rejects(service.tick(start), { code: 'ENOENT' }) }
+  finally { await rename(saved, out) }
+  await rm(join(inbox, 'alert.md'))
+  await service.tick(start + 1)
+  assert.deepEqual((await records()).flatMap((r) => r.kind === 'wake' ? [r.ids] : []), [['alert']])
+  await service.close()
+})
+
+test('one journal writer excludes a live peer, releases on close and replaces a dead PID', async (t) => {
+  const { opts, out } = await mailbox(t)
+  const service = await createShadow(opts)
+  await assert.rejects(createShadow(opts), { message: 'journal_locked' })
+  await service.close()
+  await (await createShadow(opts)).close()
+  await writeFile(join(out, 'journal.lock'), '2147483647\n')
+  const contenders = await Promise.allSettled([createShadow(opts), createShadow(opts)])
+  const live = contenders.flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
+  const refused = contenders.flatMap((result) => result.status === 'rejected' ? [result.reason.message] : [])
+  assert.equal(live.length, 1)
+  assert.deepEqual(refused, ['journal_locked'])
+  assert.equal(Number(await readFile(join(out, 'journal.lock'), 'utf8')), process.pid)
+  await live[0]!.close()
+})
+
+test('p0 waker sees the alert before job lookup and the verdict follows the receipt', async (t) => {
+  const { opts, put, records } = await mailbox(t)
+  await put('alert', { urgency: 'p0', class: 'sec.push' })
+  let consulted = false
+  const consultedAtWake: boolean[] = []
+  await runShadow({ ...opts, jobs: { job() { consulted = true; return undefined }, base: () => 'unknown' },
+    waker: { async wake() { consultedAtWake.push(consulted); return { delivered: true, detail: 'sent' } } } }, start)
+  assert.deepEqual(consultedAtWake, [false])
+  assert.deepEqual((await records()).flatMap((r) => r.kind === 'wake' || r.kind === 'verdict' ? [r.kind] : []), ['wake', 'verdict'])
+})
+
+test('oversized p0 fields are marked as truncated instead of dropping the alert', () => {
+  const large = 'x'.repeat(13_000)
+  const items = [header(large, { urgency: 'p0', from: large, ref: large, summary: large })]
+  const packet = compilePacket({ tag, lane: 'p0_now', now: start, items })
+  assert.equal(packet.items.length, 1)
+  assert.equal(packet.omitted, 0)
+  assert.ok(JSON.stringify(packet).length <= 12_800)
+  for (const field of ['id', 'from', 'ref', 'summary'] as const) assert.match(packet.items[0]![field], /^x{199}…$/)
+  const mixed = compilePacket({ tag, lane: 'p1_batch', now: start, missing: ['x'.repeat(12_000)], items: [
+    ...items, header('also urgent', { urgency: 'p0', ref: large }),
+  ] })
+  assert.equal(mixed.items.length, 2)
+  assert.ok(JSON.stringify(mixed).length <= 12_800)
+})
+
+test('rejects parent segments in either path before creating output', async (t) => {
+  const { opts, root } = await mailbox(t)
+  const inner = join(opts.mailDir, 'inner')
+  const jump = join(root, 'jump')
+  await mkdir(inner)
+  await symlink(inner, jump)
+  await assert.rejects(createShadow({ ...opts, outDir: `${jump}/../out` }), { message: 'parent_path_segment' })
+  await assert.rejects(createShadow({ ...opts, mailDir: `${jump}/..` }), { message: 'parent_path_segment' })
+  await assert.rejects(stat(opts.outDir), { code: 'ENOENT' })
+})
+
+test('handler looks up the original canonical ref, not its redacted alias', async (t) => {
+  const { opts, inbox, put, records, text } = await mailbox(t)
+  const ref = 'token=FAKE_ONLY'
+  await put('push', { class: 'sec.push', urgency: 'p1', ref })
+  const lookups: string[] = []
+  const jobs = { job(_tag: string, lookup: string) {
+    lookups.push(lookup)
+    return lookup === ref ? undefined : { repo: tag, ref: lookup, expectedBase: 'base', artifactDigest: 'd', check: 'test' }
+  }, base: () => 'base' }
+  const service = await createShadow({ ...opts, jobs })
+  await service.tick(start)
+  await service.tick(start + 10 * minute)
+  assert.deepEqual(lookups, [ref])
+  assert.deepEqual((await records()).flatMap((r) => r.kind === 'verdict' ? [r.reason] : []), ['hold_missing_job'])
+  const later = start + 20 * minute
+  await put('archived', { class: 'sec.push', urgency: 'p1', ref: 'token=ARCHIVED_ONLY' }, later)
+  await service.tick(later)
+  await service.close()
+  await rm(join(inbox, 'archived.md'))
+  await runShadow({ ...opts, jobs }, later + 10 * minute)
+  assert.deepEqual(lookups, [ref], 'replay cannot look up a redacted alias when the original is gone')
+  assert.deepEqual((await records()).flatMap((r) => r.kind === 'verdict' ? [r.action] : []), ['hold', 'hold'])
+  assert.doesNotMatch(await text(), /FAKE_ONLY|ARCHIVED_ONLY/)
+})
+
+test('retire holds on both a sprite hole and an explicit undefined observation', () => {
+  const clean: RetireFacts = { headOnOrigin: true, cleanWorktree: true, noRunningSprite: true,
+    noLiveClaim: true, approvedCompletion: true }
+  const sprites = new Array<RetireFacts | undefined>(2)
+  sprites[1] = undefined
+  for (const observations of [sprites.slice(0, 1), sprites]) {
+    const result = handleRetire(header('retire'), tag, { inspect: () => ({ mob: clean, sprites: observations }) })
+    assert.equal(result.action, 'hold')
+    assert.deepEqual(result.missing, Array.from(observations, (_, i) => `sprites.${i}`))
+  }
+})
+
+test('wake receipts allowlist adapter text and log error names without messages', async (t) => {
+  const { opts, put, records, text } = await mailbox(t)
+  for (const id of ['allowed', 'diagnostic', 'throw']) await put(id, { urgency: 'p0' })
+  await runShadow({ ...opts, waker: { async wake(packet) {
+    const id = packet.items[0]?.id
+    if (id === 'throw') throw Object.assign(new Error(body), { name: 'AdapterFailure' })
+    return { delivered: false, detail: id === 'allowed' ? 'not delivered' : `${body} 123` }
+  } } }, start)
+  const details = (await records()).flatMap((r) => r.kind === 'wake' ? [r.detail] : [])
+  assert.equal(details[0], 'not delivered')
+  assert.match(details[1]!, /^[a-z_ ]{1,40}$/)
+  assert.equal(details[2], 'error:AdapterFailure')
+  assert.ok(!(await text()).includes(body))
+})
+
+test('scorecard reports unknown SLA for the unobserved urgency only', async (t) => {
+  const { opts, put, records } = await mailbox(t)
+  await put('alert', { urgency: 'p0' })
+  await runShadow(opts, start)
+  const result = await scorecard({ tag, records: await records(), ledger: unknownLedger, sinceMs: start, untilMs: start + minute })
+  assert.deepEqual([result.late_p0, result.missed_p0, result.late_p1, result.missed_p1], [0, 0, 'unknown', 'unknown'])
 })

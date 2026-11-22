@@ -3,6 +3,7 @@ import type { CasePacket } from './packet.ts'
 import type { Forward } from './route.ts'
 
 export interface Waker {
+  // Must be idempotent by wakeId (packet.packetId): restart can retry the same ID before a receipt is recorded.
   wake(packet: CasePacket): Promise<{ delivered: boolean; detail: string }>
 }
 

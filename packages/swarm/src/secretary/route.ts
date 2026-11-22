@@ -66,6 +66,22 @@ function safeHeader({ id, class: mailClass, urgency, from, ref, summary, at }: S
   return { id: safeId, class: redact(mailClass), urgency, from: redact(from), ref: redact(ref), summary: redact(summary), at }
 }
 
+// Dedupe uses the original canonical header, even when its persisted display fields collide.
+export type PreparedMail = FileMailItem & {
+  fileKey: string
+  identity?: { id: string; tuple: string; payload: string; redactedEvidence: boolean }
+}
+
+export function prepareMail({ file, receivedAt, result }: FileMailItem): PreparedMail {
+  const item = { file: redact(file), receivedAt, fileKey: key(file, receivedAt, result) }
+  if (!result.ok) return { ...item, result: { ok: false, reason: redact(result.reason) } }
+  const message = result.message
+  const header = safeHeader(message)
+  return { ...item, result: { ok: true, message: { ...header, ...(message.expires && { expires: message.expires }) } },
+    identity: { id: key(message.id), tuple: key(message.from, message.ref, message.class), payload: key(message),
+      redactedEvidence: header.id !== message.id || header.ref !== message.ref } }
+}
+
 function digest(batchKey: string, repo: string, start: number, end: number, entries: Entry[]): Digest {
   entries.sort((a, b) => a.header.urgency.localeCompare(b.header.urgency) || compareReceipt(a, b))
   const counts = { p0: 0, p1: 0, p2: 0, p3: 0 }
@@ -85,7 +101,7 @@ function digest(batchKey: string, repo: string, start: number, end: number, entr
   return { key: digestKey, batch: `${repo}-${to}`, repo, window: { from, to }, counts, act_on, items }
 }
 
-export function createRouter(opts: RouterOptions) {
+export function createRouter(opts: RouterOptions, repo?: string) {
   const classes = [...opts.classes]
   const digestMs = opts.digestMinutes * 60_000
   const p1Ms = opts.p1Minutes * 60_000
@@ -114,12 +130,14 @@ export function createRouter(opts: RouterOptions) {
     }
   }
 
-  function ingestOne({ file, receivedAt, result }: FileMailItem, now: number): Decision {
-    const parsed = result.ok ? parseHeader(result.message, { classes }) : result
-    const fingerprint = parsed.ok ? key(parsed.message) : undefined
+  function ingestOne(item: FileMailItem | PreparedMail, now: number): Decision {
+    const { file, receivedAt, result } = item
+    const prepared = 'fileKey' in item ? item : undefined
+    const parsed = !prepared && result.ok ? parseHeader(result.message, { classes }) : result
+    const fingerprint = prepared?.identity?.payload ?? (parsed.ok ? key(parsed.message) : undefined)
     const header = parsed.ok ? safeHeader(parsed.message) : undefined
     const record = (kind: Decision['kind'], reason?: string): Decision => ({
-      key: key(kind, file, receivedAt, fingerprint, reason),
+      key: key(kind, prepared?.fileKey ?? file, receivedAt, fingerprint, reason),
       kind, file: redact(file), receivedAt,
       ...(header && { id: header.id, header: { ...header }, lane: route(header) }),
       ...(reason !== undefined && { reason: redact(reason) }),
@@ -127,10 +145,11 @@ export function createRouter(opts: RouterOptions) {
     if (!parsed.ok) return record('reject', parsed.reason)
     const { message } = parsed
 
-    const seen = ids.get(message.id)
+    const id = prepared?.identity?.id ?? key(message.id)
+    const seen = ids.get(id)
     if (seen !== undefined) return seen === fingerprint! ? record('duplicate') : record('reject', 'id_collision')
-    ids.set(message.id, fingerprint!)
-    const tuple = key(message.from, message.ref, message.class)
+    ids.set(id, fingerprint!)
+    const tuple = prepared?.identity?.tuple ?? key(message.from, message.ref, message.class)
     const previous = latest.get(tuple)
     const order = previous ? Date.parse(message.at) - Date.parse(previous.header.at) : 1
     if (message.urgency !== 'p0') {
@@ -139,7 +158,7 @@ export function createRouter(opts: RouterOptions) {
     }
     const decision = record(previous ? 'revision' : 'accept')
     const receiptStart = Math.floor(receivedAt / digestMs) * digestMs
-    const receiptWindow = key('digest', fileMailTag(file), receiptStart, receiptStart + digestMs)
+    const receiptWindow = key('digest', repo ?? fileMailTag(file), receiptStart, receiptStart + digestMs)
     // Once emitted, a receipt window stays closed. Pin late mail to the window open at ingest.
     const digestStart = emitted.has(receiptWindow) ? Math.floor(now / digestMs) * digestMs : receiptStart
     const entry: Entry = {
@@ -163,7 +182,7 @@ export function createRouter(opts: RouterOptions) {
     return decision
   }
 
-  function ingest(items: readonly FileMailItem[], now: number): Decision[] {
+  function ingest(items: readonly (FileMailItem | PreparedMail)[], now: number): Decision[] {
     // Expirations discovered by due() are returned here, including on an empty ingest.
     expirePending(now)
     const decisions = expirations
@@ -207,9 +226,9 @@ export function createRouter(opts: RouterOptions) {
       if (end > now) continue
       entry.digestPending = false
       prune(entry)
-      const repo = fileMailTag(entry.file)
-      const batchKey = key('digest', repo, start, end)
-      const window = windows.get(batchKey) ?? { repo: redact(repo), start, end, entries: [] }
+      const tag = repo ?? fileMailTag(entry.file)
+      const batchKey = key('digest', tag, start, end)
+      const window = windows.get(batchKey) ?? { repo: redact(tag), start, end, entries: [] }
       window.entries.push(entry)
       windows.set(batchKey, window)
     }

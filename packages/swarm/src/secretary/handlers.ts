@@ -16,7 +16,7 @@ export interface JobSource {
 }
 export type RetireFacts = Record<'headOnOrigin' | 'cleanWorktree' | 'noRunningSprite' | 'noLiveClaim' | 'approvedCompletion', Fact>
 export interface RetireEvidence {
-  inspect(tag: string, ref: string): { mob: RetireFacts; sprites: readonly RetireFacts[] | 'unknown' } | 'unknown'
+  inspect(tag: string, ref: string): { mob: RetireFacts; sprites: readonly (RetireFacts | undefined)[] | 'unknown' } | 'unknown'
 }
 export interface RolloutLedger {
   validated(tag: string, version: string): Fact
@@ -57,7 +57,11 @@ export function handleRetire(item: Pick<MailHeader, 'ref'>, tag: string, evidenc
   }
   check('mob', snapshot.mob)
   if (snapshot.sprites === 'unknown') missing.push('sprites')
-  else snapshot.sprites.forEach((sprite, i) => check(`sprites.${i}`, sprite))
+  else for (let i = 0; i < snapshot.sprites.length; i++) {
+    const sprite = snapshot.sprites[i]
+    if (sprite === undefined) missing.push(`sprites.${i}`)
+    else check(`sprites.${i}`, sprite)
+  }
   if (missing.length) return verdict('hold', 'unknown', missing)
   return blocked ? verdict('hold', 'retire_blocked') : verdict('retire', 'retire_ready')
 }

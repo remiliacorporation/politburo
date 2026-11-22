@@ -28,10 +28,12 @@ export async function scorecard({ records, ledger, tag, sinceMs, untilMs }: Scor
   }
   const late = { p0: 0, p1: 0 }
   const missed = { p0: 0, p1: 0 }
+  const urgencies = new Set<'p0' | 'p1'>()
   for (const r of observed) {
     if ((r.kind !== 'accept' && r.kind !== 'revision') || !r.header || r.receivedAt < sinceMs) continue
     const { id, urgency } = r.header
     if (urgency !== 'p0' && urgency !== 'p1') continue
+    urgencies.add(urgency)
     const deadline = r.receivedAt + (urgency === 'p0' ? 60_000 : 600_000)
     const forward = forwards.get(id)
     if (forward && forward.at > deadline) late[urgency]++
@@ -42,7 +44,7 @@ export async function scorecard({ records, ledger, tag, sinceMs, untilMs }: Scor
     tokens_per_merged_pr: divide(tokens, merged),
     wakes_per_day: divide(known ? wakes : 'unknown', (untilMs - sinceMs) / 86_400_000),
     tokens_per_wake: divide(tokens, wakes),
-    late_p0: known ? late.p0 : 'unknown', late_p1: known ? late.p1 : 'unknown',
-    missed_p0: known ? missed.p0 : 'unknown', missed_p1: known ? missed.p1 : 'unknown',
+    late_p0: urgencies.has('p0') ? late.p0 : 'unknown', late_p1: urgencies.has('p1') ? late.p1 : 'unknown',
+    missed_p0: urgencies.has('p0') ? missed.p0 : 'unknown', missed_p1: urgencies.has('p1') ? missed.p1 : 'unknown',
   }
 }
