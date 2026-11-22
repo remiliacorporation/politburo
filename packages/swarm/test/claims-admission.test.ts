@@ -14,6 +14,7 @@ function setup(t: TestContext, caps: Partial<ClaimsConfig> = {}) {
   const config: ClaimsConfig = { ...defaultConfig().claims, ...caps }
   const service = (party: string) => createClaims({
     board: team.as(party, { can: ['read', 'post', 'label'] }), channel, party, config,
+    validate: async () => ({ result: 'invalid' }),
   })
   const tasks = async (count: number) => {
     const ids: string[] = []
