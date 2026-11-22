@@ -147,33 +147,25 @@ const taskRows = () => [...document.querySelectorAll<HTMLElement>('main [data-ta
 const taskRowIds = () => taskRows().map((row) => row.dataset.taskRow)
 const taskRead = { timeout: 5000 }
 
-it('orders rendered Ready rows by default claim-next eligibility and log order', async () => {
+it('orders rendered Ready rows by default claim-next eligibility, priority, assignment and age', async () => {
   const { api, as, client, open } = await workbench()
   const worker = as('worker')
   const me = await worker.me()
   const make = async (text: string, priority: 'urgent' | 'high', assigned?: string) =>
     (await worker.tasks.create('work', { text, priority, ...(assigned ? { for: assigned } : {}) })).task
-  const fenced = await make('Fenced', 'urgent')
-  await worker.tasks.claim(fenced.id, { lease: 600 })
   const parked = await make('Parked', 'urgent')
   await client.tasks.park(parked.id, 'hold for operator')
   const other = await make('Other profile', 'urgent', (await as('reviewer').me()).actor)
   const teammate = createBoardClient({ url: BOARD_URL, token: await personToken('u_teammate', BOARD_URL), fetch: (input, init) => api.fetch(new Request(input, init)) })
   const foreign = (await teammate.tasks.create('work', { text: 'Other owner', priority: 'urgent' })).task
-  const first = await make('First in log', 'high')
-  // Log order, not the clocks on writes, breaks a priority/assignment tie.
-  vi.setSystemTime(Date.now() - 1000)
-  const second = await make('Second in log', 'high')
-  vi.useRealTimers()
-  expect(second.createdAt < first.createdAt).toBe(true)
+  const first = await make('First', 'high')
+  const second = await make('Second', 'high')
   const assigned = await make('For this profile', 'high', me.actor)
-  await client.pause('fence the outstanding lease')
-  await client.resume('accept claims again')
-  const stillHeld = await make('Claimed after resume', 'urgent')
-  await worker.tasks.claim(stillHeld.id, { lease: 600 })
+  const held = await make('Held, lease running', 'urgent')
+  await worker.tasks.claim(held.id, { lease: 600 })
 
   await open('/tasks?state=ready&channel=work', { profile: 'worker' })
-  const expected = [fenced.id, assigned.id, first.id, second.id, other.id, foreign.id]
+  const expected = [assigned.id, first.id, second.id, other.id, foreign.id]
   await vi.waitFor(() => expect(taskRowIds()).toEqual(expected), taskRead)
   const rendered = taskRowIds()
   const claimed: string[] = []
@@ -182,6 +174,7 @@ it('orders rendered Ready rows by default claim-next eligibility and log order',
     if (!next) break
     claimed.push(next.task.id)
   }
+  // The rows claim-next can take come first, in the order it takes them; the rest follow.
   expect(rendered).toEqual([...claimed, other.id, foreign.id])
 }, 30_000)
 

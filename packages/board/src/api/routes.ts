@@ -1038,7 +1038,7 @@ export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention'> 
   /** The tasks it waits for, by their IDs. */
   needs: string[]
   /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
-  claim: { actor: string; until: string; pauseEpoch?: number; binding?: TaskBinding } | null
+  claim: { actor: string; until: string; binding?: TaskBinding } | null
 }
 
 /** Assignment metadata attested by a claimant, not a grant of authority. */
@@ -1155,8 +1155,6 @@ export type Discovery = {
   wake_by_path?: boolean
   /** True when the board enforces bound claims, parking, and handoffs. */
   task_authority?: boolean
-  /** Task lists and claim-next scan roots in increasing numeric message ID order. */
-  task_root_order?: 'log-id'
   /** Whether this board is configured to keep structured task attention requests. */
   task_attention?: true
   /** This board opts into the fork's agent registry. */

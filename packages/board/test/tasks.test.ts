@@ -1611,7 +1611,7 @@ describe('task events', () => {
     expect(tasks[1]!.payload).toMatchObject({ needs: [first.id] })
     expect(claimed).toMatchObject({ payload: { id: first.id, epoch: 1, until: at(15 * MINUTE), by: { actor: `${ADA}+fixer`, principal: ADA, profile: 'fixer' } }, actor: { id: `${ADA}+fixer`, handle: 'u_ada/fixer' } })
     expect(claimed!.payload).not.toHaveProperty('session')
-    expect(claimed!.message?.task?.claim).toEqual({ actor: `${ADA}+fixer`, until: at(15 * MINUTE), pauseEpoch: 0 })
+    expect(claimed!.message?.task?.claim).toEqual({ actor: `${ADA}+fixer`, until: at(15 * MINUTE) })
 
     // A renewal is bookkeeping: only a feed that asks for everything shows it.
     expect(types(feed)).not.toContain('task.renewed')

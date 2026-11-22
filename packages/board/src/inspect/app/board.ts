@@ -311,7 +311,6 @@ export function loadThread(id: string, fresh = false) {
       const status = (error as { status?: unknown } | null)?.status
       if (as === identity && (status === 403 || status === 404)) {
         deniedThreads.set(id, ++threadDenials)
-        liveTaskCursors.delete(id)
         set((s) => store.forgetThread(s, id))
       }
       throw error
@@ -592,22 +591,18 @@ export async function loadTasks(filter: store.TaskFilter, after?: string) {
 }
 
 // Only the active table read vouches for membership. Neither sidebar reads nor old threads do.
-let liveTaskCursors = new Map<string, number>()
 
 function addLiveTasks(events: BoardEventView[]) {
   const list = state.taskList
   if (!list || list.refused) return
-  const logIds = state.discovery?.task_root_order === 'log-id'
   let ids: Set<string> | undefined
   for (const event of events) {
     const root = event.message
     if (!store.isTask(root)) continue
     if (!list.page) {
-      // Keep in-flight events only when we can tell they're newer than the read's cursor.
-      if (logIds) liveTaskCursors.set(root.id, Number(event.cursor))
       continue
     }
-    if ((logIds && Number(event.cursor) <= Number(list.page.cursor)) || list.ids.has(root.id)) continue
+    if (list.ids.has(root.id)) continue
     ;(ids ??= new Set(list.ids)).add(root.id)
   }
   if (ids) set((s) => ({ ...s, taskList: { ...list, ids } }))
@@ -617,7 +612,6 @@ export async function readTaskList(scope: symbol, filter: store.TaskFilter, afte
   const as = identity
   const denials = threadDenials
   if (!after) {
-    liveTaskCursors = new Map()
     set((s) => ({ ...s, taskList: { scope, ids: new Set() } }))
   } else if (state.taskList?.scope !== scope || state.taskList.page?.cursor !== after) return
   // Read the open pool for Ready and Claimed so leases and pause fences can move rows between
@@ -633,14 +627,11 @@ export async function readTaskList(scope: symbol, filter: store.TaskFilter, afte
   const roots = page.roots.filter((root) => (deniedThreads.get(root.id) ?? 0) <= denials)
   const ids = new Set(list.ids)
   for (const root of roots) ids.add(root.id)
-  for (const [id, cursor] of liveTaskCursors) if (cursor > Number(page.cursor)) ids.add(id)
-  liveTaskCursors.clear()
   set((s) => ({ ...store.merge(s, roots), taskList: { scope, ids, page: { cursor: page.cursor, through: page.more ? page.roots.at(-1) : undefined } } }))
 }
 
 export function closeTaskList(scope: symbol) {
   if (state.taskList?.scope !== scope) return
-  liveTaskCursors.clear()
   set((s) => ({ ...s, taskList: undefined }))
 }
 

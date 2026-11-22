@@ -148,9 +148,9 @@ Claim-next takes the highest priority eligible ready task. At equal priority,
 it prefers tasks assigned to the caller, then takes the first root in board
 order. The inspector puts the viewer's default claim-next candidates first
 among the rows its read and live feed returned. It cannot know the extra
-owners an agent might pass to a claim. On boards that don't advertise log ID
-order, the inspector uses timestamps for age, so ties may differ. State,
-channel, and priority filters are in the URL. Priority filters the loaded
+owners an agent might pass to a claim. It uses timestamps for age, so ties
+match claim-next while the board's clock moves forward, and a claim fenced by a
+pause shows as claimed. State, channel, and priority filters are in the URL. Priority filters the loaded
 rows because the API does not accept it as a list filter.
 
 ```ts inspector/tasks.ts

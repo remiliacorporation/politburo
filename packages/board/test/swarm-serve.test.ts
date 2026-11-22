@@ -17,7 +17,7 @@ const COMMIT = 'a'.repeat(40)
 const ANSWER = { option: 'go', commit: COMMIT }
 const BASE = {
   version: VERSION, url: BOARD_URL, audience: BOARD_URL, team_id: TEAM_ID,
-  project_id: PROJECT_ID, sync: [], task_authority: true, task_root_order: 'log-id',
+  project_id: PROJECT_ID, sync: [], task_authority: true,
 }
 const SWARM = {
   politburo: 1, task_authority: true, task_attention: true, agent_ops: true, agent_intents: true,
@@ -83,7 +83,7 @@ it('advertises the swarm version and serves agent registry writes and reads', as
   expect(registered).toMatchObject({ binding: { principal: OWNER } })
 })
 
-it('advertises local task root order and refuses attention and agent ops without the flag', async ({ onTestFinished }) => {
+it('keeps default discovery bytes and refuses attention and agent ops without the flag', async ({ onTestFinished }) => {
   const { team, token, owner } = await setup(onTestFinished, {})
   const discovery = await team.fetch(new Request(BOARD_URL))
   expect.soft(await discovery.text()).toBe(JSON.stringify(BASE))

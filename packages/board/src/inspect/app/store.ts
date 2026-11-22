@@ -568,9 +568,11 @@ export function stateNow(task: TaskView, now: number): TaskState {
 }
 // #endregion
 
-/** A pause fences even claims whose wall-clock lease has time left. */
-export function taskState(task: TaskView, now: number, status: BoardStatus | null): TaskState {
-  if (task.state === 'claimed' && task.claim?.pauseEpoch !== undefined && status && task.claim.pauseEpoch < status.pauseEpoch) return 'ready'
+/**
+ * A task's state as the page can know it. A claim fenced by a pause is claimable again after
+ * resume while its lease is unexpired; the board's API doesn't say so, so such a task shows as claimed.
+ */
+export function taskState(task: TaskView, now: number, _status: BoardStatus | null): TaskState {
   return stateNow(task, now)
 }
 
@@ -707,11 +709,9 @@ export function tasks(state: State, filter: TaskFilter, now: number, through?: M
 
 /** Tasks from the current read or the authorized feed, with default claim-next candidates first. */
 export function taskListRows(state: State, list: TaskList, filter: TaskFilter, now: number, viewer: Viewer): TaskRoot[] {
-  // Local roots have numeric log IDs, which is the order claim-next actually scans. Without
-  // that guarantee, use createdAt (then ID); equal-priority/assignment ties may differ there.
-  const byAge = state.discovery?.task_root_order === 'log-id'
-    ? (a: MessageView, b: MessageView) => Number(a.id) - Number(b.id)
-    : byWritten
+  // Claim-next scans roots in the board's log order; the page has createdAt (then ID), so
+  // equal-priority, equally assigned tasks match it while the board's clock is monotone.
+  const byAge = byWritten
   const through = list.page?.through
   const found: TaskRoot[] = []
   for (const id of list.ids) {

@@ -522,7 +522,6 @@ function build(options: A2Options, binding: BoardBinding) {
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
         task_authority: true,
-        task_root_order: 'log-id',
         ...(agents ? { agent_ops: true } : {}),
         ...(intents ? { agent_intents: true } : {}),
         ...(options.politburo === 1 ? { politburo: 1 } : {}),
