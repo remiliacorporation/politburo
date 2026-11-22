@@ -1,4 +1,5 @@
-import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { accessSync, closeSync, constants, lstatSync, openSync, readFileSync,
+  realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
@@ -14,32 +15,53 @@ const flags = {
   session: { type: 'string' },
 } as const
 
-function fail(message: string, code = 1): number {
-  console.error(`error: ${message}`)
-  return code
+function usableDirectory(path: string, which: 'book' | 'ledger'): string {
+  try {
+    const dir = realpathSync(dirname(path))
+    if (!statSync(dir).isDirectory()) throw new Error()
+    accessSync(dir, constants.W_OK | constants.X_OK)
+    return dir
+  } catch {
+    throw new BookError(`cannot use ${which} directory`)
+  }
 }
 
-function canonicalPath(path: string): string {
-  try { return realpathSync(path) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    return join(canonicalPath(dirname(path)), basename(path))
-  }
+function deliverCapability(output: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    // A failed write can also emit 'error' after invoking its callback.
+    process.stdout.once('error', reject)
+    process.stdout.write(`${output}\n`, error => {
+      if (error) { reject(error); return }
+      process.stdout.off('error', reject)
+      resolve()
+    })
+  })
 }
 
 function sameFile(book: string, ledger: string): boolean {
   const a = statSync(book, { bigint: true, throwIfNoEntry: false })
   const b = statSync(ledger, { bigint: true, throwIfNoEntry: false })
-  return a && b ? a.dev === b.dev && a.ino === b.ino : canonicalPath(book) === canonicalPath(ledger)
+  return a && b ? a.dev === b.dev && a.ino === b.ino : book === ledger
 }
 
 export async function captureCloud([action, ...args]: string[]): Promise<number> {
+  let json = args.slice(0, args.includes('--') ? args.indexOf('--') : args.length).includes('--json')
+  const fail = (message: string, code = 1): number => {
+    const safe = message.replace(/[\x00-\x1f\x7f-\x9f]/g, char =>
+      `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
+    console.error(json ? JSON.stringify({ error: { message: safe } }) : `error: ${safe}`)
+    return code
+  }
   const allowed = action === 'serve' ? ['ledger', 'port', 'unsafe-bind-all']
-    : action === 'issue' ? ['envelope', 'ttl-hours', 'json']
+    : action === 'issue' ? ['envelope', 'ttl-hours']
     : action === 'bind' ? ['session'] : undefined
   if (!allowed) return fail('expected capture-cloud serve, issue, or bind', 2)
   let values
   try { ({ values } = parseArgs({ args, options: flags })) } catch { return fail('invalid flags', 2) }
-  if (Object.keys(values).some(key => key !== 'book' && !allowed.includes(key))) return fail('invalid flags', 2)
+  json = values.json === true
+  if (Object.keys(values).some(key => key !== 'book' && key !== 'json' && !allowed.includes(key))) {
+    return fail('invalid flags', 2)
+  }
   if (!values.book) return fail('missing --book', 2)
   if (action === 'serve' && !values.ledger) return fail('missing --ledger', 2)
   if (action === 'issue' && !values.envelope) return fail('missing --envelope', 2)
@@ -51,15 +73,25 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
     return fail('invalid --ttl-hours', 2)
   }
 
+  if (action === 'bind' && !/^[A-Za-z0-9_-]{8,128}$/.test(values.session!)) {
+    return fail('invalid session id', 2)
+  }
+  if (action === 'bind' && process.stdin.isTTY) {
+    return fail('capability must be piped on stdin', 2)
+  }
+
   try {
-    if (action === 'serve' && sameFile(values.book, values.ledger!)) {
-      return fail('book and ledger must be different files')
-    }
-    let capability: string | undefined
-    if (action === 'bind') {
-      const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
-      try { for await (const line of lines) { capability = line; break } } finally { lines.close() }
-      if (!capability) return fail('missing capability on stdin', 2)
+    if (action === 'serve') {
+      const ledger = values.ledger!
+      const bookDir = usableDirectory(values.book, 'book')
+      const ledgerDir = usableDirectory(ledger, 'ledger')
+      const leaf = lstatSync(ledger, { throwIfNoEntry: false })
+      if (leaf && !leaf.isFile()) return fail('ledger path is not a safe regular file')
+      const bookPath = join(bookDir, basename(values.book))
+      const ledgerPath = join(ledgerDir, basename(ledger))
+      if (sameFile(bookPath, ledgerPath) || ledgerPath === `${bookPath}.lock`) {
+        return fail('book and ledger must be different files')
+      }
     }
     const book = new Book({ file: values.book })
     if (action === 'issue') {
@@ -68,11 +100,18 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
       if (!validateEnvelope(envelope)) return fail('invalid envelope')
       const result = book.issue(envelope, { ttlMs })
       // Stdout is the dispatcher's capability handoff channel.
-      console.log(values.json ? JSON.stringify(result) : `capability  ${result.capability}\nexpires  ${result.expiresAt}`)
+      const output = json ? JSON.stringify(result)
+        : `capability  ${result.capability}\nexpires  ${result.expiresAt}`
+      try { await deliverCapability(output) } catch { return fail('cannot deliver capability') }
     } else if (action === 'bind') {
-      book.bind(capability!, values.session!)
+      let capability: string | undefined
+      const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
+      try { for await (const line of lines) { capability = line; break } } finally { lines.close() }
+      if (!capability) return fail('missing capability on stdin', 2)
+      book.bind(capability, values.session!)
       console.log('bound')
     } else {
+      closeSync(openSync(values.ledger!, 'a', 0o600))
       const all = values['unsafe-bind-all'] === true
       const server = await createReceiver({ book, ledger: jsonlLedger(values.ledger!),
         host: all ? '0.0.0.0' : '127.0.0.1', unsafeBind: all }).listen(port)

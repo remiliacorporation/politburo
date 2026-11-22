@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { linkSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, closeSync, constants, existsSync, linkSync, mkdirSync,
+  mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test, type TestContext } from 'node:test'
 import { Book, type Claim, type Envelope, type SpendRecord } from '../src/capture-cloud/index.ts'
@@ -68,6 +69,7 @@ test('CLI issues, binds and serves a claim into the ledger', async (t) => {
     closed.then(([code]) => assert.fail(`serve exited before listening (${code}): ${stderr}`)),
   ])
   assert.match(line, /^listening\s+http:\/\/127\.0\.0\.1:[1-9]\d*$/)
+  assert.equal(statSync(ledgerFile).mode & 0o777, 0o600, 'ledger exists privately before the first claim')
   assert.equal((await post(line.trim().split(/\s+/)[1], capability)).status, 202)
   // Independent file read immediately after the child acknowledges append; it cannot observe fsync.
   const [row, ...rest] = records(ledgerFile)
@@ -76,23 +78,113 @@ test('CLI issues, binds and serves a claim into the ledger', async (t) => {
   assert.deepEqual(row.tokens, claim.tokens)
 })
 
+function serveError(book: string, ledger: string, message: string) {
+  const result = run('serve', '--book', book, '--ledger', ledger, '--port', '0')
+  assert.deepEqual([result.status, result.stdout, result.stderr.trim()], [1, '', `error: ${message}`])
+}
+
 test('CLI serve rejects a ledger alias of the book', (t) => {
   const { bookFile, ledgerFile } = paths(t)
+  const alias = join(dirname(bookFile), 'alias')
+  symlinkSync(dirname(bookFile), alias, 'dir')
+  serveError(bookFile, join(alias, basename(bookFile)), 'book and ledger must be different files')
   writeFileSync(bookFile, '{\n}', { mode: 0o600 })
-  for (const alias of [symlinkSync, linkSync]) {
-    alias(bookFile, ledgerFile)
-    const result = run('serve', '--book', bookFile, '--ledger', ledgerFile, '--port', '0')
-    assert.deepEqual([result.status, result.stderr.trim()], [1, 'error: book and ledger must be different files'])
-    rmSync(ledgerFile)
+  linkSync(bookFile, ledgerFile)
+  serveError(bookFile, ledgerFile, 'book and ledger must be different files')
+})
+
+test('CLI serve rejects ledger symlinks and non-regular files', (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  const rejectsLedger = () => serveError(bookFile, ledgerFile, 'ledger path is not a safe regular file')
+  symlinkSync(bookFile, ledgerFile)
+  rejectsLedger()
+  writeFileSync(bookFile, '{}', { mode: 0o600 })
+  rejectsLedger()
+  rmSync(ledgerFile)
+  mkdirSync(ledgerFile)
+  rejectsLedger()
+})
+
+test('CLI serve rejects the book lock through a directory alias', (t) => {
+  const { bookFile } = paths(t)
+  const alias = join(dirname(bookFile), 'alias')
+  symlinkSync(dirname(bookFile), alias, 'dir')
+  serveError(bookFile, join(alias, `${basename(bookFile)}.lock`), 'book and ledger must be different files')
+})
+
+test('CLI serve rejects unavailable parent directories before listening', (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  const dir = join(dirname(bookFile), 'unavailable')
+  const nested = join(dir, 'file')
+  const rejectsParents = () => {
+    serveError(nested, ledgerFile, 'cannot use book directory')
+    serveError(bookFile, nested, 'cannot use ledger directory')
+  }
+  rejectsParents()
+  mkdirSync(dir, { mode: 0o500 })
+  let writable = true
+  try { accessSync(dir, constants.W_OK) } catch { writable = false }
+  try { if (!writable) rejectsParents() } finally { chmodSync(dir, 0o700) }
+})
+
+test('CLI bind refuses terminal stdin', (t) => {
+  const probe = spawnSync('script', ['-qec', 'exit 23', '/dev/null'], { timeout: 2_000 })
+  if (probe.status !== 23) return t.skip('script with -qec is unavailable for a pseudo-terminal')
+  const { bookFile } = paths(t)
+  const argv = [process.execPath, ...cli, 'bind', '--book', bookFile, '--session', session]
+  const command = argv.map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')
+  const result = spawnSync('script', ['-qec', command, '/dev/null'], {
+    cwd, input: 'not-a-capability\n', encoding: 'utf8', timeout: 5_000,
+  })
+  if (result.error) throw result.error
+  assert.equal(result.status, 2, result.stdout)
+  assert.match(result.stdout, /error: capability must be piped on stdin\r?\n/)
+})
+
+test('CLI issue reports a failed capability handoff', (t) => {
+  if (!existsSync('/dev/full')) return t.skip('/dev/full is unavailable')
+  const { bookFile, envelopeFile } = paths(t)
+  writeFileSync(envelopeFile, JSON.stringify(envelope))
+  const full = openSync('/dev/full', 'w')
+  t.after(() => closeSync(full))
+  const result = spawnSync(process.execPath, [...cli, 'issue', '--book', bookFile,
+    '--envelope', envelopeFile, '--ttl-hours', '1'], {
+    cwd, stdio: ['ignore', full, 'pipe'], encoding: 'utf8', timeout: 5_000,
+  })
+  if (result.error) throw result.error
+  assert.deepEqual([result.status, result.stderr.trim()], [1, 'error: cannot deliver capability'])
+})
+
+test('CLI --json errors are one document on stderr', (t) => {
+  const { bookFile, envelopeFile } = paths(t)
+  writeFileSync(envelopeFile, JSON.stringify({ ...envelope, extra: true }))
+  const issue = ['issue', '--book', bookFile, '--ttl-hours', '1', '--envelope']
+  for (const [args, status, message] of [
+    [[...issue, '/dev/null'], 1, 'cannot read envelope json'],
+    [[...issue, envelopeFile], 1, 'invalid envelope'],
+    [['bind', '--session', session], 2, 'missing --book'],
+    [['serve', '--book', bookFile, '--unknown'], 2, 'invalid flags'],
+  ] as const) {
+    const result = run(...args, '--json')
+    assert.deepEqual([result.status, result.stdout, result.stderr],
+      [status, '', `${JSON.stringify({ error: { message } })}\n`])
   }
 })
 
-// Catches minting a capability for an envelope with unexpected fields.
-test('CLI rejects an envelope with an unknown field without printing a capability', (t) => {
-  const { bookFile, envelopeFile } = paths(t)
-  writeFileSync(envelopeFile, JSON.stringify({ ...envelope, extra: true }))
-  const result = run('issue', '--book', bookFile, '--envelope', envelopeFile, '--ttl-hours', '1', '--json')
-  assert.ok(result.status === 1 || result.status === 2, `exit status ${result.status}`)
-  assert.match(result.stderr, /^error:/)
-  assert.equal(result.stdout, '')
+test('CLI bind validates arguments and the book without waiting for stdin', async (t) => {
+  const { bookFile } = paths(t)
+  for (const [args, status, message] of [
+    [['--book', bookFile, '--session', 'x'], 2, 'invalid session id'],
+    [['--session', session], 2, 'missing --book'],
+    [['--book', dirname(bookFile), '--session', session], 1, 'unsafe book file'],
+  ] as const) {
+    const child = spawn(process.execPath, [...cli, 'bind', ...args], { cwd, timeout: 2_000 })
+    const closed = once(child, 'close')
+    let stderr = ''
+    child.stderr.setEncoding('utf8').on('data', text => { stderr += text })
+    child.stdin.on('error', () => {})
+    child.stdin.write('not-a-capability') // No newline or EOF: a read would block.
+    const [code, signal] = await closed
+    assert.deepEqual([code, signal, stderr.trim()], [status, null, `error: ${message}`])
+  }
 })
