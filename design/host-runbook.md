@@ -4,7 +4,7 @@ Nothing in this document has been run on the Mac Studio. This runbook covers
 installing, supervising, backing up, and recovering the board host without a
 login. It separates Linux VM evidence from the Mac acceptance checks.
 
-This file lives in `design/` beside the operational and architecture docs.
+The tools and templates are still under `tools/host` and `design/ops-templates`. They move to `packages/swarm/host/` in a later change.
 
 ## 1. Status and legend
 
@@ -228,9 +228,11 @@ the same user on the VM, not across macOS users.
 ### 7.2 Contents and ordering
 
 The script snapshots each SQLite file first with the online backup API. Then
-it copies attachments, writes a manifest with SHA-256 hashes, and atomically
-renames `.partial-...` to `backup-...`. A blob is written before its referencing
-message, so the later blob copy covers references in the earlier DB snapshot.
+it copies attachments, writes `MANIFEST.json` with SHA-256 hashes and a random
+backup token, and atomically renames `.partial-...` to `backup-...`. The per-board
+index `<out>/.backup-index.json` records each published backup's name and token
+for retention. A blob is written before its referencing message, so the later
+blob copy covers references in the earlier DB snapshot.
 
 Ordering, checked in the code: the CLI awaits an upload before it posts. The
 upload awaits the blob and its metadata, and `fsBlob.put` awaits each file and
@@ -241,7 +243,13 @@ that is harmless. A client that wrote a blob and never posted leaves the same
 orphan. This order is a property of today's write path, not of the backup
 script: re-check it if the write path changes.
 
-Two limits of the script. Do not start or stop a board while its backup runs:
+The script holds an exclusive publish lock for the whole run. It uses
+`<out>/.publish.lock`, a separate SQLite file. The OS releases the lock if the
+process dies. Never delete the file. Overlapping backups of the same board take
+turns. A second run waits up to 10 minutes, then fails with
+`another backup of this board is running` if the lock is still held.
+
+Do not start or stop a board while its backup runs:
 a read-only open can still create an empty `-wal` file beside the database if
 the board shuts down between the script's checks and its open. The backup then
 fails without publishing; SQLite should reuse or discard the empty file, which
@@ -261,9 +269,19 @@ ownership. Restore it only to the intended account with private permissions.
 ### 7.3 Schedule and retention
 
 **[host: not run]** Schedule the backup plist nightly for each board. Run a
-manual backup before each upgrade. `--keep` sets local retention. Nightly
-means up to a day of loss if jobs succeed. Monitor time since the last
-successful published backup, not merely the last job start.
+manual backup before each upgrade. Nightly means up to a day of loss if jobs
+succeed. Monitor time since the last successful published backup, not merely
+the last job start.
+
+`--keep N` keeps the newest N eligible backups. It deletes only indexed backups
+whose directory still exists and whose manifest token matches the index.
+Hand-made directories, copies, and older unindexed backups stay, even if they
+look like backups. A person must remove older unindexed backups. Without
+`--keep`, nothing is pruned.
+
+If the index is unreadable, the run prunes nothing. It warns on stderr,
+publishes the backup, exits 0, and leaves the index for a person to inspect.
+See `tools/host/test/backup-retention.test.mjs` for test coverage.
 
 Choose an independent disk or existing NAS for encrypted copies, plus an
 offline copy. The target and owner are open decisions. An on-machine copy
@@ -283,9 +301,23 @@ does not cover loss of the host disk.
 ## 8. Restore
 
 [board-restore.mjs](../tools/host/board-restore.mjs) takes `--backup` and `--dir`.
-It verifies manifest hashes and `integrity_check` before touching the target.
-It refuses a running board. Use an absent dir for drills. Replacing existing
-board data needs `--replace`, which moves the old directory aside, never deletes it.
+It copies each entry into a fresh stage with exclusive creation and checks its
+hash. It refuses entries that differ only by case on every platform. Those
+entries would overwrite each other on the usual case-insensitive Mac volumes.
+After all copies and hash checks, it runs `integrity_check` on every database
+in the completed stage. This is the last check before it touches the target.
+
+Use an absent dir for drills. An existing empty target needs no `--replace`.
+The script removes it with `rmdir`, which fails safely if it is no longer empty.
+A successful restore into an empty target leaves nothing beside it. A non-empty
+target needs `--replace`, which moves the old directory aside as `.replaced-...`
+instead of deleting it. A running board is refused even with `--replace`.
+
+To install, the script creates the target directory exclusively and renames
+the stage onto that empty directory. If a directory appears at the target after
+the checks, the script reports that it appeared, leaves it alone, keeps any old
+directory aside under `.replaced-...`, and exits 1.
+See `tools/host/test/restore-install.test.mjs` for test coverage.
 
 ### Restore drill
 
@@ -297,6 +329,8 @@ board data needs `--replace`, which moves the old directory aside, never deletes
   ```bash
   /opt/politburo/bin/node /opt/politburo/current/tools/host/board-restore.mjs --backup '{{BACKUP_DIR}}' --dir '{{DRILL_DIR}}'
   ```
+
+- [ ] **[host: not run]** After restore, `ls -a` in the target's parent shows no `.restoring-*` directory.
 
 - [ ] **[host: not run]** As the drill user, start a second board on an unused
   loopback port. Use the same disposable `XDG_CONFIG_HOME` for the server and
@@ -335,10 +369,10 @@ board data needs `--replace`, which moves the old directory aside, never deletes
    and pause its scheduled backup until recovery is complete.
 2. **[host: not run]** Restore with `--replace`, as root, because the target's
    parent is root-owned. The restored files then belong to root: hand the tree
-   to the board user (next block) before starting the board. The old directory
-   is kept beside it as `.replaced-...`. Renaming does not change owner, so it
-   stays owned by the board user; tighten it with `chown` if the old data
-   should be out of that account's reach.
+   to the board user (next block) before starting the board. If the target was
+   non-empty, the old directory is kept beside it as `.replaced-...`. Renaming
+   does not change its owner. Use `chown` if the old data should be out of the
+   board user's reach.
 
    ```bash
    sudo /opt/politburo/bin/node /opt/politburo/current/tools/host/board-restore.mjs --backup '{{BACKUP_DIR}}' --dir '/var/lib/politburo/board-{{BOARD_ID}}' --replace
@@ -353,9 +387,10 @@ board data needs `--replace`, which moves the old directory aside, never deletes
    point-in-time state before enabling writes and backups. Do not replay
    external effects or previously approved jobs.
 
-Restore recovers files, not access setup, external effects, or work since the
-snapshot. Relay and secretary owners must reconcile their state before resuming.
-The procedure for those services is unknown until they exist.
+Restore recovers the database snapshots and attachments. It does not recover
+env files, separate access setup, external effects, or work since the snapshot.
+Relay and secretary owners must reconcile their state before resuming. The
+procedure for those services is unknown until they exist.
 
 ## 9. Upgrades
 

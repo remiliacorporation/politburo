@@ -1,3 +1,5 @@
+The tools and templates are still under `tools/host` and `design/ops-templates`. They move to `packages/swarm/host/` in a later change.
+
 ## backup and restore
 
 Requires Node 22.18 or newer.
@@ -12,14 +14,43 @@ copies attachments. The board can keep running. Writes after a database's
 snapshot starts may not be included, and databases have separate cutoffs.
 Avoid starting or stopping the board during backup. If a crash leaves a WAL
 without its shared-memory file, start and cleanly stop the board before retrying.
-Completed `backup-*` directories contain `files/` and a versioned
-`MANIFEST.json` with sizes and SHA-256 checksums. `--keep N` keeps the newest
-N completed backups, where N is positive. No pruning happens without it.
+Completed `backup-*` directories contain database snapshots, `files/`, and a
+versioned `MANIFEST.json` with sizes, SHA-256 checksums, and a random backup token.
+The per-board index `<out>/.backup-index.json` records each published backup's
+name and token.
 
-`board-restore` verifies the backup before installing it. Use a missing or
-empty target, or pass `--replace` for a non-empty one. Any displaced directory
-is kept at the printed `.replaced-…` path. Stop the board on the target first,
-even with `--replace`.
+`--keep N` keeps the newest N eligible backups, where N is positive. It deletes
+only indexed backups whose directory still exists and whose manifest token
+matches the index. It never deletes hand-made directories, copies, or unindexed
+backups from older versions, even if they look like backups. No pruning happens
+without `--keep`. If the index is unreadable, backup warns on stderr, publishes
+without pruning, leaves the index for a person to inspect, and exits 0.
+
+Backup holds an exclusive lock on `<out>/.publish.lock`, a separate SQLite file,
+for the whole run. The OS releases the lock if the process dies. Never delete
+the file. Overlapping backups of one board take turns. A second run waits up to
+10 minutes, then fails with `another backup of this board is running` if the
+lock is still held. See `test/backup-retention.test.mjs` for test coverage.
+
+`board-restore` copies entries into a fresh stage with exclusive creation and
+checks their hashes. It refuses entries that differ only by case on every
+platform. Those entries would overwrite each other on the usual case-insensitive
+Mac volumes. After every copy and hash check is complete, it runs
+`integrity_check` on each staged database. That is the last check before it
+touches the target.
+
+Use a missing or empty target. The script removes an empty target with `rmdir`,
+which fails safely if it is no longer empty. An empty target needs no `--replace`
+and leaves nothing beside it on success. A non-empty target needs `--replace`,
+which keeps the old directory at the printed `.replaced-...` path. Stop the
+board on the target first. A running board is refused even with `--replace`.
+
+To install, restore creates the target directory exclusively, then renames the
+stage onto that empty directory. If a directory appears at the target after the
+checks, restore reports that it appeared, leaves it alone, keeps any old
+directory aside under `.replaced-...`, and exits 1. Restore recovers the backed-up
+files, not separate access setup or work since the snapshot.
+See `test/restore-install.test.mjs` for test coverage.
 
 Both commands exit 0 on success, 1 on failure, and 2 for invalid arguments.
 
@@ -48,5 +79,4 @@ Whether launchd's open log files behave this way on macOS is unverified; the
 [design/ops-templates](../../design/ops-templates/README.md). It fails on a
 placeholder with no value.
 
-These tools and the templates move to `packages/swarm/host/` when that package
-lands. Nothing in CI starts a service.
+Nothing in CI starts a service.

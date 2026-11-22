@@ -1,7 +1,8 @@
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path'
 import {
-  contains, digest, integrityCheck, intendedPath, privateCopy, runCli, skipped, sqliteFile,
+  contains, digest, integrityCheck, intendedPath, runCli, skipped, sqliteFile,
   statIfPresent, timestamp,
 } from './board-backup.mjs'
 
@@ -51,12 +52,22 @@ async function verifyBackup(backup) {
   }
   const files = join(backup, 'files')
   if (!(await lstat(files)).isDirectory()) throw new Error('backup files is not a directory')
-  const listed = new Set()
+  const listed = new Map()
+  for (const entry of manifest.files) {
+    const path = entry?.path
+    parts(path)
+    // Compare NFC-normalized paths in lowercase on every platform.
+    const folded = path.normalize('NFC').toLowerCase()
+    const previous = listed.get(folded)
+    if (previous === path) throw new Error(`duplicate file in manifest: ${path}`)
+    if (previous !== undefined) {
+      throw new Error(`backup has two entries that differ only by case: ${previous}, ${path}`)
+    }
+    listed.set(folded, path)
+  }
   const databases = new Set()
   for (const entry of manifest.files) {
-    const file = await regularFile(files, entry?.path)
-    if (listed.has(entry.path)) throw new Error(`duplicate file in manifest: ${entry.path}`)
-    listed.add(entry.path)
+    const file = await regularFile(files, entry.path)
     await verifyFile(file, entry)
     if (!entry.path.includes('/') && await sqliteFile(file)) databases.add(entry.path)
   }
@@ -64,7 +75,6 @@ async function verifyBackup(backup) {
     if (!databases.delete(entry?.path) || entry.integrity !== 'ok') {
       throw new Error('invalid database entry in manifest')
     }
-    await integrityCheck(join(files, entry.path), entry.path)
   }
   if (databases.size) throw new Error('backup contains a database not listed in the manifest')
   return { files: manifest.files, databases: new Set(manifest.databases.map((entry) => entry.path)) }
@@ -76,7 +86,7 @@ async function lockTarget(dir, replace, expected) {
   const nonEmpty = () => new Error('target is non-empty; use --replace or a different --dir')
   // A live board must already have a lock file. Do not create one in a
   // non-empty directory that we would reject anyway.
-  if (!info && !replace && (await readdir(dir)).length) throw nonEmpty()
+  if (!info && !replace) throw nonEmpty()
   if (info && !info.isFile()) throw new Error('target .lock is not a regular file')
   const { DatabaseSync } = await import('node:sqlite')
   const db = new DatabaseSync(path)
@@ -88,9 +98,7 @@ async function lockTarget(dir, replace, expected) {
     }
     // A stopped board's old lock files are not board data, but they still
     // make the directory non-empty for the purposes of requiring --replace.
-    if (!replace && (info || (await readdir(dir)).some((name) => name !== '.lock' && name !== '.lock-journal'))) {
-      throw nonEmpty()
-    }
+    if (!replace) throw nonEmpty()
     return db
   } catch (error) {
     db.close()
@@ -98,6 +106,19 @@ async function lockTarget(dir, replace, expected) {
       throw new Error('a board is running there; stop it first')
     }
     throw error
+  }
+}
+
+const targetConflict = (error) => ['EEXIST', 'ENOTEMPTY', 'ENOTDIR'].includes(error.code)
+
+export async function installNoClobber(stage, target) {
+  try {
+    // Reserve the name exclusively. Rename can replace the reservation only while it is empty.
+    await mkdir(target, { mode: 0o700 })
+    await rename(stage, target)
+  } catch (error) {
+    if (!targetConflict(error)) throw error
+    throw Object.assign(new Error(`target already exists: ${target}`, { cause: error }), { code: 'EEXIST' })
   }
 }
 
@@ -120,25 +141,41 @@ async function restore({ backup, dir, replace }) {
     for (const entry of files) {
       const to = join(stage, entry.path)
       await mkdir(dirname(to), { recursive: true })
-      await privateCopy(await regularFile(join(backup, 'files'), entry.path), to)
+      await copyFile(await regularFile(join(backup, 'files'), entry.path), to, constants.COPYFILE_EXCL)
+      await chmod(to, 0o600)
       await verifyFile(to, entry)
-      // Check the bytes that will be installed, not the backup's copy, which can change.
-      if (databases.has(entry.path)) await integrityCheck(to, entry.path)
     }
+    // Check the completed stage before making any changes at the target.
+    for (const path of databases) await integrityCheck(join(stage, path), path)
+
     const info = await statIfPresent(target)
     if (info) {
       if (!info.isDirectory()) throw new Error('target is not a directory')
-      lock = await lockTarget(target, replace, info)
-      if (await statIfPresent(aside)) throw new Error('cannot keep old directory: replacement path exists')
-      await rename(target, aside)
-      kept = true
+      if ((await readdir(target)).length === 0) {
+        await rmdir(target)
+      } else {
+        lock = await lockTarget(target, replace, info)
+        if (await statIfPresent(aside)) throw new Error('cannot keep old directory: replacement path exists')
+        await rename(target, aside)
+        kept = true
+      }
     }
     try {
-      await rename(stage, target)
+      await installNoClobber(stage, target)
     } catch (error) {
-      // Do not overwrite a directory another process has created in the gap.
-      if (kept && !await statIfPresent(target)) await rename(aside, target)
-      throw new Error(`cannot install restore: ${error.message}${kept && await statIfPresent(aside) ? `; old directory kept at ${aside}` : ''}`)
+      if (!kept) throw error
+      const appeared = () => new Error(`target appeared during restore; the old directory is kept at ${aside}`)
+      if (error.code === 'EEXIST') throw appeared()
+      if (!await statIfPresent(target)) {
+        try {
+          await installNoClobber(aside, target)
+          kept = false
+        } catch (rollbackError) {
+          if (rollbackError.code === 'EEXIST') throw appeared()
+          throw new Error(`cannot put the old directory back: ${rollbackError.message}; kept at ${aside}`)
+        }
+      }
+      throw new Error(`cannot install restore: ${error.message}${kept ? `; old directory kept at ${aside}` : ''}`)
     }
   } finally {
     lock?.close()
@@ -148,5 +185,7 @@ async function restore({ backup, dir, replace }) {
   if (kept) console.log(`kept  ${aside}`)
 }
 
-await runCli({ backup: { type: 'string' }, dir: { type: 'string' }, replace: { type: 'boolean' } },
-  ['backup', 'dir'], restore)
+if (import.meta.main) {
+  await runCli({ backup: { type: 'string' }, dir: { type: 'string' }, replace: { type: 'boolean' } },
+    ['backup', 'dir'], restore)
+}

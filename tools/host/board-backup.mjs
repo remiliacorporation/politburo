@@ -1,9 +1,14 @@
-import { createHash } from 'node:crypto'
+// Usage: node tools/host/board-backup.mjs --dir <board> --out <backups> [--keep N]
+// One --out directory per board. Backups serialize on its .publish.lock.
+// --keep N prunes older backups only when their manifest token matches the
+// local .backup-index.json. An unreadable index is left intact and disables pruning.
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
-  chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile,
+  chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink, writeFile,
 } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -131,33 +136,99 @@ async function* manifestFiles(dir, prefix = '') {
 
 const BACKUP_NAME = /^backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z$/
 
-async function publishedBackup(dir) {
+const INDEX_NAME = '.backup-index.json'
+
+async function lockPublisher(out) {
+  const { DatabaseSync } = await import('node:sqlite')
+  // SQLite holds the OS lock until close or process death. Never unlink the file.
+  const path = join(out, '.publish.lock')
+  const stat = await statIfPresent(path)
+  if (stat && (!stat.isFile() || stat.nlink !== 1)) throw new Error('invalid publish lock file')
+  const db = new DatabaseSync(path)
   try {
-    const manifest = JSON.parse(await readFile(join(dir, 'MANIFEST.json'), 'utf8'))
-    return manifest?.version === 1 && Array.isArray(manifest.files) && Array.isArray(manifest.databases)
+    db.exec('pragma busy_timeout = 600000; pragma locking_mode = exclusive; begin exclusive; commit')
+    return db
+  } catch (error) {
+    db.close()
+    if (error.code === 'ERR_SQLITE_ERROR' && (error.errcode & 0xff) === 5) {
+      throw new Error('another backup of this board is running')
+    }
+    throw error
+  }
+}
+
+async function readIndex(out) {
+  const path = join(out, INDEX_NAME)
+  try {
+    const stat = await statIfPresent(path)
+    if (!stat) return new Map()
+    if (!stat.isFile()) throw new Error('not a regular file')
+    const { version, backups } = JSON.parse(await readFile(path, 'utf8'))
+    if (version !== 1 || !Array.isArray(backups)) throw new Error('invalid index')
+    const index = new Map()
+    for (const { name, token } of backups) {
+      if (typeof name !== 'string' || !BACKUP_NAME.test(name) ||
+          typeof token !== 'string' || !token || index.has(name)) throw new Error('invalid entry')
+      index.set(name, token)
+    }
+    return index
+  } catch {
+    console.error('warning: backup index unreadable; nothing pruned')
+    return null
+  }
+}
+
+async function writeIndex(out, index) {
+  const backups = [...index].map(([name, token]) => ({ name, token }))
+  const temp = join(out, `.backup-index-${randomUUID()}.tmp`)
+  const file = await open(temp, 'wx', 0o600)
+  try {
+    try {
+      await file.writeFile(JSON.stringify({ version: 1, backups }) + '\n')
+    } finally {
+      await file.close()
+    }
+    await rename(temp, join(out, INDEX_NAME))
+  } catch (error) {
+    await unlink(temp).catch(() => {})
+    throw error
+  }
+}
+
+async function matchesBackup(dir, token) {
+  try {
+    if (!(await lstat(dir)).isDirectory()) return false
+    const path = join(dir, 'MANIFEST.json')
+    if (!(await lstat(path)).isFile()) return false
+    return JSON.parse(await readFile(path, 'utf8'))?.token === token
   } catch {
     return false
   }
 }
 
-// Only directories this script published (its timestamped name and a version 1
-// manifest) are candidates, and the backup just written is never one of them.
-async function prune(out, keep, source, current) {
-  const backups = []
-  for (const entry of await readdir(out, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !BACKUP_NAME.test(entry.name)) continue
-    const dir = join(out, entry.name)
-    if (dir === current || contains(dir, source)) continue
-    if (await publishedBackup(dir)) backups.push(entry.name)
-  }
-  // The newest `keep` includes the one just written, so keep one fewer older one.
-  for (const older of backups.sort().reverse().slice(keep - 1)) {
-    await rm(join(out, older), { recursive: true })
-  }
+async function removeOlderBackup(out, source, index, name, current) {
+  if (name === current || !BACKUP_NAME.test(name) || !index.has(name)) return false
+  const dir = join(out, name)
+  if (contains(dir, source) || !await matchesBackup(dir, index.get(name))) return false
+  await rm(dir, { recursive: true })
+  index.delete(name)
+  return true
 }
 
-async function makeBackup(dir, out, keep) {
-  const source = await realpath(dir)
+async function prune(out, keep, source, index, current) {
+  const backups = [current]
+  for (const [name, token] of index) {
+    const dir = join(out, name)
+    if (name !== current && !contains(dir, source) && await matchesBackup(dir, token)) backups.push(name)
+  }
+  let changed = false
+  for (const name of backups.sort().reverse().slice(keep)) {
+    if (await removeOlderBackup(out, source, index, name, current)) changed = true
+  }
+  if (changed) await writeIndex(out, index)
+}
+
+async function publishBackup(source, out, keep) {
   const databases = new Set()
   for (const entry of await readdir(source, { withFileTypes: true })) {
     if (!skipped(entry.name) && entry.isFile() && await sqliteFile(join(source, entry.name))) {
@@ -166,12 +237,25 @@ async function makeBackup(dir, out, keep) {
   }
   if (!databases.size) throw new Error('no sqlite database in --dir')
 
-  out = await intendedPath(resolve(out))
-  if (contains(source, out)) throw new Error('--out must be outside the board directory')
-  await mkdir(out, { recursive: true })
-  const created = new Date()
-  const partial = join(out, `.partial-${timestamp(created)}`)
-  const complete = join(out, `backup-${timestamp(created)}`)
+  const index = await readIndex(out)
+  if (index) {
+    // Drop entries left by an interrupted publish or a manually removed backup.
+    // An existing entry is retained even if its manifest cannot be read.
+    for (const name of index.keys()) {
+      if (!await statIfPresent(join(out, name))) index.delete(name)
+    }
+  }
+  let created = new Date()
+  let name = `backup-${timestamp(created)}`
+  let complete = join(out, name)
+  while (await statIfPresent(complete)) {
+    await sleep(1)
+    created = new Date()
+    name = `backup-${timestamp(created)}`
+    complete = join(out, name)
+  }
+  const token = randomUUID()
+  const partial = join(out, `.partial-${token}`)
   await mkdir(partial)
   let files
   try {
@@ -190,16 +274,34 @@ async function makeBackup(dir, out, keep) {
     files = []
     for await (const file of manifestFiles(dest)) files.push(file)
     await writeFile(join(partial, 'MANIFEST.json'), JSON.stringify({
-      version: 1, created: created.toISOString(), files,
+      version: 1, token, created: created.toISOString(), files,
       databases: [...databases].map((path) => ({ path, integrity: 'ok' })),
     }, null, 2) + '\n')
+    if (index) {
+      // Record ownership before publishing so a crash cannot leave an unindexed backup.
+      index.set(name, token)
+      await writeIndex(out, index)
+    }
     await rename(partial, complete)
   } catch (error) {
     await rm(partial, { recursive: true, force: true })
     throw error
   }
   console.log(`backup  ${complete}\ndatabases  ${databases.size}  files  ${files.length}`)
-  if (keep !== undefined) await prune(out, keep, source, complete)
+  if (index && keep !== undefined) await prune(out, keep, source, index, name)
+}
+
+async function makeBackup(dir, out, keep) {
+  const source = await realpath(dir)
+  out = await intendedPath(resolve(out))
+  if (contains(source, out)) throw new Error('--out must be outside the board directory')
+  await mkdir(out, { recursive: true })
+  const lock = await lockPublisher(out)
+  try {
+    await publishBackup(source, out, keep)
+  } finally {
+    lock.close()
+  }
 }
 
 export async function runCli(options, required, run) {

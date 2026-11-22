@@ -188,23 +188,3 @@ test('backup leaves the live board responsive and its lock held', { timeout: 200
   assert.equal(denied.code, 1)
   assert.match(denied.stderr, /another process owns this board's directory/)
 })
-
-// Catches retention removing unrelated entries, hand-made or incomplete backup-* directories, or the newest backup.
-test('--keep only prunes older completed backup directories', { timeout: 20000 }, async (t) => {
-  const f = await fixture(t)
-  await f.serve()
-  const older = await f.save()
-  await mkdir(join(f.out, 'backup-incomplete'))
-  await mkdir(join(f.out, 'other-directory'))
-  await writeFile(join(f.out, 'other-directory', 'MANIFEST.json'), '{}')
-  await writeFile(join(f.out, 'backup-note'), 'keep me')
-  // Hand-made directories with a manifest of their own, one named to sort after any timestamp.
-  for (const name of ['backup-000', 'backup-manual']) {
-    await mkdir(join(f.out, name))
-    await writeFile(join(f.out, name, 'MANIFEST.json'), '{}')
-  }
-  const newest = await f.save('--keep', '1')
-  await assert.rejects(lstat(older), { code: 'ENOENT' })
-  assert.deepEqual((await readdir(f.out)).sort(), [newest.slice(f.out.length + 1), 'backup-000', 'backup-incomplete', 'backup-manual', 'backup-note', 'other-directory'].sort())
-  assert.equal(await readFile(join(f.out, 'backup-note'), 'utf8'), 'keep me')
-})
