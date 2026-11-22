@@ -1,9 +1,8 @@
 import type { SQLInputValue } from 'node:sqlite'
 import { LedgerError, type LedgerErrorCode } from './errors.ts'
 import { schema, SCHEMA_VERSION } from './schema.ts'
-import {
-  BASES, BUCKETS, COVERAGE_STATES, QUALITIES, TIERS,
-  type AppendOutcome, type Dispatch, type Envelope, type Intent, type IntentView, type SpendRecord,
+import type {
+  AppendOutcome, Dispatch, Envelope, Intent, IntentView, SpendRecord,
 } from './types.ts'
 import { validateDispatch, validateIntent, validateRecord } from './validate.ts'
 
@@ -30,55 +29,13 @@ function fail(code: LedgerErrorCode, message: string): never {
   throw new LedgerError(code, message)
 }
 
-// Keep the storage boundary typed even if a validator permits extra fields or
-// SQLite would coerce the value. Only field_quality is serialized as JSON.
-type Check = (value: unknown, field: string) => void
+// Arguments that do not pass through a record validator.
 function text(value: unknown, field: string): void {
   if (typeof value !== 'string' || /\0|[\uD800-\uDFFF]/u.test(value)) fail('invalid', `${field} must be text`)
 }
-const nullable = (check: Check): Check => (v, f) => { if (v !== null) check(v, f) }
-const choice = (values: readonly string[]): Check => (v, f) => {
+const choice = (values: readonly string[]) => (v: unknown, f: string): void => {
   if (typeof v !== 'string' || !values.includes(v)) fail('invalid', `${f} has an invalid value`)
 }
-const count: Check = (v, f) => {
-  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) fail('invalid', `${f} must be a non-negative safe integer`)
-}
-const fields = (required: Record<string, Check>, optional: Record<string, Check> = {}): Check => (v, f) => {
-  if (typeof v !== 'object' || v === null || ![Object.prototype, null].includes(Object.getPrototypeOf(v))) {
-    fail('invalid', `${f} must be a plain object`)
-  }
-  for (const key of Object.keys(required)) {
-    if (!Object.hasOwn(v, key)) fail('invalid', `${f}.${key} is required`)
-  }
-  for (const key of Reflect.ownKeys(v)) {
-    const prop = Object.getOwnPropertyDescriptor(v, key)
-    if (typeof key !== 'string' || !prop?.enumerable || !Object.hasOwn(prop, 'value')) fail('invalid', `${f} has an invalid field`)
-    const check = Object.hasOwn(required, key) ? required[key] : Object.hasOwn(optional, key) ? optional[key] : undefined
-    if (!check) fail('invalid', `${f} has an unexpected field`)
-    check(prop.value, `${f}.${key}`)
-  }
-}
-const maybeText = nullable(text)
-const envelopeFields = fields({
-  party: text, repo: maybeText, work_id: maybeText, attempt: maybeText, tier: choice(TIERS),
-  parent: maybeText, session: text, trace: fields({ id: text, execution_id: text }),
-})
-const dispatchFields = fields({ envelope: envelopeFields, sponsor: maybeText, created: text })
-const intentFields = fields({
-  intent_id: text, execution_id: text, board_id: text, task_id: text, claim_epoch: count,
-  fence: text, reservation_ref: maybeText, created: text,
-})
-const recordFields = fields({
-  record_id: text, dedupe_key: text, revises: maybeText, envelope: nullable(envelopeFields),
-  source: text, source_version: text, source_event_key: text, evidence_ref: text,
-  provider: maybeText, requested_route: maybeText, actual_model: maybeText, auth_class: maybeText,
-  tokens: fields(Object.fromEntries(BUCKETS.map(b => [b, nullable(count)]))),
-  amount: nullable(fields({ value: text, unit: text })), basis: choice(BASES),
-  occurred: maybeText, received: text, started: maybeText, ended: maybeText, status: text,
-  coverage: fields({ state: choice(COVERAGE_STATES), field_quality: fields({}, Object.fromEntries(
-    ['amount', ...BUCKETS.map(b => `tokens.${b}`)].map(k => [k, choice(QUALITIES)]),
-  )) }),
-}, { actor: text, reason: text, exit_reason: text })
 
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) => {
@@ -235,7 +192,6 @@ export function openLedger(path: string): Ledger {
   return {
     createDispatch(input) {
       const d = validateDispatch(input)
-      dispatchFields(d, 'dispatch')
       return write(() => {
         const { trace, ...envelope } = d.envelope
         const existing = dispatch(trace.execution_id)
@@ -252,7 +208,6 @@ export function openLedger(path: string): Ledger {
     dispatches: () => all<DispatchRow>('SELECT * FROM dispatches ORDER BY rowid').map(readDispatch),
     beginIntent(input) {
       const i = validateIntent(input)
-      intentFields(i, 'intent')
       return write(() => {
         if (!dispatch(i.execution_id)) fail('unknown_dispatch', 'the dispatch does not exist')
         const existing = intent(i.intent_id)
@@ -279,7 +234,7 @@ export function openLedger(path: string): Ledger {
       })
     },
     markLaunched: (id, at) => change(id, at, view => {
-      if (view.state === 'ambiguous') fail('intent_ambiguous', 'reconcile the intent first')
+      active(view)
       if (view.state !== 'ready') fail('not_ready', 'only a ready intent can be launched')
       return 'launched'
     }),
@@ -293,7 +248,6 @@ export function openLedger(path: string): Ledger {
     },
     append(input) {
       const r = validateRecord(input)
-      recordFields(r, 'record')
       return write(() => {
         function duplicate(): AppendOutcome | null {
           const existing = get<RecordRow>('SELECT * FROM records WHERE dedupe_key=?', r.dedupe_key)
