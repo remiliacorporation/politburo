@@ -1,5 +1,5 @@
 import { parseSourceId, TrackerError, type ItemState, type Observation, type TrackerAdapter } from './types.ts'
-import { commentMarker } from './write.ts'
+import { coalesceComment, commentCredential, commentMarker, readCredential, requireWriteBack, type WriteBack } from './write.ts'
 
 export type LinearOptions = {
   source: string
@@ -7,6 +7,7 @@ export type LinearOptions = {
   token: () => string | undefined
   fetch?: typeof fetch
   now?: () => Date | number | string
+  writeBack?: WriteBack
 }
 
 const fields = 'id identifier title url priority updatedAt state { name type } labels { nodes { name } pageInfo { hasNextPage } } assignee { id }'
@@ -17,6 +18,7 @@ const scanQuery = `query ScanIssues($key: String!, $cursor: String) {
   }
 }`
 const getQuery = `query GetIssue($id: String!) { issue(id: $id) { ${fields} } }`
+const identityQuery = `query IssueIdentity($id: String!) { issue(id: $id) { identifier } }`
 const commentsQuery = `query IssueComments($id: String!, $cursor: String) {
   issue(id: $id) { comments(first: 100, after: $cursor) { nodes { id body } pageInfo { hasNextPage endCursor } } }
 }`
@@ -61,26 +63,23 @@ async function data(response: Response): Promise<Record<string, unknown>> {
 }
 
 export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app/graphql',
-  fetch: send = globalThis.fetch, now = () => new Date(),
+  fetch: send = globalThis.fetch, now = () => new Date(), writeBack = 'off',
 }: LinearOptions): TrackerAdapter {
   const { kind, scope } = parseSourceId(source)
   if (kind !== 'linear') throw new TrackerError('bad_source')
   const teamIdentifier = new RegExp(`^${scope}-[0-9]+$`)
 
-  async function request(query: string, variables: Record<string, string | null>) {
-    let credential: string | undefined
-    try { credential = token() } catch { throw new TrackerError('no_credential') }
-    if (!credential?.trim()) throw new TrackerError('no_credential')
+  async function request(query: string, variables: Record<string, string | null>, credential = readCredential(token)) {
     let response: Response
     try {
       response = await send(baseUrl, { method: 'POST', headers: {
         Authorization: credential, 'Content-Type': 'application/json',
-      }, body: JSON.stringify({ query, variables }) })
+      }, body: JSON.stringify({ query, variables }), redirect: 'error' })
     } catch {
       throw new TrackerError('unavailable')
     }
     if (response.status === 429) throw new TrackerError('rate_limited')
-    if (response.status >= 500) throw new TrackerError('unavailable')
+    if ((response.status >= 300 && response.status < 400) || response.status >= 500) throw new TrackerError('unavailable')
     return response
   }
 
@@ -139,35 +138,43 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
       return teamIdentifier.test(result.ref.displayId) ? result : 'inaccessible'
     },
     async comment(ref, body, opId) {
+      requireWriteBack(writeBack)
       const marker = commentMarker(body, opId)
       if (ref.source !== source || !ref.itemId) throw new TrackerError('bad_source')
-      let cursor: string | null = null
-      for (let count = 0; count < 10; count++) {
-        const result = await data(await request(commentsQuery, { id: ref.itemId, cursor }))
-        const issue = result.issue
-        const comments = isObject(issue) ? issue.comments : undefined
-        if (!isObject(comments) || !Array.isArray(comments.nodes) || !isObject(comments.pageInfo)
-          || typeof comments.pageInfo.hasNextPage !== 'boolean') throw new TrackerError('bad_response')
-        for (const comment of comments.nodes as unknown[]) {
-          if (!isObject(comment) || typeof comment.body !== 'string') throw new TrackerError('bad_response')
-          if (!comment.body.includes(marker)) continue
-          if (typeof comment.id !== 'string' || !comment.id) throw new TrackerError('bad_response')
-          return { receipt: comment.id, alreadyApplied: true }
+      const { itemId, displayId } = ref
+      if (!teamIdentifier.test(displayId)) throw new TrackerError('bad_request')
+      const credential = commentCredential(token, body, opId)
+      return coalesceComment(ref, opId, async () => {
+        const { issue } = await data(await request(identityQuery, { id: itemId }, credential))
+        if (!isObject(issue) || issue.identifier !== displayId) throw new TrackerError('bad_request')
+        let cursor: string | null = null
+        for (let count = 0; count < 10; count++) {
+          const result = await data(await request(commentsQuery, { id: itemId, cursor }, credential))
+          const issue = result.issue
+          const comments = isObject(issue) ? issue.comments : undefined
+          if (!isObject(comments) || !Array.isArray(comments.nodes) || !isObject(comments.pageInfo)
+            || typeof comments.pageInfo.hasNextPage !== 'boolean') throw new TrackerError('bad_response')
+          for (const comment of comments.nodes as unknown[]) {
+            if (!isObject(comment) || typeof comment.body !== 'string') throw new TrackerError('bad_response')
+            if (!comment.body.includes(marker)) continue
+            if (typeof comment.id !== 'string' || !comment.id) throw new TrackerError('bad_response')
+            return { receipt: comment.id, alreadyApplied: true }
+          }
+          const { hasNextPage, endCursor } = comments.pageInfo
+          if (!hasNextPage) { cursor = null; break }
+          if (typeof endCursor !== 'string' || !endCursor) throw new TrackerError('unavailable')
+          cursor = endCursor
         }
-        const { hasNextPage, endCursor } = comments.pageInfo
-        if (!hasNextPage) { cursor = null; break }
-        if (typeof endCursor !== 'string' || !endCursor) throw new TrackerError('unavailable')
-        cursor = endCursor
-      }
-      if (cursor) throw new TrackerError('unavailable')
-      const { commentCreate } = await data(await request(createComment, {
-        issueId: ref.itemId, body: `${body}\n${marker}`,
-      }))
-      if (!isObject(commentCreate) || commentCreate.success !== true || !isObject(commentCreate.comment)
-        || typeof commentCreate.comment.id !== 'string' || !commentCreate.comment.id) {
-        throw new TrackerError('bad_response')
-      }
-      return { receipt: commentCreate.comment.id, alreadyApplied: false }
+        if (cursor) throw new TrackerError('unavailable')
+        const { commentCreate } = await data(await request(createComment, {
+          issueId: itemId, body: `${body}\n${marker}`,
+        }, credential))
+        if (!isObject(commentCreate) || commentCreate.success !== true || !isObject(commentCreate.comment)
+          || typeof commentCreate.comment.id !== 'string' || !commentCreate.comment.id) {
+          throw new TrackerError('bad_response')
+        }
+        return { receipt: commentCreate.comment.id, alreadyApplied: false }
+      })
     },
   }
 }

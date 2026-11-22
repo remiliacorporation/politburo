@@ -1,5 +1,5 @@
 import { parseSourceId, TrackerError, type ItemState, type Observation, type Priority, type TrackerAdapter } from './types.ts'
-import { commentMarker } from './write.ts'
+import { coalesceComment, commentCredential, commentMarker, readCredential, requireWriteBack, type WriteBack } from './write.ts'
 
 export type GitHubOptions = {
   source: string
@@ -7,6 +7,7 @@ export type GitHubOptions = {
   token: () => string | undefined
   fetch?: typeof fetch
   now?: () => Date | number | string
+  writeBack?: WriteBack
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -57,30 +58,27 @@ async function json(response: Response): Promise<unknown> {
 }
 
 export function githubAdapter({ source, token, baseUrl = 'https://api.github.com',
-  fetch: send = globalThis.fetch, now = () => new Date(),
+  fetch: send = globalThis.fetch, now = () => new Date(), writeBack = 'off',
 }: GitHubOptions): TrackerAdapter {
   const { kind, scope } = parseSourceId(source)
   if (kind !== 'github') throw new TrackerError('bad_source')
   const issues = `${baseUrl.replace(/\/+$/, '')}/repos/${scope}/issues`
 
-  async function request(url: string, body?: string) {
-    let credential: string | undefined
-    try { credential = token() } catch { throw new TrackerError('no_credential') }
-    if (!credential?.trim()) throw new TrackerError('no_credential')
+  async function request(url: string, body?: string, credential = readCredential(token)) {
     let response: Response
     try {
       response = await send(url, { method: body === undefined ? 'GET' : 'POST', headers: {
         Authorization: `Bearer ${credential}`, Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'politburo-swarm',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      }, ...(body === undefined ? {} : { body, redirect: 'error' as const }) })
+      }, body, redirect: 'error' })
     } catch {
       throw new TrackerError('unavailable')
     }
     const { status, headers } = response
     const limited = status === 403 && headers.get('x-ratelimit-remaining') === '0'
     if (status === 429 || limited) throw new TrackerError('rate_limited')
-    if (status >= 500) throw new TrackerError('unavailable')
+    if ((status >= 300 && status < 400) || status >= 500) throw new TrackerError('unavailable')
     return response
   }
 
@@ -128,33 +126,42 @@ export function githubAdapter({ source, token, baseUrl = 'https://api.github.com
       return result.ref.itemId === ref.itemId ? result : 'gone'
     },
     async comment(ref, body, opId) {
+      requireWriteBack(writeBack)
       const marker = commentMarker(body, opId)
       if (ref.source !== source || !/^[1-9][0-9]*$/.test(ref.displayId)
         || !Number.isSafeInteger(Number(ref.displayId))) throw new TrackerError('bad_source')
-      const endpoint = `${issues}/${ref.displayId}/comments`
-      let page: string | undefined
-      for (let count = 0; count < 10; count++) {
-        const url: string = `${endpoint}?per_page=100${page ? `&page=${page}` : ''}`
-        const response = await request(url)
-        const comments = await json(response)
-        if (!Array.isArray(comments)) throw new TrackerError('bad_response')
-        for (const comment of comments as unknown[]) {
-          if (!isObject(comment) || typeof comment.body !== 'string') throw new TrackerError('bad_response')
-          if (!comment.body.includes(marker)) continue
-          const { id } = comment
-          if (!(typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
-            && !(typeof id === 'string' && id)) throw new TrackerError('bad_response')
-          return { receipt: String(id), alreadyApplied: true }
+      const credential = commentCredential(token, body, opId)
+      const issueUrl = `${issues}/${ref.displayId}`
+      const endpoint = `${issueUrl}/comments`
+      return coalesceComment(ref, opId, async () => {
+        const lookup = await request(issueUrl, undefined, credential)
+        if (lookup.status === 404) throw new TrackerError('bad_request')
+        const issue = await json(lookup)
+        if (!isObject(issue) || issue.node_id !== ref.itemId) throw new TrackerError('bad_request')
+        let page: string | undefined
+        for (let count = 0; count < 10; count++) {
+          const url: string = `${endpoint}?per_page=100${page ? `&page=${page}` : ''}`
+          const response = await request(url, undefined, credential)
+          const comments = await json(response)
+          if (!Array.isArray(comments)) throw new TrackerError('bad_response')
+          for (const comment of comments as unknown[]) {
+            if (!isObject(comment) || typeof comment.body !== 'string') throw new TrackerError('bad_response')
+            if (!comment.body.includes(marker)) continue
+            const { id } = comment
+            if (!(typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
+              && !(typeof id === 'string' && id)) throw new TrackerError('bad_response')
+            return { receipt: String(id), alreadyApplied: true }
+          }
+          page = nextPage(response.headers.get('link') ?? '', url)
+          if (!page) break
         }
-        page = nextPage(response.headers.get('link') ?? '', url)
-        if (!page) break
-      }
-      if (page) throw new TrackerError('unavailable')
-      const created = await json(await request(endpoint, JSON.stringify({ body: `${body}\n${marker}` })))
-      if (!isObject(created) || typeof created.node_id !== 'string' || !created.node_id) {
-        throw new TrackerError('bad_response')
-      }
-      return { receipt: created.node_id, alreadyApplied: false }
+        if (page) throw new TrackerError('unavailable')
+        const created = await json(await request(endpoint, JSON.stringify({ body: `${body}\n${marker}` }), credential))
+        if (!isObject(created) || typeof created.node_id !== 'string' || !created.node_id) {
+          throw new TrackerError('bad_response')
+        }
+        return { receipt: created.node_id, alreadyApplied: false }
+      })
     },
   }
 }
