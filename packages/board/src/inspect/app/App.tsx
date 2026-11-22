@@ -20,6 +20,7 @@ import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
+import { Work } from './work.tsx'
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
 
@@ -249,6 +250,7 @@ export function App() {
       : current.view === 'needs' ? 'Needs action'
       : current.view === 'handoffs' ? 'HANDOFFS'
       : current.view === 'presidium' ? 'PRESIDIUM'
+      : current.view === 'work' ? 'Work'
       : current.view
     document.title = `${title} · ${named}`
   }, [where.path, named])
@@ -333,6 +335,7 @@ export function App() {
             {current.view === 'channel' && (
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
+            {current.view === 'work' && <Work key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
             {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}

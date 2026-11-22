@@ -7,6 +7,7 @@ export type Route =
   | { view: 'needs' }
   | { view: 'handoffs' }
   | { view: 'presidium' }
+  | { view: 'work' }
   | { view: 'tasks' }
   | { view: 'attention' }
   | { view: 'channel'; channel: string }
@@ -23,6 +24,7 @@ export function route(path: string): Route {
   if (decoded === '/') return { view: 'needs' }
   if (decoded === '/handoffs') return { view: 'handoffs' }
   if (decoded === '/presidium') return { view: 'presidium' }
+  if (decoded === '/work') return { view: 'work' }
   if (decoded === '/tasks') return { view: 'tasks' }
   if (decoded === '/attention') return { view: 'attention' }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }

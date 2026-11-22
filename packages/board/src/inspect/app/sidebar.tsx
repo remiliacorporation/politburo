@@ -86,6 +86,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           <span className="name">tasks</span>
           {open !== null && open > 0 && <span className="count">{open}</span>}
         </Link>
+        <Link to="/work" className="item" current={current.view === 'work'}><ListTodo size={14} aria-hidden="true" /><span className="name">Work</span></Link>
         <Link to="/attention" className="item" current={current.view === 'attention'}>
           <CircleHelp size={14} aria-hidden="true" />
           <span className="name">attention</span>

@@ -515,6 +515,11 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .needs-view ul { list-style: none; margin: 0; padding: 0; }
 .needs-view li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding-block: 3px; overflow-wrap: anywhere; }
 .needs-view small { color: var(--muted); }
+.work-view > * { max-width: none; }
+.work-view > [tabindex] { overflow-x: auto; }
+.work-view li { flex-wrap: nowrap; white-space: nowrap; }
+.work-view li > * { flex: none; }
+.work-view h2 small { margin-inline-start: 4px; font-weight: normal; }
 .more { display: block; margin: 8px 20px; }
 /* A few facts, each a quiet name and what it is. */
 .facts { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 3px 10px; margin: 0; }
