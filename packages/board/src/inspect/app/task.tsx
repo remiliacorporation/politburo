@@ -4,10 +4,11 @@ import type { AttentionView } from '../../api/routes.ts'
 import { TaskPriority } from '../../contract/schemas.ts'
 import * as board from './board.ts'
 import { toast } from './chrome.ts'
-import { here, Link } from './nav.tsx'
+import { here, Link, RelativeTime } from './nav.tsx'
+import { Sha } from './sha.tsx'
 import { isTask, moves, nameOf, profilesOf, stateNow, type State, type TaskRoot, type TaskState, type Viewer } from './store.ts'
 import { AskForm, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, type AskProps } from './ui.tsx'
-import { clock, firstLine, refusal } from './words.ts'
+import { firstLine, left, refusal } from './words.ts'
 
 // A task is a thread with a state, so it shows as one more line on its root: the state, who holds
 // it and for how long, who it's for, what it waits for, and how it ended. The thread pane shows the
@@ -54,12 +55,7 @@ export function Lease({ until }: { until: string }) {
     const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
   }, [])
-  const left = Date.parse(until) - Date.now()
-  return (
-    <span className="lease" title={`until ${new Date(until).toLocaleString()}`}>
-      {left > 0 ? `${clock(left)} left` : 'lease ran out'}
-    </span>
-  )
+  return <RelativeTime iso={until} className="lease">{left(until)}</RelativeTime>
 }
 
 /** The tasks one waits for, each a link to its thread, with its state where the page has it. */
@@ -248,6 +244,18 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         <dd>{nameOf(state, task.owner)}</dd>
         <dt>priority</dt>
         <dd>{task.priority}</dd>
+        {task.claim?.binding && (
+          <>
+            <dt>base commit</dt>
+            <dd><Sha value={task.claim.binding.baseCommit} /></dd>
+          </>
+        )}
+        {task.handoff && (
+          <>
+            <dt>handoff commit</dt>
+            <dd><Sha value={task.handoff.commit} /></dd>
+          </>
+        )}
         {task.for && (
           <>
             <dt>for</dt>
@@ -352,6 +360,7 @@ function Answer({ task, request }: { task: string; request: string }) {
           }).catch((error) => toast(refusal(error))).finally(() => setBusy(false))
         }}>
           <strong>{attention.question}</strong>
+          <p className="hint">commit <Sha value={attention.commit} /></p>
           {attention.context && <p>{attention.context}</p>}
           {attention.options.map((option) => (
             <label key={option.id}>

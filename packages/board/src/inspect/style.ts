@@ -628,7 +628,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .attention-choice:not(:disabled):hover { color: var(--accent); }
 
 .task-rows { display: grid; container-type: inline-size; }
-.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 32px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
+.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 64px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
 .task-row:hover { background: var(--shade); }
 .task-row[aria-current] { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
 .task-row:focus-visible { outline-offset: -2px; }
@@ -773,7 +773,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 }
 
 @container (min-width: 42rem) {
-  .task-row { grid-template-columns: 80px minmax(0, 1fr) auto auto 36px; }
+  .task-row { grid-template-columns: 80px minmax(0, 1fr) auto auto 64px; }
   .task-where, .task-now:empty { display: block; }
   .task-now { grid-column: auto; grid-row: auto; max-width: 24ch; }
   .task-where { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }

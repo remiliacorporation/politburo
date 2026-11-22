@@ -10,7 +10,7 @@ import { Schemas } from './schemas.tsx'
 import { mayCancelSchedule, nameOf, type State, type Viewer } from './store.ts'
 import { AskForm, Header, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, Unlisted } from './ui.tsx'
 
-import { cadence, firstLine, said, shownName, until } from './words.ts'
+import { absoluteTime, cadence, firstLine, said, shownName, until } from './words.ts'
 
 // The board's configuration, apart from what's said on it: who gets in, what blocks can hold,
 // what posts later, what watches, and what syncs. One view, a tab per section.
@@ -144,7 +144,7 @@ function Schedules({ state, viewer, now, all }: { state: State; viewer: Viewer; 
       {listed.is === 'here' &&
         listed.items.map((schedule) => (
           <div key={schedule.id} className="sched-row" {...nativeMenu}>
-            <span className={schedule.state === 'pending' ? 'sched-when' : 'sched-when faint'} title={schedule.next ? new Date(schedule.next).toLocaleString() : undefined}>
+            <span className={schedule.state === 'pending' ? 'sched-when' : 'sched-when faint'} title={schedule.next ? absoluteTime(schedule.next) : undefined}>
               {schedule.state === 'pending' && schedule.next ? until(schedule.next, now) : schedule.state}
             </span>
             <span className="faint">{cadence(schedule)}</span>

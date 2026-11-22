@@ -9,7 +9,7 @@ import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { here, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { here, navigate, RelativeTime, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Presidium } from './presidium.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
@@ -331,7 +331,7 @@ export function App() {
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
             {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
-            {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} />}
+            {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} now={now} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
             {current.view === 'missing' && (
               <>
@@ -541,7 +541,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
             <div key={schedule.id} className="fact">
               <dt>later</dt>
               <dd>
-                {schedule.next ? until(schedule.next, props.now) : ''} · {cadence(schedule)} · {firstLine(schedule.text)}{' '}
+                {schedule.next && <RelativeTime iso={schedule.next}>{until(schedule.next, props.now)}</RelativeTime>} · {cadence(schedule)} · {firstLine(schedule.text)}{' '}
                 {mayCancelSchedule(viewer, schedule) && (
                   <button className="clear" onClick={() => void board.cancelSchedule(schedule.id)}>
                     cancel
