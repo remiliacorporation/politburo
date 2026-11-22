@@ -96,8 +96,10 @@ export function beadsAdapter({ run, store, now = () => new Date(), maxBeads = 50
           }
           return bead
         })
-      for (const id of ready) {
-        if (!listed.has(id)) disagreements.push({ id, bdReady: true, derivedReady: false, kind: 'unlisted', reasons: [] })
+      for (const id of new Set([...ready, ...blocked.keys()])) {
+        if (!listed.has(id)) {
+          disagreements.push({ id, bdReady: ready.has(id), derivedReady: false, kind: 'unlisted', reasons: [] })
+        }
       }
       return { source, store, epic, observedAt, items, disagreements }
     },

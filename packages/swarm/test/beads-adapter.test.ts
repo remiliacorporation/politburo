@@ -104,6 +104,26 @@ test('a race between list and ready hides disagreements or invents an unlisted i
   assert.ok(!items.some(({ id }) => id === unlistedId), 'a ready-only id appeared as an item')
 })
 
+test('a race between list and blocked hides an unlisted bead', async () => {
+  const blockedOnly = 'rw-cn1.blocked-only'
+  const inBoth = 'rw-cn1.in-both'
+  const run: BdRunner = async (argv) => {
+    const stdout = await recorded(argv)
+    if (argv.at(-1) !== epic || (argv[0] !== 'blocked' && argv[0] !== 'ready')) return stdout
+    const rows = JSON.parse(stdout) as unknown[]
+    return JSON.stringify([...rows, { id: inBoth, status: 'open' },
+      ...(argv[0] === 'blocked' ? [{ id: blockedOnly, status: 'blocked', blocked_by: [epic] }] : []),
+    ])
+  }
+  const { items, disagreements } = await adapter(run).scan({ epic })
+  for (const [id, bdReady] of [[blockedOnly, false], [inBoth, true]] as const) {
+    assert.deepEqual(disagreements.filter((entry) => entry.id === id), [{
+      id, kind: 'unlisted', bdReady, derivedReady: false, reasons: [],
+    }])
+    assert.ok(!items.some((item) => item.id === id), `${id} appeared as an item`)
+  }
+})
+
 test('scan or get invokes show or another verb outside the read-only allowlist', async () => {
   const calls: (readonly string[])[] = []
   const tracker = adapter(async (argv) => {
@@ -143,6 +163,31 @@ test('parsing accepts invalid output, echoes raw output in an error, or keeps an
     const parsed = parse('[{"id":"rw-demo","status":"open","owner":"owner@example.invalid"}]')
     assert.doesNotMatch(JSON.stringify(parsed), /@/)
   }
+})
+
+test('redaction merges distinct email-shaped bead ids instead of rejecting them', () => {
+  const stdout = JSON.stringify(['first@example.invalid', 'second@example.invalid'].map((id) => ({ id, status: 'open' })))
+  assert.throws(() => parseIssues(stdout), (error) =>
+    error instanceof BdParseError && error.message === 'invalid bd list output')
+})
+
+test('scan leaks credentials or keeps malformed external refs from list output', async () => {
+  const run: BdRunner = async (argv) => {
+    const stdout = await recorded(argv)
+    if (argv[0] !== 'list' || argv.at(-1) !== epic) return stdout
+    const rows = JSON.parse(stdout) as { id: string; external_ref?: string }[]
+    return JSON.stringify(rows.map((row) => {
+      if (row.id === 'rw-cn1.1') return { ...row, external_ref: 'https://user:pw@example.com/issue/9?access_token=SECRET#frag' }
+      if (row.id === 'rw-cn1.2') return { ...row, external_ref: 'not a ref; DROP TABLE' }
+      return row
+    }))
+  }
+  const scan = await adapter(run).scan({ epic })
+  assert.doesNotMatch(JSON.stringify(scan), /SECRET|pw/)
+  assert.equal(scan.items.find(({ id }) => id === 'rw-cn1.1')?.externalRef, 'https://example.com/issue/9')
+  const malformed = scan.items.find(({ id }) => id === 'rw-cn1.2')
+  assert.ok(malformed)
+  assert.equal(malformed.externalRef, undefined)
 })
 
 test('the rendered queue exceeds 80 columns or prints a title with raw ESC', async () => {
