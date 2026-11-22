@@ -102,12 +102,12 @@ export function currentHeads(spend: readonly SpendRecord[]): SpendRecord[] {
 }
 
 function unique<T>(rows: T[], list: string, field: keyof T) {
-  const ids = new Set<T[keyof T]>()
+  const byId = new Map<T[keyof T], T>()
   for (const [i, row] of rows.entries()) {
-    if (ids.has(row[field])) throw new ScoringInputError(`${list}/${i}/${String(field)}`, 'duplicate id')
-    ids.add(row[field])
+    if (byId.has(row[field])) throw new ScoringInputError(`${list}/${i}/${String(field)}`, 'duplicate id')
+    byId.set(row[field], row)
   }
-  return ids
+  return byId
 }
 
 export function parseScoreInput(value: unknown): ScoreInput {
@@ -118,12 +118,21 @@ export function parseScoreInput(value: unknown): ScoreInput {
     const path = error.instancePath + (field === undefined ? '' : `/${field}`)
     throw new ScoringInputError(path || '/', error.message ?? 'invalid input')
   }
-  const ids = unique(value.spend, 'spend', 'record_id')
+  const spendById = unique(value.spend, 'spend', 'record_id')
   unique(value.facts, 'facts', 'fact_id')
   for (const [i, record] of value.spend.entries()) {
-    if (record.revises !== null && !ids.has(record.revises)) {
-      throw new ScoringInputError(`spend/${i}/revises`, 'missing record')
+    if (record.revises === null) continue
+    const target = spendById.get(record.revises)
+    if (!target) throw new ScoringInputError(`spend/${i}/revises`, 'missing record')
+    if (target.envelope !== null && target.envelope.party !== record.envelope?.party) {
+      throw new ScoringInputError(`spend/${i}/revises`, 'revision of a bound record must belong to the same party')
     }
+  }
+  const outcomeKeys = new Set<string>()
+  for (const [i, { party, work_id, attempt, checked_at }] of value.outcomes.entries()) {
+    const key = JSON.stringify([party, work_id, attempt, checked_at])
+    if (outcomeKeys.has(key)) throw new ScoringInputError(`outcomes/${i}`, 'duplicate outcome ref')
+    outcomeKeys.add(key)
   }
   return value
 }

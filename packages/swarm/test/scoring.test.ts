@@ -144,6 +144,27 @@ test('a superseded spend record still counts alongside its revision', () => {
   assert.deepEqual(report({ ...input, spend: [old, head] }), report({ ...input, spend: [{ ...head, revises: null }] }))
 })
 
+test('a cross-party or unbound revision hides a party’s 10M-token spend', () => {
+  const input = seeded(701, 'A', 1)
+  const old = input.spend[0]!
+  const head = { ...old, record_id: 'amended', revises: old.record_id }
+  parseScoreInput({ ...input, spend: [old, head] })
+  parseScoreInput({ ...input, spend: [{ ...old, envelope: null }, head] })
+  for (const envelope of [{ ...old.envelope!, party: 'B' }, null]) {
+    assert.throws(() => parseScoreInput({ ...input, spend: [old, { ...head, envelope }] }), {
+      name: 'ScoringInputError', message: /spend\/1\/revises:.*same party/,
+    }, envelope === null ? 'unbound revision was accepted' : 'party B revision was accepted')
+  }
+})
+
+test('quarantining a 10M-token report loses its dispatch’s unknown-spend deduction', () => {
+  const input = seeded(701, 'A', 1)
+  const known = report(parseScoreInput(input))
+  const quarantined = report(parseScoreInput({ ...input, spend: [{ ...input.spend[0]!, envelope: null }] }))
+  assert.ok(quarantined.total < known.total, `quarantined score ${quarantined.total} >= known score ${known.total}`)
+  assert.equal(quarantined.unknown.items, 1)
+})
+
 test('facts after asOf change the score report', () => {
   const input = mergedOnly()
   const { party, work_id, attempt } = input.facts[0]!
@@ -170,6 +191,14 @@ test('malformed spend is accepted or reported outside the offending field', () =
   }
 })
 
+test('two outcome records with the same party, work, attempt, and timestamp share a ref', () => {
+  const input = mergedOnly()
+  const outcome = input.outcomes[0]!
+  assert.throws(() => parseScoreInput({ ...input, outcomes: [outcome, { ...outcome, evidence: 'other' }] }), {
+    name: 'ScoringInputError', message: /outcomes\/1:.*duplicate outcome ref/,
+  })
+})
+
 test('a misspelled score setting is accepted or reported at the wrong path', () => {
   assert.throws(() => loadConfig({ party: { score: { merged_wrk: 10 } } }), {
     name: 'ConfigError', field: 'score.merged_wrk',
@@ -180,6 +209,19 @@ test('a score point value too large for exact integer arithmetic is accepted and
   assert.throws(() => loadConfig({ party: { score: { merged_work: 1e20 } } }), {
     name: 'ConfigError', field: 'score.merged_work',
   })
+})
+
+test('an oversized missed-claim dock product can round away the unknown-spend deduction', () => {
+  const config = (dock: number) => loadConfig({ party: {
+    score: { missed_claim: 1_000_000 }, claims: { dock: { missed_claim: dock } },
+  } })
+  assert.equal(scoreRules(config(1)).missed_claim, 1_000_000)
+  for (const dock of [2, 1e14]) {
+    const oversized = config(dock)
+    assert.throws(() => scoreRules(oversized), {
+      name: 'ConfigError', field: 'claims.dock.missed_claim', message: /must not exceed 1000000/,
+    })
+  }
 })
 
 test('a level or milestone changes before or after the second merge reaches the exact boundary', () => {

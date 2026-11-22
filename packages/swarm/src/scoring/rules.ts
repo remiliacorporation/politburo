@@ -31,5 +31,8 @@ export function scoreRules(config: PartyConfig): ScoreRules {
     ids.add(id)
   }
   rules.missed_claim *= config.claims.dock.missed_claim
+  if (rules.missed_claim > 1_000_000) {
+    throw new ConfigError('claims.dock.missed_claim', 'when multiplied by score.missed_claim, must not exceed 1000000')
+  }
   return rules
 }
