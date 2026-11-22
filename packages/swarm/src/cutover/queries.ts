@@ -58,25 +58,30 @@ const needsAck = (r: LedgerRecord) => r.urgency === 'p0' || r.urgency === 'p1'
 
 export async function soak(tag: string, ledger: LedgerPort, since?: string, p1Minutes = 10) {
   const counts = { p0: 0, p1: 0, p2: 0, p3: 0 }
-  const missedP0P1: string[] = [], duplicates: string[] = [], lateP0: string[] = [], lateP1: string[] = []
+  const missedP0P1: string[] = [], duplicates: string[] = [], unknownDeliveries: string[] = []
+  const lateP0: string[] = [], lateP1: string[] = []
   let unknownTimes = 0
   for (const r of await ledger.records(tag, since)) {
     counts[r.urgency]++
-    if (r.deliveries !== undefined && r.deliveries > 1) duplicates.push(r.id)
+    const { deliveries } = r
+    if (deliveries === undefined || !Number.isFinite(deliveries)) unknownDeliveries.push(r.id)
+    else if (deliveries > 1) duplicates.push(r.id)
     if (!r.deliveredAt && needsAck(r)) missedP0P1.push(r.id)
-    const delay = Date.parse(r.deliveredAt ?? '') - Date.parse(r.at)
-    if (!Number.isFinite(delay)) unknownTimes++
-    else if (r.urgency === 'p0' && delay > 60_000) lateP0.push(r.id)
-    else if (r.urgency === 'p1' && delay > p1Minutes * 60_000) lateP1.push(r.id)
+    const delay = r.deliveredAt && isoDateTime(r.deliveredAt) && isoDateTime(r.at)
+      ? Date.parse(r.deliveredAt) - Date.parse(r.at) : NaN
+    const knownDelay = Number.isFinite(delay) && delay >= 0
+    if (!knownDelay || (r.ackedAt !== undefined && !isoDateTime(r.ackedAt))) unknownTimes++
+    if (knownDelay && r.urgency === 'p0' && delay > 60_000) lateP0.push(r.id)
+    if (knownDelay && r.urgency === 'p1' && delay > p1Minutes * 60_000) lateP1.push(r.id)
   }
-  const dirty = missedP0P1.length || duplicates.length || lateP0.length || lateP1.length || unknownTimes
-  return { counts, missedP0P1, duplicates, lateP0, lateP1, unknownTimes,
+  const dirty = missedP0P1.length || duplicates.length || unknownDeliveries.length || lateP0.length || lateP1.length || unknownTimes
+  return { counts, missedP0P1, duplicates, unknownDeliveries, lateP0, lateP1, unknownTimes,
     verdict: counts.p0 + counts.p1 === 0 ? 'empty' : dirty ? 'not clean' : 'clean' }
 }
 
 export async function acks(tag: string, ledger: LedgerPort, since?: string, clock: Clock = Date) {
   const records = (await ledger.records(tag, since)).filter(needsAck).map(r => ({ ...r,
-    state: r.ackedAt ? 'acked' : r.wokenAt ? 'woken' : r.deliveredAt ? 'delivered' : 'undelivered' }))
+    state: r.ackedAt && isoDateTime(r.ackedAt) ? 'acked' : r.wokenAt ? 'woken' : r.deliveredAt ? 'delivered' : 'undelivered' }))
   const cutoff = clock.now() - 15 * 60_000
   const overdue = records.filter(r => r.state !== 'acked' && Date.parse(r.at) < cutoff).map(r => r.id)
   return { records, overdue }
@@ -121,7 +126,8 @@ export async function runQuery(action: 'soak' | 'acks', tag: string | undefined,
       const result = await soak(tag, ledger, v.since, minutes)
       if (json) console.log(JSON.stringify(result))
       else rows([...Object.entries(result.counts), ['missed p0/p1', ids(result.missedP0P1)],
-        ['duplicates', ids(result.duplicates)], ['late p0', ids(result.lateP0)], ['late p1', ids(result.lateP1)],
+        ['duplicates', ids(result.duplicates)], ['unknown deliveries', ids(result.unknownDeliveries)],
+        ['late p0', ids(result.lateP0)], ['late p1', ids(result.lateP1)],
         ['unknown times', result.unknownTimes], ['verdict', result.verdict]])
       return result.verdict === 'not clean' ? 1 : 0
     }

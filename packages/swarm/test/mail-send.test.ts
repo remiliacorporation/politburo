@@ -79,6 +79,18 @@ test('mail send does not stop at the first failed tag or exit successfully after
   assert.match(result.stdout, /^xyz +sent$/m)
 })
 
+test('mail send fails a p0 when the poster closes stdin and exits zero', (t) => {
+  const f = poster(t)
+  const script = join(f.dir, 'close-stdin.cjs'), bodyFile = join(f.dir, 'large-body.txt')
+  writeFileSync(script, "require('node:fs').closeSync(0); process.exit(0)")
+  writeFileSync(bodyFile, 'x'.repeat(1024 * 1024))
+  const result = f.send({ to: 'abc', body: undefined, 'body-file': bodyFile,
+    'post-cmd': JSON.stringify([process.execPath, script]) })
+  assert.equal(result.status, 1, result.stderr || result.stdout)
+  assert.equal(result.stderr, '')
+  assert.match(result.stdout, /^abc +failed .+\n$/)
+})
+
 for (const urgency of ['p0', 'p1']) {
   test(`mail send does not post ${urgency} with expires`, (t) => {
     const f = poster(t)
@@ -116,6 +128,15 @@ test('mail send --dry-run does not post even when a poster is configured', (t) =
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stderr, '')
   assert.match(result.stdout, /^def +dry run +p0 policy notice\.def +review requested\n$/)
+})
+
+test('mail send rejects invalid UTF-8 in a body file without posting', (t) => {
+  const f = poster(t)
+  const bodyFile = join(f.dir, 'invalid-utf8.txt')
+  writeFileSync(bodyFile, Buffer.from([0xc3, 0x28]))
+  const result = f.send({ body: undefined, 'body-file': bodyFile })
+  refusal(result, 2, /^error: body-file: not valid UTF-8\n$/)
+  assert.deepEqual(f.received(), [])
 })
 
 test('CLI mail send does not lose its route or change the p0 message on the way to the poster', (t) => {

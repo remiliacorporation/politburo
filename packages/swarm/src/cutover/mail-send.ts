@@ -17,10 +17,8 @@ export function commandPoster([program, ...args]: [string, ...string[]]): MailPo
   return { post: (tag, message) => new Promise((resolve, reject) => {
     const child = spawn(program, [...args, tag], { env: {}, stdio: ['pipe', 'ignore', 'ignore'] })
     child.once('error', reject)
-    child.stdin.on('error', error => {
-      if ((error as NodeJS.ErrnoException).code !== 'EPIPE') reject(error)
-    })
-    child.once('close', code => resolve({ landed: code === 0 }))
+    child.stdin.on('error', reject)
+    child.once('close', code => resolve({ landed: code === 0 && child.stdin.writableFinished }))
     child.stdin.end(JSON.stringify(message))
   }) }
 }
@@ -60,7 +58,12 @@ export async function runMail(action: string | undefined, args: string[], clock:
     const tags = await destinations(to, v.tags)
     if (v['post-cmd'] === undefined) throw new CutoverError('no_poster', 'no_poster: --post-cmd is required')
     const poster = commandPoster(argvJson(v['post-cmd'], 'post-cmd'))
-    const body = v.body ?? await readFile(v['body-file']!, 'utf8').catch(() => misuse('body-file', 'cannot read body'))
+    let body = v.body
+    if (body === undefined) {
+      const bytes = await readFile(v['body-file']!).catch(() => misuse('body-file', 'cannot read body'))
+      try { body = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+      catch { misuse('body-file', 'not valid UTF-8') }
+    }
     const time = new Date(clock.now())
     if (!Number.isFinite(time.getTime())) misuse('at', 'clock did not provide a valid date-time')
     const at = time.toISOString()

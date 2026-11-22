@@ -60,6 +60,16 @@ test('soak does not ignore a duplicate delivery even when it was on time', (t) =
   assert.equal(report.verdict, 'not clean')
 })
 
+test('soak does not call an on-time p0 with missing deliveries clean', (t) => {
+  const run = ledger(t, [mail('unknown-count', 'p0', { deliveredAt: onTime })])
+  const report = document(run('soak', '--json'), 1)
+  assert.deepEqual(report.unknownDeliveries, ['unknown-count'])
+  assert.equal(report.verdict, 'not clean')
+  const text = run('soak')
+  assert.equal(text.status, 1)
+  assert.match(text.stdout, /^unknown deliveries +1 \(unknown-count\)$/m)
+})
+
 test('soak does not ignore p1 delivery past the configured window or flag its exact boundary', (t) => {
   const run = ledger(t, [
     mail('at-limit', 'p1', { deliveredAt: '2025-01-01T12:02:00Z' }),
@@ -84,6 +94,25 @@ test('soak does not treat an unparseable delivery time as a known delay', (t) =>
   assert.equal(report.verdict, 'not clean')
 })
 
+test('soak counts a delivery before send as an unknown time', (t) => {
+  const run = ledger(t, [mail('early', 'p0', { deliveredAt: '2025-01-01T11:59:59Z', deliveries: 1 })])
+  const report = document(run('soak', '--json'), 1)
+  assert.equal(report.unknownTimes, 1)
+  assert.deepEqual(report.lateP0, [])
+  assert.equal(report.verdict, 'not clean')
+})
+
+test('soak counts impossible send and delivery dates as unknown times', (t) => {
+  const run = ledger(t, [
+    mail('invalid-send', 'p0', { at: '2025-02-30T12:00:00Z', deliveredAt: '2025-03-02T12:00:30Z', deliveries: 1 }),
+    mail('invalid-delivery', 'p0', { at: '2025-03-02T12:00:00Z', deliveredAt: '2025-02-30T12:00:30Z', deliveries: 1 }),
+  ])
+  const report = document(run('soak', '--json'), 1)
+  assert.equal(report.unknownTimes, 2)
+  assert.deepEqual(report.lateP0, [])
+  assert.equal(report.verdict, 'not clean')
+})
+
 test('soak does not call an empty ledger clean', (t) => {
   const run = ledger(t, [])
   assert.equal(document(run('soak', '--json'), 0).verdict, 'empty')
@@ -104,7 +133,7 @@ for (const [failure, options] of [
 
 test('soak does not exit unsuccessfully or report dirty for a clean ledger', (t) => {
   const run = ledger(t, [
-    mail('p0-at-limit', 'p0', { deliveredAt: '2025-01-01T12:01:00Z' }),
+    mail('p0-at-limit', 'p0', { deliveredAt: '2025-01-01T12:01:00Z', deliveries: 1 }),
     mail('p1-at-default-limit', 'p1', { deliveredAt: '2025-01-01T12:10:00Z', deliveries: 1 }),
   ])
   const report = document(run('soak', '--json'), 0)
@@ -129,6 +158,16 @@ test('acks does not omit an old woken but unacked p0 from overdue', (t) => {
   })
 })
 
+test('an old p0 with invalid ackedAt has an unknown time and stays overdue', (t) => {
+  const run = ledger(t, [mail('invalid-ack', 'p0', { deliveredAt: onTime, deliveries: 1, ackedAt: 'not a date' })])
+  const acks = document(run('acks', '--json'), 0)
+  assert.equal(acks.records[0].state, 'delivered')
+  assert.deepEqual(acks.overdue, ['invalid-ack'])
+  const soak = document(run('soak', '--json'), 1)
+  assert.equal(soak.unknownTimes, 1)
+  assert.equal(soak.verdict, 'not clean')
+})
+
 test('acks does not report undelivered p1 as acked', (t) => {
   const run = ledger(t, [mail('not-delivered')])
   const report = document(run('acks', '--json'), 0)
@@ -136,7 +175,7 @@ test('acks does not report undelivered p1 as acked', (t) => {
 })
 
 test('CLI soak does not lose the tag or since argument on the way to the ledger', (t) => {
-  const run = ledger(t, [mail('in-window', 'p1', { deliveredAt: onTime })], { since: at })
+  const run = ledger(t, [mail('in-window', 'p1', { deliveredAt: onTime, deliveries: 1 })], { since: at })
   const result = run('soak', '--since', at)
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.equal(result.stderr, '')
