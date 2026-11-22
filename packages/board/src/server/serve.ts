@@ -50,7 +50,6 @@ import {
   ScheduleBody,
   CreateGrantsBody,
   CreateInviteBody,
-  RedeemInviteBody,
   GrantBody,
   RevokeGrantBody,
   UpdateGrantBody,
@@ -97,12 +96,10 @@ import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
 import type { WatcherContext } from './watcher.ts'
 import { VERSION } from '../version.ts'
+import { atAudience, CONTROL, noInvites, redeem, SECRET_RESPONSE } from './politburo-serve.ts'
 
 /** The methods whose answer is something new. */
 const CREATED = new Set<Method>(['post', 'schedule', 'createTask', 'createTasks', 'requestTaskAttention', 'upload', 'uploadFinish', 'createInvite', 'sendOperationalMessage'])
-const CONTROL = new Set<Method>(['status', 'pause', 'resume'])
-const noInvites = () => new HttpError(501, 'no_invites', 'this board keeps no invites')
-const SECRET_RESPONSE = { 'cache-control': 'no-store' }
 
 /**
  * Refuses a label write under `board.`: those keys are the board's own, which only its task writes
@@ -435,9 +432,6 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     warned = true
     return at
   }
-
-  /** Joined credentials only work at the public mount itself, not at aliases or deeper mounts. */
-  const atAudience = (at: string, audience: string) => URL.parse(audience)?.href.replace(/\/+$/, '') === at
 
   /**
    * What a board that serves no requests answers them: one that uses another board's. One on
@@ -1155,34 +1149,6 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     }
   }
 
-  /** Redeeming the invite proves admission; neither headers nor an existing login can name the new principal. */
-  async function redeem(request: Request, at: string, injected: boolean): Promise<Response> {
-    if (!backend.redeemInvite) throw noInvites()
-    // http() forwards only the secret; its remote board binds the bearer to its own mount.
-    const audience = injected ? (backend.keeps ? ownUrl() : at) : audienceOf(at)
-    if (audience === null)
-      throw new HttpError(500, 'no_board_url', 'this board needs a public URL to redeem an invite in-process', {
-        hint: 'Pass board({ url }) with the URL people reach it at.',
-      })
-    if (!injected && !atAudience(at, audience)) throw notFound('this is not the public board mount')
-    const invalid = () => badRequest('send an invite secret in the request body', 'invalid_invite')
-    let body: unknown
-    try {
-      body = JSON.parse(new TextDecoder().decode(await readCapped(request, 1024)))
-    } catch {
-      throw invalid()
-    }
-    const parsed = RedeemInviteBody.safeParse(body)
-    if (!parsed.success) throw invalid()
-    try {
-      return json(await backend.redeemInvite(OWN, { ...parsed.data, audience }, request.signal), 201, SECRET_RESPONSE)
-    } catch (error) {
-      if (error instanceof HttpError) throw error
-      // A failure on a secret-bearing request must not log the input or serialize a raw exception.
-      throw new HttpError(500, 'internal', 'could not redeem the invite')
-    }
-  }
-
   /** board()'s own routes for a caller: sync's, which run where board() does. */
   async function serve(name: BoardRoute, caller: Caller, request: Request, url: URL, params: Record<string, string>): Promise<Response> {
     const signal = request.signal
@@ -1327,7 +1293,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         : null
       if (!injected && !policy.open) throw ops ? noAgentOps(ops) : servesOnly()
       if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
-      if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null)
+      if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null, backend, OWN, ownUrl, audienceOf)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
         && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {
         if (INVITE_METHODS.has(target.name)) throw noInvites()

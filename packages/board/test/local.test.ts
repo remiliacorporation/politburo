@@ -64,7 +64,7 @@ describe('local()', () => {
     await general.team.post('dev', 'on the default board')
     await Promise.all([first.backend.close(), general.backend.close()])
     // A board's files folder is there once it keeps a file.
-    expect((await readdir(dir)).filter((name) => !/-(wal|shm)$/.test(name)).sort()).toEqual(['local.db', 'security', 'security.db'])
+    expect((await readdir(dir)).filter((name) => !name.startsWith('.') && !/-(wal|shm)$/.test(name)).sort()).toEqual(['local.db', 'security', 'security.db'])
 
     // Another process, by the same name in another case: the same board, its file included.
     const again = open('SECURITY')

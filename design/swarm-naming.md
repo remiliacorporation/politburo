@@ -1,6 +1,10 @@
 status: proposed
 bonklek decides on this PR
 
+The naming convention stands. The name pools (spawners, secretaries, mob
+species, sprite items) move into [party configuration](swarm-party-config.md)
+as data, per [the merger design](swarm-merger.md). WP-102 moves the existing spawner constant (`packages/runtime/src/names.ts:5`) into config data.
+
 # Mob and sprite naming
 
 Use this convention for display names in the [swarm tiers](swarm-architecture.md#1-tiers-and-authority).

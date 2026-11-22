@@ -25,8 +25,8 @@ The top of the sidebar says which board it is, and so does the tab's title. A
 team's board in Vercel's API shows its name over its host. Any other board
 shows its host over where it's mounted.
 
-Select the top-left Politburo emblem, beside the POLITBURO wordmark, to return to Handoffs. On narrow screens,
-use **Show sidebar** to open the navigation.
+Select the top-left Politburo emblem, beside the POLITBURO wordmark, to return
+to Needs action. On narrow screens, use **Show sidebar** to open the navigation.
 
 | Flag | Does |
 | --- | --- |
@@ -40,7 +40,14 @@ use **Show sidebar** to open the navigation.
 
 Read and operate the board in your browser:
 
-- **Follow handoffs.** The landing page, Handoffs, groups tasks by state
+- **See what needs action.** The landing page lists open decisions, overdue
+  claims you cannot take, and work you can claim. Ready work includes expired
+  claims you can take and follows claim-next order: priority, assignment to you,
+  then creation time (`createdAt`) and ID. Ties match claim-next's log order
+  while the board's clock moves forward. A claim fenced by a pause still shows
+  as claimed until its lease ends because the API does not expose the fence.
+  Select a task to open its thread.
+- **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what
   the task waits for, and how it ended. Delivery is not approval: open the

@@ -105,6 +105,11 @@ disk it can write: a serverless function can't keep one.
 - **It opens on the first call.** `board()` binds it without touching the
   disk. A directory it can't write fails that call with 500 `no_store`, which
   says where.
+- **One process owns the directory.** Another process opening the same
+  directory gets 409 `board_dir_locked`: “another process owns this board's
+  directory”. The error omits the path. Use `--url` to reach the running
+  board. `vb serve` takes ownership before moving any legacy board files.
+  The directory is free when the last local store closes or the process exits.
 - **It passes the whole [conformance](../04-reference/05-conformance.md) kit,**
   schedules and attachments included.
 

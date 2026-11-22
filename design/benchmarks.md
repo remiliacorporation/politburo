@@ -222,7 +222,17 @@ p90 tokens, and tokens per changed line. Total tokens for a run are
 beside it and never added, because cache hits vary by run. Skip
 ratios for missing or zero churn. Name the run IDs behind every reported
 number. Keep the suite inputs and matrix associated with those IDs so a
-comparison can be repeated. Building the suite is a later PR.
+comparison can be repeated. See the [suite runner](benchmark-suite.md).
+
+### Threat model and known limits
+
+The runner grades our own sprites. Use one disposable VM per model run. It
+is not a sandbox: hostile-sprite escapes such as swapped directories, moved
+file descriptors and races against runner files are out of scope. Setup and
+the golden command run sprite-written code with the runner's filesystem
+permissions. Export stages raw bytes and refuses bases that set
+`working-tree-encoding`, because those bases need Git's encoding conversion
+for correct churn.
 
 ## Open
 

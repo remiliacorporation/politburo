@@ -1,0 +1,2 @@
+{"type":"session","id":"s1","timestamp":"2025-01-01T00:00:00.000Z"}
+{"type":"message_end","message":{"role":"assistant","provider":"p1","model":"m1","timestamp":1735689602000,"thinkingLevel":"low","stopReason":"stop"}}

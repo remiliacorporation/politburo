@@ -57,7 +57,7 @@ let page: typeof import('../src/inspect/app/board.ts')
 beforeAll(async () => {
   // What a browser gives the page: where it is, its document, and a fetch, which here is the proxy.
   vi.stubGlobal('document', { querySelector: () => null })
-  vi.stubGlobal('location', { origin: 'http://127.0.0.1:4747' })
+  vi.stubGlobal('location', new URL('http://127.0.0.1:4747/'))
   vi.stubGlobal('requestAnimationFrame', (run: () => void) => setTimeout(run, 0))
   vi.stubGlobal('addEventListener', () => {})
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {

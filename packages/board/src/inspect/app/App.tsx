@@ -7,6 +7,7 @@ import { setEditing } from './chrome.ts'
 import { Composer } from './composer.tsx'
 import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
+import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
 import { here, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
@@ -167,7 +168,7 @@ function PauseControl({ paused }: { paused: boolean }) {
 export function App() {
   const state = board.useBoard()
   const where = useLocation()
-  const now = useNow()
+  const now = useNow(state.openTaskRoots)
   const [failed, setFailed] = useState<string | null>(null)
   const sidebar = useSidebar()
   const pane = usePane()
@@ -245,7 +246,8 @@ export function App() {
     const title = current.view === 'channel' ? `#${current.channel}`
       : current.view === 'settings' ? `${current.section} · settings`
       : current.view === 'missing' ? 'nothing here'
-      : current.view === 'home' ? 'HANDOFFS'
+      : current.view === 'needs' ? 'Needs action'
+      : current.view === 'handoffs' ? 'HANDOFFS'
       : current.view === 'presidium' ? 'PRESIDIUM'
       : current.view
     document.title = `${title} · ${named}`
@@ -325,7 +327,8 @@ export function App() {
         </nav>
         <main className="main" inert={narrow && (nav || where.thread !== null)}>
           <HeaderActions.Provider value={paneIsFront ? null : headerActions}>
-            {current.view === 'home' && <Home key={identity} state={state} now={now} lead={expand} />}
+            {current.view === 'needs' && <NeedsAction key={identity} state={state} now={now} lead={expand} />}
+            {current.view === 'handoffs' && <Home key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'presidium' && <Presidium key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'channel' && (
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
@@ -475,15 +478,11 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
 function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
   const { id, state, viewer } = props
   useTypeToFocus('thread')
-  const [missing, setMissing] = useState(false)
   const identity = board.getIdentity()
-  useEffect(() => {
-    setMissing(false)
-    void board.loadThread(id).then(() => {
-      if (identity === board.getIdentity()) setMissing(!board.getState().messages[id])
-    })
-  }, [id, identity])
-  const t = useMemo(() => threadOf(state, id), [state.messages, state.ops, state.pending, state.actors, id])
+  useEffect(() => board.openThreadPane(id), [id, identity])
+  const read = state.paneThread?.id === id && state.paneThread.identity === identity ? state.paneThread.result : 'loading'
+  const refused = typeof read === 'object' ? read.refused : null
+  const t = useMemo(() => read === 'readable' ? threadOf(state, id) : null, [state.messages, state.ops, state.pending, state.actors, id, read])
   // Where the thread's copies are, on the platforms it syncs with.
   const [synced, setSynced] = useState<SyncedView['targets']>([])
   useEffect(() => {
@@ -516,7 +515,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       </Header>
       <div className="view-body">
       {t && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
-      {(synced.length > 0 || scheduled.length > 0) && (
+      {t && (synced.length > 0 || scheduled.length > 0) && (
         <dl className="facts thread-facts" {...nativeMenu}>
           {synced.length > 0 && (
             <>
@@ -554,7 +553,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       )}
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
         {!t ? (
-          <p className="empty">{missing ? 'no such thread' : 'loading…'}</p>
+          <p className={refused === null ? 'empty' : 'error'}>{refused ?? 'loading…'}</p>
         ) : (
           <>
             <Messages messages={[t.root]} now={props.now} options={options} />

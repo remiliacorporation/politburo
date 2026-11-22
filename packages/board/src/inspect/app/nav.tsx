@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
-import type { Filter } from './store.ts'
+import { isTask, type Filter, type State } from './store.ts'
 import { ago } from './words.ts'
 
 export { route, SECTIONS, type Route, type Section } from './routes.ts'
@@ -12,13 +12,13 @@ export { route, SECTIONS, type Route, type Section } from './routes.ts'
 export const base = document.querySelector<HTMLMetaElement>('meta[name="inspect-base"]')?.content ?? ''
 
 /** The page's own path for where the address bar is: `/` at `base` itself. */
-const current = () => (location.pathname === base || location.pathname.startsWith(`${base}/`) ? location.pathname.slice(base.length) : location.pathname) || '/'
+export const currentPath = () => (location.pathname === base || location.pathname.startsWith(`${base}/`) ? location.pathname.slice(base.length) : location.pathname) || '/'
 
 /** Where one of the page's paths is in the address bar. */
 const address = (to: string) => `${base}${to}`
 
 export function navigate(to: string, replace = false) {
-  if (to === current() + location.search) return
+  if (to === currentPath() + location.search) return
   history[replace ? 'replaceState' : 'pushState'](null, '', address(to))
   dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -31,7 +31,7 @@ export function useLocation(): Where {
     const params = new URLSearchParams(location.search)
     const thread = params.get('thread')
     return {
-      path: current(),
+      path: currentPath(),
       params,
       thread: thread || null,
       filter: {
@@ -68,7 +68,7 @@ export function here(changes: { thread?: string | null; filter?: Filter; params?
     if (changes.filter.text) params.set('text', changes.filter.text)
   }
   const query = params.toString()
-  return `${current()}${query ? `?${query}` : ''}`
+  return `${currentPath()}${query ? `?${query}` : ''}`
 }
 
 export function Link(props: { to: string; className?: string; current?: boolean; title?: string; onNavigate?: () => void; children: ReactNode }) {
@@ -101,13 +101,20 @@ export function Link(props: { to: string; className?: string; current?: boolean;
   )
 }
 
-/** The current time, ticking, so "2m" ages without a reload. */
-export function useNow(every = 30_000): number {
+/** Age the page's labels, waking sooner if the next lease can change the queue. */
+export function useNow(roots: State['openTaskRoots']): number {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), every)
-    return () => clearInterval(timer)
-  }, [every])
+    let next = Infinity
+    for (const root of Object.values(roots)) {
+      if (!isTask(root) || root.deleted || root.task.state !== 'claimed' || !root.task.claim) continue
+      const expiry = Date.parse(root.task.claim.until)
+      if (expiry > now) next = Math.min(next, expiry)
+    }
+    const delay = Math.max(0, Math.min(30_000, next - Date.now()) + 1_000)
+    const timer = setTimeout(() => setNow(Date.now()), delay)
+    return () => clearTimeout(timer)
+  }, [roots, now])
   return now
 }
 
@@ -134,11 +141,13 @@ export function useTypeToFocus(composer: string) {
 /**
  * "now", "12s", "4m": a relative time that changes exactly when its label
  * would. Each one schedules its own next update: every second in the first
- * minute, then on the minute, the hour, the day.
+ * minute, then on the minute, the hour, the day, unless given the view's clock.
  */
-export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
+export function Ago({ iso, prefix = '', now }: { iso: string; prefix?: string; now?: number }) {
   const [, tick] = useReducer((n: number) => n + 1, 0)
+  const ticking = now === undefined
   useEffect(() => {
+    if (!ticking) return
     let timer: ReturnType<typeof setTimeout>
     const schedule = () => {
       const age = Math.max(0, Date.now() - Date.parse(iso))
@@ -150,12 +159,12 @@ export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
     }
     schedule()
     return () => clearTimeout(timer)
-  }, [iso])
-  const age = Date.now() - Date.parse(iso)
+  }, [iso, ticking])
+  const time = now ?? Date.now()
   return (
     <span className="time" title={new Date(iso).toLocaleString()}>
       {prefix}
-      {age < 5_000 ? 'now' : ago(iso)}
+      {ticking && time - Date.parse(iso) < 5_000 ? 'now' : ago(iso, time)}
     </span>
   )
 }

@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose'
 import { BoardError, createBoardClient, type BoardClient } from '../client/client.ts'
 import { localTokenFile } from '../client/node.ts'
-import { local } from '../server/local.ts'
+import { local, lockLocalDirectory } from '../server/local.ts'
 import { oidcTokens } from '../server/tokens.ts'
 import { board } from '../server/index.ts'
 import { hostCheckedBy } from '../server/board.ts'
@@ -183,9 +183,7 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
     ? await localIssuer()
     : { authenticate: await teamVerifier(options.teamTokens) }
   const dir = resolve(options.dir)
-  await mkdir(dir, { recursive: true, mode: 0o700 })
   quietSqliteWarning()
-  await carryOver(dir)
   const backend = local({ dir, ...features })
 
   const tailnet = new Set((options.tailscale ?? []).map((host) => host.toLowerCase()))
@@ -237,7 +235,11 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
   const serving = { url, port, dir, close }
   let token: string
   let file: string
+  let unlock: (() => void) | undefined
   try {
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    unlock = lockLocalDirectory(dir)
+    await carryOver(dir)
     // Opened now, so a directory it can't write says so before it serves.
     await team.channels({ limit: 1 })
     if (!('sign' in auth)) {
@@ -252,6 +254,9 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
   } catch (error) {
     await close()
     throw error
+  } finally {
+    // On success the store now holds its own reference, until backend.close().
+    unlock?.()
   }
 
   // One client a person at each host: the page's requests reach the board in this process, as Tailscale named them.

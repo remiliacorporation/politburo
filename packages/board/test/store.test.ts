@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AttentionView, BoardEventView, MessageView, ScheduleView, SchemaView, TaskView } from '../src/api/routes.ts'
 import { block } from '../src/contract/blocks.ts'
 import * as attentionStore from '../src/inspect/app/attention-store.ts'
+import { needsAction } from '../src/inspect/app/needs.ts'
 import * as store from '../src/inspect/app/store.ts'
 import { continues } from '../src/inspect/app/store.ts'
 import { boardWords, cadence, clock, laterFields, localInput, principalName, refusal, span, timingWords, until } from '../src/inspect/app/words.ts'
@@ -399,6 +400,62 @@ describe('the inspector store', () => {
     const reading = attentionStore.beginAttentionRead(state, root)
     return attentionStore.finishAttentionRead(reading.state, root.id, reading.read, result)
   }
+
+    /** The state the page holds after its open-task read returned these roots. */
+  const seeded = (roots: store.State['messages'][string][], returned = roots) => ({ ...store.merge(start, roots), openTaskRoots: Object.fromEntries(returned.map((root) => [root.id, root])) })
+
+it('shows only open decisions, oldest first, from readable task roots', () => {
+    const oldest = hold(9, { createdAt: at(-9) })
+    const newest = task(2, { state: 'blocked', attentionId: 'approve', blocked: { kind: 'awaiting_approval', reason: 'Ship?' } }, { createdAt: at(-2) })
+    const answered = hold(3)
+    const canceled = hold(4)
+    const absent = hold(5)
+    const roots = [newest, oldest, answered, canceled, { ...hold(6), deleted: true }, hold(7, { channel: 'private' }),
+      task(8, { state: 'blocked', blocked: { kind: 'needs_input', reason: 'Ordinary hold' } }),
+      task(10, { state: 'failed', attentionId: 'request' }), message(11),
+    ]
+    // The board's read did not return the one in `private`: the viewer cannot read it.
+    let state = seeded(roots, roots.filter((root) => root.channel !== 'private'))
+    state = withRead(state, answered, here({ ...request(answered), status: 'answered', receipt: { by: answered.by, option: 'yes', at: at(-1), routedTo: 'ready' } }))
+    state = withRead(state, canceled, here(request(canceled, 'canceled')))
+    const prior = withRead(seeded([absent]), absent, here(request(absent)))
+    state = { ...state, attention: { ...prior.attention, ...state.attention } }
+    const groups = needsAction(state, viewer([], { may: (perm, channel) => perm === 'read' && channel === 'work' }), NOW)
+    expect(groups.decisions.map(({ id }) => id)).toEqual(['9', '2'])
+    expect(groups.stalled).toEqual([])
+    expect(groups.ready).toEqual([])
+  })
+
+  it('puts only unclaimable expired claims in stalled, with the longest overdue first', () => {
+    const owner = 'vercel:user:u_ada'
+    const atDeadline = task(1, { ...claimedBy(owner, at(0)), owner }, { createdAt: at(-12) })
+    const overdue = task(2, { ...claimedBy(owner, at(-4)), owner }, { createdAt: at(-10) })
+    const live = task(3, claimedBy(ME, at(1)))
+    const ready = task(4)
+    const groups = needsAction(seeded([atDeadline, overdue, live, ready]), viewer(['read', 'label']), NOW)
+    expect(groups.stalled.map(({ id }) => id)).toEqual(['2', '1'])
+    expect(groups.ready.map(({ id }) => id)).toEqual(['4'])
+  })
+
+  it('orders eligible ready work by priority, then assignment, then age', () => {
+    const worker = `${ME}+worker`
+    const state = seeded([
+      task(1, { priority: 'low' }, { createdAt: at(-10) }),
+      task(2, { priority: 'urgent' }, { createdAt: at(-1) }),
+      task(3, { priority: 'high' }, { createdAt: at(-4) }),
+      task(4, { priority: 'high' }, { createdAt: at(-8) }),
+      task(5, { priority: 'high', for: worker }, { createdAt: at(-2) }),
+      task(6, { priority: 'urgent', for: `${ME}+other` }),
+      task(7, { priority: 'urgent', owner: 'vercel:user:u_ada' }),
+      task(8, { state: 'waiting' }),
+      task(9, {}, { deleted: true }),
+      task(10, { priority: 'urgent' }, { channel: 'read-only' }),
+      task(11, { priority: 'normal' }),
+      task(12, { priority: 'lowest' }),
+    ])
+    const groups = needsAction(state, viewer([], { actor: worker, profile: 'worker', may: (perm, channel) => perm === 'read' || (perm === 'label' && channel === 'work') }), NOW)
+    expect(groups.ready.map(({ id }) => id)).toEqual(['2', '5', '4', '3', '11', '1', '12'])
+  })
 
   it('lists held attention tasks oldest first, even for stale or canceled requests', () => {
     const oldest = hold(9, { createdAt: at(-9) })

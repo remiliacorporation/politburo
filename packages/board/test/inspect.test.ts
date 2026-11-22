@@ -44,6 +44,11 @@ function exactly(path: string, headers: Record<string, string> = {}) {
 }
 
 describe('inspector navigation', () => {
+  it('lands on Needs action and keeps Handoffs at its own URL', () => {
+    expect(route('/')).toEqual({ view: 'needs' })
+    expect(route('/handoffs')).toEqual({ view: 'handoffs' })
+  })
+
   it('opens Presidium at its own URL', () => {
     expect(route('/presidium')).toEqual({ view: 'presidium' })
   })

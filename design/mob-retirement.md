@@ -29,8 +29,8 @@ pass, retire the mob instead of leaving it running.
 ## On the board
 
 The spawner retires the mob. Its [secretary](swarm-secretaries.md) can
-handle retirement on a `sec.retire` message in the
-[operational inbox](../SPEC.md#operational-inbox).
+handle retirement on a `sec.retire` message (a thread in the spawner's inbox
+channel; see [swarm mail](swarm-mail.md)).
 
 1. Make sure the mob holds no live task claim. The claimant completes or
    fails each task it still holds, or releases the claim. A

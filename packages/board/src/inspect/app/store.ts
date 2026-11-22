@@ -66,6 +66,13 @@ export type State = AttentionState & {
   control: Extract<BoardEventView, { type: 'work.control' }> | null
   /** Whether every open task is loaded, so the page can count them. */
   tasksCounted: boolean
+  /** Membership of the last accepted complete open-task read, with live updates to its members only. */
+  openTaskRoots: Record<string, MessageView>
+  /** Permissions read with that membership, never used to decide write identity. */
+  openTaskMe: Me | null
+  /** The result of the open pane's own read, independent of cached messages. */
+  paneThread: { id: string; identity: number; result: 'loading' | 'readable' | { refused: string } } | null
+  openTaskAttentionRefusals: Record<string, string>
   /** Each opened channel's listing, or null on a board whose thread pages have no `older`: it loads by messages. */
   listings: Record<string, Listing | null>
   /** The board's schema registry, once it's read: what a block's fields mean. */
@@ -94,6 +101,10 @@ export const initialState: State = {
   statusRefused: null,
   control: null,
   tasksCounted: false,
+  openTaskRoots: {},
+  openTaskMe: null,
+  paneThread: null,
+  openTaskAttentionRefusals: {},
   tasksRefused: null,
   attention: {},
   attentionUnsupported: false,
@@ -516,7 +527,7 @@ export type Viewer = {
   principal: string
   /** The profile you write as, or null as yourself. */
   profile: string | null
-  may(permission: 'post' | 'label' | 'react' | 'manage', channel: string): boolean
+  may(permission: 'read' | 'post' | 'label' | 'react' | 'manage', channel: string): boolean
   /** `manage` at `*`: what registering a schema and listing grants need. */
   manages: boolean
   person: boolean
