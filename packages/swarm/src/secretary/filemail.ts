@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { open, readdir, realpath } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parseDocument } from 'yaml'
 import defaults from '../config/defaults.json' with { type: 'json' }
 import { parseHeader, type HeaderResult } from './message.ts'
@@ -23,6 +23,16 @@ function parseMail(text: string, opts: { classes: string[] }): HeaderResult {
   }
 }
 
+function decodeMail(bytes: Uint8Array, opts: { classes: string[] }): HeaderResult {
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return { ok: false, reason: 'bad_encoding' }
+  }
+  return parseMail(text, opts)
+}
+
 // Keep knowledge of the mailbox path layout here.
 export function fileMailTag(file: string): string {
   return basename(dirname(file)) === 'inbox' ? basename(dirname(dirname(file))) : 'unknown'
@@ -33,9 +43,14 @@ export async function readFileMail(
 ): Promise<FileMailItem[]> {
   if (!tag || tag !== basename(tag) || tag === '.' || tag === '..') throw new Error('bad_tag')
   const dir = resolve(mailDir, tag, 'inbox')
+  let realDir: string
   let entries
   try {
-    entries = await readdir(dir, { withFileTypes: true })
+    const root = await realpath(mailDir)
+    realDir = await realpath(dir)
+    const subpath = relative(root, realDir)
+    if (!subpath || subpath === '..' || subpath.startsWith(`..${sep}`) || isAbsolute(subpath)) throw new Error('symlink')
+    entries = await readdir(realDir, { withFileTypes: true })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw error
@@ -45,23 +60,28 @@ export async function readFileMail(
     if (!entry.name.endsWith('.md')) continue
     const file = join(dir, entry.name)
     let receivedAt = 0
-    let result: HeaderResult = { ok: false, reason: 'not_a_file' }
+    let result: HeaderResult = { ok: false, reason: 'symlink' }
     if (entry.isFile()) {
       try {
-        const info = await stat(file)
-        receivedAt = info.mtimeMs
-        if (info.isFile()) {
-          if (info.size > maxBytes) {
-            result = { ok: false, reason: 'oversize' }
-          } else {
-            const bytes = await readFile(file, { flag: constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK })
-            result = bytes.length > maxBytes
-              ? { ok: false, reason: 'oversize' }
-              : parseMail(bytes.toString('utf8'), opts)
+        const handle = await open(join(realDir, entry.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+        try {
+          const info = await handle.stat()
+          receivedAt = info.mtimeMs
+          if (info.isFile()) {
+            const bytes = Buffer.alloc(maxBytes + 1)
+            let size = 0
+            while (size < bytes.length) {
+              const { bytesRead } = await handle.read(bytes, size, bytes.length - size, null)
+              if (!bytesRead) break
+              size += bytesRead
+            }
+            result = size > maxBytes ? { ok: false, reason: 'oversize' } : decodeMail(bytes.subarray(0, size), opts)
           }
+        } finally {
+          await handle.close()
         }
-      } catch {
-        result = { ok: false, reason: 'unreadable_file' }
+      } catch (error) {
+        result = { ok: false, reason: (error as NodeJS.ErrnoException).code === 'ELOOP' ? 'symlink' : 'unreadable_file' }
       }
     }
     items.push({ file, receivedAt, result })

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import fs, { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, utimes, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -13,6 +14,8 @@ const options = {
 }
 const start = Date.parse('2026-11-20T21:00:00Z')
 const min = 60_000
+const statFile = stat
+const redactedId = (id: string) => `[redacted:${createHash('sha256').update(id).digest('hex').slice(0, 8)}]`
 const iso = (ms: number) => new Date(ms).toISOString()
 
 function raw(id: string, patch: Record<string, unknown> = {}) {
@@ -287,7 +290,7 @@ test('decisions, forwards and digests redact free text and omit non-header field
   assert.deepEqual(new Set(decisions.map(({ kind }) => kind)), new Set(['accept', 'expire', 'revision', 'duplicate', 'reject']))
   assert.deepEqual(decisions.find(({ reason }) => reason?.startsWith('unknown_field:'))?.reason, 'unknown_field:[redacted]')
   const safe = {
-    id: 'alert-[redacted]', class: 'spawner.[redacted]', urgency: 'p0', from: 'sprite [redacted]',
+    id: redactedId('alert-ghp_idFixture'), class: 'spawner.[redacted]', urgency: 'p0', from: 'sprite [redacted]',
     ref: 'work [redacted]', summary: 'review [redacted]', at: iso(start - min),
   }
   const accepted = decisions.find(({ kind, id }) => kind === 'accept' && id === safe.id)
@@ -297,7 +300,7 @@ test('decisions, forwards and digests redact free text and omit non-header field
   assert.equal(p1.length, 1)
   const urgentDigest = digests.find(({ repo }) => repo === '[redacted]')
   assert.deepEqual(urgentDigest?.items, [{ ...safe, forwarded: true }])
-  assert.deepEqual(urgentDigest?.act_on, ['alert-[redacted]'])
+  assert.deepEqual(urgentDigest?.act_on, [safe.id])
   assert.equal(digests.length, 2)
   for (const record of [...decisions, ...p0, ...p1, ...digests]) {
     assert.doesNotMatch(JSON.stringify(record), /ghp_|private (?:pointer|destination|dispatch)|"(?:body|dispatch|expires)":/)
@@ -314,4 +317,168 @@ test('redact does not leak bearer, PEM, assignment, cloud, Slack or API credenti
     '[redacted]', '[redacted]', '[redacted]', '[redacted]', '[redacted]',
     'Bearer [redacted]', 'Bearer [redacted]', '[redacted]', 'password=[redacted]', 'token=[redacted]',
   ])
+})
+
+test('file mail refuses tag and inbox links outside the real mail root', async (t) => {
+  const { root } = await inbox(t)
+  const outside = await inbox(t)
+  await outside.put('outside.md', fenced(raw('outside')))
+  await symlink(join(outside.root, 'abc'), join(root, 'tag-link'), 'dir')
+  await mkdir(join(root, 'inbox-link'))
+  await symlink(join(outside.root, 'abc', 'inbox'), join(root, 'inbox-link', 'inbox'), 'dir')
+  for (const tag of ['tag-link', 'inbox-link']) {
+    await assert.rejects(readFileMail(root, tag), { message: 'symlink' }, tag)
+  }
+})
+
+test('symlink and non-file mail entries receive symlink rejection decisions', async (t) => {
+  const { root, put } = await inbox(t)
+  await put('valid.md', fenced(raw('valid')))
+  const dir = join(root, 'abc', 'inbox')
+  await symlink('valid.md', join(dir, 'link.md'))
+  await mkdir(join(dir, 'directory.md'))
+  const decisions = createRouter(options).ingest(await readFileMail(root, 'abc'), start)
+  assert.deepEqual(decisions.map(({ file, kind, reason }) => [basename(file), kind, reason]), [
+    ['directory.md', 'reject', 'symlink'], ['link.md', 'reject', 'symlink'], ['valid.md', 'accept', undefined],
+  ])
+})
+
+test('file mail caps reads even when a path stat understates the file size', async (t) => {
+  const { root, put } = await inbox(t)
+  const cap = 64 * 1024
+  const text = fenced(raw('at-cap'))
+  await put('at-cap.md', text.padEnd(cap, 'x'))
+  await put('over-cap.md', text.padEnd(cap + 1, 'x'))
+  await put('sparse.md', text)
+  const sparse = join(root, 'abc', 'inbox', 'sparse.md')
+  await truncate(sparse, 2 ** 31) // A full read hits Node's file-size limit without allocating gigabytes.
+  // Simulate a stale path stat at the filesystem boundary; open/read still use the real file.
+  const pathStat = t.mock.method(fs, 'stat', async (path: string) => {
+    const info = await statFile(path)
+    if (path === sparse) info.size = text.length
+    return info
+  })
+  syncBuiltinESMExports()
+  try {
+    const files = await readFileMail(root, 'abc')
+    assert.deepEqual(files.map(({ file, result }) => [basename(file), result.ok ? 'ok' : result.reason]).sort(), [
+      ['at-cap.md', 'ok'], ['over-cap.md', 'oversize'], ['sparse.md', 'oversize'],
+    ])
+  } finally {
+    pathStat.mock.restore()
+    syncBuiltinESMExports()
+  }
+})
+
+test('file mail rejects invalid UTF-8 instead of accepting replacement characters', async (t) => {
+  const { root } = await inbox(t)
+  const text = Buffer.from(fenced(raw('bad-utf8', { summary: 'placeholder' })))
+  text[text.indexOf('placeholder')] = 0xff
+  await writeFile(join(root, 'abc', 'inbox', 'invalid.md'), text)
+  const [item] = await readFileMail(root, 'abc')
+  assert.deepEqual(item?.result, { ok: false, reason: 'bad_encoding' })
+})
+
+test('redact masks the whole quoted Bearer value across escaped quotes', () => {
+  for (const input of [String.raw`Bearer "fake\"remaining" done`, String.raw`Bearer 'fake\'remaining' done`]) {
+    assert.equal(redact(input), 'Bearer [redacted] done')
+  }
+})
+
+test('distinct redacted ids stay distinct in decisions, forwards, digest items and act_on', () => {
+  const router = createRouter(options)
+  const ids = ['ghp_fixtureOne', 'ghp_fixtureTwo']
+  const safeIds = ids.map(redactedId)
+  const decisions = router.ingest(ids.map((id, i) => mail(id, {
+    class: 'spawner.decide', urgency: i === 0 ? 'p0' : 'p1', ref: `ref-${i}`, summary: `summary-${i}`,
+  }, start + i)), start + 1)
+  const { p0, p1, digests } = router.due(start + 30 * min)
+  assert.notEqual(decisions[0]?.id, decisions[1]?.id)
+  assert.deepEqual(decisions.map(({ id, header }) => [id, header?.id]), safeIds.map((id) => [id, id]))
+  assert.deepEqual([...p0, ...p1].map(({ items }) => items.map(({ id }) => id)), safeIds.map((id) => [id]))
+  assert.deepEqual(digests[0]?.items.map((item) => 'id' in item ? item.id : undefined), safeIds)
+  assert.deepEqual(digests[0]?.act_on, safeIds)
+  assert.doesNotMatch(JSON.stringify({ decisions, p0, p1, digests }), /ghp_fixture/)
+})
+
+test('an already expired revision does not cancel pending live p1 or p2 mail', () => {
+  const router = createRouter(options)
+  router.ingest([mail('live-p1', { urgency: 'p1' }), mail('live-p2')], start)
+  const decisions = router.ingest(['live-p1', 'live-p2'].map((ref) => mail(`expired-${ref}`, {
+    ref, at: iso(start), expires: iso(start + 1),
+  }, start + 1)), start + 1)
+  assert.deepEqual(decisions.map(({ kind, reason }) => [kind, reason]), [['expire', 'expired'], ['expire', 'expired']])
+  const { p1, digests } = router.due(start + 30 * min)
+  assert.deepEqual(p1.map(({ items }) => items.map(({ id }) => id)), [['live-p1']])
+  assert.deepEqual(digests.map(({ items }) => items.map(({ summary }) => summary)), [['live-p1', 'live-p2']])
+})
+
+test('older-at and same-at p0 forward alone on warm and fresh routers', async (t) => {
+  const { root, put } = await inbox(t)
+  for (const ref of ['older', 'same']) {
+    await put(`routine-${ref}.md`, fenced(raw(`routine-${ref}`, { ref })), start + min)
+  }
+  const warm = createRouter(options)
+  warm.ingest(await readFileMail(root, 'abc'), start + min)
+  await put('alert-older.md', fenced(raw('alert-older', { ref: 'older', urgency: 'p0', at: iso(start - 2 * min) })))
+  await put('alert-same.md', fenced(raw('alert-same', { ref: 'same', urgency: 'p0' })))
+  const files = await readFileMail(root, 'abc')
+  const now = start + 2 * min
+  for (const [label, router] of [['warm', warm], ['fresh', createRouter(options)]] as const) {
+    router.ingest(files, now)
+    const { p0, p1 } = router.due(now)
+    assert.deepEqual(p0.map(({ items }) => items.map(({ id }) => id)), [['alert-older'], ['alert-same']], label)
+    assert.deepEqual(p1, [], label)
+    const decisions = router.ingest([
+      mail('alert-same', { ref: 'same', urgency: 'p0' }),
+      mail('alert-older', { ref: 'changed', urgency: 'p0' }),
+    ], now)
+    assert.deepEqual(decisions.map(({ kind, reason }) => [kind, reason]), [['reject', 'id_collision'], ['duplicate', undefined]])
+    assert.deepEqual(router.due(now).p0, [])
+  }
+})
+
+test('older-at rejects reserve their ids against reuse with a different ref', () => {
+  const router = createRouter(options)
+  router.ingest([mail('latest', { ref: 'task', at: iso(start) })], start)
+  const old = mail('stale', { ref: 'task' })
+  assert.equal(router.ingest([old], start)[0]?.reason, 'older_at')
+  assert.equal(router.ingest([mail('stale', { ref: 'other' })], start)[0]?.reason, 'id_collision')
+  assert.equal(router.ingest([old], start)[0]?.kind, 'duplicate')
+})
+
+test('scalar ref mappings escape delimiters and cannot collide during file mail dedupe', async (t) => {
+  const { root, put } = await inbox(t)
+  await put('one.md', fenced(raw('one', { ref: { a: 'x,b=y' } })))
+  await put('two.md', fenced(raw('two', { ref: { b: 'y', a: 'x' } })))
+  await put('three.md', fenced(raw('three', { ref: { 'c%,=': 'x%2Cb%3Dy' } })))
+  const decisions = createRouter(options).ingest(await readFileMail(root, 'abc'), start)
+  assert.deepEqual(decisions.map(({ kind, header }) => [kind, header?.ref]), [
+    ['accept', 'a=x%2Cb%3Dy'], ['accept', 'c%25%2C%3D=x%252Cb%253Dy'], ['accept', 'a=x,b=y'],
+  ])
+})
+
+test('restarted router gives a changed member set in the same digest window a new key', () => {
+  function replay(ids: string[]) {
+    const router = createRouter(options)
+    router.ingest(ids.map((id, i) => mail(id, { class: 'sec.log' }, start + i)), start + min)
+    const { digests } = router.due(start + 30 * min)
+    assert.equal(digests.length, 1)
+    return digests[0]!
+  }
+  const first = replay(['a', 'b'])
+  const changed = replay(['a', 'c'])
+  assert.equal(first.window.from, changed.window.from)
+  assert.equal(first.repo, changed.repo)
+  assert.notEqual(first.key, changed.key)
+  assert.equal(first.key, replay(['b', 'a']).key)
+})
+
+test('id and summary length limits count Unicode code points', () => {
+  const id = '🐝'.repeat(200)
+  const summary = '🐝'.repeat(120)
+  assert.ok(parseHeader(raw(id, { summary: 'short' }), options).ok, '200 code points in id')
+  assert.ok(parseHeader(raw('short', { summary }), options).ok, '120 code points in summary')
+  assert.deepEqual(parseHeader(raw(`${id}a`, { summary }), options), { ok: false, reason: 'id_too_long' })
+  assert.deepEqual(parseHeader(raw(id, { summary: `${summary}a` }), options), { ok: false, reason: 'summary_too_long' })
 })

@@ -62,7 +62,8 @@ function key(...parts: unknown[]): string {
 }
 
 function safeHeader({ id, class: mailClass, urgency, from, ref, summary, at }: SwarmMessage): MailHeader {
-  return { id: redact(id), class: redact(mailClass), urgency, from: redact(from), ref: redact(ref), summary: redact(summary), at }
+  const safeId = redact(id) === id ? id : `[redacted:${createHash('sha256').update(id).digest('hex').slice(0, 8)}]`
+  return { id: safeId, class: redact(mailClass), urgency, from: redact(from), ref: redact(ref), summary: redact(summary), at }
 }
 
 function digest(batchKey: string, repo: string, start: number, end: number, entries: Entry[]): Digest {
@@ -80,7 +81,8 @@ function digest(batchKey: string, repo: string, start: number, end: number, entr
   }
   const from = new Date(start).toISOString()
   const to = new Date(end).toISOString()
-  return { key: batchKey, batch: `${repo}-${to}`, repo, window: { from, to }, counts, act_on, items }
+  const digestKey = key(batchKey, entries.map(({ header }) => header.id).sort())
+  return { key: digestKey, batch: `${repo}-${to}`, repo, window: { from, to }, counts, act_on, items }
 }
 
 export function createRouter(opts: RouterOptions) {
@@ -127,18 +129,13 @@ export function createRouter(opts: RouterOptions) {
 
     const seen = ids.get(message.id)
     if (seen !== undefined) return seen === fingerprint! ? record('duplicate') : record('reject', 'id_collision')
+    ids.set(message.id, fingerprint!)
     const tuple = key(message.from, message.ref, message.class)
     const previous = latest.get(tuple)
-    if (previous) {
-      const order = Date.parse(message.at) - Date.parse(previous.header.at)
+    const order = previous ? Date.parse(message.at) - Date.parse(previous.header.at) : 1
+    if (message.urgency !== 'p0') {
       if (order < 0) return record('reject', 'older_at')
       if (order === 0) return record('reject', 'conflict_same_at')
-      // A valid p0 is never held back, even by a revision before the next tick.
-      if (previous.header.urgency !== 'p0' && !previous.forwarded) {
-        previous.forwardPending = false
-        previous.digestPending = false
-        prune(previous)
-      }
     }
     const decision = record(previous ? 'revision' : 'accept')
     const receiptStart = Math.floor(receivedAt / digestMs) * digestMs
@@ -152,9 +149,16 @@ export function createRouter(opts: RouterOptions) {
       forwarded: false, logOnly: message.class === 'sec.log',
       needsAction: message.class.startsWith('spawner.') || message.class === 'core.escalate',
     }
-    ids.set(message.id, fingerprint!)
-    latest.set(tuple, entry)
     if (entry.expires <= now) return expire(entry)
+    if (order > 0) {
+      // A valid p0 is never held back, even by a revision before the next tick.
+      if (previous && previous.header.urgency !== 'p0' && !previous.forwarded) {
+        previous.forwardPending = false
+        previous.digestPending = false
+        prune(previous)
+      }
+      latest.set(tuple, entry)
+    }
     pending.add(entry)
     return decision
   }

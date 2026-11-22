@@ -32,7 +32,8 @@ export function canonicalRef(ref: unknown): string | undefined {
   if (!entries.length || entries.some(([, value]) =>
     value !== null && typeof value !== 'string' && typeof value !== 'boolean' && !Number.isFinite(value),
   )) return
-  return Object.keys(ref).sort().map((key) => `${key}=${ref[key]}`).join(',')
+  const escape = (text: string) => text.replace(/[%,=]/g, (char) => encodeURIComponent(char))
+  return Object.keys(ref).sort().map((key) => `${escape(key)}=${escape(String(ref[key]))}`).join(',')
 }
 
 function timestamp(raw: unknown): string | undefined {
@@ -58,14 +59,14 @@ export function parseHeader(raw: unknown, opts: { classes: string[] }): HeaderRe
   }
   const { id, class: mailClass, urgency, from, summary } = raw
   if (typeof id !== 'string' || !id) return reject('bad_id')
-  if (id.length > 200) return reject('id_too_long')
+  if ([...id].length > 200) return reject('id_too_long')
   if (typeof mailClass !== 'string' || !opts.classes.includes(mailClass)) return reject('bad_class')
   if (urgency !== 'p0' && urgency !== 'p1' && urgency !== 'p2' && urgency !== 'p3') return reject('bad_urgency')
   if (typeof from !== 'string' || !from) return reject('bad_from')
   const ref = canonicalRef(raw.ref)
   if (ref === undefined) return reject('bad_ref')
   if (typeof summary !== 'string') return reject('bad_summary')
-  if (summary.length > 120) return reject('summary_too_long')
+  if ([...summary].length > 120) return reject('summary_too_long')
   const at = timestamp(raw.at)
   if (at === undefined) return reject('bad_timestamp:at')
 
