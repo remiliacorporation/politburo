@@ -32,7 +32,7 @@ function flags(args: string[], required: string[], json = false) {
 }
 
 function printFindings(findings: Awaited<ReturnType<typeof preflightCommand>>, output = console.log) {
-  for (const { rule, file, line } of findings) output(`${rule} ${file.replace(/[\x00-\x1f\x7f-\x9f]/g, '?')}:${line}`)
+  for (const { rule, file, line } of findings) output(`${rule} ${file}:${line}`)
 }
 
 export async function run(argv: string[]): Promise<number> {

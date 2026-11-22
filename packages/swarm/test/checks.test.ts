@@ -107,6 +107,7 @@ test('lock refuses reserved suffixes and status-directory paths before writing',
 
 test('passing check preserves the owner inode, keeps argv out of records, and pushes the checked SHA', async (t) => {
   const f = fixture(t), token = fakeToken(), owner = `${f.options.lockPath}.owner`
+  f.options.statusDir = join(f.options.statusDir, 'nested')
   const file = join(f.dir, token)
   symlinkSync(process.execPath, file)
   writeFileSync(owner, 'old owner\n')
@@ -116,13 +117,67 @@ test('passing check preserves the owner inode, keeps argv out of records, and pu
   assert.deepEqual(await checkAndPush({ ...f.options, command: [file, '-e', '', token] }), { status: 'pushed', sha })
   f.expectRemote(sha)
   assert.equal(statSync(owner).ino, inode, 'owner was replaced instead of updated')
-  assert.equal(statSync(f.options.statusDir).mode & 0o777, 0o700)
+  for (const dir of [join(f.dir, 'statuses'), f.options.statusDir]) assert.equal(statSync(dir).mode & 0o777, 0o700)
   assert.equal(f.state(sha), 'pass')
   for (const path of [owner, join(f.options.statusDir, `${sha}.json`)]) {
     const record = readFileSync(path, 'utf8')
     assert.ok(!record.includes(token), 'record exposed argv')
     assert.equal(JSON.parse(record).command, 'check (3 args)')
   }
+})
+
+test('hard-linked or foreign owner file is not truncated and prevents the check from running', async (t) => {
+  const f = fixture(t), owner = `${f.options.lockPath}.owner`, target = join(f.dir, 'unrelated')
+  f.commit()
+  writeFileSync(target, 'unrelated')
+  linkSync(target, owner)
+  let ran = false
+  const check = () => checkAndPush({ ...f.options, run: async () => {
+    ran = true
+    return { stdout: '', exitCode: 0 }
+  } })
+  const refused = /owner file must be a regular file owned by the current user with exactly one link/
+  // Capture the rejection first so the data-loss assertion also catches an early O_TRUNC.
+  const outcome = () => check().catch((error: Error) => error.message)
+  const linked = await outcome()
+  assert.equal(readFileSync(target, 'utf8'), 'unrelated')
+  assert.match(String(linked), refused)
+  if (process.getuid?.() === 0) {
+    rmSync(owner)
+    writeFileSync(owner, 'foreign')
+    chownSync(owner, 65534, 65534)
+    const foreign = await outcome()
+    assert.equal(readFileSync(owner, 'utf8'), 'foreign')
+    assert.match(String(foreign), refused)
+  }
+  assert.equal(ran, false)
+  f.expectRemote()
+})
+
+test('status directory refuses symlinked ancestors, even when swapped in during the check', async (t) => {
+  const f = fixture(t), sha = f.commit(), alias = join(f.dir, 'alias')
+  const target = join(f.options.statusDir, 'nested'), marker = join(target, `${sha}.json`)
+  mkdirSync(target, { recursive: true })
+  writeFileSync(marker, 'unrelated')
+  symlinkSync(f.options.statusDir, alias)
+  for (const child of ['nested', 'missing/child']) {
+    let ran = false
+    await assert.rejects(checkAndPush({ ...f.options, statusDir: join(alias, child), run: async () => {
+      ran = true
+      return { stdout: '', exitCode: 0 }
+    } }), /real directory owned by the current user/)
+    assert.equal(ran, false)
+  }
+  assert.ok(!existsSync(join(f.options.statusDir, 'missing')))
+  rmSync(alias)
+  mkdirSync(alias)
+  await assert.rejects(checkAndPush({ ...f.options, statusDir: join(alias, 'nested'), run: async () => {
+    rmSync(alias, { recursive: true })
+    symlinkSync(f.options.statusDir, alias)
+    return { stdout: '', exitCode: 0 }
+  } }), /real directory owned by the current user/)
+  assert.equal(readFileSync(marker, 'utf8'), 'unrelated')
+  f.expectRemote()
 })
 
 test('status directory refuses final symlinks, including a late swap, and foreign ownership', async (t) => {
@@ -298,30 +353,60 @@ test('preflight refuses credentials added then removed from outgoing history, in
     const cli = checkCli('preflight', '--repo', f.repo, '--base', f.base)
     assert.ok(!(cli.stdout + cli.stderr).includes(token), 'CLI exposed matched text')
     assert.equal(cli.status, 1, `preflight, merge=${merge}`)
-    assert.match(cli.stdout, /^github-token sample\.txt:1\n/)
+    assert.match(cli.stdout, /^github-token file#1:1\n/)
   }
 })
 
-test('finding paths cannot expose private text in results, text, or JSON', async (t) => {
-  const f = fixture(t), token = fakeToken()
-  writeFileSync(join(f.repo, `${token}.txt`), `${['npm', 'Q'.repeat(36)].join('_')}\n`)
-  git(f.repo, 'add', '.')
-  f.commit(token)
+test('both preflights refuse a merged side root even when log.showRoot is false', async (t) => {
+  const f = fixture(t)
+  git(f.repo, 'config', 'log.showRoot', 'false')
+  git(f.repo, 'switch', '--orphan', 'side')
+  writeFileSync(join(f.repo, 'side.txt'), `${fakeToken()}\n`)
+  git(f.repo, 'add', 'side.txt')
+  git(f.repo, 'commit', '-m', 'side root')
+  git(f.repo, 'rm', 'side.txt')
+  git(f.repo, 'commit', '-m', 'clean side tip')
+  git(f.repo, 'switch', 'main')
+  git(f.repo, 'merge', '--allow-unrelated-histories', '--no-ff', 'side')
+  const cli = checkCli('preflight', '--repo', f.repo, '--base', f.base)
   const result = await checkAndPush(f.options)
-  assert.ok(!JSON.stringify(result).includes(token), 'result exposed a private path')
+  assert.deepEqual([cli.status, result.status], [1, 'refused_privacy'])
+  assert.equal(cli.stdout, 'github-token file#1:1\n')
+  f.expectRemote()
+})
+
+test('findings use stable file indices, never paths that can disclose a cross-file password', async (t) => {
+  const f = fixture(t), value = ['cross', 'file', 'fixture'].join('-')
+  const gh = fakeToken(), npm = ['npm', 'Q'.repeat(36)].join('_')
+  // The password basename is not a token pattern. The two token basenames self-redact.
+  for (const [file, text] of [[value, `\n${gh}\n${gh}`], [gh, gh], [npm, npm]] as const) {
+    writeFileSync(join(f.repo, file), `${text}\n`)
+  }
+  git(f.repo, 'add', '.')
+  f.commit(`password=${value}`)
+  const noPaths = (output: string) => assert.ok(![value, gh, npm, 'sample.txt'].some((path) => output.includes(path)),
+    'refusal exposed a file path')
+  const result = await checkAndPush(f.options)
+  noPaths(JSON.stringify(result))
   assert.equal(result.status, 'refused_privacy')
-  assert.ok(result.findings.some(({ file }) => file === '[redacted]'))
+  const findings = [
+    ['github-token', 'file#1', 2], ['github-token', 'file#1', 3], ['github-token', 'file#2', 1],
+    ['npm-token', 'file#3', 1], ['secret-assignment', 'file#4', 1],
+  ].map(([rule, file, line]) => ({ rule, file, line, match: '[redacted]' }))
+  assert.deepEqual(result.findings, findings)
+  const expected = findings.map(({ rule, file, line }) => `${rule} ${file}:${line}\n`).join('')
   for (const args of [[], ['--json']]) {
     const cli = checkCli('preflight', '--repo', f.repo, '--base', f.base, ...args)
-    assert.ok(!(cli.stdout + cli.stderr).includes(token), 'preflight exposed a private path')
+    noPaths(cli.stdout + cli.stderr)
     assert.equal(cli.status, 1)
-    assert.ok(cli.stdout.includes('[redacted]'))
+    if (args.length) assert.deepEqual(JSON.parse(cli.stdout), { findings })
+    else assert.equal(cli.stdout, expected)
   }
   const cli = checkCli('run', '--repo', f.repo, '--branch', 'main', '--lock', f.options.lockPath,
     '--status-dir', f.options.statusDir, '--', ...f.options.command)
-  assert.ok(!(cli.stdout + cli.stderr).includes(token), 'check run exposed a private path')
+  noPaths(cli.stdout + cli.stderr)
   assert.equal(cli.status, 1)
-  assert.match(cli.stderr, /npm-token \[redacted\]:1/)
+  assert.equal(cli.stderr, expected)
   f.expectRemote()
 })
 

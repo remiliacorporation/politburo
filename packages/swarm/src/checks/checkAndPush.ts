@@ -2,17 +2,17 @@ import { randomUUID } from 'node:crypto'
 import { constants as fs } from 'node:fs'
 import { lstat, mkdir, open, realpath, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
-import type { PrivacyFinding, PrivacyOptions } from '@remilia/politburo-runtime'
+import type { PrivacyOptions } from '@remilia/politburo-runtime'
 import { exec, GitError, gitAt, isClean, readHead, type Exec } from './exec.ts'
 import { LockError, lockFile, tryAcquire } from './lock.ts'
-import { diffFindings } from './preflight.ts'
+import { diffFindings, type CheckFinding } from './preflight.ts'
 
 export type CommitStatus = { sha: string; state: 'pass' | 'fail' | 'unknown' }
 export type CheckResult =
   | { status: 'pushed' | 'head_changed'; sha: string }
   | ({ status: 'check_failed'; exitCode: number | null } & CommitStatus)
   | { status: 'dirty' | 'busy' }
-  | { status: 'refused_privacy'; findings: PrivacyFinding[] }
+  | { status: 'refused_privacy'; findings: CheckFinding[] }
 
 export type CheckOptions = {
   repo: string
@@ -30,27 +30,52 @@ export type CheckOptions = {
 const json = (data: object) => `${JSON.stringify(data)}\n`
 const invalidDir = () => new LockError('check status directory must be a real directory owned by the current user')
 
-async function statusInfo(dir: string) {
-  const info = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error
-  })
-  if (info && (!info.isDirectory() || info.uid !== process.getuid?.())) throw invalidDir()
-  return info
+async function withStatusDir<T>(dir: string, create: boolean, use: (anchor: string) => T | Promise<T>) {
+  const flags = fs.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW
+  let handle = await open(sep, flags)
+  try {
+    // Each lookup is relative to an open parent, not a pathname that can be redirected.
+    for (const component of dir.split(sep).filter(Boolean)) {
+      const child = `/proc/self/fd/${handle.fd}/${component}`
+      let info = await lstat(child).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+      if (!info) {
+        if (!create) return
+        await mkdir(child, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'EEXIST') throw error
+        })
+        info = await lstat(child)
+      }
+      if (!info.isDirectory()) throw invalidDir()
+      const parent = handle
+      handle = await open(child, flags)
+      await parent.close()
+    }
+    if ((await handle.stat()).uid !== process.getuid?.()) throw invalidDir()
+    return await use(`/proc/self/fd/${handle.fd}`)
+  } finally { await handle.close() }
 }
 
 async function writeStatus<T extends CommitStatus>(dir: string, data: T) {
-  await mkdir(dir, { recursive: true, mode: 0o700 })
-  const info = await statusInfo(dir)
-  const handle = await open(dir, fs.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
-  try {
-    const opened = await handle.stat()
-    if (info?.ino !== opened.ino || info.dev !== opened.dev || info.uid !== opened.uid) throw invalidDir()
-    // Anchor both operations to the directory we verified, even if its pathname moves.
-    const anchor = `/proc/self/fd/${handle.fd}`
+  await withStatusDir(dir, true, async (anchor) => {
     const temp = join(anchor, `.${randomUUID()}.tmp.json`)
     await writeFile(temp, json(data), { flag: 'wx', mode: 0o600 })
     try { await rename(temp, join(anchor, `${data.sha}.json`)) }
     finally { await unlink(temp).catch(() => {}) }
+  })
+}
+
+async function writeOwner(path: string, data: object) {
+  const invalidOwner = () => new LockError('check owner file must be a regular file owned by the current user with exactly one link')
+  // Do not block on a FIFO before fstat can reject it.
+  const handle = await open(path, fs.O_WRONLY | fs.O_CREAT | fs.O_NOFOLLOW | fs.O_NONBLOCK, 0o600)
+    .catch(() => { throw invalidOwner() })
+  try {
+    const info = await handle.stat()
+    if (!info.isFile() || info.uid !== process.getuid?.() || info.nlink !== 1) throw invalidOwner()
+    await handle.truncate(0)
+    await handle.writeFile(json(data))
   } finally { await handle.close() }
 }
 
@@ -62,7 +87,7 @@ export async function checkAndPush({
   const path = lockFile(lockPath)
   const dir = resolve(statusDir)
   const inside = (file: string, folder: string) => file === folder || file.startsWith(join(folder, sep))
-  if (inside(path, dir) || (await statusInfo(dir) && inside(await realpath(dirname(path)), await realpath(dir)))) {
+  if (inside(path, dir) || await withStatusDir(dir, false, async () => inside(await realpath(dirname(path)), dir))) {
     throw new LockError('check lock path cannot be inside the status directory')
   }
   const lock = await attempt(path)
@@ -83,9 +108,7 @@ export async function checkAndPush({
     if (await readHead(at) !== sha) return { status: 'head_changed', sha }
 
     const startedAt = now().toISOString()
-    await writeFile(`${path}.owner`, json({ pid: process.pid, sha, command: label, startedAt }), {
-      flag: fs.O_WRONLY | fs.O_CREAT | fs.O_TRUNC | fs.O_NOFOLLOW | fs.O_NONBLOCK, mode: 0o600,
-    })
+    await writeOwner(`${path}.owner`, { pid: process.pid, sha, command: label, startedAt })
     const result = await run(command, { cwd: repo, timeoutMs: 30 * 60_000 }).catch(() => null)
     const exitCode = result?.exitCode ?? null
     const endedAt = now().toISOString()
