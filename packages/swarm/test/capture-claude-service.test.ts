@@ -10,6 +10,7 @@ import {
 } from '../src/capture-claude/index.ts'
 
 const session = 'native-1'
+const privateCwd = '/fixture/private-cwd-7a83/acme/web'
 const now = () => new Date('2026-11-22T12:00:07Z')
 const envelope: Envelope = {
   party: 'default', repo: 'acme/web', work_id: 'work-1', attempt: 'att-1', tier: 'spawner',
@@ -30,7 +31,7 @@ function log(nativeSession: string | null = session, requestId = 'req-1', output
       'user.email': { stringValue: 'fixture@example.test' },
       'user.account_uuid': { stringValue: 'private-account-id' },
       'organization.id': { stringValue: 'private-org-id' },
-      cwd: { stringValue: '/fixture/acme/web' },
+      cwd: { stringValue: privateCwd },
       branch: { stringValue: 'main' },
       'session.name': { stringValue: envelope.session },
     }).map(([key, value]) => ({ key, value })),
@@ -60,7 +61,7 @@ function fixture(t: TestContext) {
       const receiver = createReceiver({ ...options, ...overrides })
       const address = await receiver.listen()
       running = receiver
-      return { address }
+      return { address, counters: receiver.counters }
     },
   }
 }
@@ -125,7 +126,7 @@ test('an unknown session never borrows a binding from cwd, branch or name', asyn
   assert.equal(rows[0]?.tokens.output, 91)
 })
 
-test('replayed POSTs add no records and neither file retains prompt, transcript or account data', async (t) => {
+test('replayed POSTs add no records and neither file retains prompt, transcript, path or account data', async (t) => {
   const f = fixture(t)
   f.registry.bind(session, envelope)
   const { address } = await f.start()
@@ -135,10 +136,44 @@ test('replayed POSTs add no records and neither file retains prompt, transcript 
   const persisted = paths.map((path) => readFileSync(path, 'utf8'))
   assert.deepEqual(paths.map((path) => readJsonl(path).length), [1, 1])
   for (const contents of persisted) {
+    assert.ok(!contents.includes(privateCwd), 'must not persist the cwd value')
     assert.doesNotMatch(contents, /private prompt|private transcript excerpt|fixture@example\.test|private-account-id|private-org-id|"prompt"|"user\.email"|"user\.account_uuid"|"organization\.id"/)
   }
   assert.equal((await send(address, body)).status, 200)
   assert.deepEqual(paths.map((path) => readFileSync(path, 'utf8')), persisted)
+})
+
+test('same-batch ledger disagreements and later quarantine disagreements persist once as conflicts', async (t) => {
+  const f = fixture(t)
+  f.registry.bind(session, envelope)
+  const { address, counters } = await f.start()
+  const originalBatch = batch(log(), log(undefined, undefined, 42), log('unbound'))
+  assert.equal((await send(address, originalBatch)).status, 200)
+  const laterBatch = batch(log(undefined, undefined, 7), log('unbound', 'req-1', 42))
+  assert.deepEqual(readJsonl(f.ledgerPath).map((row) => row.tokens.output), [91, 42])
+  assert.deepEqual(readJsonl(f.quarantinePath).map((row) => row.tokens.output), [91])
+  assert.equal((await send(address, laterBatch)).status, 200)
+  for (const [path, binding, counts] of [
+    [f.ledgerPath, envelope, [91, 42, 7]], [f.quarantinePath, null, [91, 42]],
+  ] as const) {
+    const [original, ...successors] = readJsonl(path)
+    assert.ok(original)
+    assert.deepEqual([original, ...successors].map((row) => row.tokens.output), counts)
+    for (const successor of successors) {
+      assert.equal(successor.coverage.state, 'conflict')
+      assert.deepEqual(successor.envelope, binding)
+      assert.equal(successor.revises, original.record_id)
+      assert.equal(successor.actor, 'capture-claude receiver')
+      assert.equal(successor.evidence_ref, original.evidence_ref)
+    }
+  }
+  assert.equal(counters.conflicts, 3)
+  const paths = [f.ledgerPath, f.quarantinePath]
+  const persisted = paths.map((path) => readFileSync(path, 'utf8'))
+  assert.equal((await send(address, originalBatch)).status, 200)
+  assert.equal((await send(address, laterBatch)).status, 200)
+  assert.deepEqual(paths.map((path) => readFileSync(path, 'utf8')), persisted)
+  assert.equal(counters.conflicts, 3)
 })
 
 test('a failed append returns 500, not a durable acknowledgement, and retry fills only the gap', async (t) => {
@@ -156,12 +191,14 @@ test('a failed append returns 500, not a durable acknowledgement, and retry fill
   assert.deepEqual(readJsonl(f.quarantinePath).map((row) => row.tokens.output), [42])
 })
 
-test('the receiver does not listen on a non-loopback host by default or without opt-in', async (t) => {
+test('the receiver only binds hosts on the loopback allowlist', async (t) => {
   const f = fixture(t)
   const { address } = await f.start()
   assert.equal(address.host, '127.0.0.1')
   assert.ok(address.port > 0)
-  assert.throws(() => createReceiver({ ...f.options, host: '0.0.0.0' }), /loopback/)
+  for (const host of ['0.0.0.0', '127.0.0.2']) {
+    assert.throws(() => createReceiver({ ...f.options, host }), /loopback/)
+  }
 })
 
 test('a foreign Host header gets 403 and cannot write records', async (t) => {
@@ -188,6 +225,29 @@ test('oversized plain and inflated bodies get 413 and cannot write records', asy
   assert.ok(compressed.length < 512)
   assert.equal((await send(address, body, {}, true)).status, 413, 'respond before the upload ends')
   assert.equal((await send(address, compressed, { headers: { 'Content-Encoding': 'gzip' } })).status, 413)
+  assertNoWrites(f)
+})
+
+test('oversized gzip Content-Length gets 413 before any body is sent', async (t) => {
+  const f = fixture(t)
+  const { address } = await f.start({ maxBodyBytes: 20, requestTimeoutMs: 500 })
+  assert.equal((await send(address, '', {
+    headers: { 'Content-Encoding': 'gzip', 'Content-Length': 21 },
+  }, true)).status, 413)
+  assertNoWrites(f)
+})
+
+test('oversized chunked gzip gets 413 before the upload ends even with a tiny inflated body', async (t) => {
+  const f = fixture(t)
+  const limit = 20
+  const { address } = await f.start({ maxBodyBytes: limit, requestTimeoutMs: 500 })
+  const body = '{}'
+  const compressed = gzipSync(body)
+  assert.ok(body.length < limit && compressed.length > limit)
+  const headers = { 'Content-Encoding': 'gzip', 'Transfer-Encoding': 'chunked' }
+  assert.equal((await send(address, compressed, { headers }, true)).status, 413)
+  assert.equal((await send(address, Buffer.alloc(limit + 1), { headers })).status, 413,
+    'the wire limit takes precedence over a gzip format error')
   assertNoWrites(f)
 })
 
@@ -230,14 +290,15 @@ test('a corrupt registry or malformed envelope goes to quarantine, not the ledge
 test('release uses the exact native session, preserves evidence, and never adds a second successor', async (t) => {
   const f = fixture(t)
   const { address } = await f.start()
-  const nativeSession = 'fixture/%2F:session'
+  const nativeSession = 'fixture:session'
   assert.deepEqual(readJsonl(f.quarantinePath), [])
-  assert.equal((await send(address, batch(log(nativeSession)))).status, 200)
+  assert.equal((await send(address, batch(log(nativeSession, 'req:1')))).status, 200)
   assert.deepEqual(readJsonl(f.ledgerPath), [])
   appendFileSync(f.quarantinePath, '{"truncated":')
   const records = readJsonl(f.quarantinePath)
   assert.equal(records.length, 1)
   const [original] = records
+  assert.equal(original?.evidence_ref, 'claude/fixture:session/req%3A1:')
   const releaseTime = new Date('2026-11-22T12:01:00Z')
   const release = (ledger = f.ledger) => releaseQuarantine({
     records, registry: f.registry, ledger, actor: 'operator', reason: 'binding verified', now: releaseTime,
@@ -261,10 +322,44 @@ test('release uses the exact native session, preserves evidence, and never adds 
   assert.deepEqual(readJsonl(f.quarantinePath), records)
 })
 
-test('prototype-named sessions quarantine until explicitly bound, then keep distinct bindings', async (t) => {
+test('release rejects a malformed evidence reference even when its prefix names a bound session', async (t) => {
   const f = fixture(t)
   const { address } = await f.start()
-  const names = ['__proto__', 'constructor']
+  assert.equal((await send(address, batch(log()))).status, 200)
+  const [original] = readJsonl(f.quarantinePath)
+  assert.ok(original)
+  f.registry.bind(session, envelope)
+  writeFileSync(f.quarantinePath, `${JSON.stringify({ ...original, evidence_ref: `${original.evidence_ref}/extra` })}\n`)
+  assert.deepEqual(releaseQuarantine({
+    records: readJsonl(f.quarantinePath), registry: f.registry, ledger: f.ledger,
+    actor: 'operator', reason: 'binding verified', now,
+  }), { released: 0, stillUnbound: 1 })
+  assert.deepEqual(readJsonl(f.ledgerPath), [])
+})
+
+test('a running receiver does not re-append a quarantine release written by another ledger writer', async (t) => {
+  const f = fixture(t)
+  const { address } = await f.start()
+  const body = batch(log())
+  assert.equal((await send(address, body)).status, 200)
+  const records = readJsonl(f.quarantinePath)
+  assert.equal(records.length, 1)
+  fileRegistry(f.registryPath).bind(session, envelope)
+  assert.deepEqual(releaseQuarantine({
+    records, registry: f.registry, ledger: jsonlWriter(f.ledgerPath), actor: 'operator', reason: 'binding verified', now,
+  }), { released: 1, stillUnbound: 0 })
+  const [released] = readJsonl(f.ledgerPath)
+  assert.equal(released?.revises, records[0]?.record_id)
+  assert.deepEqual(released?.envelope, envelope)
+  assert.equal((await send(address, body)).status, 200)
+  assert.deepEqual(readJsonl(f.ledgerPath), [released])
+  assert.deepEqual(readJsonl(f.quarantinePath), records)
+})
+
+test('legal prototype-named sessions quarantine until explicitly bound, then keep distinct bindings', async (t) => {
+  const f = fixture(t)
+  const { address } = await f.start()
+  const names = ['constructor', 'toString']
   const body = batch(...names.map((name) => log(name)))
   f.registry.bind(session, envelope)
   assert.equal((await send(address, body)).status, 200)
@@ -278,10 +373,25 @@ test('prototype-named sessions quarantine until explicitly bound, then keep dist
   assert.deepEqual(readJsonl(f.ledgerPath).map((row) => row.envelope), bindings)
 })
 
-test('colon and path-like session IDs release both distinct requests even when their joined IDs match', async (t) => {
+test('invalid native session IDs cannot bind or write spend records', async (t) => {
+  const f = fixture(t)
+  const { address, counters } = await f.start()
+  const invalid = ['__proto__', 'fixture/../%2F']
+  assert.equal((await send(address, batch(...invalid.map((name) => log(name))))).status, 200)
+  assertNoWrites(f)
+  assert.equal(counters.rejected, invalid.length)
+  // Invalid sessions from an old registry cannot be looked up, either.
+  writeFileSync(f.registryPath, JSON.stringify(Object.fromEntries(invalid.map((name) => [name, envelope]))))
+  for (const name of invalid) {
+    assert.equal(f.registry.lookup(name), null)
+    assert.throws(() => f.registry.bind(name, envelope), /invalid native session/)
+  }
+})
+
+test('colon-delimited IDs release both distinct requests even when their joined IDs match', async (t) => {
   const f = fixture(t)
   const { address } = await f.start()
-  const prefix = 'fixture/../%2F'
+  const prefix = 'fixture.session'
   const body = batch(log(`${prefix}:part`, 'req-1'), log(prefix, 'part:req-1', 42))
   assert.equal((await send(address, body)).status, 200)
   assert.deepEqual(readJsonl(f.ledgerPath), [])
@@ -295,8 +405,10 @@ test('colon and path-like session IDs release both distinct requests even when t
   releaseQuarantine({
     records, registry: f.registry, ledger: f.ledger, actor: 'operator', reason: 'binding verified', now,
   })
+  const released = readJsonl(f.ledgerPath)
+  assert.deepEqual(released.map((row) => [row.envelope, row.tokens.output]), [[envelope, 91], [other, 42]])
   assert.equal((await send(address, body)).status, 200)
-  assert.deepEqual(readJsonl(f.ledgerPath).map((row) => [row.envelope, row.tokens.output]), [[envelope, 91], [other, 42]])
+  assert.deepEqual(readJsonl(f.ledgerPath), released)
 })
 
 test('a completed empty POST returns 400 without writing', async (t) => {

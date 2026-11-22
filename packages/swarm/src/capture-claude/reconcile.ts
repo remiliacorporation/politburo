@@ -1,4 +1,4 @@
-import type { RequestFact } from './facts.ts'
+import { buckets, type RequestFact } from './facts.ts'
 
 export type Resolved = {
   fact: RequestFact
@@ -6,24 +6,22 @@ export type Resolved = {
   quality: 'provider_reported'
 }
 
-type Tokens = RequestFact['tokens']
-const buckets: (keyof Tokens)[] = ['input_uncached', 'input_total', 'output', 'cache_read', 'cache_write', 'reasoning']
-
 function conflict(a: RequestFact, b: RequestFact): boolean {
   return buckets.some((key) => a.tokens[key] !== null && b.tokens[key] !== null && a.tokens[key] !== b.tokens[key])
 }
 
 function matches(a: RequestFact, b: RequestFact): boolean {
   if (a.nativeSession !== b.nativeSession) return false
-  if (a.requestId !== null && b.requestId !== null) return a.requestId === b.requestId
-  return a.responseId !== null && a.responseId === b.responseId
+  const sharedRequest = a.requestId !== null && b.requestId !== null
+  const sharedResponse = a.responseId !== null && b.responseId !== null
+  return (sharedRequest || sharedResponse) && (!sharedRequest || a.requestId === b.requestId) &&
+    (!sharedResponse || a.responseId === b.responseId)
 }
 
 export function reconcile(otlp: RequestFact[], transcript: RequestFact[], { exactCounts = false } = {}) {
   const groups = new Map<string, RequestFact[]>()
-  for (const [index, fact] of otlp.entries()) {
-    const id = fact.requestId ?? fact.responseId
-    const key = JSON.stringify([fact.nativeSession, id ?? index])
+  for (const fact of otlp) {
+    const key = JSON.stringify([fact.nativeSession, fact.requestId, fact.responseId])
     const group = groups.get(key)
     if (!group) groups.set(key, [fact])
     else if (!group.some((a) => buckets.every((k) => a.tokens[k] === fact.tokens[k]))) group.push(fact)
