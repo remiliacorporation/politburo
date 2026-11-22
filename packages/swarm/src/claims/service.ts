@@ -1,6 +1,6 @@
 import { BoardError, type Board, type ClaimedTask } from '@vercel/board'
 import { checkCaps, claimStatus, liveClaim, type ClaimRefusal, type ClaimStatus, type ClaimsConfig } from './admission.ts'
-import { closeRecord, cooldown, isOpen, readHistory, recordThreads, writeRecord, type ClaimRecord } from './records.ts'
+import { closeRecord, cooldown, HistoryTooLong, isOpen, readHistory, recordThreads, writeRecord, type ClaimRecord } from './records.ts'
 
 export type { ClaimStatus, ClaimsConfig } from './admission.ts'
 
@@ -14,6 +14,8 @@ export type ClaimsOptions = {
   party: string
   config: ClaimsConfig
   validate: Validate
+  // Tests inject now. Date.now assumes the service runs on the board's host, as designed.
+  // hardEnd always comes from the board's lease answer.
   now?: () => number
   leaseSeconds?: number
 }
@@ -23,7 +25,7 @@ export type TickSummary = { renewed: number; satisfied: number; docked: number; 
 
 type Decision = { kind: 'docked' } | { kind: 'released' } |
   { kind: 'satisfied'; outcome: string | null; evidence: string | null; checkedAt: number }
-type Active = { data: ClaimRecord; held: ClaimedTask; id?: string; decision?: Decision }
+type Active = { data: ClaimRecord; held: ClaimedTask; id: string; decision?: Decision }
 
 async function ignoreLost(write: () => Promise<unknown>) {
   try {
@@ -39,6 +41,7 @@ export function createClaims({ board, channel, party, config, validate, now = Da
   const lease = Math.max(30, Math.min(3600, Math.floor(leaseSeconds), config.hours * 3600))
   const active = new Map<string, Active>()
   let pendingRecovery = false
+  let recovered = false
   let queue: Promise<unknown> = Promise.resolve()
   function serial<T>(run: () => Promise<T>): Promise<T> {
     const next = queue.then(run)
@@ -46,28 +49,23 @@ export function createClaims({ board, channel, party, config, validate, now = Da
     return next
   }
 
-  async function register(attempt: Active) {
-    const { data } = attempt
-    attempt.id ??= (await writeRecord(board, 'claim', data, { claimedAt: data.claimedAt, hardEnd: data.hardEnd })).id
-    return attempt.id
-  }
-
   async function claim(task: string): Promise<ClaimResult> {
     const { actor } = await board.me()
     let history
     try {
+      if (!recovered) await recover()
       history = await readHistory(board, task, party, actor)
+      if (history.message.channel !== channel) return { ok: false, code: 'wrong_channel' }
+      task = history.message.id
+      const retryAt = cooldown(history.entries)
+      if (retryAt !== null && now() < retryAt) return { ok: false, code: 'reclaim_cooldown', retryAt }
+      const cap = await checkCaps(board, channel, party, actor, task, config, now)
+      if (cap) return cap
     } catch (error) {
-      if (error instanceof BoardError && error.status === 404) return { ok: false, code: error.code }
+      if (error instanceof HistoryTooLong) return { ok: false, code: 'history_too_long' }
+      if (recovered && !history && error instanceof BoardError && error.status === 404) return { ok: false, code: error.code }
       throw error
     }
-    if (history.message.channel !== channel) return { ok: false, code: 'wrong_channel' }
-    task = history.message.id
-    const retryAt = cooldown(history.entries)
-    if (retryAt !== null && now() < retryAt) return { ok: false, code: 'reclaim_cooldown', retryAt }
-    if (active.has(task)) return { ok: false, code: 'task_claimed' }
-    const cap = await checkCaps(board, channel, party, actor, task, config, now)
-    if (cap) return cap
     // Some backends cap the lease at five minutes; the initial duration must not be shortened.
     const initialLease = Math.min(lease, 300)
     let held
@@ -81,13 +79,26 @@ export function createClaims({ board, channel, party, config, validate, now = Da
     const claimedAt = Date.parse(held.until) - initialLease * 1000
     const hardEnd = claimedAt + config.hours * 3_600_000
     const data: ClaimRecord = { v: 1, party, task, epoch: held.epoch, claimedAt, hardEnd }
-    const attempt = { data, held }
-    active.set(task, attempt)
-    await register(attempt)
+    try {
+      const { id } = await writeRecord(board, 'claim', data, { claimedAt, hardEnd })
+      active.set(task, { data, held, id })
+    } catch (error) {
+      try {
+        await held.release()
+      } catch (releaseError) {
+        if (!(releaseError instanceof BoardError && releaseError.code === 'claim_lost')) {
+          throw new AggregateError([error, releaseError], `task ${task}: claim record write and lease release failed`)
+        }
+      }
+      throw error
+    }
     return { ok: true, task, epoch: held.epoch, claimedAt, hardEnd }
   }
 
   async function attach(task: string, evidence: string) {
+    if (!evidence.trim() || evidence.length > 2048 || /\p{Cc}/u.test(evidence)) {
+      throw new Error('claim evidence must be nonblank, at most 2048 characters, and contain no control characters')
+    }
     const { actor } = await board.me()
     const { message, entries } = await readHistory(board, task, party, actor)
     if (message.channel !== channel) throw new Error('task is outside the work channel')
@@ -104,8 +115,7 @@ export function createClaims({ board, channel, party, config, validate, now = Da
   }
 
   async function advance(attempt: Active, summary: TickSummary) {
-    const { data } = attempt
-    const id = await register(attempt)
+    const { data, id } = attempt
     const remaining = data.hardEnd - now()
     if (!attempt.decision && remaining <= 0) attempt.decision = { kind: 'docked' }
     if (!attempt.decision) {
@@ -120,8 +130,9 @@ export function createClaims({ board, channel, party, config, validate, now = Da
         const checkedAt = now()
         if (checkedAt < data.hardEnd) {
           const result = await validate({ task: data.task, text: attempt.held.task.text, party, epoch: data.epoch, checkedAt })
-          if (result.result === 'valid') {
-            attempt.decision = { kind: 'satisfied', outcome: result.outcome ?? null, evidence: result.evidence ?? null, checkedAt }
+          const answeredAt = now()
+          if (result.result === 'valid' && answeredAt < data.hardEnd) {
+            attempt.decision = { kind: 'satisfied', outcome: result.outcome ?? null, evidence: result.evidence ?? null, checkedAt: answeredAt }
           }
         }
         if (!attempt.decision && now() >= data.hardEnd) attempt.decision = { kind: 'docked' }
@@ -152,8 +163,19 @@ export function createClaims({ board, channel, party, config, validate, now = Da
       const { message, entries } = await readHistory(board, task, party, actor)
       for (const { data, message: record } of entries.filter(isOpen)) {
         if (active.get(task)?.data.epoch === data.epoch) continue
-        const terminal = entries.some((entry) => entry.data.epoch === data.epoch &&
-          (entry.kind === 'satisfied' || entry.kind === 'dock' || entry.kind === 'released'))
+        const satisfied = entries.some((entry) => entry.data.epoch === data.epoch && entry.kind === 'satisfied')
+        const terminal = satisfied || entries.some((entry) => entry.data.epoch === data.epoch &&
+          (entry.kind === 'dock' || entry.kind === 'released'))
+        // A lapsed lease can still read as 'claimed' in thread history; the board decides.
+        if (satisfied && (message.task?.state === 'ready' || message.task?.state === 'claimed')) {
+          try {
+            await board.tasks.block(task, 'outcome satisfied; awaiting review', { kind: 'review' })
+          } catch (error) {
+            if (!(error instanceof BoardError && error.code === 'task_claimed')) throw error
+            pending = true
+            continue
+          }
+        }
         const at = now()
         if (!terminal && at >= data.hardEnd) {
           await dock(data)
@@ -170,6 +192,7 @@ export function createClaims({ board, channel, party, config, validate, now = Da
       }
     }
     pendingRecovery = pending
+    recovered = true
   }
 
   async function tick(): Promise<TickSummary> {
@@ -186,6 +209,6 @@ export function createClaims({ board, channel, party, config, validate, now = Da
     attach: (task: string, evidence: string) => serial(() => attach(task, evidence)),
     tick: () => serial(tick),
     recover: () => serial(() => recover()),
-    status: async (): Promise<ClaimStatus[]> => claimStatus(board, channel, party, now, (await board.me()).actor),
+    status: async (): Promise<ClaimStatus[]> => claimStatus(board, channel, party, config, now, (await board.me()).actor),
   }
 }

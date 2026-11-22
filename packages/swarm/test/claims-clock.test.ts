@@ -53,11 +53,14 @@ test('a four-hour miss must release immediately and never double-dock on tick or
 })
 
 test('reclaim cooldown must refuse until exactly fifteen minutes after hard end', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'] })
   const { service, ticket, at } = setup(t)
   const red = service()
   const id = await ticket()
   const claim = await red.claim(id)
   assert.ok(claim.ok)
+  // Recent-dock status compares board reply timestamps with the service clock.
+  t.mock.timers.tick(claim.hardEnd - Date.now())
   at(claim.hardEnd)
   await red.tick()
   const retryAt = claim.hardEnd + 15 * 60_000
@@ -79,6 +82,23 @@ test('even a valid outcome must not save a check starting at hard end', async (t
   // Start the tick before the cutoff, then cross it while the board renews the lease.
   at(claim.hardEnd - 1, claim.hardEnd)
   assert.equal((await red.tick()).docked, 1)
+  assert.equal((await state(id)).state, 'ready')
+  assert.equal(await docks(id), 1)
+})
+
+test('a valid answer arriving at hard end must release and dock, not satisfy', async (t) => {
+  let deadline = 0
+  const { service, ticket, at, state, docks } = setup(t, async () => {
+    at(deadline)
+    return { result: 'valid' }
+  })
+  const red = service()
+  const id = await ticket()
+  const claim = await red.claim(id)
+  assert.ok(claim.ok)
+  deadline = claim.hardEnd
+  at(deadline - 1)
+  assert.deepEqual(await red.tick(), { ...idle, renewed: 1, docked: 1 })
   assert.equal((await state(id)).state, 'ready')
   assert.equal(await docks(id), 1)
 })
@@ -187,4 +207,65 @@ test('recovery must dock an overdue claim abandoned by a crashed service exactly
   assert.equal(await docks(id), 1)
   await service().recover()
   assert.equal(await docks(id), 1)
+})
+
+test('first claim after restart must recover the miss before allowing reclaim', async (t) => {
+  const { service, ticket, at, docks } = setup(t)
+  const id = await ticket()
+  const claim = await service().claim(id)
+  assert.ok(claim.ok)
+  const afterEnd = claim.hardEnd + 60_000
+  t.mock.method(Date, 'now', () => afterEnd)
+  at(afterEnd)
+  assert.equal(await docks(id), 0)
+  assert.deepEqual(await service().claim(id), {
+    ok: false, code: 'reclaim_cooldown', retryAt: claim.hardEnd + 15 * 60_000,
+  })
+  assert.equal(await docks(id), 1)
+})
+
+async function interruptedSatisfaction(t: TestContext) {
+  const fixture = setup(t, async () => ({ result: 'valid' }), [async ({ write, next }) => {
+    await next()
+    if (write.kind === 'post' && write.labels['swarm.kind'] === 'satisfied') {
+      throw new HttpError(503, 'interrupted', 'interrupted after recording satisfaction')
+    }
+  }])
+  const { ticket, service, state, at } = fixture
+  // The red service actor also creates the task; recovery has no claim proof for an owner-only block.
+  const id = await ticket()
+  const red = service()
+  const claim = await red.claim(id)
+  assert.ok(claim.ok)
+  at(claim.claimedAt + 1)
+  await assert.rejects(red.tick(), (error) => error instanceof AggregateError && error.errors[0]?.code === 'interrupted')
+  const expired = Date.parse((await state(id)).claim!.until) + 1
+  return { ...fixture, id, expire: () => {
+    t.mock.method(Date, 'now', () => expired)
+    at(expired)
+  } }
+}
+
+test('recovery must restore the review hold after satisfaction was recorded and the lease elapsed', async (t) => {
+  const { team, service, id, expire, state } = await interruptedSatisfaction(t)
+  expire()
+  const { tasks } = await team.tasks.list({ channel, state: 'ready' })
+  assert.ok(tasks.some(({ message }) => message.id === id))
+  const red = service()
+  await red.recover()
+  assert.equal((await state(id)).blocked?.kind, 'review')
+  assert.deepEqual(await service('blue').claim(id), { ok: false, code: 'task_blocked' })
+  await team.tasks.unblock(id)
+  await red.recover()
+  assert.ok((await service('blue').claim(id)).ok)
+})
+
+test('a live lease must leave a recorded satisfaction pending for a later tick', async (t) => {
+  const { service, id, expire } = await interruptedSatisfaction(t)
+  const red = service()
+  await red.recover()
+  assert.deepEqual(await service('blue').claim(id), { ok: false, code: 'task_claimed' })
+  expire()
+  await red.tick()
+  assert.deepEqual(await service('blue').claim(id), { ok: false, code: 'task_blocked' })
 })
