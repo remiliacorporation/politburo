@@ -10,9 +10,11 @@ const browser = (window as unknown as import('happy-dom').Window).happyDOM
 let visit = 0
 let root: Root | undefined
 let close: (() => Promise<void>) | undefined
+const releaseGates: (() => void)[] = []
 
 afterEach(async () => {
   root?.unmount()
+  for (const release of releaseGates.splice(0)) release()
   await close?.()
   root = undefined
   close = undefined
@@ -141,7 +143,9 @@ it('opens peek from the URL with absolute claim time, tracker badges and overlap
 it('shows loading then the task-list refusal in Queue and peek without presenting an empty Home', async () => {
   const { create, open } = await workBoard()
   const { task } = await create(1, 'Task the reader cannot load')
+  const requested = Promise.withResolvers<void>()
   const respond = Promise.withResolvers<void>()
+  releaseGates.push(respond.resolve)
   const refusal = 'This board cannot list open tasks'
   const expectNoEmptyBoard = () => {
     const text = document.querySelector('main')?.textContent
@@ -150,22 +154,23 @@ it('shows loading then the task-list refusal in Queue and peek without presentin
   }
 
   await open(`?peek=${task.id}`, async () => {
+    requested.resolve()
     await respond.promise
     return Response.json({ error: { code: 'forbidden', message: refusal } }, { status: 403 })
   })
-  try {
-    await vi.waitFor(() => {
-      expect(queue().querySelector('[role="status"]')?.textContent).toBe('loading…')
-      expect(peek()?.textContent).toBe('loading…')
-    })
-    expectNoEmptyBoard()
-  } finally {
-    respond.resolve()
-  }
-
-  await vi.waitFor(() => expect(queue().querySelector('[role="status"]')?.textContent).toBe(refusal))
-  expect(peek()?.textContent).toBe(refusal)
+  await requested.promise
+  await vi.waitFor(() => {
+    expect(queue().querySelector('[role="status"]')?.textContent).toBe('loading…')
+    expect(peek()?.textContent).toBe('loading…')
+  })
   expectNoEmptyBoard()
+  respond.resolve()
+
+  await vi.waitFor(() => {
+    expect(queue().querySelector('[role="status"]')?.textContent).toBe(refusal)
+    expect(peek()?.textContent).toBe(refusal)
+    expectNoEmptyBoard()
+  })
 })
 
 it('replaces a peeked task deleted live with only the no-longer-on-board message', async () => {
@@ -309,10 +314,10 @@ it('holds the focused queue row at its viewport offset when Running now gains a 
   await vi.waitFor(() => {
     expect(running()?.querySelector('li a')?.textContent).toBe('First ready task')
     expect(headings()).toEqual(['Running', 'Ready to pull'])
+    // Running now adds a party, claimant and row; the queue adds a group heading.
+    expect(scroll.scrollTop).toBe(20 + 4 * blockHeight)
+    expect(row.getBoundingClientRect().top).toBe(top)
+    expect(document.activeElement).toBe(reading)
+    expect(peek()?.querySelector('h2')?.textContent).toBe('Reading this task')
   })
-  // Running now adds a party, claimant and row; the queue adds a group heading.
-  expect(scroll.scrollTop).toBe(20 + 4 * blockHeight)
-  expect(row.getBoundingClientRect().top).toBe(top)
-  expect(document.activeElement).toBe(reading)
-  expect(peek()?.querySelector('h2')?.textContent).toBe('Reading this task')
 })
