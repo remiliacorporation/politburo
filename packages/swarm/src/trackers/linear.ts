@@ -8,7 +8,7 @@ export type LinearOptions = {
   now?: () => Date | number | string
 }
 
-const fields = 'id identifier title url priority updatedAt state { name type } labels { nodes { name } } assignee { id }'
+const fields = 'id identifier title url priority updatedAt state { name type } labels { nodes { name } pageInfo { hasNextPage } } assignee { id }'
 const scanQuery = `query ScanIssues($key: String!, $cursor: String) {
   issues(filter: { team: { key: { eq: $key } } }, first: 100, after: $cursor, orderBy: updatedAt) {
     nodes { ${fields} }
@@ -58,6 +58,7 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
 }: LinearOptions): TrackerAdapter {
   const { kind, scope } = parseSourceId(source)
   if (kind !== 'linear') throw new TrackerError('bad_source')
+  const teamIdentifier = new RegExp(`^${scope}-[0-9]+$`)
 
   async function request(query: string, variables: Record<string, string | null>) {
     let credential: string | undefined
@@ -80,12 +81,13 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
     if (!isObject(item)) throw new TrackerError('bad_response')
     const { id, identifier, url, updatedAt, title, state, priority, labels, assignee } = item
     const assigneeId = assignee === null ? null : isObject(assignee) ? assignee.id : undefined
-    if (typeof id !== 'string' || !id || typeof identifier !== 'string' || !identifier
+    if (typeof id !== 'string' || !id || typeof identifier !== 'string'
       || typeof url !== 'string' || typeof title !== 'string'
       || typeof updatedAt !== 'string' || !Number.isFinite(Date.parse(updatedAt))
       || !isObject(state) || typeof state.name !== 'string' || typeof state.type !== 'string'
       || typeof priority !== 'number' || !Number.isInteger(priority) || priority < 0 || priority > 4
       || !isObject(labels) || !Array.isArray(labels.nodes)
+      || !isObject(labels.pageInfo) || labels.pageInfo.hasNextPage !== false
       || (assigneeId !== null && (typeof assigneeId !== 'string' || !assigneeId))) {
       throw new TrackerError('bad_response')
     }
@@ -114,6 +116,7 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
         throw new TrackerError('bad_response')
       }
       const items = issues.nodes.map(observation)
+      if (items.some(({ ref }) => !teamIdentifier.test(ref.displayId))) throw new TrackerError('bad_response')
       if (!hasNextPage) return { items, complete: true }
       if (!endCursor) throw new TrackerError('bad_response')
       return { items, nextCursor: endCursor, complete: false }
@@ -125,7 +128,8 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
       const { issue } = await data(response)
       if (issue === null) return 'gone'
       const result = observation(issue)
-      return result.ref.itemId === ref.itemId ? result : 'gone'
+      if (result.ref.itemId !== ref.itemId) return 'gone'
+      return teamIdentifier.test(result.ref.displayId) ? result : 'inaccessible'
     },
   }
 }

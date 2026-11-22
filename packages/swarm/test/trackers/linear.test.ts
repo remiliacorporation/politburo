@@ -46,6 +46,31 @@ test('Linear get rejects a matching issue or treats a null or mismatched issue a
   assert.equal(await adapter.get(ref(8)), 'gone', 'mismatched id')
 })
 
+test('Linear scan and get accept truncated labels or invalid label pagination', async (t) => {
+  const issue = linearIssue(7, 'triage', 1, ['work:plb-1'])
+  const ref = { source, itemId: issue.id, displayId: issue.identifier, url: issue.url }
+  const valid = await setup(t, { singleIssue: issue })
+  assert.deepEqual((await valid.scan()).items[0]?.labels, ['work:plb-1'])
+  const found = await valid.get(ref)
+  assert.ok(typeof found !== 'string')
+  assert.deepEqual(found.labels, ['work:plb-1'])
+
+  for (const [name, pageInfo] of [['truncated', { hasNextPage: true }], ['missing', undefined],
+    ['malformed', { hasNextPage: 'false' }]] as const) {
+    const adapter = await setup(t, { singleIssue: { ...issue, labels: { ...issue.labels, pageInfo } } })
+    await assert.rejects(adapter.scan(), { name: 'TrackerError', reason: 'bad_response' }, `scan: ${name}`)
+    await assert.rejects(adapter.get(ref), { name: 'TrackerError', reason: 'bad_response' }, `get: ${name}`)
+  }
+})
+
+test('Linear get and scan expose an issue outside the configured team', async (t) => {
+  const issue = linearIssue(7, 'triage', 1)
+  const adapter = await setup(t, { singleIssue: { ...issue, identifier: 'OTHER-7' } })
+  const ref = { source, itemId: issue.id, displayId: issue.identifier, url: issue.url }
+  assert.equal(await adapter.get(ref), 'inaccessible')
+  await assert.rejects(adapter.scan(), { name: 'TrackerError', reason: 'bad_response' })
+})
+
 for (const [failure, reason] of [['errors', 'bad_response'], ['rate', 'rate_limited'], [401, 'unauthorized'],
   [500, 'unavailable'], ['missing-labels', 'bad_response']] as const) {
   test(`Linear scan fails to report ${failure} as ${reason} or leaks its credential`, async (t) => {
