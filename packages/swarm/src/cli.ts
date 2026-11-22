@@ -93,4 +93,7 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+const args = process.argv.slice(2)
+process.exitCode = args[0] === 'mail'
+  ? await (await import('./mail/cli.ts')).runMail(args.slice(1))
+  : main(args)
