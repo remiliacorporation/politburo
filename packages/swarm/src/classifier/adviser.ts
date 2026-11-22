@@ -1,9 +1,6 @@
-import { execFile } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
-import { loadConfig } from '../config/load.ts'
 
 export type Usage = { input?: number; output?: number }
 
@@ -17,18 +14,18 @@ export function stubAdviser(fixedReply: string): Adviser {
   return { async advise() { return { text: fixedReply } } }
 }
 
+type Env = Record<string, string | undefined>
 type Run = (command: string, args: string[], options: {
   timeout: number
-  env: { PATH: string | undefined; HOME: string | undefined; PI_MODEL: string; PI_THINKING: string }
+  env: Env & { PI_MODEL: string; PI_THINKING: string }
 }) => Promise<{ stdout: string }>
 
-const exec: Run = promisify(execFile)
-
-// pi-task invocation, no-tools enforcement beyond the prompt, and usage parsing
-// are unverified until a real run. Use a fake run in tests.
-export function piAdviser({ run = exec, model = loadConfig().tiers.models.adviser, thinking }: {
-  run?: Run
-  model?: string
+// There is no live path. A real pi-task runner, no-tools enforcement, and usage
+// parsing must be added and verified before live use.
+export function piAdviser({ run, env, model, thinking }: {
+  run: Run
+  env: Env
+  model: string
   thinking: string
 }): Adviser {
   return {
@@ -40,7 +37,7 @@ export function piAdviser({ run = exec, model = loadConfig().tiers.models.advise
           await writeFile(file, packet, { mode: 0o600 })
           const { stdout } = await run('pi-task', [file], {
             timeout: adviserTimeoutMs,
-            env: { PATH: process.env.PATH, HOME: process.env.HOME, PI_MODEL: model, PI_THINKING: thinking },
+            env: { ...env, PI_MODEL: model, PI_THINKING: thinking },
           })
           return { text: stdout }
         } finally {

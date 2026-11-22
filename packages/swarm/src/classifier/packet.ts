@@ -74,6 +74,16 @@ function isOneOf<T extends string>(values: readonly T[], value: unknown): value 
   return typeof value === 'string' && values.some((item) => item === value)
 }
 
+export function validateAnswer(value: unknown): Answer | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 4) return
+  const { advice, next_step, need_facts, confidence } = value as Record<string, unknown>
+  if (typeof advice !== 'string' || advice.length > 600 || containsCredential(advice)) return
+  if (!isOneOf(nextSteps, next_step) || !isOneOf(confidences, confidence)) return
+  if (!Array.isArray(need_facts) || need_facts.length > 5 || (next_step !== 'need_facts' && need_facts.length)) return
+  if (!need_facts.every((fact) => typeof fact === 'string' && fact.length <= 120 && !containsCredential(fact))) return
+  return { advice, next_step, need_facts, confidence }
+}
+
 export function parseAnswer(text: string): Answer | undefined {
   if (typeof text !== 'string') return
   let value: unknown
@@ -82,14 +92,8 @@ export function parseAnswer(text: string): Answer | undefined {
   } catch {
     return undefined
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 4) return
-  const { advice, next_step, need_facts, confidence } = value as Record<string, unknown>
-  if (typeof advice !== 'string' || advice.length > 600 || containsCredential(advice)) return
-  if (!isOneOf(nextSteps, next_step) || !isOneOf(confidences, confidence)) return
-  if (!Array.isArray(need_facts) || need_facts.length > 5 || (next_step !== 'need_facts' && need_facts.length)) return
-  if (!need_facts.every((fact) => typeof fact === 'string' && fact.length <= 120 && !containsCredential(fact))) return
   // The shape is flat. Count keys in the original JSON so duplicates cannot pass after JSON.parse collapses them.
   const strings = text.matchAll(/"(?:[^"\\]|\\[\s\S])*"\s*(:)?/g)
   if ([...strings].filter((match) => match[1]).length !== 4) return
-  return { advice, next_step, need_facts, confidence }
+  return validateAnswer(value)
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -71,13 +71,19 @@ test('a diff, fenced code, private key header, or bearer token leaks into a pack
 test('a repeated case calls the adviser again or loses its audited packet hash or answer', async (t) => {
   const dir = await tempDir(t)
   const packets: string[] = []
-  const adviser: Adviser = { async advise(packet) { packets.push(packet); return { text: reply } } }
+  let outcomesAtCall: string[] | undefined
+  const adviser: Adviser = { async advise(packet) {
+    outcomesAtCall = readAudit(dir).map((record) => record.outcome)
+    packets.push(packet)
+    return { text: reply }
+  } }
   const first = await terra(dir, adviser).advise(exception)
+  assert.deepEqual(outcomesAtCall, ['pending'], 'pending must be visible before the call')
   assert.deepEqual(first, { status: 'answered', answer, audited: true })
   assert.equal(packets.length, 1)
   const records = readAudit(dir)
-  assert.equal(records.length, 1)
-  const record = records[0]!
+  assert.deepEqual(records.map((record) => record.outcome), ['pending', 'answered'])
+  const record = records[1]!
   assert.equal(record.case_id, exception.id)
   assert.equal(record.revision, exception.revision)
   assert.equal(record.packet_sha256, createHash('sha256').update(packets[0]!).digest('hex'))
@@ -99,7 +105,7 @@ test('a new revision is mistaken for an already advised case', async (t) => {
   const result = await service.advise({ ...exception, revision: 2 })
   assert.equal(calls, 2)
   assert.deepEqual(result, { status: 'answered', answer: updated, audited: true })
-  assert.deepEqual(readAudit(dir).map((record) => record.revision), [1, 2])
+  assert.deepEqual(readAudit(dir).map((record) => record.revision), [1, 1, 2, 2])
 })
 
 test('an adviser exception fails to wake the spawner or is not audited as unavailable', async (t) => {
@@ -107,7 +113,8 @@ test('an adviser exception fails to wake the spawner or is not audited as unavai
   const result = await terra(dir, { async advise() { throw new Error('test adviser failed') } }).advise(exception)
   assert.equal(result.status, 'wake_spawner')
   assert.ok(!('answer' in result))
-  assert.deepEqual(readAudit(dir).map((record) => [record.outcome, 'answer' in record]), [['unavailable', false]])
+  assert.deepEqual(readAudit(dir).map((record) => [record.outcome, 'answer' in record]),
+    [['pending', false], ['unavailable', false]])
 })
 
 test('an out-of-format answer is accepted or is not audited as invalid', async (t) => {
@@ -126,7 +133,7 @@ test('an out-of-format answer is accepted or is not audited as invalid', async (
     assert.ok(!('answer' in result), revision)
   }
   assert.deepEqual(readAudit(dir).map((record) => [record.revision, record.outcome, 'answer' in record]),
-    Object.keys(invalid).map((revision) => [revision, 'invalid', false]))
+    Object.keys(invalid).flatMap((revision) => [[revision, 'pending', false], [revision, 'invalid', false]]))
 })
 
 test('an ineligible kind reaches the adviser instead of being refused', async (t) => {
@@ -139,36 +146,96 @@ test('an ineligible kind reaches the adviser instead of being refused', async (t
   assert.deepEqual(readAudit(dir).map((record) => record.outcome), ['refused'])
 })
 
-test('a failed audit write loses the answer or is hidden from the caller', async (t) => {
-  const file = join(await tempDir(t), 'not-a-directory')
-  await writeFile(file, '')
-  const result = await terra(file).advise(exception)
-  assert.equal(result.status, 'answered')
-  assert.deepEqual(result.answer, answer)
-  assert.equal(result.audited, false)
-  assert.match(result.reason, /audit write failed/i)
+test('concurrent callers invoke the adviser twice or receive different results', async (t) => {
+  const dir = await tempDir(t)
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let calls = 0
+  const adviser: Adviser = { async advise() {
+    calls++
+    entered.resolve()
+    await release.promise
+    return { text: reply }
+  } }
+  const first = terra(dir, adviser).advise(exception)
+  await entered.promise
+  const second = terra(dir, adviser).advise(exception)
+  release.resolve()
+  const expected = { status: 'answered', answer, audited: true }
+  assert.deepEqual(await Promise.all([first, second]), [expected, expected])
+  assert.equal(calls, 1)
 })
 
-test('pi retains or exposes the packet file or inherits the parent environment', async (t) => {
-  const sentinel = `SWARM_TERRA_TEST_${randomUUID()}`
-  process.env[sentinel] = 'synthetic-test-secret'
-  t.after(() => { delete process.env[sentinel] })
+const auditCase = { case_id: exception.id, revision: exception.revision }
+const pendingRecord = JSON.stringify({ ...auditCase, outcome: 'pending', reason: null })
+
+test('replay calls again after an unfinished adviser call', async (t) => {
+  const dir = await tempDir(t)
+  await writeFile(join(dir, 'terra.jsonl'), `${pendingRecord}\n`)
+  let calls = 0
+  const service = terra(dir, { async advise() { calls++; return { text: reply } } })
+  assert.deepEqual(await service.advise(exception), { status: 'wake_spawner', reason: 'uncertain_previous_call' })
+  assert.equal(calls, 0)
+})
+
+test('replay trusts an answered record with a bad or missing answer', async (t) => {
+  const dir = await tempDir(t)
+  const answered = { ...auditCase, outcome: 'answered', reason: null }
+  const bad = { ...answered, answer: { ...answer, next_step: 'merge' } }
+  const missing = { ...answered, revision: 2 }
+  await writeFile(join(dir, 'terra.jsonl'), `${JSON.stringify(bad)}\n${JSON.stringify(missing)}\n`)
+  let calls = 0
+  const service = terra(dir, { async advise() { calls++; return { text: reply } } })
+  for (const revision of [1, 2]) {
+    assert.deepEqual(await service.advise({ ...exception, revision }), { status: 'wake_spawner', reason: 'corrupt_audit' })
+  }
+  assert.equal(calls, 0)
+})
+
+test('an unreadable middle line does not block replay or new calls', async (t) => {
+  const dir = await tempDir(t)
+  const answered = JSON.stringify({ ...auditCase, outcome: 'answered', reason: null, answer })
+  await writeFile(join(dir, 'terra.jsonl'), `${answered}\n{\n${pendingRecord}\n`)
+  let calls = 0
+  const service = terra(dir, { async advise() { calls++; return { text: reply } } })
+  for (const revision of [1, 2]) {
+    assert.deepEqual(await service.advise({ ...exception, revision }), { status: 'wake_spawner', reason: 'corrupt_audit' })
+  }
+  assert.equal(calls, 0)
+})
+
+test('a torn tail blocks new advice or turns into middle-line corruption on append', async (t) => {
+  const dir = await tempDir(t)
+  await writeFile(join(dir, 'terra.jsonl'), `${pendingRecord}\n{`)
+  const updated = { ...exception, revision: 2 }
+  const answered = { status: 'answered', answer, audited: true }
+  assert.deepEqual(await terra(dir).advise(updated), answered)
+  assert.deepEqual(await terra(dir, stubAdviser('')).advise(updated), answered)
+  assert.deepEqual(await terra(dir).advise(exception), { status: 'wake_spawner', reason: 'uncertain_previous_call' })
+})
+
+test('a failed pending write still lets the adviser run', async (t) => {
+  const dir = await tempDir(t)
+  await symlink(join(dir, 'missing', 'audit'), join(dir, 'terra.jsonl'))
+  let calls = 0
+  const result = await terra(dir, { async advise() { calls++; return { text: reply } } }).advise(exception)
+  assert.deepEqual(result, { status: 'wake_spawner', reason: 'audit write failed' })
+  assert.equal(calls, 0)
+})
+
+test('pi retains or exposes the packet file or passes more than the explicit environment', async (t) => {
   const packet = compilePacket(exception)
-  let observed: { file: string; text: string; mode: number; envKeys: string[]; hasSentinel: boolean } | undefined
-  const adviser = piAdviser({ model: 'test-model', thinking: 'low', async run(_command, [file], { env }) {
+  let observed: { file: string; text: string; mode: number; env: Record<string, string | undefined> } | undefined
+  const adviser = piAdviser({ env: { FIXTURE: 'explicit' }, model: 'test-model', thinking: 'low', async run(_command, [file], { env }) {
     assert.ok(file && dirname(dirname(file)) === tmpdir(), 'expected a temporary packet file')
     t.after(() => rm(dirname(file), { recursive: true, force: true }))
-    observed = {
-      file, text: await readFile(file, 'utf8'), mode: (await stat(file)).mode & 0o777,
-      envKeys: env ? Object.keys(env).sort() : [], hasSentinel: !!env && sentinel in env,
-    }
+    observed = { file, text: await readFile(file, 'utf8'), mode: (await stat(file)).mode & 0o777, env }
     return { stdout: reply }
   } })
   assert.deepEqual(await adviser.advise(packet), { text: reply })
   assert.ok(observed)
   assert.equal(observed.text, packet)
   assert.equal(observed.mode, 0o600)
-  assert.equal(observed.hasSentinel, false, 'the parent secret was passed to pi')
-  assert.deepEqual(observed.envKeys, ['HOME', 'PATH', 'PI_MODEL', 'PI_THINKING'])
+  assert.deepEqual(observed.env, { FIXTURE: 'explicit', PI_MODEL: 'test-model', PI_THINKING: 'low' })
   await assert.rejects(stat(observed.file), { code: 'ENOENT' })
 })

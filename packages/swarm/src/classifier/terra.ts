@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { adviserTimeoutMs, type Adviser, type Usage } from './adviser.ts'
-import { appendAudit, readAudit, sha256, type Decision } from './audit.ts'
-import { compilePacket, containsCredential, estimateTokens, parseAnswer, type Answer, type TerraCase } from './packet.ts'
+import { appendAudit, readAudit, sha256, type AuditDecision, type Decision } from './audit.ts'
+import { compilePacket, containsCredential, estimateTokens, parseAnswer, validateAnswer, type Answer, type TerraCase } from './packet.ts'
 
 export { piAdviser, stubAdviser, type Adviser, type Usage } from './adviser.ts'
 export { readAudit, type AuditRecord } from './audit.ts'
@@ -48,10 +48,8 @@ function reportedUsage(usage: Usage | undefined): Usage | undefined {
   return Object.keys(counts).length ? counts : undefined
 }
 
-// Share in-flight work within the service; the audit log replays completed cases.
-// If the log could not be written, keep that outcome for the life of the process.
+// Share in-flight work across handles to the same audit log in this process.
 const pending = new Map<string, Promise<Result>>()
-const unaudited = new Map<string, Result>()
 
 export function createTerra({ adviser, dir, model, maxTokens, now = () => new Date() }: {
   adviser: Adviser
@@ -60,16 +58,25 @@ export function createTerra({ adviser, dir, model, maxTokens, now = () => new Da
   maxTokens?: number
   now?: () => Date
 }) {
-  async function evaluate(input: TerraCase, key: string): Promise<Result> {
+  async function evaluate(input: TerraCase): Promise<Result> {
     const { id, revision, kind } = input
     try {
-      const first = readAudit(dir).find((record) => record.case_id === id && record.revision === revision)
-      if (first) return result(first, true)
+      const last = readAudit(dir).findLast((record) => record.case_id === id && record.revision === revision)
+      if (last?.outcome === 'pending') return wake('uncertain_previous_call')
+      if (last?.outcome === 'answered' && !validateAnswer(last.answer)) return wake('corrupt_audit')
+      if (last) return result(last, true)
     } catch {
-      // An audit I/O failure must not block advice or leak the filesystem error.
+      return wake('corrupt_audit')
     }
 
     let packet = ''
+    const safe = (text: string) => containsCredential(text) ? '[withheld]' : text
+    const write = (decision: AuditDecision, usage?: Usage) => appendAudit(dir, {
+      at: now().toISOString(), case_id: safe(id),
+      revision: typeof revision === 'string' ? safe(revision) : revision,
+      kind: safe(kind), packet_sha256: sha256(packet), packet_tokens_est: estimateTokens(packet),
+      packet, model: safe(model), ...decision, ...(usage ? { usage } : {}),
+    })
     let decision: Decision = { outcome: 'refused', reason: 'case kind is not an eligible semantic exception' }
     let usage: Usage | undefined
     if (eligibleKinds.has(kind)) {
@@ -79,6 +86,11 @@ export function createTerra({ adviser, dir, model, maxTokens, now = () => new Da
         decision = { outcome: 'refused', reason: 'case packet could not fit the size cap or failed content screening' }
       }
       if (packet) {
+        try {
+          write({ outcome: 'pending', reason: null })
+        } catch {
+          return wake('audit write failed')
+        }
         try {
           const reply = await ask(adviser, packet)
           usage = reportedUsage(reply.usage)
@@ -92,18 +104,10 @@ export function createTerra({ adviser, dir, model, maxTokens, now = () => new Da
       }
     }
 
-    const safe = (text: string) => containsCredential(text) ? '[withheld]' : text
     try {
-      appendAudit(dir, {
-        at: now().toISOString(), case_id: safe(id),
-        revision: typeof revision === 'string' ? safe(revision) : revision,
-        kind: safe(kind), packet_sha256: sha256(packet), packet_tokens_est: estimateTokens(packet),
-        packet, model: safe(model), ...decision, ...(usage ? { usage } : {}),
-      })
+      write(decision, usage)
     } catch {
-      const outcome = result(decision, false)
-      unaudited.set(key, outcome)
-      return outcome
+      return result(decision, false)
     }
     return result(decision, true)
   }
@@ -112,11 +116,9 @@ export function createTerra({ adviser, dir, model, maxTokens, now = () => new Da
     async advise(input: TerraCase): Promise<Result> {
       try {
         const key = JSON.stringify([resolve(dir), input.id, input.revision])
-        const previous = unaudited.get(key)
-        if (previous) return structuredClone(previous)
         let work = pending.get(key)
         if (!work) {
-          work = Promise.resolve().then(() => evaluate(input, key)).finally(() => pending.delete(key))
+          work = Promise.resolve().then(() => evaluate(input)).finally(() => pending.delete(key))
           pending.set(key, work)
         }
         return structuredClone(await work)
