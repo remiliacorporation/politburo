@@ -139,6 +139,9 @@ importers:
 
   packages/swarm:
     dependencies:
+      '@vercel/board':
+        specifier: workspace:^
+        version: link:../board
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
