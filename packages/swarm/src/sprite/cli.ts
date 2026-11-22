@@ -1,4 +1,6 @@
-import { closeSync, fchmodSync, openSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { closeSync, fchmodSync, openSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { buildSetup } from './build.ts'
 
@@ -40,12 +42,19 @@ export function runSetup(args: string[]): number {
     if (out === undefined) {
       process.stdout.write(text)
     } else {
-      const fd = openSync(out, 'w', 0o644)
+      const temp = join(realpathSync.native(dirname(out)), `.swarm-setup-${randomUUID()}.tmp`)
+      const fd = openSync(temp, 'wx', 0o644)
       try {
-        writeFileSync(fd, text)
-        fchmodSync(fd, 0o644)
-      } finally {
-        closeSync(fd)
+        try {
+          writeFileSync(fd, text)
+          fchmodSync(fd, 0o644)
+        } finally {
+          closeSync(fd)
+        }
+        renameSync(temp, out)
+      } catch (error) {
+        rmSync(temp, { force: true })
+        throw error
       }
       console.log(`wrote ${out} (v${version} sha256:${hash.slice(0, 12)})`)
     }

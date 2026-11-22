@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
+  copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
+  statSync, symlinkSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -52,6 +53,42 @@ test('setup build --out writes different bytes or misreports the pin', (t) => {
   assert.equal(result.status, 0)
   assert.ok(readFileSync(out).equals(Buffer.from(text)), '--out differs from stdout')
   assert.equal(result.stdout, `wrote ${out} (v11 sha256:${hash})\n`)
+})
+
+test('setup build --out does not write through a symlink at the target', (t) => {
+  const dir = tempDir(t)
+  const victim = join(dir, 'victim')
+  const out = join(dir, 'setup.sh')
+  writeFileSync(victim, 'unchanged\n', { mode: 0o600 })
+  symlinkSync(victim, out)
+
+  const result = run(['build', '--out', out])
+  assert.equal(result.status, 0)
+  assert.ok(readFileSync(victim, 'utf8') === 'unchanged\n', 'symlink target was overwritten')
+  assert.equal(mode(victim), 0o600)
+  assert.ok(lstatSync(out).isFile(), '--out did not replace the symlink with a regular file')
+  assert.ok(readFileSync(out, 'utf8') === build(), '--out differs from stdout')
+})
+
+test('setup build refuses a marker outside its allowlist', (t) => {
+  const dir = tempDir(t)
+  mkdirSync(join(dir, 'src/sprite'), { recursive: true })
+  mkdirSync(join(dir, 'sprite'))
+  for (const file of ['build.ts', 'cli.ts']) {
+    copyFileSync(new URL(`../src/sprite/${file}`, import.meta.url), join(dir, 'src/sprite', file))
+  }
+  writeFileSync(join(dir, 'sprite/models-store.json'), '{}\n')
+  writeFileSync(join(dir, 'sprite/pi-task'), 'fixture\n')
+  for (const marker of ['@@file:models-store.json@@', '@@gz:pi-task@@', '@@gz:setup.sh.in@@']) {
+    writeFileSync(join(dir, 'sprite/setup.sh.in'), `#!/bin/bash\n${marker}\n`)
+    const result = spawnSync(process.execPath, [
+      '--input-type=module', '--eval',
+      "import { runSetup } from './src/sprite/cli.ts'; process.exitCode = runSetup(['build'])",
+    ], { cwd: dir, encoding: 'utf8', env: {} })
+    if (result.error) throw result.error
+    assert.equal(result.status, 1, `${marker} was not refused`)
+    assert.equal(result.stderr, `error: unknown setup template marker ${marker}\n`)
+  }
 })
 
 test('setup misuse loses its exit code or stderr usage', () => {
