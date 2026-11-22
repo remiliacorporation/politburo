@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { captureCloud } from './capture-cloud/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm capture-cloud <serve|issue|bind>'
 
 class ReadError extends Error {}
 
@@ -32,7 +33,7 @@ function misuse(message: string): number {
   return 2
 }
 
-function main(args: string[]): number {
+function main(args: string[]): number | Promise<number> {
   const [command, action, ...flags] = args
   if (
     (args.length === 1 && command === '--help') ||
@@ -42,6 +43,7 @@ function main(args: string[]): number {
     return 0
   }
   if (command === undefined) return misuse('missing command')
+  if (command === 'capture-cloud') return captureCloud(args.slice(1))
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {
@@ -93,4 +95,4 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+process.exitCode = await main(process.argv.slice(2))
