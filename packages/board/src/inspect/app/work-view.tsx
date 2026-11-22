@@ -75,7 +75,8 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   const viewer = useMemo(() => state.openTaskMe && board.viewerOf(state.openTaskMe), [state.openTaskMe])
   const latest = useMemo(() => projectWork(state, records, viewer, now), [state, records, viewer, now])
   const errors = new Set(viewer ? Object.values(state.openTaskAttentionRefusals) : [])
-  if (state.tasksRefused !== null) errors.add(state.tasksRefused)
+  const readStatus = state.tasksRefused ?? (state.tasksCounted ? null : 'loading…')
+  const statusClass = state.tasksRefused === null ? undefined : 'error'
   for (const { root } of latest.rows) {
     const { readError } = attentionFor(state, root, viewer)
     if (readError !== null) errors.add(readError)
@@ -96,10 +97,11 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
       : []
   }
   const selected = selectionInList()
-  const anchor = rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean) ?? (frozen ? selection : null)
-  // Keep the slice-1 visual anchor when reading the list alone. With a peek open,
-  // leave the shared scroll position (and the independently scrollable pane) alone.
-  useHoldPosition(list, peekId === null ? anchor : undefined, 'data-work-row')
+  // Hold the row being read even with peek open; only fall back to the keyboard
+  // selection when reading the list alone.
+  const anchor = rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean) ??
+    (frozen && peekId === null ? selection : null)
+  useHoldPosition(list, anchor, 'data-work-row')
   const release = (target: EventTarget | null) => {
     if (hovered.current || target === field.current ||
         (target instanceof Node && (list.current?.contains(target) || pane.current?.contains(target)))) return
@@ -270,13 +272,17 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
           ))}
         </div>}
         {help && <KeyHelp row={selectedRow} />}
-        {filtering && <p role="status">{shown.length} of {scope.length} rows</p>}
-        <p className="work-counts">
-          {inView('needs') && <><a href="#work-needs">{counts.needs} need you</a> · </>}
-          {inView('review') && <><a href="#work-review">{counts.review} ready to review</a> · </>}
-          {inView('running') && <><a href="#work-running">{counts.running} running</a> · </>}
-          <a href="#work-health">{health.total.expiring} expiring in 30 min</a>
-        </p>
+        {readStatus === null && (
+          <>
+            {filtering && <p role="status">{shown.length} of {scope.length} rows</p>}
+            <p className="work-counts">
+              {inView('needs') && <><a href="#work-needs">{counts.needs} need you</a> · </>}
+              {inView('review') && <><a href="#work-review">{counts.review} ready to review</a> · </>}
+              {inView('running') && <><a href="#work-running">{counts.running} running</a> · </>}
+              <a href="#work-health">{health.total.expiring} expiring in 30 min</a>
+            </p>
+          </>
+        )}
         <p role="status">{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
         <div className="work-layout">
           <div ref={list} tabIndex={-1} aria-label="Work board tasks" className="work-list"
@@ -297,44 +303,54 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
               hoveredKey.current = undefined
               release(document.activeElement)
             }}>
-            {inView('needs') && <HomeSection id="work-needs" title="Needs you" empty="nothing needs you" present={!!home.needs.length}>
-              {!collapsed.has('needs') && <ul role="list">{home.needs.map((row) => showRow(row, 'home'))}</ul>}
-            </HomeSection>}
-            {inView('review') && <HomeSection id="work-review" title="Ready to review" empty="nothing to review" present={!!home.review.length}>
-              {!collapsed.has('review') && <ul role="list">{home.review.map((row) => showRow(row, 'home', <Ago iso={row.root.createdAt} now={now} prefix="open " />))}</ul>}
-            </HomeSection>}
-            {inView('running') && <HomeSection id="work-running" title="Running now" empty="nothing running" present={!!home.running.length}>
-              {!collapsed.has('running') && home.running.map(({ party, cells }) => (
-                <div key={party.id}>
-                  <h3><PartyName party={party} /></h3>
-                  {cells.map(({ claimant, rows }) => (
-                    <div key={claimant}>
-                      <h4>{claimant ? nameOf(state, claimant) : 'unclaimed'}</h4>
-                      <ul role="list">{rows.map(({ row, liveness }) => showRow(row, 'home', liveness))}</ul>
+            {readStatus === null && (
+              <>
+                {inView('needs') && <HomeSection id="work-needs" title="Needs you" empty="nothing needs you" present={!!home.needs.length}>
+                  {!collapsed.has('needs') && <ul role="list">{home.needs.map((row) => showRow(row, 'home'))}</ul>}
+                </HomeSection>}
+                {inView('review') && <HomeSection id="work-review" title="Ready to review" empty="nothing to review" present={!!home.review.length}>
+                  {!collapsed.has('review') && <ul role="list">{home.review.map((row) => showRow(row, 'home', <Ago iso={row.root.createdAt} now={now} prefix="open " />))}</ul>}
+                </HomeSection>}
+                {inView('running') && <HomeSection id="work-running" title="Running now" empty="nothing running" present={!!home.running.length}>
+                  {!collapsed.has('running') && home.running.map(({ party, cells }) => (
+                    <div key={party.id}>
+                      <h3><PartyName party={party} /></h3>
+                      {cells.map(({ claimant, rows }) => (
+                        <div key={claimant}>
+                          <h4>{claimant ? nameOf(state, claimant) : 'unclaimed'}</h4>
+                          <ul role="list">{rows.map(({ row, liveness }) => showRow(row, 'home', liveness))}</ul>
+                        </div>
+                      ))}
                     </div>
                   ))}
-                </div>
-              ))}
-            </HomeSection>}
-            <HomeSection id="work-health" title="Health and spend" empty="no health data" present={!!health.perParty.length}>
-              <Health health={health} />
-            </HomeSection>
+                </HomeSection>}
+                <HomeSection id="work-health" title="Health and spend" empty="no health data" present={!!health.perParty.length}>
+                  <Health health={health} />
+                </HomeSection>
+              </>
+            )}
             <div className="home-queue work-queue">
               <h2 id="work-queue-queue" tabIndex={-1}>Queue</h2>
-              {groups.map(({ group, rows }) => (
-                <section key={group}>
-                  <h3 id={`work-queue-${group}`} tabIndex={-1}>{workGroupTitle(group)} ({rows.length}) <small>{collapsed.has(group) ? 'collapsed' : RULES[group]}</small></h3>
-                  {!collapsed.has(group) && rows.length > 0 && <ul role="list">{rows.map((row) => showRow(row, 'queue'))}</ul>}
-                </section>
-              ))}
-              {shown.length === 0 && filtering && <p role="status">no rows match</p>}
-              {shown.length === 0 && !filtering && errors.size === 0 && <p role="status">{state.tasksCounted ? 'nothing on the board' : 'loading…'}</p>}
-              {[...errors].map((error) => <p key={error} role="status" className="error">{error}</p>)}
+              {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p> : (
+                <>
+                  {groups.map(({ group, rows }) => (
+                    <section key={group}>
+                      <h3 id={`work-queue-${group}`} tabIndex={-1}>{workGroupTitle(group)} ({rows.length}) <small>{collapsed.has(group) ? 'collapsed' : RULES[group]}</small></h3>
+                      {!collapsed.has(group) && rows.length > 0 && <ul role="list">{rows.map((row) => showRow(row, 'queue'))}</ul>}
+                    </section>
+                  ))}
+                  {shown.length === 0 && filtering && <p role="status">no rows match</p>}
+                  {shown.length === 0 && !filtering && errors.size === 0 && <p role="status">nothing on the board</p>}
+                  {[...errors].map((error) => <p key={error} role="status" className="error">{error}</p>)}
+                </>
+              )}
             </div>
           </div>
           {peekId !== null && (
             <aside ref={pane} id="work-peek" className="work-peek" aria-label="Work peek" onBlur={(event) => release(event.relatedTarget)}>
-              {peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} /> : <p role="status">no longer on the board</p>}
+              {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p>
+                : peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} />
+                : <p role="status">no longer on the board</p>}
             </aside>
           )}
         </div>

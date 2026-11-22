@@ -85,6 +85,17 @@ it('counts a claim due in 20 minutes but not 40 as expiring, and a lapsed claim 
   expect(home([lapsed]).counts.running).toBe(0)
 })
 
+it('counts a lapsed claim in Needs you once in Health and never as Running', () => {
+  const fixtures = records({ 'wp-1': { contract: 'invalid' } })
+  const { groups, rows } = projectWork(snapshot([claimed(1, -60_000)]), fixtures, viewer, now)
+  expect(groups.map(({ title }) => title)).toEqual(['Needs you'])
+  const home = homeOf(rows, fixtures, now)
+  expect(home.needs.map(({ title }) => title)).toEqual(['Task 1'])
+  expect(home.health.total.stale).toBe(1)
+  expect(home.counts.running).toBe(0)
+  expect(home.running).toEqual([])
+})
+
 it('never shows a cached task outside the readable open list or a deleted task', () => {
   const visible = task(1)
   const absent = task(2)
