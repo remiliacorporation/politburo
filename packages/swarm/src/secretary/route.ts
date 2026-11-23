@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { compareReceipt, fileMailTag, type FileMailItem } from './filemail.ts'
+import { hashKey as key } from './hash.ts'
 import { parseHeader, type SwarmMessage, type Urgency } from './message.ts'
 import { redact } from './redact.ts'
 
@@ -55,10 +56,6 @@ export function route<T extends Pick<SwarmMessage, 'urgency'>>(header: T): Lane 
   if (header.urgency === 'p0') return 'p0_now'
   if (header.urgency === 'p1') return 'p1_batch'
   return 'digest'
-}
-
-function key(...parts: unknown[]): string {
-  return createHash('sha256').update(JSON.stringify(parts)).digest('hex')
 }
 
 function safeHeader({ id, class: mailClass, urgency, from, ref, summary, at }: SwarmMessage): MailHeader {
@@ -156,7 +153,14 @@ export function createRouter(opts: RouterOptions, repo?: string) {
     const previous = tuple !== undefined ? latest.get(tuple) : undefined
     const order = previous ? Date.parse(message.at) - Date.parse(previous.header.at) : 1
     const newer = order > 0 || (order === 0 && message.urgency !== 'p0')
-    if (message.urgency !== 'p0' && !newer) return record('reject', 'older_at')
+    if (message.urgency !== 'p0') {
+      if (order < 0) return record('reject', 'older_at')
+      if (previous && order === 0) {
+        const urgency = message.urgency.localeCompare(previous.header.urgency)
+        if (urgency > 0) return record('reject', 'less_urgent_same_at')
+        if (urgency === 0 && compareReceipt(item, previous) < 0) return record('reject', 'older_receipt_same_at')
+      }
+    }
     const decision = record(previous ? 'revision' : 'accept')
     const receiptStart = Math.floor(receivedAt / digestMs) * digestMs
     const receiptWindow = key('digest', repo ?? fileMailTag(file), receiptStart, receiptStart + digestMs)

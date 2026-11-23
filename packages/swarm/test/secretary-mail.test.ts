@@ -140,16 +140,16 @@ test('dedupe distinguishes revisions, older mail, identical replays and ID colli
   const decisions = router.ingest(arrivals, start + min)
   assert.deepEqual(decisions.map(({ kind, reason }) => [kind, reason]), [
     ['accept', undefined], ['revision', undefined], ['duplicate', undefined], ['reject', 'older_at'],
-    ['reject', 'id_collision'], ['revision', undefined], ['reject', 'id_collision'],
+    ['reject', 'id_collision'], ['reject', 'less_urgent_same_at'], ['reject', 'id_collision'],
     ['accept', undefined], ['accept', undefined], ['accept', undefined],
   ])
-  assert.deepEqual(router.due(start + 11 * min).p1.map(({ items }) => items.map(({ id }) => id)), [])
+  assert.deepEqual(router.due(start + 11 * min).p1.map(({ items }) => items.map(({ id }) => id)), [['revision']])
   const followup = mail('followup', { ref, urgency: 'p1', at: iso(start + min) }, start + 12 * min)
   assert.equal(router.ingest([followup], start + 12 * min)[0]?.kind, 'revision')
   const { p1, digests } = router.due(start + 30 * min)
   assert.deepEqual(p1.map(({ items }) => items.map(({ id }) => id)), [['followup']])
   assert.deepEqual(digests.map(({ items }) => items.map(({ summary }) => summary).sort()), [
-    ['followup', 'other-class', 'other-ref', 'other-sender'],
+    ['followup', 'other-class', 'other-ref', 'other-sender', 'revision'],
   ])
 })
 
@@ -531,30 +531,55 @@ test('optional Tigeryard header fields and a missing ref are accepted rather tha
   assert.ok(digests[0]?.items.every((entry) => !('ref' in entry)))
 })
 
-test('same-at p2 then p1 with the same from/ref/class in the same minute forwards p1 on warm and fresh routers', async (t) => {
-  const { root, put } = await inbox(t)
+test('same-at escalation forwards once on warm and fresh routers in either filename order', async (t) => {
   const shared = { from: 'sprite', ref: 'task=1', class: 'policy', at: iso(start) }
-  await put('a-routine.md', fenced(raw('routine-p2', { ...shared, urgency: 'p2', summary: 'routine' })), start)
-  const warm = createRouter(options)
-  warm.ingest(await readFileMail(root, 'abc'), start)
-  await put('b-escalate.md', fenced(raw('escalate-p1', { ...shared, urgency: 'p1', summary: 'escalate' })), start)
-  const files = await readFileMail(root, 'abc')
+  const routine = fenced(raw('routine-p2', { ...shared, urgency: 'p2', summary: 'routine' }))
+  const escalate = fenced(raw('escalate-p1', { ...shared, urgency: 'p1', summary: 'escalate' }))
   const now = start + 10 * min
-  for (const [label, router] of [['warm', warm], ['fresh', createRouter(options)]] as const) {
-    const decisions = router.ingest(files, now)
-    assert.equal(decisions.find((row) => row.id === 'escalate-p1')?.kind, 'revision', label)
+  for (const label of ['warm', 'fresh routine first', 'fresh escalation first']) {
+    const { root, put } = await inbox(t)
+    const router = createRouter(options)
+    const routineFirst = label === 'fresh routine first'
+    await put(routineFirst ? 'a.md' : 'z.md', routine, start)
+    if (label === 'warm') {
+      assert.equal(router.ingest(await readFileMail(root, 'abc'), start)[0]?.kind, 'accept')
+      assert.deepEqual(router.due(start).p1, [])
+    }
+    await put(routineFirst ? 'z.md' : 'a.md', escalate, start)
+    const decisions = router.ingest(await readFileMail(root, 'abc'), now)
+    assert.equal(decisions.find((row) => row.id === 'escalate-p1')?.kind,
+      label === 'fresh escalation first' ? 'accept' : 'revision', label)
     const { p0, p1 } = router.due(now)
     assert.deepEqual(p1.map(({ items }) => items.map(({ id }) => id)), [['escalate-p1']], label)
     assert.deepEqual(p0, [], label)
-    const { digests } = router.due(start + 30 * min)
-    assert.deepEqual(digests.map(({ items }) => items.map((item) => 'id' in item ? [item.id, item.forwarded] : item)), [
+    const followUp = router.due(start + 30 * min)
+    assert.deepEqual(followUp.p1, [], label)
+    assert.deepEqual(followUp.digests.map(({ items }) => items.map((item) => 'id' in item ? [item.id, item.forwarded] : item)), [
       [['escalate-p1', true]],
     ], label)
+    if (label === 'fresh escalation first') {
+      const rejected = decisions.find((row) => row.id === 'routine-p2')
+      assert.deepEqual([rejected?.kind, rejected?.reason], ['reject', 'less_urgent_same_at'])
+    }
     assert.equal(router.ingest([
       mail('stale', { ...shared, at: iso(start - min) }, now + 1),
       mail('escalate-p1', { ...shared, urgency: 'p1', summary: 'escalate' }, now + 2),
       mail('escalate-p1', { ...shared, urgency: 'p1', summary: 'other' }, now + 3),
     ], now + 3).map(({ kind, reason }) => [kind, reason]).join(),
     [['reject', 'older_at'], ['duplicate', undefined], ['reject', 'id_collision']].join(), label)
+  }
+})
+
+test('equal-urgency same-at revisions keep the later receipt across ticks', () => {
+  const shared = { ref: 'task', urgency: 'p1' }
+  const earlier = mail('a', shared)
+  const later = mail('z', shared)
+  for (const [first, second] of [[earlier, later], [later, earlier]] as const) {
+    const router = createRouter(options)
+    assert.equal(router.ingest([first], start)[0]?.kind, 'accept')
+    const [next] = router.ingest([second], start + 1)
+    assert.deepEqual([next?.kind, next?.reason], second === later
+      ? ['revision', undefined] : ['reject', 'older_receipt_same_at'])
+    assert.deepEqual(router.due(start + 10 * min).p1.map(({ items }) => items.map(({ id }) => id)), [['z']])
   }
 })

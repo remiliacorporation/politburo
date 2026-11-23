@@ -18,6 +18,11 @@ from mail. It sends no wakes and uses no model or network. Until WP-104,
 file mail is assumed to have a plain summary, a fenced YAML header, and a
 filesystem mtime that serves as receipt time.
 
+For non-p0 mail with the same sender, ref, class, and `at`, higher urgency
+wins. At equal urgency, the later receipt wins by mtime, then filename.
+The router logs the losing candidate as `less_urgent_same_at` or
+`older_receipt_same_at`, respectively.
+
 Use `diff --shadow FILE --live FILE` to compare `decisions.jsonl` with
 `secretary-live@1` JSONL. Use `outcome: "reject"` with a separate string
 `reason` on rejected message rows. Digest rows list ordered `items` as

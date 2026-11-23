@@ -1,10 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { constants as fs } from 'node:fs'
 import { lstat, mkdir, open, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { defaultConfig } from '../config/load.ts'
 import { compareReceipt, readFileMail } from './filemail.ts'
 import { handlePush, handleRetire, handleRolloutAck, type JobSource, type RetireEvidence, type RolloutLedger, type Verdict } from './handlers.ts'
+import { hashKey as hash } from './hash.ts'
 import { compilePacket } from './packet.ts'
 import { redact } from './redact.ts'
 import { createRouter, prepareMail, type Decision, type Digest, type Forward, type MailHeader, type PreparedMail, type RouterOptions } from './route.ts'
@@ -25,7 +26,6 @@ type Event = Ingest | Decision | (Forward & { kind: 'lane'; wakeId: string })
 export type DecisionRecord = Event & { v: 1; at: number; cycle: number }
 type Tick = { at: number; cycle: number }
 
-const hash = (...parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex')
 const code = (error: unknown) => (error as NodeJS.ErrnoException | null)?.code
 function contains(parent: string, child: string) {
   const path = relative(parent, child)

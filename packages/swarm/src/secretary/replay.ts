@@ -69,6 +69,7 @@ function recordedDay(seed: number) {
   const shared = { from: 'synthetic', ref: 'same-at', class: 'policy' as const, at: timestamp(9) }
   accept(9, { ...header(9, 'p2', 'policy', 'same-at-p2'), ...shared }, false)
   accept(9, { ...header(9, 'p1', 'policy', 'same-at-p1'), ...shared, summary: 'escalate' })
+  reject(9, encode({ ...header(9, 'p2', 'policy', 'same-at-lower'), ...shared }), 'less_urgent_same_at', 'same-at-lower')
   inject(10, encode({
     ...header(10, 'p2', 'policy', 'annotated'),
     needs: 'context', reply_to: 'parent', thread: 'thread-1', status: 'open',

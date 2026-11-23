@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { createShadow, type CasePacket, type DecisionRecord } from '../src/secretary/index.ts'
 
 function run(...args: string[]) {
   const result = spawnSync(process.execPath, ['dist/cli.js', 'secretary', ...args], {
@@ -45,6 +46,63 @@ const journalDigest = { items: digest.items, counts: digest.counts, act_on: dige
 const forwardAt = '2026-01-01T00:11:00.000Z'
 const forward = { type: 'forward', at: forwardAt, lane: 'p1_batch', ids: [id] }
 const window = `${from}/${to}`
+
+test('ref-less deliveries survive a durable restart without leaking into the journal, packet or diff', async (t) => {
+  const dir = temp(t), tag = 'test-repo', mailDir = join(dir, 'mail'), outDir = join(dir, 'shadow')
+  const inbox = join(mailDir, tag, 'inbox')
+  mkdirSync(inbox, { recursive: true })
+  const canary = 'ghp_SYNTHETIC_REFLESS_CANARY_NOT_A_SECRET'
+  const annotations = { needs: canary, reply_to: 'parent', thread: 'thread-1', status: 'open',
+    review_by: 'core', default_if_unanswered: 'hold', answered_at: now }
+  function put(id: string, receivedAt: string) {
+    const path = join(inbox, `${id}.md`)
+    const fields = { ...message, id, ref: undefined, ...annotations }
+    writeFileSync(path, `Summary\n\n\`\`\`yaml\n${JSON.stringify(fields)}\n\`\`\`\n`)
+    utimesSync(path, new Date(receivedAt), new Date(receivedAt))
+  }
+  const packets: CasePacket[] = []
+  const opts = { mailDir, outDir, tag, waker: { async wake(packet: CasePacket) {
+    packets.push(packet)
+    return { delivered: false, detail: 'test' }
+  } } }
+  const first = await createShadow(opts)
+  try {
+    put('first', now)
+    await first.tick(Date.parse(now))
+  } finally { await first.close() }
+  rmSync(join(inbox, 'first.md')) // Only the journal can restore the first pending delivery.
+  const restarted = await createShadow(opts)
+  try {
+    put('second', '2026-01-01T00:02:00.000Z')
+    await restarted.tick(Date.parse(to))
+  } finally { await restarted.close() }
+
+  const shadow = join(outDir, tag, 'decisions.jsonl'), live = join(dir, 'live.jsonl')
+  const journal = readFileSync(shadow, 'utf8')
+  const log: DecisionRecord[] = journal.trim().split('\n').map((line) => JSON.parse(line))
+  const ids = ['first', 'second']
+  assert.deepEqual(packets.map((p) => p.items.map((item) => item.id)), [ids])
+  assert.deepEqual(log.flatMap((row) => row.kind === 'digest' ? [row.items] : [])
+    .map((members) => members.map((item) => 'id' in item ? item.id : undefined)), [ids])
+
+  // Omit one expected digest member so diff renders the actual membership rather than just 'zero diff'.
+  writeFileSync(live, lines('secretary-live@1', ...ids.map((id) => ({ type: 'message', id, outcome: 'p1_batch' })),
+    { type: 'forward', lane: 'p1_batch', at: to, ids },
+    { ...digest, counts: { p0: 0, p1: 2, p2: 0, p3: 0 }, act_on: ids, items: items('first') }))
+  const result = run('diff', '--shadow', shadow, '--live', live, '--json')
+  assert.equal(result.status, 1, result.stderr)
+  const diff = JSON.parse(result.stdout)
+  assert.deepEqual(diff.differences.map((row: { id: string; got: { items: object[] } }) => [row.id, row.got.items]),
+    [[window, items(...ids)]])
+  for (const [label, output] of [
+    ['journal', journal], ['packet', JSON.stringify(packets)], ['diff', result.stdout],
+  ] as const) {
+    assert.ok(!output.includes(canary), `${label} leaks the annotation credential`)
+    for (const key of ['ref', ...Object.keys(annotations)]) {
+      assert.doesNotMatch(output, new RegExp(`"${key}"\\s*:`), `${label} leaks ${key}`)
+    }
+  }
+})
 
 function parityFixture(t: TestContext, expected: object[]) {
   const dir = temp(t), behaviour = join(dir, 'recorded')

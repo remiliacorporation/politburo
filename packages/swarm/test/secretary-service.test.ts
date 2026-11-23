@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import {
-  compilePacket, createShadow, handlePush, handleRetire, runShadow, scorecard, unknownLedger,
+  compilePacket, createShadow, handlePush, handleRetire, prepareMail, readFileMail, runShadow, scorecard, unknownLedger,
   type CasePacket, type DecisionRecord, type RetireFacts, type SwarmMessage,
 } from '../src/secretary/index.ts'
 
@@ -203,6 +203,42 @@ test('repeated ticks and restart do not append or rebatch already forwarded mail
   await runShadow(options, start + 33 * minute)
   assert.equal(await text(), before)
   assert.deepEqual(wakes.map((p) => p.packetId), calls)
+})
+
+test('restart ignores header key order when fingerprinting unchanged mail', async (t) => {
+  const { root, opts, out, put, text, records } = await mailbox(t)
+  await put('ordered', { body: undefined })
+  const [raw] = await readFileMail(opts.mailDir, tag)
+  assert.ok(raw?.result.ok)
+  const message = raw.result.message
+  // Simulate a producer that inserts the same parsed header fields in a different order.
+  const reordered = Object.fromEntries(Object.entries(message).reverse()) as SwarmMessage
+  const prepared = prepareMail({ ...raw, result: { ok: true, message: reordered } })
+  assert.ok(prepared.result.ok)
+  assert.notDeepEqual(Object.keys(prepared.result.message), Object.keys(message))
+  await mkdir(out, { recursive: true })
+  const ingest = { ...prepared, key: 'fixture-ingest', kind: 'ingest', v: 1, at: start, cycle: 1, tick: start, batchSize: 1 }
+  await writeFile(join(out, 'decisions.jsonl'), JSON.stringify(ingest) + '\n')
+  const archived = join(root, 'ordered.md')
+  await rename(raw.file, archived)
+  await runShadow(opts, start) // Complete the fixture's ingest without rescanning the archived file.
+  await rename(archived, raw.file)
+  const before = await text()
+
+  const restarted = await createShadow(opts)
+  try {
+    const tick = await restarted.tick(start + 1)
+    const added = (await records()).slice(2)
+    assert.deepEqual(added.map((r) => 'reason' in r ? [r.kind, r.reason] : [r.kind]), [])
+    assert.equal(tick.appended, 0)
+    assert.equal(await text(), before)
+
+    // A second delivery under another filename bypasses the file key and checks the payload fingerprint.
+    await put('copied', { ...message, body: undefined }, start + 2)
+    await restarted.tick(start + 2)
+    assert.deepEqual((await records()).slice(2).map((r) => 'reason' in r ? [r.kind, r.reason] : [r.kind]),
+      [['ingest'], ['duplicate']])
+  } finally { await restarted.close() }
 })
 
 test('unknown retire, push and policy evidence never passes and is surfaced in the wake packet', async (t) => {
