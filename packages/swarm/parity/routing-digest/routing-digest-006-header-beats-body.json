@@ -1,0 +1,89 @@
+{
+  "case_id": "routing-digest-006-header-beats-body",
+  "description": "A referenced body claims p0 and a different class, but its header says p2.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/example/digest.yaml": "batch: \"example-2026-11-20T21:14Z\"\nrepo: \"example\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 1, \"p3\": 0}\nact_on: [ex-0019]\nitems:\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-0019.body.json\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"urgency\": \"p2\"}\n",
+      "mail/example/ex-0019.body.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"core.escalate\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example body claims an urgent escalation\", \"urgency\": \"p0\"}\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-0019.body.json\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"example\", \"urgency\": \"p2\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-0019.body.json\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"example\", \"urgency\": \"p2\"}"
+    ],
+    "stderr": "",
+    "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=1 p3=0 new=1 invalid=0\n",
+    "timeline": [
+      {
+        "at": "2026-11-20T21:14:00Z",
+        "body_opened": false,
+        "digest": {
+          "act_on": [
+            "ex-0019"
+          ],
+          "batch": "example-2026-11-20T21:14Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 1,
+            "p3": 0
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-0019.body.json",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0019",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p2",
+              "urgency": "p2"
+            }
+          ],
+          "repo": "example",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:14Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 1,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=1 p3=0 new=1 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/example/digest.yaml",
+      "mail/log.yaml",
+      "mail/example/ex-0019.body.json"
+    ],
+    "steps": [
+      {
+        "after_seconds": 0
+      }
+    ],
+    "tag": "example",
+    "watch_body": "ex-0019.body.json"
+  },
+  "matrix_row": "M06",
+  "notes": "The body is itself header-shaped to detect accidental inbox ingestion.",
+  "setup": {
+    "files": {
+      "mail/example/ex-0019.body.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"core.escalate\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example body claims an urgent escalation\", \"urgency\": \"p0\"}\n",
+      "mail/example/ex-0019.header.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-0019.body.json\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"urgency\": \"p2\"}\n"
+    },
+    "now": "2026-11-20T21:14:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
