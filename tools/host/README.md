@@ -23,11 +23,20 @@ versioned `MANIFEST.json` with sizes, SHA-256 checksums, and a random backup tok
 The per-board index `<out>/.backup-index.json` records each published backup's
 name, token, and directory device and inode.
 
-`--keep N` keeps the newest N eligible backups, where N is positive. It deletes
-only indexed backups whose manifest token and directory device and inode match
-the index. Copied or recreated directories stay even at the original name.
-Unindexed backups and older entries without directory identity also stay.
-No pruning happens without `--keep`.
+`--keep N` keeps the newest N eligible backups, where N is positive. A
+candidate must be in the index and match its manifest token and directory device
+and inode. Pruning never deletes in place: the candidate moves to a private
+`.pruning-<random>` name, is verified completely (the files under `files/` are
+exactly the manifest's files with matching sizes and hashes, and nothing else is
+there), and is deleted only if it verifies. Otherwise it moves back, a warning
+is printed, and nothing is deleted. A `.pruning-*` leftover after a crash is
+removed by a person. Copied, recreated or edited directories, unindexed backups
+and entries without directory identity stay. No pruning happens without `--keep`.
+
+The backup records the board directory's device and inode at the start and
+checks them after the snapshots and before publishing. If the path no longer
+names the same directory it fails with `board directory changed during the
+backup; retry` and publishes nothing.
 
 Backup syncs the new backup tree, index, and `<out>` before pruning older
 backups. If a sync fails, backup publishes, warns on stderr, exits 0, and prunes

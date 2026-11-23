@@ -2,6 +2,9 @@
 // One --out directory per board. Backups serialize on its .publish.lock.
 // --keep N prunes older backups only when their token and directory identity
 // match the local .backup-index.json. An unreadable index disables pruning.
+// Prune never deletes in place: it renames a candidate to .pruning-<uuid>,
+// verifies that directory, and only then deletes it. A leftover .pruning-*
+// directory from a crash is never deleted by the tool (a person removes it).
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
@@ -158,19 +161,29 @@ const INDEX_NAME = '.backup-index.json'
 
 async function lockPublisher(out) {
   const { DatabaseSync } = await import('node:sqlite')
-  // SQLite holds the OS lock until close or process death. Never unlink the file.
+  // The lock is an open `begin exclusive` transaction on a separate file; the OS drops
+  // it if the process dies. Never unlink the file. Stay in normal locking mode: in
+  // exclusive mode a failed attempt keeps its shared lock, so two waiting processes
+  // would each hold one and neither could ever upgrade. Poll with non-blocking attempts.
   const path = join(out, '.publish.lock')
   const stat = await statIfPresent(path)
   if (stat && (!stat.isFile() || stat.nlink !== 1)) throw new Error('invalid publish lock file')
   const db = new DatabaseSync(path)
+  const deadline = Date.now() + 10 * 60 * 1000
   try {
-    db.exec('pragma busy_timeout = 600000; pragma locking_mode = exclusive; begin exclusive; commit')
-    return db
+    db.exec('pragma busy_timeout = 0')
+    for (;;) {
+      try {
+        db.exec('begin exclusive')
+        return db
+      } catch (error) {
+        if (error.code !== 'ERR_SQLITE_ERROR' || (error.errcode & 0xff) !== 5) throw error
+        if (Date.now() >= deadline) throw new Error('another backup of this board is running')
+        await sleep(25 + Math.floor(Math.random() * 100))
+      }
+    }
   } catch (error) {
     db.close()
-    if (error.code === 'ERR_SQLITE_ERROR' && (error.errcode & 0xff) === 5) {
-      throw new Error('another backup of this board is running')
-    }
     throw error
   }
 }
@@ -250,6 +263,69 @@ async function matchesBackup(dir, { token, dev, ino }) {
   }
 }
 
+async function filesMatchListed(root, listed) {
+  const remaining = new Map(listed)
+  const parents = new Set()
+  for (const path of remaining.keys()) {
+    const segments = path.split('/')
+    for (let i = 1; i < segments.length; i++) parents.add(segments.slice(0, i).join('/'))
+  }
+  async function walk(dir, prefix) {
+    for (const name of await readdir(dir)) {
+      const rel = prefix + name
+      const path = join(dir, name)
+      const info = await lstat(path)
+      if (info.isDirectory()) {
+        if (!parents.has(rel)) return false
+        if (!await walk(path, `${rel}/`)) return false
+      } else if (info.isFile()) {
+        const entry = remaining.get(rel)
+        if (!entry) return false
+        const got = await digest(path)
+        if (got.size !== entry.size || got.sha256 !== entry.sha256) return false
+        remaining.delete(rel)
+      } else {
+        return false
+      }
+    }
+    return true
+  }
+  return await walk(root, '') && remaining.size === 0
+}
+
+async function quarantineVerified(dir, { token, dev, ino }) {
+  try {
+    const stat = await lstat(dir, { bigint: true })
+    if (!stat.isDirectory() || String(stat.dev) !== dev || String(stat.ino) !== ino) return false
+    const names = await readdir(dir)
+    if (names.length !== 2 || !names.includes('MANIFEST.json') || !names.includes('files')) return false
+    const manifestPath = join(dir, 'MANIFEST.json')
+    if (!(await lstat(manifestPath)).isFile()) return false
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    if (manifest.version !== 1 || manifest.token !== token || !Array.isArray(manifest.files)) return false
+    const listed = new Map()
+    for (const file of manifest.files) {
+      if (typeof file?.path !== 'string' || typeof file.size !== 'number' || typeof file.sha256 !== 'string') {
+        return false
+      }
+      const segments = file.path.split('/')
+      if (isAbsolute(file.path) || segments.some((part) => !part || part === '.' || part === '..')) return false
+      if (listed.has(file.path)) return false
+      listed.set(file.path, file)
+    }
+    const files = join(dir, 'files')
+    if (!(await lstat(files)).isDirectory()) return false
+    return await filesMatchListed(files, listed)
+  } catch {
+    return false
+  }
+}
+
+// The only prune deletion: a .pruning-* directory that already verified.
+async function rmVerifiedQuarantine(dir) {
+  await rm(dir, { recursive: true })
+}
+
 async function prune(out, keep, source, index, current) {
   const backups = [current]
   for (const [name, entry] of index) {
@@ -258,14 +334,42 @@ async function prune(out, keep, source, index, current) {
   }
   // The next publish drops entries for deleted directories. All syncs precede deletion.
   for (const name of backups.sort().reverse().slice(keep)) {
+    if (name === current) continue
+    const entry = index.get(name)
     const dir = join(out, name)
-    if (name !== current && await matchesBackup(dir, index.get(name))) {
-      await rm(dir, { recursive: true })
+    if (!await matchesBackup(dir, entry)) continue
+    const quarantined = `.pruning-${randomUUID()}`
+    const holding = join(out, quarantined)
+    try {
+      await rename(dir, holding)
+    } catch {
+      continue
+    }
+    if (await quarantineVerified(holding, entry)) {
+      await rmVerifiedQuarantine(holding)
+      index.delete(name)
+    } else {
+      let left = quarantined
+      if (!await statIfPresent(dir)) {
+        try {
+          await rename(holding, dir)
+          left = undefined
+        } catch {}
+      }
+      console.error(`warning: backup ${name} did not verify; not deleted${
+        left ? ` ; left at ${left}` : ''}`)
     }
   }
 }
 
-async function publishBackup(source, out, keep) {
+async function assertSameBoard(source, identity) {
+  const now = await statIfPresent(source, { bigint: true })
+  if (!now?.isDirectory() || now.dev !== identity.dev || now.ino !== identity.ino) {
+    throw new Error('board directory changed during the backup; retry')
+  }
+}
+
+async function publishBackup(source, out, keep, identity, hooks) {
   const databases = new Set()
   for (const entry of await readdir(source, { withFileTypes: true })) {
     if (!skipped(entry.name) && entry.isFile() && await sqliteFile(join(source, entry.name))) {
@@ -308,6 +412,8 @@ async function publishBackup(source, out, keep) {
         throw new Error(`snapshot ${path}: ${error.message}`)
       }
     }
+    await hooks.afterSnapshots?.()
+    await assertSameBoard(source, identity)
     // The board writes attachments before committing a reference to them.
     await copyAttachments(source, dest, databases)
     files = []
@@ -317,6 +423,8 @@ async function publishBackup(source, out, keep) {
       databases: [...databases].map((path) => ({ path, integrity: 'ok' })),
     }, null, 2) + '\n')
     synced = await syncPath(partial, true)
+    await hooks.beforePublish?.()
+    await assertSameBoard(source, identity)
     await rename(partial, complete)
   } catch (error) {
     await rm(partial, { recursive: true, force: true })
@@ -334,14 +442,17 @@ async function publishBackup(source, out, keep) {
   else if (index && keep !== undefined) await prune(out, keep, source, index, name)
 }
 
-async function makeBackup(dir, out, keep) {
+// Test seam: hooks.afterSnapshots and hooks.beforePublish are awaited at those
+// points so a test can swap the board directory. The CLI does not pass hooks.
+export async function makeBackup(dir, out, keep, hooks = {}) {
   const source = await realpath(dir)
+  const identity = await lstat(source, { bigint: true })
   out = await intendedPath(resolve(out))
   if (contains(source, out)) throw new Error('--out must be outside the board directory')
   await mkdir(out, { recursive: true })
   const lock = await lockPublisher(out)
   try {
-    await publishBackup(source, out, keep)
+    await publishBackup(source, out, keep, identity, hooks)
   } finally {
     lock.close()
   }

@@ -159,14 +159,61 @@ Scheduled jobs run on a schedule, not with `KeepAlive`. See [Health](#10-health)
    pmset -g custom
    ```
 
-4. **[host: not run]** Check FileVault on this Mac. Preboot unlock can stop a
-   cold boot before LaunchDaemons run. Unattended FileVault cold boot is
-   **UNVERIFIED**. Do not turn off disk encryption for uptime. Decide who can
-   unlock after an outage, how to reach them, and how they recover access.
+4. **[host: not run]** Check FileVault and decide how a cold boot is handled.
+   Follow [Power loss and FileVault](#power-loss-and-filevault).
 5. **[host: not run]** Confirm a current backup. With approval and services
    running, pull AC to the Mac downstream of the UPS. Confirm it loses power,
    reconnect AC, and observe restart from another machine. Record any FileVault
    prompt, when services become healthy, and whether anyone must log in.
+
+## Power loss and FileVault
+
+**[host: not run]** Whether FileVault is on or off on this Mac Studio is
+**UNKNOWN**. bonklek does not know yet. This runbook assumes neither. The
+installer finds out before go-live.
+
+1. **[host: not run]** Run the check on the Mac Studio.
+
+   ```bash
+   fdesetup status
+   ```
+
+   The output says whether FileVault is on or off. Expect a line like
+   `FileVault is On.` or `FileVault is Off.`; the exact wording is to be
+   confirmed on the host. Record the answer in the acceptance table.
+
+**Case 1, FileVault off.** The data volume is not locked at boot. After a power
+loss, with `autorestart` set as in section 4, the Mac starts and LaunchDaemons
+start with no login. The services come back on their own. Afterwards, check
+that each service is up and that each board answers on its port
+([Health](#10-health)).
+
+**Case 2, FileVault on.** A boot without a login cannot unlock the disk. After
+a power loss the Mac stops at the unlock screen. No service comes back until a
+person unlocks it. Someone enters an authorized account's password at the
+machine, or the disk is unlocked remotely. Whether this hardware and macOS
+version support a remote unlock is **UNKNOWN**; the installer checks Apple's
+documentation for this exact model and OS. This runbook does not claim any
+remote-unlock method works. Until the unlock, the boards, the relay and every
+other service are down, mail to them is not delivered, and backups do not run.
+A planned restart can skip the unlock once with `sudo fdesetup authrestart`.
+That is for planned restarts, not for power loss, and is to be confirmed on this
+macOS version.
+
+What to do:
+
+1. **[host: not run]** Run `fdesetup status` and record the answer.
+2. **[host: not run]** Decide with bonklek, who owns the risk, one of:
+   - Turn FileVault off. This leaves an unencrypted disk in the office. Do not
+     do it for uptime alone.
+   - Keep FileVault on. Name the unlock owner, how to reach them, and the
+     downtime the swarm tolerates until they unlock the machine.
+3. A UPS makes power-loss events rarer. It does not remove Case 2.
+4. **[host: not run]** Write the choice and the unlock owner into
+   [section 11](#11-what-needs-a-person) and the acceptance table.
+5. **[host: not run]** With approval, pull power as in section 4 item 5. Record
+   whether the services returned unaided (FileVault off) or waited at the unlock
+   screen (FileVault on).
 
 ## 5. Environment through files
 
@@ -250,6 +297,12 @@ process dies. Never delete the file. Overlapping backups of the same board take
 turns. A second run waits up to 10 minutes, then fails with
 `another backup of this board is running` if the lock is still held.
 
+The script also records the board directory's device and inode when it starts.
+It checks them again after the database snapshots and just before publishing. If
+the path no longer names the same directory, for example the directory was moved
+aside and a fresh board started there, the backup fails with
+`board directory changed during the backup; retry` and publishes nothing.
+
 Do not start or stop a board while its backup runs. The script compares the
 `-wal` and `-shm` files before and after the snapshot. If either disappears,
 is replaced, or appears during the snapshot, the backup fails without
@@ -279,11 +332,22 @@ manual backup before each upgrade. Nightly means up to a day of loss if jobs
 succeed. Monitor time since the last successful published backup, not merely
 the last job start.
 
-`--keep N` keeps the newest N eligible backups. It deletes only indexed backups
-whose manifest token and directory device and inode match the index. A copied
-or recreated directory stays even at the original name. Unindexed backups and
-older entries without directory identity require manual removal. Without
-`--keep`, nothing is pruned.
+`--keep N` keeps the newest N eligible backups. A candidate must be in the
+index and match its manifest token and directory device and inode. Pruning never
+deletes in place. The script first moves the candidate to a private
+`.pruning-<random>` name inside `<out>` and verifies it completely: the files
+under `files/` are exactly the manifest's files with matching sizes and SHA-256
+hashes, and nothing else is in the directory. It deletes the directory only if
+it verifies. If it does not, the script moves it back (or leaves it under its
+`.pruning-` name if the original name is taken), prints a warning, and deletes
+nothing. A `.pruning-*` directory left by a crash is never deleted by the
+script; a person removes it. A copied, recreated or edited directory stays even
+at the original name. Unindexed backups and older entries without directory
+identity require manual removal. Without `--keep`, nothing is pruned.
+
+The index and the verification protect against stray and stale directories. They
+do not protect against someone with write access to `<out>`, who can delete
+backups directly.
 
 The script syncs the new backup tree, index, and `<out>` before pruning older
 backups. If a sync fails, the backup is published, the script warns on stderr
@@ -425,9 +489,11 @@ jobs and reconcile them at startup.
 ## 11. What needs a person
 
 **[host: not run]** Plan section 10 item 4 needs access for core or a named
-installer on the Mac Studio. Confirm the service user names, name the FileVault
-unlock owner and recovery procedure, and pick the encrypted off-machine and
-offline backup targets.
+installer on the Mac Studio. Confirm the service user names and pick the
+encrypted off-machine and offline backup targets. FileVault is **UNKNOWN**:
+run `fdesetup status`, then record the choice and, if it is on, the unlock
+owner, how to reach them, and the tolerated downtime, as in
+[Power loss and FileVault](#power-loss-and-filevault).
 
 This repo supplies tools and templates only. CI starts no host service. The
 backup tests start disposable loopback boards as test fixtures, like the
@@ -445,7 +511,7 @@ By:
 | Boot with nobody logged in | **[host: not run]** From another machine, use the approved remote admin path to probe loopback before any desktop login. Record any preboot unlock separately. | not run |
 | Every installed service survives reboot | **[host: not run]** Reboot. Check each daemon's status and function and each scheduled job's next run and output. | not run |
 | Power-loss restart | **[host: not run]** Pull power and restore it as in section 4. Observe power-on and service health. | not run |
-| FileVault cold boot | **[host: not run]** Unverified. Observe the unlock gate; decide and record the unlock owner, recovery procedure, and tolerated downtime. | not run |
+| FileVault state and cold boot | **[host: not run]** Run `fdesetup status` (state is unknown). If on, observe the unlock gate and record the unlock owner and tolerated downtime; if off, confirm the services return unaided. See [Power loss and FileVault](#power-loss-and-filevault). | not run |
 | Host restore drill | **[host: not run]** Restore to a second directory. Compare message counts and read an attachment on a different port. | not run |
 | launchd log truncation | **[host: not run]** Copy-truncate a growing log. Confirm the writer stays healthy and new lines append to the live file without gaps from a stale offset. | not run |
 | Live backup as board user | **[host: not run]** While the board writes, run its backup as that account. Check the published snapshot and verify it restores. | not run |

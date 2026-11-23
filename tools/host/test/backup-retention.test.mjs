@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { makeBackup } from '../board-backup.mjs'
 
 const warningListeners = process.listeners('warning')
 process.removeAllListeners('warning')
@@ -61,10 +62,22 @@ async function fixture(t) {
     runs.push(run)
     return run
   }
-  return { out, index, start, save: (...args) => start(...args).done }
+  return { dir, out, index, start, save: (...args) => start(...args).done }
 }
 
 const published = async (out) => (await readdir(out)).filter((name) => name.startsWith('backup-'))
+const pruning = async (out) => (await readdir(out)).filter((name) => name.startsWith('.pruning-'))
+
+async function swapBoard(dir) {
+  await rename(dir, `${dir}.aside`)
+  await mkdir(dir)
+  const db = new DatabaseSync(join(dir, 'sample.db'))
+  try {
+    db.exec('create table sample (value integer); insert into sample values (99)')
+  } finally {
+    db.close()
+  }
+}
 
 // Catches pruning by name and manifest alone, even when the manifest is an exact copy.
 test('--keep prunes only older backups registered at their own names', { timeout: 15000 }, async (t) => {
@@ -150,7 +163,7 @@ test('--keep preserves a backup with a replaced manifest token', { timeout: 1500
 })
 
 // Catches publishing while another process owns the lock or racing concurrent --keep runs.
-test('overlapping backups wait and publish one complete retained backup', { timeout: 15000 }, async (t) => {
+test('overlapping backups wait and publish one complete retained backup', { timeout: 30000 }, async (t) => {
   const f = await fixture(t)
   const lock = new DatabaseSync(join(f.out, '.publish.lock'))
   let first
@@ -167,13 +180,15 @@ test('overlapping backups wait and publish one complete retained backup', { time
   const { path } = await first.done
   assert.deepEqual(await published(f.out), [basename(path)])
 
-  const a = f.start('--keep', '1')
-  const b = f.start('--keep', '1')
-  const saves = await Promise.all([a.done, b.done])
-  const names = await published(f.out)
-  assert.equal(names.length, 1)
-  assert.ok(saves.some(({ path }) => basename(path) === names[0]), 'retained a new backup')
-  const retained = join(f.out, names[0])
+  // Three at once, several rounds: an exclusive-mode lock that keeps its shared lock on a
+  // failed attempt deadlocks them in a fraction of rounds, and the test times out.
+  for (let round = 0; round < 30; round++) {
+    const saves = await Promise.all([1, 2, 3].map(() => f.start('--keep', '1').done))
+    const names = await published(f.out)
+    assert.equal(names.length, 1)
+    assert.ok(saves.some(({ path }) => basename(path) === names[0]), 'retained a new backup')
+  }
+  const retained = join(f.out, (await published(f.out))[0])
   const manifest = JSON.parse(await readFile(manifestPath(retained), 'utf8'))
   const bytes = await readFile(join(retained, 'files', 'sample.db'))
   assert.deepEqual(manifest.files, [{
@@ -192,4 +207,48 @@ test('a malformed index warns, remains untouched, and does not block publication
   assert.notEqual(newer, older)
   assert.deepEqual((await published(f.out)).sort(), [basename(older), basename(newer)].sort())
   assert.ok(malformed.equals(await readFile(f.index)), 'malformed index bytes changed')
+})
+
+// Catches pruning an indexed directory whose identity matches but whose files do not.
+test('--keep keeps an indexed backup that gained an extra file and prunes a genuine older one', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: tampered } = await f.save()
+  const { path: genuine } = await f.save()
+  await writeFile(join(tampered, 'files', 'extra.txt'), 'extra')
+  const { path: newest, stderr } = await f.save('--keep', '1')
+  assert.ok(
+    stderr.split('\n').includes(`warning: backup ${basename(tampered)} did not verify; not deleted`),
+    stderr,
+  )
+  assert.doesNotMatch(stderr, /left at/)
+  assert.equal(await readFile(join(tampered, 'files', 'extra.txt'), 'utf8'), 'extra')
+  await assert.rejects(lstat(genuine), { code: 'ENOENT' })
+  assert.deepEqual((await published(f.out)).sort(), [basename(tampered), basename(newest)].sort())
+  assert.deepEqual(await pruning(f.out), [])
+})
+
+// Catches leaving a .pruning-* directory in --out after a successful prune.
+test('--keep leaves no .pruning-* directory after a normal prune', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: older } = await f.save()
+  const { path: newest } = await f.save('--keep', '1')
+  await assert.rejects(lstat(older), { code: 'ENOENT' })
+  assert.ok((await published(f.out)).includes(basename(newest)))
+  assert.deepEqual(await pruning(f.out), [])
+})
+
+// Catches publishing a backup whose databases and attachments come from different directories.
+test('a swapped board directory is not published', { timeout: 15000 }, async (t) => {
+  for (const hook of ['afterSnapshots', 'beforePublish']) {
+    const f = await fixture(t)
+    const { path: prior } = await f.save()
+    const index = await readFile(f.index)
+    await assert.rejects(
+      () => makeBackup(f.dir, f.out, undefined, { [hook]: () => swapBoard(f.dir) }),
+      { message: 'board directory changed during the backup; retry' },
+    )
+    assert.deepEqual(await published(f.out), [basename(prior)])
+    assert.deepEqual((await readdir(f.out)).filter((name) => name.startsWith('.partial-')), [])
+    assert.ok(index.equals(await readFile(f.index)), `index changed after ${hook}`)
+  }
 })
