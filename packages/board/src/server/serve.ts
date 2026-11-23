@@ -65,6 +65,7 @@ import {
   SyncImportBody,
   UploadStartBody,
   SyncReceiptBody,
+  TASK_CLAIM_HOLD_HEADER,
   ThreadQuery,
   ThreadsQuery,
   TypingBody,
@@ -1296,19 +1297,18 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    * for, and the project people mint them with), which is board()'s to say, and the sync entries
    * accounts link on. Those are the backend's, where it keeps the board; a board on `http()` lists its own.
    */
-  async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Protocol['discovery']['output']> {
+  async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Response> {
     const { projectId, teamId } = await policy.discoveryIdentity(request.headers)
     const capabilities = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
     const sync = capabilities?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
-    return {
+    return json({
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
-      ...(capabilities?.task_claim_hold === true ? { task_claim_hold: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
       ...(capabilities?.agent_intents === true ? { agent_intents: true } : {}),
       ...(capabilities?.politburo === 1 ? { politburo: 1 } : {}),
-    }
+    }, 200, capabilities?.task_claim_hold === true ? { [TASK_CLAIM_HOLD_HEADER]: '1' } : undefined)
   }
 
   async function dispatch(request: Request, injected: Caller | PlatformCaller | null): Promise<Response> {
@@ -1344,7 +1344,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         ? (isAgentIntentMethod(target.name) ? 'intents' : 'registry')
         : null
       if (!injected && !policy.open) throw ops ? noAgentOps(ops) : servesOnly()
-      if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
+      if (!injected && target.kind === 'protocol' && target.name === 'discovery') return await discovery(request, audienceOf(at), request.signal)
       if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null, backend, OWN, ownUrl, audienceOf)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
         && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {

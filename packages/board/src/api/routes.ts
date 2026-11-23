@@ -1049,6 +1049,14 @@ export type BoardEventView = PublicBoardEvent extends infer E
     : never
   : never
 
+export const TASK_CLAIM_HOLD_HEADER = 'x-board-task-claim-hold'
+
+/** Read the capability without requiring a change to the discovery JSON. */
+export async function readDiscovery(response: Response): Promise<Discovery> {
+  const info = (await response.json()) as Discovery
+  return response.headers.get(TASK_CLAIM_HOLD_HEADER) === '1' ? { ...info, task_claim_hold: true } : info
+}
+
 export type Discovery = {
   version: string
   url: string

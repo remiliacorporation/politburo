@@ -68,7 +68,7 @@ import type {
   ThreadView,
   TypingResult,
 } from '../api/routes.ts'
-import { ACTORS_BY_ID_MAX } from '../api/routes.ts'
+import { ACTORS_BY_ID_MAX, readDiscovery } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Protocol } from '../api/protocol.ts'
 import type { Actor } from '../contract/folds.ts'
@@ -562,7 +562,7 @@ export function createBoardClient(options: ClientOptions) {
         ...(init.body ? { body: init.body } : {}),
         ...(init.signal ? { signal: init.signal } : {}),
       }),
-    discovery: () => call<Discovery>('GET', '/', { auth: false }),
+    discovery: async () => readDiscovery(await raw('GET', '/', { auth: false })),
     me: () => call<Me>('GET', '/me'),
     /** Whether the board is admitting work, and its current pause epoch. */
     status: () => call<BoardStatus>('GET', '/control'),

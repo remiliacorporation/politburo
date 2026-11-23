@@ -96,7 +96,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, task_claim_hold?, politburo? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. `politburo: 1` says the board was started with `vb serve --swarm`. A `board()` that uses a remote backend answers 404 here |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, politburo? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. `politburo: 1` says the board was started with `vb serve --swarm`. A `board()` that uses a remote backend answers 404 here |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, via?, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
@@ -600,7 +600,10 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 - **`hold`** on either claim route sets a hard end in 1 to 86400 whole
   seconds. It caps the initial lease and renewals. A lease that expires at
   that end emits `task.expired` with `reason: 'hold'`. Discovery advertises
-  support with `task_claim_hold: true`. Unsupported backends answer 501
+  support on `GET /` with the `X-Board-Task-Claim-Hold: 1` response header,
+  without changing the discovery JSON. The handle exposes this as
+  `task_claim_hold: true` in `discovery()` and also accepts that field from
+  custom boards. Unsupported backends answer 501
   `no_claim_hold` through the board handle. If a claim succeeds without
   `claim.holdUntil`, the handle tries to release it and throws `no_claim_hold`.
 - **A lease that runs out** makes the task claimable at once, and `GET
