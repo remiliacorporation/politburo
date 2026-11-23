@@ -45,9 +45,9 @@ function fixture(t: TestContext, tick = 0) {
   const raw = () => existsSync(file) ? readFileSync(file, 'utf8') : ''
   return { initial, bind, book, file, raw, advance: (ms: number) => { time += ms },
     rows: (): SpendRecord[] => raw().trim().split('\n').filter(Boolean).map(line => JSON.parse(line)),
-    async listen() {
+    async listen(ledger = jsonlLedger(file)) {
       await server?.close()
-      server = await createReceiver({ book: new Book({ file: bookFile, now }), ledger: jsonlLedger(file), now }).listen(0)
+      server = await createReceiver({ book: new Book({ file: bookFile, now }), ledger, now }).listen(0)
       const url = `http://127.0.0.1:${server.port}/v1/logs`
       return async (data: unknown, init: RequestInit & { duplex?: 'half' } = {}) => {
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -139,6 +139,16 @@ test('OTLP rejects present invalid numeric attributes', async (t) => {
   assert.equal(f.rows()[0]?.tokens.input_uncached, null)
 })
 
+test('an AnyValue with both intValue and doubleValue books the intValue', async (t) => {
+  const f = fixture(t), post = await f.listen()
+  const both = log('both', { input_tokens: { intValue: 10, doubleValue: 3 } })
+  assert.deepEqual(await post(payload([both])), error(400, 'invalid'))
+  assert.deepEqual(f.rows(), [])
+  assert.deepEqual(await post(payload([both, log('valid')])), partial(1))
+  assert.equal(f.rows().length, 1)
+  assert.equal(f.rows()[0]?.tokens.input_uncached, null)
+})
+
 test('OTLP duplicate session attributes book to neither envelope', async (t) => {
   const f = fixture(t), post = await f.listen()
   f.bind('other-session', 3_600_000, 'exec-other')
@@ -159,6 +169,37 @@ test('OTLP throttled batch makes progress on retry without charging replays', as
   assert.equal(f.rows().length, 25)
   assert.deepEqual(await (await f.listen())(data), ok, 'ledger duplicates must refund the burst after restart')
   assert.equal(f.rows().length, 25)
+})
+
+test('a late refund after the bucket refilled lets a second burst through', async (t) => {
+  const f = fixture(t)
+  let post = await f.listen()
+  assert.deepEqual(await post(payload(batch(0, 20))), ok)
+  assert.equal(f.rows().length, 20)
+  const inner = jsonlLedger(f.file)
+  let releaseHeld = () => {}
+  const held = new Promise<void>(resolve => { releaseHeld = resolve })
+  let started = 0
+  let releaseStarted = () => {}
+  const allStarted = new Promise<void>(resolve => { releaseStarted = resolve })
+  post = await f.listen({ async append(record) {
+    const result = await inner.append(record)
+    if (result === 'duplicate') {
+      if (++started === 20) releaseStarted()
+      await held
+    }
+    return result
+  } })
+  const dupes = Array.from({ length: 20 }, (_, i) => post(payload([log(`r${i}`)])))
+  await allStarted
+  f.advance(4_000)
+  assert.deepEqual(await post(payload(batch(20, 20))), ok)
+  assert.equal(f.rows().length, 40)
+  releaseHeld()
+  for (const dupe of await Promise.all(dupes)) assert.deepEqual(dupe, ok)
+  const third = await post(payload(batch(40, 20)))
+  assert.equal(third.status, 429, 'late duplicate refunds must not credit a refilled bucket')
+  assert.equal(f.rows().length, 40)
 })
 
 test('OTLP mixed batches report permanent rejects without losing valid records', async (t) => {

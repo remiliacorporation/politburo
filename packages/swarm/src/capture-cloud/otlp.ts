@@ -15,6 +15,8 @@ const text = (value: unknown) => {
 }
 function numeric(value: unknown, max: number) {
   const anyValue = object(value)
+  if (anyValue && ['stringValue', 'boolValue', 'intValue', 'doubleValue', 'arrayValue', 'kvlistValue', 'bytesValue']
+    .filter(key => key in anyValue).length > 1) return NaN
   const raw = anyValue && ('intValue' in anyValue ? anyValue.intValue : anyValue.doubleValue)
   const n = typeof raw === 'string' && raw.length && raw.length <= String(max).length && !/\D/.test(raw)
     ? Number(raw) : raw
