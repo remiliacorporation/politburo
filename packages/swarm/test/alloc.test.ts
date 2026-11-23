@@ -39,6 +39,9 @@ function patchedSerial(dir: string, fault: string, ...paths: string[]) {
     const counter = join(dir, 'mob-serial.txt')
     const write = fs.writeFileSync
     const rename = fs.renameSync
+    const open = fs.openSync
+    const mkdir = fs.mkdirSync
+    let claimFd
     let failure
     function compete(expected) {
       const other = spawnSync(process.execPath, ['src/cli.ts', 'alloc', 'serial', '--dir', dir], {
@@ -50,31 +53,48 @@ function patchedSerial(dir: string, fault: string, ...paths: string[]) {
       }
       return other.stdout
     }
-    // Keep the real filesystem; inject faults at the write and publish boundaries.
-    fs.writeFileSync = (path, ...args) => {
+    // Keep the real filesystem; inject faults at the claim, write, and publish boundaries.
+    fs.mkdirSync = (path, ...args) => {
+      const result = mkdir(path, ...args)
+      if (path === link && fault === 'symlink-claims') {
+        fs.rmdirSync(link)
+        fs.symlinkSync(target, link)
+      }
+      return result
+    }
+    fs.openSync = (path, ...args) => {
       if (path === claim && fault === 'race') process.stdout.write(compete('2\\n'))
-      if (String(path).includes('.mob-serial-') && fault === 'enospc') {
-        write(path, '2', args[1]) // ENOSPC can leave a partially written temp file.
+      const fd = open(path, ...args)
+      if (path === realClaim && args[0] === 'wx') claimFd = fd
+      return fd
+    }
+    fs.writeFileSync = (path, ...args) => {
+      const isClaim = path === claimFd
+      const isMirror = String(path).includes('.mob-serial-')
+      if ((isClaim && fault === 'claim-enospc') || (isMirror && fault === 'enospc')) {
+        if (isMirror) write(path, '2', args[1]) // ENOSPC can leave a partially written temp file.
         const error = new Error('ENOSPC: no space left on device')
         error.code = 'ENOSPC'
         throw error
       }
       write(path, ...args)
-      if (path === claim && fault === 'kill') process.kill(process.pid, 'SIGKILL')
-      if (String(path).includes('.mob-serial-') && fault === 'kill-mirror') process.kill(process.pid, 'SIGKILL')
-      if ((path === claim || path === realClaim) && fault === 'retarget') {
+      if (isClaim && fault === 'kill') process.kill(process.pid, 'SIGKILL')
+      if (isMirror && fault === 'kill-mirror') process.kill(process.pid, 'SIGKILL')
+      if (isClaim && fault === 'retarget') {
         fs.unlinkSync(link)
         fs.symlinkSync(target, link)
       }
-      if ((path === claim && fault === 'malformed') ||
-          (path.includes('.mob-serial-') && fault === 'late-malformed')) write(counter, 'broken')
+      if ((isClaim && fault === 'malformed') || (isMirror && fault === 'late-malformed')) write(counter, 'broken')
     }
     fs.renameSync = (from, to) => {
-      if (to === counter && fault === 'rename-fails') throw new Error('injected rename failure')
-      if (to === counter && fault === 'publish' && fs.readFileSync(from, 'utf8') === '2\\n') {
-        compete('3\\n')
-        rename(from, to)
-        return
+      if (to === counter) {
+        if (fault === 'rename-fails') throw new Error('injected rename failure')
+        if (fault === 'publish' || fault === 'publish-contended') {
+          const staged = Number(fs.readFileSync(from, 'utf8'))
+          // Publish a peer's higher serial just before the stale rename. Stop after six
+          // peers so an uncapped writer also finishes, but leaves a different counter.
+          if (staged === 2 || (fault === 'publish-contended' && staged < 8)) compete((staged + 1) + '\\n')
+        }
       }
       rename(from, to)
     }
@@ -146,6 +166,16 @@ test('a full disk during the mirror write fails the allocation or burns the seri
   const next = run(['serial', '--dir', dir])
   assert.equal(next.status, 0, next.stderr)
   assert.equal(next.stdout, '3\n')
+})
+
+test('a full disk writing claim metadata still returns the claimed serial', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const result = patchedSerial(dir, 'claim-enospc')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '2\n')
+  assert.equal(readFileSync(join(dir, 'serials', '2'), 'utf8'), '')
+  assert.equal(allocateSerial(dir), 3)
 })
 
 test('a --dir ancestor retarget splits the mirror from serials/ or causes an alias to reuse a serial', (t) => {
@@ -221,6 +251,18 @@ test('an out-of-order publish leaves the mirror behind the highest claim', (t) =
   assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '3\n')
 })
 
+test('a contended mirror stops after five publish rounds', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const result = patchedSerial(dir, 'publish-contended')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '2\n')
+  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '6\n')
+  assert.deepEqual(readdirSync(join(dir, 'serials')).sort(), ['1', '2', '3', '4', '5', '6', '7'])
+  assert.equal(allocateSerial(dir), 8)
+  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '8\n')
+})
+
 for (const [fault, expected] of [['malformed', 'broken'], ['late-malformed', 'broken'], ['rename-fails', '1\n']] as const) {
   test(`a ${fault} mirror fault loses the claimed serial or alters the counter`, (t) => {
     const dir = tempDir(t)
@@ -243,6 +285,18 @@ for (const name of ['serials', 'mob-serial.txt']) {
     assert.deepEqual(readdirSync(target), [])
   })
 }
+
+test('serials/ swapped for a symlink after lstat is refused without writing outside --dir', (t) => {
+  const dir = tempDir(t)
+  const target = tempDir(t)
+  const claims = join(dir, 'serials')
+  const result = patchedSerial(dir, 'symlink-claims', claims, target)
+  assert.deepEqual(readdirSync(target), [])
+  assert.equal(result.status, 1, result.stderr)
+  assert.equal(result.stdout, '')
+  assert.ok(result.stderr.includes(`symlink refused: ${claims}`))
+  assert.deepEqual(readdirSync(dir), ['serials'])
+})
 
 test('stray claim names inflate the next serial or wedge allocation', (t) => {
   const dir = tempDir(t)
