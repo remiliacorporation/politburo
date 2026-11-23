@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { chmodSync, closeSync, constants, existsSync, mkdtempSync, openSync, readFileSync,
   readSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
@@ -341,4 +342,32 @@ test('retry after a failed sync acknowledges an unsynced row', async (t) => {
   try { text = buf.subarray(0, readSync(fifo, buf)).toString('utf8') }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') throw error }
   assert.equal(text.trim().split('\n').filter(Boolean).length, 1, 'expected exactly one record')
+})
+
+// Catches a restart acknowledging a row that was never synced.
+test('restart acknowledges a row that was never synced', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const dedupe_key = `claude_cloud:${createHash('sha256')
+    .update(JSON.stringify([envelope.trace.execution_id, claim.source_event_key])).digest('hex').slice(0, 40)}`
+  assert.equal(spawnSync('mkfifo', [ledgerFile]).status, 0)
+  const writer = spawn(process.execPath, ['-e',
+    'require("fs").writeFileSync(process.argv[1], process.argv[2])',
+    ledgerFile, `${JSON.stringify({ dedupe_key })}\n`], { stdio: 'ignore' })
+  t.after(() => { try { writer.kill() } catch { /* exited */ } })
+  let ledger: ReturnType<typeof jsonlLedger>
+  try {
+    ledger = jsonlLedger(ledgerFile)
+  } catch (error) {
+    assert.match((error as Error).message, /failed to sync existing ledger/)
+    return
+  }
+  const server = await createReceiver({ book, ledger }).listen(0)
+  t.after(() => server.close())
+  const response = await post(`http://127.0.0.1:${server.port}`, capability)
+  assert.notEqual(response.status, 200, 'restart acknowledged a row that was never synced')
 })

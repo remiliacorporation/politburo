@@ -50,8 +50,18 @@ export interface LedgerSink { append(record: SpendRecord): Promise<'appended' | 
 // STUB: single writer.
 export function jsonlLedger(path: string): LedgerSink {
   const keys = new Set<string>(), written = new Set<string>()
-  const text = readIfPresent(path)
-  let syncDir = text === undefined
+  let text: string | undefined, syncDir = false
+  try {
+    const fd = openSync(path, 'r')
+    try {
+      try { fsyncSync(fd) }
+      catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
+      text = readFileSync(fd, 'utf8')
+    } finally { closeSync(fd) }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    syncDir = true
+  }
   for (const line of (text ?? '').split('\n')) if (line.trim()) keys.add(JSON.parse(line).dedupe_key)
   return { async append(record) {
     const key = record.dedupe_key
