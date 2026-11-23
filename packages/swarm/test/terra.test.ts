@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import fs from 'node:fs'
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { appendAudit } from '../src/classifier/audit.ts'
 import {
   compilePacket, createTerra, estimateTokens, piAdviser, readAudit, stubAdviser,
   type Adviser, type Answer, type TerraCase,
@@ -214,6 +217,39 @@ test('a torn tail blocks new advice or turns into middle-line corruption on appe
   assert.deepEqual(await terra(dir).advise(exception), { status: 'wake_spawner', reason: 'uncertain_previous_call' })
 })
 
+test('a stale torn-tail repair erases another writer’s durable pending record and allows a second call', async (t) => {
+  const dir = await tempDir(t)
+  const file = join(dir, 'terra.jsonl')
+  await writeFile(file, '{')
+  const read = fs.readFileSync
+  let reads = 0
+  const hook = t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof read>) => {
+    const snapshot = read(...args)
+    if (args[0] === file && ++reads === 2) {
+      // The second read is for repair. Another writer commits before it returns.
+      appendAudit(dir, {
+        ...auditCase, outcome: 'pending', reason: null, at: new Date(0).toISOString(),
+        kind: exception.kind, packet: '', packet_sha256: '', packet_tokens_est: 0, model: 'test-model',
+      })
+    }
+    return snapshot
+  })
+  syncBuiltinESMExports()
+  try {
+    assert.deepEqual(await terra(dir).advise({ ...exception, revision: 2 }),
+      { status: 'answered', answer, audited: true })
+  } finally {
+    hook.mock.restore()
+    syncBuiltinESMExports()
+  }
+
+  let calls = 0
+  const retry = terra(dir, { async advise() { calls++; return { text: reply } } })
+  assert.deepEqual(await retry.advise(exception), { status: 'wake_spawner', reason: 'uncertain_previous_call' })
+  assert.equal(calls, 0)
+  assert.ok((await readFile(file, 'utf8')).startsWith('{\n'), 'repair replaced the original fragment')
+})
+
 test('a failed pending write still lets the adviser run', async (t) => {
   const dir = await tempDir(t)
   await symlink(join(dir, 'missing', 'audit'), join(dir, 'terra.jsonl'))
@@ -223,10 +259,11 @@ test('a failed pending write still lets the adviser run', async (t) => {
   assert.equal(calls, 0)
 })
 
-test('pi retains or exposes the packet file or passes more than the explicit environment', async (t) => {
+test('pi retains or exposes the packet file or drops allowed or model environment keys', async (t) => {
   const packet = compilePacket(exception)
   let observed: { file: string; text: string; mode: number; env: Record<string, string | undefined> } | undefined
-  const adviser = piAdviser({ env: { FIXTURE: 'explicit' }, model: 'test-model', thinking: 'low', async run(_command, [file], { env }) {
+  const allowed = { PATH: '/fixture/bin', HOME: '/fixture', LANG: 'C', LC_ALL: 'C', TZ: 'UTC', TMPDIR: '/fixture/tmp' }
+  const adviser = piAdviser({ env: allowed, model: 'test-model', thinking: 'low', async run(_command, [file], { env }) {
     assert.ok(file && dirname(dirname(file)) === tmpdir(), 'expected a temporary packet file')
     t.after(() => rm(dirname(file), { recursive: true, force: true }))
     observed = { file, text: await readFile(file, 'utf8'), mode: (await stat(file)).mode & 0o777, env }
@@ -236,6 +273,15 @@ test('pi retains or exposes the packet file or passes more than the explicit env
   assert.ok(observed)
   assert.equal(observed.text, packet)
   assert.equal(observed.mode, 0o600)
-  assert.deepEqual(observed.env, { FIXTURE: 'explicit', PI_MODEL: 'test-model', PI_THINKING: 'low' })
+  assert.deepEqual(observed.env, { ...allowed, PI_MODEL: 'test-model', PI_THINKING: 'low' })
   await assert.rejects(stat(observed.file), { code: 'ENOENT' })
+})
+
+test('pi accepts an unlisted environment key instead of rejecting it before the runner can be called', () => {
+  let calls = 0
+  assert.throws(() => piAdviser({
+    env: { PATH: '/fixture/bin', SENTINEL_SECRET: 'not-a-real-secret' }, model: 'test-model', thinking: 'low',
+    async run() { calls++; return { stdout: reply } },
+  }), /unlisted environment key/)
+  assert.equal(calls, 0)
 })

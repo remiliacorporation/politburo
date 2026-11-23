@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, truncateSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Usage } from './adviser.ts'
 import type { Answer, TerraCase } from './packet.ts'
@@ -35,17 +35,20 @@ function readLog(file: string): Buffer {
   }
 }
 
-function parseLog(log: Buffer): { records: AuditRecord[]; tornAt?: number } {
+const tornTailMarker = '{"repair":"torn_tail"}'
+
+function parseLog(log: Buffer): { records: AuditRecord[]; tornTail?: true } {
   const records: AuditRecord[] = []
   const lines = log.toString('utf8').split('\n')
   for (const [index, line] of lines.entries()) {
-    if (!line) continue
+    if (!line || line === tornTailMarker) continue
     let record
     try {
       record = JSON.parse(line)
     } catch {
-      // Only an unterminated last line can be an interrupted append.
-      if (index === lines.length - 1) return { records, tornAt: log.lastIndexOf(10) + 1 }
+      // An interrupted append is either still at the tail or marked by repair.
+      if (index === lines.length - 1) return { records, tornTail: true }
+      if (lines[index + 1] === tornTailMarker) continue
       throw new Error('corrupt audit')
     }
     if (!record || typeof record.case_id !== 'string' ||
@@ -69,10 +72,9 @@ export function appendAudit(dir: string, record: AuditRecord): void {
   const log = readLog(file)
   let separator = ''
   if (log.length && log.at(-1) !== 10) {
-    const { tornAt } = parseLog(log)
-    // Discard the incomplete bytes so they do not become a corrupt middle line.
-    if (tornAt !== undefined) truncateSync(file, tornAt)
-    else separator = '\n'
+    const { tornTail } = parseLog(log)
+    // Keep existing bytes: another writer may have repaired and appended since this read.
+    separator = tornTail ? `\n${tornTailMarker}\n` : '\n'
   }
   appendFileSync(file, `${separator}${JSON.stringify(record)}\n`, { mode: 0o600, flush: true })
 }

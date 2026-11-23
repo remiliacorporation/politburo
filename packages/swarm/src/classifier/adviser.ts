@@ -15,6 +15,7 @@ export function stubAdviser(fixedReply: string): Adviser {
 }
 
 type Env = Record<string, string | undefined>
+const allowedEnvKeys = new Set(['PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR'])
 type Run = (command: string, args: string[], options: {
   timeout: number
   env: Env & { PI_MODEL: string; PI_THINKING: string }
@@ -28,6 +29,11 @@ export function piAdviser({ run, env, model, thinking }: {
   model: string
   thinking: string
 }): Adviser {
+  const runnerEnv: Env = {}
+  for (const key of Object.keys(env)) {
+    if (!allowedEnvKeys.has(key)) throw new Error('unlisted environment key')
+    runnerEnv[key] = env[key]
+  }
   return {
     async advise(packet) {
       try {
@@ -37,7 +43,7 @@ export function piAdviser({ run, env, model, thinking }: {
           await writeFile(file, packet, { mode: 0o600 })
           const { stdout } = await run('pi-task', [file], {
             timeout: adviserTimeoutMs,
-            env: { ...env, PI_MODEL: model, PI_THINKING: thinking },
+            env: { ...runnerEnv, PI_MODEL: model, PI_THINKING: thinking },
           })
           return { text: stdout }
         } finally {
