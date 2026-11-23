@@ -1,0 +1,31 @@
+{
+  "case_id": "serial-counter-002-sequential",
+  "description": "Repeat the same CLI invocation five times",
+  "expected": {
+    "directories": [],
+    "exit_code": 0,
+    "files": {
+      "mob-serial.txt": "5\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "1\n2\n3\n4\n5\n"
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "cli",
+    "repeat": 5
+  },
+  "matrix_row": "M13",
+  "notes": "All calls share one notes directory; allocation is not idempotent.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}

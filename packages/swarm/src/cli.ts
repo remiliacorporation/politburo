@@ -6,6 +6,7 @@ import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { rolloutMain } from './rollout/rollout-cli.ts'
 
 const usage = `usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]
+       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]
        swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]`
 
 class ReadError extends Error {}
@@ -96,4 +97,12 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+// One line per area: the subcommand's module exports run(argv): Promise<number>.
+const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  check: () => import('./checks/cli.ts'),
+  watch: () => import('./watch/cli.ts'),
+  trackers: () => import('./trackers/cli.ts'),
+}
+const [subcommand, ...subargs] = process.argv.slice(2)
+const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
+process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))

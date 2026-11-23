@@ -1,0 +1,87 @@
+{
+  "case_id": "expiry-001-mixed-mail",
+  "description": "Expired, future-dated, and no-deadline mail in one digest run.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/ex/.wake.lock": "",
+      "mail/ex/bodies/ex-0019.txt": null,
+      "mail/ex/bodies/ex-0020.txt": "Example detail for ex-0020.\n",
+      "mail/ex/bodies/ex-0026.txt": "Example detail for ex-0026.\n",
+      "mail/ex/digest.yaml": "batch: \"ex-2026-11-20T21:30:00Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:00:00Z\", \"to\": \"2026-11-20T21:30:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 1, \"p3\": 1}\nact_on: [ex-0020]\nitems:\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0020.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0020\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n  - {\"at\": \"2026-11-20T21:14Z\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"summary\": \"Example spawner.dispatch at p3\", \"urgency\": \"p3\"}\n",
+      "mail/ex/ex-0019.json": null,
+      "mail/ex/ex-0020.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0020.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0020\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n",
+      "mail/ex/ex-0026.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0026.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30:01Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p3\", \"to\": \"ex\", \"urgency\": \"p3\"}\n",
+      "mail/ex/id-counter.txt": "19\n",
+      "mail/ex/sec-queue.yaml": "",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:30:00Z\", \"event\": \"expired\", \"hash\": \"6de657fab7bca8fb68c10bb38f70c3af863acda434a76154e65c94fb22c8b0d8\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0019\", \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:30:00Z\", \"event\": \"routed\", \"hash\": \"83a654371ba81b12cee9518360409e1dca65eae601e6613ab1e6d26b169714fd\", \"id\": \"ex-0020\", \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:30:00Z\", \"event\": \"routed\", \"hash\": \"7ca3b474b22e863c820027e2aa188e7a3669ce45771bc219a23fa746f007a955\", \"id\": \"ex-0026\", \"to\": \"ex\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:30:00Z\", \"event\": \"expired\", \"hash\": \"6de657fab7bca8fb68c10bb38f70c3af863acda434a76154e65c94fb22c8b0d8\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0019\", \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:30:00Z\", \"event\": \"routed\", \"hash\": \"83a654371ba81b12cee9518360409e1dca65eae601e6613ab1e6d26b169714fd\", \"id\": \"ex-0020\", \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:30:00Z\", \"event\": \"routed\", \"hash\": \"7ca3b474b22e863c820027e2aa188e7a3669ce45771bc219a23fa746f007a955\", \"id\": \"ex-0026\", \"to\": \"ex\"}"
+    ],
+    "snapshots": [
+      {
+        "digest": {
+          "act_on": [
+            "ex-0020"
+          ],
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 1,
+            "p3": 1
+          },
+          "item_ids": [
+            "ex-0020",
+            "ex-0026"
+          ]
+        },
+        "skipped": false
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\"alerts\": [], \"delivered\": [], \"expired\": [\"ex-0019\"], \"forward_batch\": [], \"forward_now\": [], \"rejected\": [], \"secretary_now\": []}\n"
+  },
+  "inputs": {
+    "collect": [
+      "mail/ex/.wake.lock",
+      "mail/ex/bodies/ex-0019.txt",
+      "mail/ex/bodies/ex-0020.txt",
+      "mail/ex/bodies/ex-0026.txt",
+      "mail/ex/digest.yaml",
+      "mail/ex/ex-0019.json",
+      "mail/ex/ex-0020.json",
+      "mail/ex/ex-0026.json",
+      "mail/ex/id-counter.txt",
+      "mail/ex/sec-queue.yaml",
+      "mail/log.yaml"
+    ],
+    "kind": "wake",
+    "repo": "ex",
+    "tag": "ex",
+    "window_minutes": 30
+  },
+  "matrix_row": "M07",
+  "notes": "All send times are inside the digest window; only the past deadline expires.",
+  "setup": {
+    "files": {
+      "mail/ex/bodies/ex-0019.txt": "Example detail for ex-0019.\n",
+      "mail/ex/bodies/ex-0020.txt": "Example detail for ex-0020.\n",
+      "mail/ex/bodies/ex-0026.txt": "Example detail for ex-0026.\n",
+      "mail/ex/ex-0019.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n",
+      "mail/ex/ex-0020.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0020.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0020\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n",
+      "mail/ex/ex-0026.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0026.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30:01Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p3\", \"to\": \"ex\", \"urgency\": \"p3\"}\n"
+    },
+    "now": "2026-11-20T21:30:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_wake.py"
+    ]
+  }
+}

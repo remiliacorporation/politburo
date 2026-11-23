@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 type Version = { subject: string; version: string }
@@ -16,10 +16,7 @@ type RecipientState = 'not notified' | 'waiting' | 'acked' | 'behind'
 const limit = 4000
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 const noFollow = constants.O_NOFOLLOW ?? 0
-// Finish an observed torn line with a reserved suffix, then a newline. Its
-// starting byte offset lets concurrent repairs recognize a redundant suffix
-// on its own line, without excusing an unrelated malformed line or a blank line.
-const repaired = /\t!rollout-torn:(\d+)$/
+const recordStarts = ['{"type":"entry"', '{"type":"notice"', '{"type":"ack"']
 
 function token(field: string, value: unknown): void {
   if (typeof value !== 'string' || !value.length || value.length > 64 || /[^A-Za-z0-9._-]/.test(value)) {
@@ -82,35 +79,52 @@ function read(dir: string, file: string, create = false) {
   if (ledger?.isSymbolicLink()) throw new Error(`symlinked rollout ledger: ${file}`)
   if (ledger && !ledger.isFile()) throw new Error(`not a rollout ledger file: ${file}`)
 
+  if (!ledger && !create) throw new Error(`no rollout ledger in ${dir}`)
+
   // Split on newline bytes before decoding, so invalid UTF-8 cannot become valid JSON.
   const text = ledger ? readFileSync(file, { encoding: 'latin1', flag: constants.O_RDONLY | noFollow }) : ''
   const subjects: Subjects = new Map()
   const lines = text.split('\n')
-  const tail = lines.pop()!
-  const repairs = new Set<number>()
-  let offset = 0
+  lines.pop() // Ignore an unterminated tail, even if it parses.
+  const corrupt = (line: number) => new Error(`corrupt rollout ledger at line ${line}`)
+  let fragment: number | undefined
   for (const [i, line] of lines.entries()) {
-    const start = offset
-    offset += line.length + 1
-    const marker = repaired.exec(line)
-    if (marker && Number(marker[1]) === start && marker.index > 0) {
-      repairs.add(start)
-      continue
-    }
-    if (marker?.index === 0 && repairs.has(Number(marker[1]))) continue
+    if (!line) continue
     try {
       if (line.length + 1 >= limit) throw new Error('oversize record')
-      const record: RolloutRecord = JSON.parse(utf8.decode(Buffer.from(line, 'latin1')))
+      const bytes = Buffer.from(line, 'latin1')
+      let decoded: string
+      let incompleteUtf8 = false
+      try {
+        decoded = utf8.decode(bytes)
+      } catch {
+        // A cut can split the final code point, but invalid bytes are still corruption.
+        decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes, { stream: true })
+        incompleteUtf8 = true
+      }
+      let record: RolloutRecord
+      try {
+        record = JSON.parse(decoded)
+      } catch (error) {
+        // Only a line that starts like a writer's record can be a sealed tear.
+        // A later successfully folded record must confirm recovery.
+        if (line[0] !== '{' || !recordStarts.some((start) => start.startsWith(line) || line.startsWith(start))) throw error
+        fragment ??= i + 1
+        continue
+      }
+      if (incompleteUtf8) throw new Error('incomplete UTF-8 after complete JSON')
       validate(record)
       if (typeof record.at !== 'string' || new Date(record.at).toISOString() !== record.at) {
         throw new Error('invalid timestamp')
       }
       fold(subjects, record)
+      fragment = undefined
     } catch {
-      throw new Error(`corrupt rollout ledger at line ${i + 1}`)
+      throw corrupt(fragment ?? i + 1)
     }
   }
-  return { subjects, prefix: tail ? `\t!rollout-torn:${offset}\n` : '' }
+  if (fragment !== undefined) throw corrupt(fragment)
+  return subjects
 }
 
 function view(subjects: Subjects, { subject, version }: Filter) {
@@ -147,12 +161,18 @@ function view(subjects: Subjects, { subject, version }: Filter) {
 export function openLedger(dir: string, { now = () => new Date() }: { now?: () => Date } = {}) {
   const file = join(dir, 'rollout.jsonl')
 
-  function append(prefix: string, record: RolloutRecord) {
+  function append(record: RolloutRecord) {
     record.at = now().toISOString()
-    const bytes = Buffer.from(`${prefix}${JSON.stringify(record)}\n`)
+    const bytes = Buffer.from(`${JSON.stringify(record)}\n`)
     if (bytes.length >= limit) throw new Error('rollout record must be under 4000 bytes')
-    const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | noFollow, 0o600)
-    try { appendFileSync(fd, bytes) } finally { closeSync(fd) }
+    const fd = openSync(file, constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | noFollow, 0o600)
+    try {
+      const { size } = fstatSync(fd)
+      const last = Buffer.alloc(1)
+      const seal = size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a
+      if (seal && bytes.length + 1 >= limit) throw new Error('rollout record must be under 4000 bytes')
+      appendFileSync(fd, seal ? Buffer.concat([Buffer.from('\n'), bytes]) : bytes)
+    } finally { closeSync(fd) }
   }
 
   function addEntryWithOutcome({ subject, version, audience, summary }: Announcement) {
@@ -160,10 +180,10 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
     const entry = { type: 'entry' as const, at: '', subject, version, audience, summary, writeId: randomUUID() }
     validate(entry)
     entry.audience = [...audience]
-    const { subjects, prefix } = read(dir, file, true)
+    const subjects = read(dir, file, true)
     const existing = subjects.get(subject)?.get(version)
-    if (!existing) append(prefix, entry)
-    const effective = existing ?? read(dir, file).subjects.get(subject)?.get(version)
+    if (!existing) append(entry)
+    const effective = existing ?? read(dir, file).get(subject)?.get(version)
     if (!effective || effective.entry.summary !== summary ||
       JSON.stringify(effective.entry.audience) !== JSON.stringify(entry.audience)) {
       throw new Error(`conflicting entry ${subject} ${version}`)
@@ -174,7 +194,7 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
   function receipt<T extends 'notice' | 'ack'>(type: T, { subject, version, recipient }: Delivery) {
     const record = { type, at: '', subject, version, recipient }
     validate(record)
-    const { subjects, prefix } = read(dir, file)
+    const subjects = read(dir, file)
     // An ack is the recipient's own statement, not proof of notice. A recipient
     // who learned of the version elsewhere can be acked with null notifiedAt.
     const timestamp = (state: Subjects) => {
@@ -183,8 +203,8 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
     }
     const at = timestamp(subjects)
     if (at !== undefined) return { ...record, at }
-    append(prefix, record)
-    const effective = timestamp(read(dir, file).subjects)
+    append(record)
+    const effective = timestamp(read(dir, file))
     if (effective === undefined) throw new Error(`missing ${type} after append: ${subject} ${version} ${recipient}`)
     return { ...record, at: effective }
   }
@@ -194,8 +214,8 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
     addEntryWithOutcome,
     notify: (delivery: Delivery) => receipt('notice', delivery),
     ack: (delivery: Delivery) => receipt('ack', delivery),
-    show: (filter: Filter = {}) => view(read(dir, file).subjects, filter),
-    stale: (filter: Filter = {}) => view(read(dir, file).subjects, filter).flatMap(({ subject, version, recipients }) =>
+    show: (filter: Filter = {}) => view(read(dir, file), filter),
+    stale: (filter: Filter = {}) => view(read(dir, file), filter).flatMap(({ subject, version, recipients }) =>
       recipients.filter(({ state }) => state !== 'acked').map((recipient) => ({ subject, version, ...recipient }))),
   }
 }

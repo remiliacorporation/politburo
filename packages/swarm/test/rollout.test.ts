@@ -96,7 +96,8 @@ test('racing adds with different audiences both succeed, or identical adds are n
 test('a torn final line is folded or concurrent recovery rewrites bytes or poisons appends', async (t) => {
   const { dir, file, ledger, bytes } = fixture(t)
   ledger.addEntry({ ...config, audience: ['pb', 'ty'] })
-  appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }))
+  const ack = JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' })
+  appendFileSync(file, ack.slice(0, ack.length / 2))
   const damaged = bytes()
   assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['pb', 'ty'])
   assert.deepEqual(bytes(), damaged)
@@ -109,8 +110,42 @@ test('a torn final line is folded or concurrent recovery rewrites bytes or poiso
   assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['ty'])
 })
 
+test('a short write after preflight swallows the next record', (t) => {
+  const { dir, file, ledger } = fixture(t)
+  ledger.addEntry({ ...config, audience: ['pb', 'ty'] })
+  ledger.ack({ ...config, recipient: 'pb' })
+  const record = JSON.stringify({ type: 'ack', at, ...config, recipient: 'ty' })
+  const writer = openLedger(dir, { now: () => {
+    appendFileSync(file, record.slice(0, record.length / 2))
+    assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['ty'])
+    return new Date(at)
+  } })
+  writer.notify({ ...config, recipient: 'ty' })
+  assert.deepEqual(ledger.show()[0]?.recipients.map(({ recipient, state }) => [recipient, state]), [
+    ['pb', 'acked'], ['ty', 'waiting'],
+  ])
+  assert.deepEqual(ledger.stale().map(({ recipient, state }) => [recipient, state]), [['ty', 'waiting']])
+})
+
+test('a short write inside a Unicode character poisons later reads', (t) => {
+  const { file, ledger } = fixture(t)
+  ledger.addEntry({ ...config, audience: ['pb'] })
+  const partial = Buffer.from('{"type":"entry","summary":"😀')
+  appendFileSync(file, partial.subarray(0, -2))
+  ledger.ack({ ...config, recipient: 'pb' })
+  assert.deepEqual(ledger.stale(), [])
+})
+
+test('a blank line hides a later valid rollout record', (t) => {
+  const { file, ledger } = fixture(t)
+  ledger.addEntry({ ...config, audience: ['pb'] })
+  appendFileSync(file, '\n')
+  appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }) + '\n')
+  assert.deepEqual(ledger.stale(), [])
+})
+
 test('a corrupt newline-terminated last line is ignored or a writer appends after it', (t) => {
-  for (const garbage of ['garbage\n', '{}\n']) {
+  for (const garbage of ['garbage\n', '{}\n', '{"type":"ack",\n\n']) {
     const { file, ledger, bytes } = fixture(t)
     ledger.addEntry({ ...config, audience: ['pb'] })
     appendFileSync(file, garbage)
@@ -262,7 +297,6 @@ test('read commands report missing directories or unknown filters as healthy, or
     assert.match(result.stderr, headline)
   }
   for (const action of ['stale', 'show']) {
-    expectFailure('', /^error: missing --dir/, action)
     expectFailure(missing, /^error: missing rollout directory .*missing\n$/, action)
     expectFailure(dir, /^error: unknown subject away\n$/, action, '--subject', 'away')
   }
@@ -274,6 +308,29 @@ test('read commands report missing directories or unknown filters as healthy, or
   const healthy = cli(dir, 'stale', '--subject', 'config', '--json')
   assert.equal(healthy.status, 0, healthy.stderr)
   assert.deepEqual(JSON.parse(healthy.stdout), { stale: [] })
+})
+
+test('show or stale reports an existing directory without a ledger as healthy', (t) => {
+  const { dir, file } = fixture(t)
+  for (const action of ['show', 'stale']) {
+    const result = cli(dir, action, '--dir', dir)
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    assert.equal(result.stderr, `error: no rollout ledger in ${dir}\n`)
+    assert.equal(result.stdout, '')
+  }
+  assert.ok(!existsSync(file))
+})
+
+test('show or stale treats an empty or missing --dir as anything but misuse', (t) => {
+  const { dir } = fixture(t)
+  for (const action of ['show', 'stale']) {
+    for (const [fallback, flags] of [['', []], [dir, ['--dir', '']], [dir, ['--dir']]] as const) {
+      const result = cli(fallback, action, ...flags)
+      assert.equal(result.status, 2, result.stderr || result.stdout)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /^error: .*--dir.*\nusage:/)
+    }
+  }
 })
 
 test('JSON error stderr emits a raw C1 control character', () => {

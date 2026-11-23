@@ -65,7 +65,7 @@ export function rolloutMain(args: string[]): number {
     if (flag !== 'dir' && flag !== 'json' && !allowed.includes(flag)) return fail(`unexpected --${flag}`, 2)
   }
   const dir = values.dir ?? process.env.SWARM_ROLLOUT_DIR
-  if (!dir) return fail('missing --dir or SWARM_ROLLOUT_DIR', action === 'show' || action === 'stale' ? 1 : 2)
+  if (!dir) return fail('missing --dir or SWARM_ROLLOUT_DIR', 2)
 
   const { subject, version, audience, summary, recipient, json } = values
   const ledger = openLedger(dir)
