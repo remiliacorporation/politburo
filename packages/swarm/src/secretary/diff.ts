@@ -133,15 +133,18 @@ function indexForwards(forwards: ForwardBatch[]) {
 }
 
 function indexNotices(lines: LiveLine[]) {
-  const files = new Map<string, Map<string, NoticeTarget>>()
+  const files = new Map<string, Map<string, NoticeTarget[]>>()
   for (const row of lines) {
     if (row.type !== 'notice') continue
     const { file, to, reason } = row
-    const targets = files.get(file) ?? new Map<string, NoticeTarget>()
-    targets.set(JSON.stringify([to, reason]), { to, reason })
+    const targets = files.get(file) ?? new Map<string, NoticeTarget[]>()
+    const tuple = JSON.stringify([to, reason])
+    const occurrences = targets.get(tuple) ?? []
+    occurrences.push({ to, reason })
+    targets.set(tuple, occurrences)
     files.set(file, targets)
   }
-  return new Map([...files].map(([file, targets]) => [file, [...targets.keys()].sort().map((key) => targets.get(key)!)]))
+  return new Map([...files].map(([file, targets]) => [file, [...targets.keys()].sort().flatMap((key) => targets.get(key)!)]))
 }
 
 export function compareJournal(records: DecisionRecord[], expected: LiveLine[]): Difference[] {

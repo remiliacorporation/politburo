@@ -28,6 +28,8 @@ type Event = Ingest | Decision | Notice | (Forward & { kind: 'lane'; wakeId: str
 export type DecisionRecord = Event & { v: 1; at: number; cycle: number }
 type Tick = { at: number; cycle: number }
 
+const noticeLimit = 200
+const boundNoticeText = (text: string) => [...text].slice(0, noticeLimit).join('')
 const code = (error: unknown) => (error as NodeJS.ErrnoException | null)?.code
 function contains(parent: string, child: string) {
   const path = relative(parent, child)
@@ -155,8 +157,10 @@ export async function createShadow({ mailDir, tag, outDir, config, waker = shado
       if (decision.kind === 'reject') {
         const { key, file, id, reason, header } = decision
         const to = item.result.ok ? header?.from : item.result.from
-        notices.push({ key: hash('notice', key), kind: 'notice', file, ...(id !== undefined && { id }),
-          to: to ?? null, class: 'spawner.decide', urgency: 'p2', reason: reason!, sent: false, detail: 'shadow: not sent' })
+        // Prepared mail and decisions already redact these fields. Keep the filename end for diff.
+        notices.push({ key: hash('notice', key), kind: 'notice', file: [...file].slice(-noticeLimit).join(''),
+          ...(id !== undefined && { id: boundNoticeText(id) }), to: to === undefined ? null : boundNoticeText(to),
+          class: 'spawner.decide', urgency: 'p2', reason: boundNoticeText(reason!), sent: false, detail: 'shadow: not sent' })
       }
       if ((decision.kind === 'accept' || decision.kind === 'revision') && item.identity?.redactedEvidence) {
         state.redactedEvidence.set(decision.id!, item.fileKey)

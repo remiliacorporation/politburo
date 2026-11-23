@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { isMap, parseDocument } from 'yaml'
 import defaults from '../config/defaults.json' with { type: 'json' }
 import { parseHeader, type HeaderResult } from './message.ts'
+import { redact } from './redact.ts'
 
 export type FileMailItem = { file: string; receivedAt: number; result: HeaderResult }
 
@@ -22,7 +23,7 @@ function parseMail(text: string, opts: { classes: string[] }): HeaderResult {
     // A rejected file can still claim a sender. This is not authenticated provenance.
     const from: unknown = !result.ok && isMap(doc.contents) && Object.hasOwn(raw, 'from') ? raw.from : undefined
     return !result.ok && typeof from === 'string' && from
-      ? { ...result, from: [...from].slice(0, 200).join('') } : result
+      ? { ...result, from: [...redact(from)].slice(0, 200).join('') } : result
   } catch {
     return { ok: false, reason: 'bad_yaml' }
   }

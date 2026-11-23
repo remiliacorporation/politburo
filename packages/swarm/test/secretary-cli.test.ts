@@ -245,6 +245,26 @@ test('diff reports missing, extra, misaddressed and wrong-reason reject notices'
   }
 })
 
+test('diff reports missing and extra occurrences of the same reject notice tuple', (t) => {
+  const file = 'bad.md', reason = 'bad_class', to = 'sprite'
+  const target = { to, reason }
+  const notice = { type: 'notice', file, ...target }
+  const reject = { type: 'message', id: file, outcome: 'reject', reason }
+  const rejects = [1, 2].map((receivedAt) => ({ kind: 'reject', file, reason, receivedAt }))
+  const notices = [1, 2, 3].map((n) => ({ kind: 'notice', key: `notice-${n}`, file, ...target }))
+  const actual = [2, 1, 3].map((count) => {
+    const result = diffFixture(t, [...rejects, ...notices.slice(0, count)], [reject, reject, notice, notice], '--json')
+    assert.equal(result.stderr, '')
+    return [result.status, JSON.parse(result.stdout)]
+  })
+  assert.deepEqual(actual, [
+    [0, { result: 'zero diff', differences: [] }],
+    ...[1, 3].map((count) => [1, { result: 'diff', differences: [
+      { id: `notice ${file}`, expected: [target, target], got: Array(count).fill(target) },
+    ] }]),
+  ])
+})
+
 function mailbox(dir: string) {
   const mail = join(dir, 'mail'), inbox = join(mail, 'pb', 'inbox')
   mkdirSync(inbox, { recursive: true })

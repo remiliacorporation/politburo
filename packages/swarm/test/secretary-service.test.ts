@@ -110,6 +110,41 @@ test('a rejected header yields one unsent notice with a redacted sender and reas
   assert.equal(await treeHash(opts.mailDir), before, 'recording the notice must not touch the mailbox')
 })
 
+test('a quoted sender credential crossing the cap is masked in ingest and notice', async (t) => {
+  const { opts, put, records } = await mailbox(t)
+  const prefix = 's'.repeat(160)
+  await put('bad', { class: 'disabled', from: `${prefix} password="first synthetic-canary ${'x'.repeat(80)}"` })
+  await runShadow(opts, start)
+  const log = await records()
+  const ingest = log.find((r) => r.kind === 'ingest')
+  assert.ok(ingest && !ingest.result.ok)
+  const notice = log.find((r) => r.kind === 'notice')
+  assert.deepEqual([ingest.result.from, notice?.to], Array(2).fill(`${prefix} password=[redacted]`))
+})
+
+test('reject notices bound recipient, reason, file and ID after redaction', async (t) => {
+  const { opts, inbox, put, records } = await mailbox(t)
+  const id = '🦋'.repeat(200)
+  const credential = 'password="synthetic multiword fixture"'
+  await put('original', { id })
+  await put('collision', { id, from: `${credential} ${'🦋'.repeat(300)}` }, start + 1)
+  await writeFile(join(inbox, `${'x'.repeat(205)}.md`), `Summary\n\`\`\`yaml\n${JSON.stringify({
+    ...header('bad'), [`${credential} ${'🦋'.repeat(300)}`]: 'unexpected',
+  })}\n\`\`\`\n`)
+  await runShadow(opts, start + 1)
+  const notices = (await records()).filter((r) => r.kind === 'notice')
+  assert.equal(notices.length, 2)
+  const collision = notices.find((r) => r.reason === 'id_collision')
+  const invalid = notices.find((r) => r.reason.startsWith('unknown_field:'))
+  assert.ok(collision && invalid)
+  const toPrefix = 'password=[redacted] '
+  const reasonPrefix = `unknown_field:${toPrefix}`
+  assert.deepEqual({ to: collision.to, id: collision.id, reason: invalid.reason, fileLength: [...invalid.file].length }, {
+    to: toPrefix + '🦋'.repeat(200 - toPrefix.length), id,
+    reason: reasonPrefix + '🦋'.repeat(200 - reasonPrefix.length), fileLength: 200,
+  })
+})
+
 test('repeated ticks and restart append no second reject notice and recover a missing one', async (t) => {
   const { opts, out, put, text, records } = await mailbox(t)
   await put('bad', { class: 'disabled' })
