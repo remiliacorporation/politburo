@@ -1,0 +1,78 @@
+{
+  "case_id": "check-lock-001-clean-registration",
+  "description": "Acquire, register the check process, and release the lock.",
+  "expected": {
+    "attempts": [
+      {
+        "exec_reached": true,
+        "lock_dir_exists": false,
+        "owner": {
+          "hostname": "example-host",
+          "pid": 120,
+          "pid_start": "345",
+          "started": 1767225600.0,
+          "tag": "example-worker",
+          "token": "00000000000000000000000000000001"
+        },
+        "registered_owner": {
+          "check_pid": 122,
+          "check_start": "567",
+          "hostname": "example-host",
+          "pid": 120,
+          "pid_start": "345",
+          "started": 1767225600.0,
+          "tag": "example-worker",
+          "token": "00000000000000000000000000000001"
+        },
+        "sleeps": []
+      }
+    ],
+    "exit_code": null,
+    "files": {
+      "example-notes/mac-check.lock/owner.json": null
+    },
+    "lock_path": "example-notes/mac-check.lock",
+    "log_lines": [],
+    "stale_directories": 0,
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "attempts": [
+      {
+        "args": {
+          "tag": "example-worker",
+          "timeout": 0
+        },
+        "register_check": {
+          "after": 10,
+          "pid": 122
+        }
+      }
+    ],
+    "collect": [
+      "example-notes/mac-check.lock/owner.json"
+    ],
+    "function": "take_lock",
+    "kind": "call",
+    "notes_root": "example-notes"
+  },
+  "matrix_row": "M11",
+  "notes": "Stop at exec; no check command or push is run.",
+  "setup": {
+    "files": {
+      "example-proc/120/stat": "120 (example fixture) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 345\n",
+      "example-proc/122/stat": "122 (example fixture) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 567\n"
+    },
+    "hostname": "example-host",
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 120,
+    "proc_root": "example-proc"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py"
+    ]
+  }
+}

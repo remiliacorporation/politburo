@@ -1,0 +1,53 @@
+{
+  "case_id": "mail-delivery-006-atomic-rollback",
+  "description": "Fail the directory sync during an in-place header update.",
+  "expected": {
+    "exit_code": 2,
+    "files": {
+      "mail/ex/ex-0002.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "update.json": "{\"id\": \"ex-0002\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-two\"}, \"summary\": \"Example replacement\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14:01Z\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "secretary_mailbox: [Errno 28] Example directory sync failure\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 2,
+        "stderr": "secretary_mailbox: [Errno 28] Example directory sync failure\n",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "deliver",
+          "<WORK>/update.json"
+        ],
+        "fault": {
+          "kind": "directory-fsync-once",
+          "path": "mail/ex"
+        },
+        "kind": "cli",
+        "tool": "mailbox"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "Inject one ENOSPC after replacing an existing header. Collect all files to expose leaked staging files.",
+  "setup": {
+    "files": {
+      "mail/ex/ex-0002.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "update.json": "{\"id\": \"ex-0002\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-two\"}, \"summary\": \"Example replacement\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14:01Z\"}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
