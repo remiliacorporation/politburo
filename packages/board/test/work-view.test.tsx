@@ -398,11 +398,13 @@ it('/work ignores a focused row that was scrolled offscreen during live regroupi
   })
 
   const scroll = document.querySelector<HTMLElement>('main .work-view')!
+  const queueRegion = queue()
   const blockHeight = 40
   const getRect = Element.prototype.getBoundingClientRect
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-    if (!this.matches('li[data-task-id]') || !scroll.contains(this)) return getRect.call(this)
-    const blocks = [...scroll.querySelectorAll('section h2, section li[data-task-id]')]
+    if (!this.matches('li') || !queueRegion.contains(this)) return getRect.call(this)
+    // happy-dom has no layout: model the queue as equal-height group headings and rows.
+    const blocks = [...queueRegion.querySelectorAll('h3, li')]
     return new DOMRect(0, blocks.indexOf(this) * blockHeight - scroll.scrollTop, 100, blockHeight)
   })
   const reading = taskLinks()[1]!
