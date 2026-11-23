@@ -1,0 +1,57 @@
+{
+  "case_id": "mail-delivery-002-reject-and-notify",
+  "description": "Reject an unknown field and notify the sender.",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "invalid.json": "{\n  \"id\": \"ex-0004\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"to\": \"ex2\",\n  \"summary\": \"Example invalid header\",\n  \"at\": \"2026-11-20T21:14Z\",\n  \"extra\": \"Example unknown field\"\n}\n",
+      "mail/ex/.keep": "",
+      "mail/ex/ex-0001.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex2 secretary\"\nto: \"ex\"\nref: {rejected: \"ex-0004\"}\nsummary: \"rejected mail ex-0004: $.extra: additionalProperties\"\nat: \"2026-11-20T21:20:00Z\"\n",
+      "mail/ex/id-counter.txt": "1\n",
+      "mail/ex2/rejected/ex-0004-47c7a2f5.reason.txt": "$.extra: additionalProperties\n",
+      "mail/ex2/rejected/ex-0004-47c7a2f5.yaml": "{\n  \"id\": \"ex-0004\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"to\": \"ex2\",\n  \"summary\": \"Example invalid header\",\n  \"at\": \"2026-11-20T21:14Z\",\n  \"extra\": \"Example unknown field\"\n}\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"rejected\", \"hash\": \"9ec39abb2d71835e414e260a36505e1d30ec6cc8cfd98b7c4e051a59a6eb52cc\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"class\": \"spawner.dispatch\", \"extra\": \"Example unknown field\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0004\", \"summary\": \"Example invalid header\", \"to\": \"ex2\", \"urgency\": \"p0\"}, \"id\": \"ex-0004\", \"reason\": \"$.extra: additionalProperties\", \"to\": \"ex2\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"1acab1f10b0fc990bd6a419d0fb928700297c8c29078ccf91038b477e3faa0c2\", \"header\": {\"at\": \"2026-11-20T21:20:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"ref\": {\"rejected\": \"ex-0004\"}, \"summary\": \"rejected mail ex-0004: $.extra: additionalProperties\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"rejected\": \"ex-0004\"}, \"spawner.decide\"], \"to\": \"ex\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"rejected\", \"hash\": \"9ec39abb2d71835e414e260a36505e1d30ec6cc8cfd98b7c4e051a59a6eb52cc\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"class\": \"spawner.dispatch\", \"extra\": \"Example unknown field\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0004\", \"summary\": \"Example invalid header\", \"to\": \"ex2\", \"urgency\": \"p0\"}, \"id\": \"ex-0004\", \"reason\": \"$.extra: additionalProperties\", \"to\": \"ex2\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"1acab1f10b0fc990bd6a419d0fb928700297c8c29078ccf91038b477e3faa0c2\", \"header\": {\"at\": \"2026-11-20T21:20:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"ref\": {\"rejected\": \"ex-0004\"}, \"summary\": \"rejected mail ex-0004: $.extra: additionalProperties\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"rejected\": \"ex-0004\"}, \"spawner.decide\"], \"to\": \"ex\"}"
+    ],
+    "stderr": "rejected: ex-0004: $.extra: additionalProperties\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 1,
+        "stderr": "rejected: ex-0004: $.extra: additionalProperties\n",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "deliver",
+          "<WORK>/invalid.json"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "The invalid secretary_v2 fixture has no reply_to; the marker makes its sender mailbox exist.",
+  "setup": {
+    "files": {
+      "invalid.json": "{\n  \"id\": \"ex-0004\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"to\": \"ex2\",\n  \"summary\": \"Example invalid header\",\n  \"at\": \"2026-11-20T21:14Z\",\n  \"extra\": \"Example unknown field\"\n}\n",
+      "mail/ex/.keep": ""
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
