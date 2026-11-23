@@ -1,0 +1,30 @@
+{
+  "case_id": "serial-counter-001-clean",
+  "description": "First allocation in an empty notes directory",
+  "expected": {
+    "directories": [],
+    "exit_code": 0,
+    "files": {
+      "mob-serial.txt": "1\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "1\n"
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "cli"
+  },
+  "matrix_row": "M13",
+  "notes": "No counter or lock is seeded.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}

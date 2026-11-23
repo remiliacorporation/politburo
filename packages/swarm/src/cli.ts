@@ -93,4 +93,10 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+// One line per area: the subcommand's module exports run(argv): Promise<number>.
+const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  watch: () => import('./watch/cli.ts'),
+}
+const [subcommand, ...subargs] = process.argv.slice(2)
+const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
+process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))

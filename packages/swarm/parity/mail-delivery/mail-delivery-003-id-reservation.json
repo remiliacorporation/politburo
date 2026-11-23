@@ -1,0 +1,111 @@
+{
+  "case_id": "mail-delivery-003-id-reservation",
+  "description": "Reserve a supplied local ID, archive it, and allocate past an occupied slot.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "mail/ex/bodies/ex-0007.txt": "Example retained detail\n",
+      "mail/ex/ex-0007.yaml": null,
+      "mail/ex/ex-0008.json": "{\"id\": \"ex-0008\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-other\"}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14Z\"}\n",
+      "mail/ex/id-counter.txt": "10\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"ca61dff4d8e9bb4187830959dd6356de3fdb66fa2fd5f55943e16d3e93b166ef\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0007.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0007\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0007\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"archived\", \"hash\": \"ca61dff4d8e9bb4187830959dd6356de3fdb66fa2fd5f55943e16d3e93b166ef\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0007.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0007\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0007\", \"to\": \"ex\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"ca61dff4d8e9bb4187830959dd6356de3fdb66fa2fd5f55943e16d3e93b166ef\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0007.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0007\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0007\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"archived\", \"hash\": \"ca61dff4d8e9bb4187830959dd6356de3fdb66fa2fd5f55943e16d3e93b166ef\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0007.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0007\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0007\", \"to\": \"ex\"}"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0007",
+          "notice": null,
+          "path": "mail/ex/ex-0007.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": null
+      },
+      {
+        "return": "ex-0009"
+      },
+      {
+        "return": "ex-0010"
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/ex/ex-0007.yaml",
+      "mail/ex/bodies/ex-0007.txt",
+      "mail/ex/ex-0008.json",
+      "mail/ex/id-counter.txt",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "args": {
+          "body": "Example retained detail\n",
+          "header": {
+            "at": "2026-11-20T21:14Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0007",
+            "ref": {
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example batch dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p1"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "id": "ex-0007",
+          "to": "ex"
+        },
+        "function": "archive_message",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "tag": "ex"
+        },
+        "function": "next_id",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "tag": "ex"
+        },
+        "function": "next_id",
+        "kind": "call"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "Archiving leaves the body intact; next_id skips the occupied JSON slot and persists each new allocation.",
+  "setup": {
+    "files": {
+      "mail/ex/ex-0008.json": "{\"id\": \"ex-0008\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-other\"}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14Z\"}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
