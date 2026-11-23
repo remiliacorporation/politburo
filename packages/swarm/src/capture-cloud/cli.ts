@@ -1,6 +1,6 @@
-import { accessSync, closeSync, constants, lstatSync, openSync, readFileSync,
+import { accessSync, closeSync, constants, fstatSync, openSync, readFileSync,
   realpathSync, statSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { Book, BookError } from './book.ts'
@@ -15,12 +15,16 @@ const flags = {
   session: { type: 'string' },
 } as const
 
-function usableDirectory(path: string, which: 'book' | 'ledger'): string {
+const unsafeLedger = 'ledger path is not a safe regular file'
+
+function usablePath(path: string, which: 'book' | 'ledger'): string {
+  if (path.endsWith(sep)) throw new BookError(which === 'book' ? 'unsafe book file' : unsafeLedger)
   try {
-    const dir = realpathSync(dirname(path))
+    // Preserve the filesystem's traversal of symlinks followed by `..`.
+    const dir = realpathSync.native(dirname(path))
     if (!statSync(dir).isDirectory()) throw new Error()
     accessSync(dir, constants.W_OK | constants.X_OK)
-    return dir
+    return join(dir, basename(path))
   } catch {
     throw new BookError(`cannot use ${which} directory`)
   }
@@ -38,10 +42,16 @@ function deliverCapability(output: string): Promise<void> {
   })
 }
 
-function sameFile(book: string, ledger: string): boolean {
-  const a = statSync(book, { bigint: true, throwIfNoEntry: false })
-  const b = statSync(ledger, { bigint: true, throwIfNoEntry: false })
-  return a && b ? a.dev === b.dev && a.ino === b.ino : book === ledger
+function openLedger(path: string): number {
+  const { O_RDWR, O_CREAT, O_APPEND, O_NOFOLLOW, O_NONBLOCK } = constants
+  try {
+    return openSync(path, O_RDWR | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, 0o600)
+  } catch (error) {
+    if (['ELOOP', 'EISDIR', 'ENXIO'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      throw new BookError(unsafeLedger)
+    }
+    throw error
+  }
 }
 
 export async function captureCloud([action, ...args]: string[]): Promise<number> {
@@ -82,18 +92,37 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
 
   try {
     if (action === 'serve') {
-      const ledger = values.ledger!
-      const bookDir = usableDirectory(values.book, 'book')
-      const ledgerDir = usableDirectory(ledger, 'ledger')
-      const leaf = lstatSync(ledger, { throwIfNoEntry: false })
-      if (leaf && !leaf.isFile()) return fail('ledger path is not a safe regular file')
-      const bookPath = join(bookDir, basename(values.book))
-      const ledgerPath = join(ledgerDir, basename(ledger))
-      if (sameFile(bookPath, ledgerPath) || ledgerPath === `${bookPath}.lock`) {
-        return fail('book and ledger must be different files')
-      }
+      const bookPath = usablePath(values.book, 'book')
+      const ledgerPath = usablePath(values.ledger!, 'ledger')
+      const differentFiles = 'book and ledger must be different files'
+      if (ledgerPath === bookPath || ledgerPath === `${bookPath}.lock`) return fail(differentFiles)
+      const book = new Book({ file: bookPath })
+      const fd = openLedger(ledgerPath)
+      try {
+        const ledgerStat = fstatSync(fd, { bigint: true })
+        if (!ledgerStat.isFile()) return fail(unsafeLedger)
+        const bookStat = statSync(bookPath, { bigint: true, throwIfNoEntry: false })
+        if (bookStat && bookStat.dev === ledgerStat.dev && bookStat.ino === ledgerStat.ino) {
+          return fail(differentFiles)
+        }
+        const all = values['unsafe-bind-all'] === true
+        const server = await createReceiver({ book, ledger: jsonlLedger(ledgerPath, fd),
+          host: all ? '0.0.0.0' : '127.0.0.1', unsafeBind: all }).listen(port)
+        await new Promise<void>((resolve, reject) => {
+          const stop = () => {
+            process.off('SIGINT', stop)
+            process.off('SIGTERM', stop)
+            server.close().then(resolve, reject)
+          }
+          process.on('SIGINT', stop)
+          process.on('SIGTERM', stop)
+          const url = `http://127.0.0.1:${server.port}`
+          console.log(json ? JSON.stringify({ listening: url }) : `listening  ${url}`)
+        })
+      } finally { closeSync(fd) }
+      return 0
     }
-    const book = new Book({ file: values.book })
+    const book = new Book({ file: action === 'bind' ? usablePath(values.book, 'book') : values.book })
     if (action === 'issue') {
       let envelope: unknown
       try { envelope = JSON.parse(readFileSync(values.envelope!, 'utf8')) } catch { return fail('cannot read envelope json') }
@@ -103,28 +132,13 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
       const output = json ? JSON.stringify(result)
         : `capability  ${result.capability}\nexpires  ${result.expiresAt}`
       try { await deliverCapability(output) } catch { return fail('cannot deliver capability') }
-    } else if (action === 'bind') {
+    } else {
       let capability: string | undefined
       const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
       try { for await (const line of lines) { capability = line; break } } finally { lines.close() }
       if (!capability) return fail('missing capability on stdin', 2)
       book.bind(capability, values.session!)
-      console.log('bound')
-    } else {
-      closeSync(openSync(values.ledger!, 'a', 0o600))
-      const all = values['unsafe-bind-all'] === true
-      const server = await createReceiver({ book, ledger: jsonlLedger(values.ledger!),
-        host: all ? '0.0.0.0' : '127.0.0.1', unsafeBind: all }).listen(port)
-      await new Promise<void>((resolve, reject) => {
-        const stop = () => {
-          process.off('SIGINT', stop)
-          process.off('SIGTERM', stop)
-          server.close().then(resolve, reject)
-        }
-        process.on('SIGINT', stop)
-        process.on('SIGTERM', stop)
-        console.log(`listening  http://127.0.0.1:${server.port}`)
-      })
+      console.log(json ? JSON.stringify({ bound: true }) : 'bound')
     }
     return 0
   } catch (error) {

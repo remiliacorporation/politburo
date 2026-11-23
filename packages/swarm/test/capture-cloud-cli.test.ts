@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
 import { accessSync, chmodSync, closeSync, constants, existsSync, linkSync, mkdirSync,
-  mkdtempSync, openSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+  mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -30,16 +30,36 @@ function records(path: string): SpendRecord[] {
 }
 function post(url: string, capability: string) {
   return fetch(`${url}/v1/claims/${capability}`, { method: 'POST',
+    signal: AbortSignal.timeout(5_000),
     headers: { 'content-type': 'application/json' }, body: JSON.stringify(claim) })
 }
 
-const cli = ['dist/cli.js', 'capture-cloud']
+const cli = ['src/cli.ts', 'capture-cloud']
 const cwd = new URL('../', import.meta.url)
 function run(...args: string[]) { return runWithInput('', ...args) }
 function runWithInput(input: string, ...args: string[]) {
-  const result = spawnSync(process.execPath, [...cli, ...args], { cwd, input, encoding: 'utf8', timeout: 5_000 })
+  const result = spawnSync(process.execPath, [...cli, ...args], {
+    cwd, input, encoding: 'utf8', timeout: 5_000, killSignal: 'SIGKILL',
+  })
   if (result.error) throw result.error
   return result
+}
+
+async function listen(t: TestContext, bookFile: string, ledgerFile: string): Promise<string> {
+  const child = spawn(process.execPath, [...cli, 'serve', '--book', bookFile, '--ledger', ledgerFile, '--port', '0'],
+    { cwd, timeout: 10_000, killSignal: 'SIGKILL' })
+  const closed = once(child, 'close')
+  t.after(async () => { child.kill('SIGKILL'); await closed })
+  const lines = createInterface({ input: child.stdout })
+  t.after(() => lines.close())
+  let stderr = ''
+  child.stderr.setEncoding('utf8').on('data', text => { stderr += text })
+  const [line] = await Promise.race([
+    once(lines, 'line', { signal: AbortSignal.timeout(5_000) }),
+    closed.then(([code]) => assert.fail(`serve exited before listening (${code}): ${stderr}`)),
+  ])
+  assert.match(line, /^listening\s+http:\/\/127\.0\.0\.1:[1-9]\d*$/)
+  return line.trim().split(/\s+/)[1]!
 }
 
 // Catches a broken CLI dispatch, binding, ephemeral listener, or file handoff.
@@ -57,25 +77,29 @@ test('CLI issues, binds and serves a claim into the ledger', async (t) => {
   assert.deepEqual([empty.status, empty.stderr.trim()], [2, 'error: missing capability on stdin'])
   assert.deepEqual([flag.status, flag.stderr.trim()], [2, 'error: invalid flags'])
   assert.equal(new Book({ file: bookFile }).bySession(session, Date.now())?.session, session)
-  const child = spawn(process.execPath, [...cli, 'serve', '--book', bookFile, '--ledger', ledgerFile, '--port', '0'], { cwd })
-  const closed = once(child, 'close')
-  t.after(async () => { child.kill('SIGKILL'); await closed })
-  const lines = createInterface({ input: child.stdout })
-  t.after(() => lines.close())
-  let stderr = ''
-  child.stderr.setEncoding('utf8').on('data', text => { stderr += text })
-  const [line] = await Promise.race([
-    once(lines, 'line', { signal: AbortSignal.timeout(5_000) }),
-    closed.then(([code]) => assert.fail(`serve exited before listening (${code}): ${stderr}`)),
-  ])
-  assert.match(line, /^listening\s+http:\/\/127\.0\.0\.1:[1-9]\d*$/)
+  const url = await listen(t, bookFile, ledgerFile)
   assert.equal(statSync(ledgerFile).mode & 0o777, 0o600, 'ledger exists privately before the first claim')
-  assert.equal((await post(line.trim().split(/\s+/)[1], capability)).status, 202)
+  assert.equal((await post(url, capability)).status, 202)
   // Independent file read immediately after the child acknowledges append; it cannot observe fsync.
   const [row, ...rest] = records(ledgerFile)
   assert.ok(row && rest.length === 0, 'expected exactly one record')
   assert.deepEqual(row.envelope, envelope)
   assert.deepEqual(row.tokens, claim.tokens)
+})
+
+test('CLI serve does not write claims to a replacement ledger path', async (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const url = await listen(t, bookFile, ledgerFile)
+
+  const original = `${ledgerFile}.moved`
+  renameSync(ledgerFile, original)
+  writeFileSync(ledgerFile, '')
+  assert.equal((await post(url, capability)).status, 202)
+  assert.equal(readFileSync(ledgerFile, 'utf8'), '', 'replacement must remain untouched')
+  assert.equal(records(original).length, 1, 'claim must reach the ledger opened at startup')
 })
 
 function serveError(book: string, ledger: string, message: string) {
@@ -103,6 +127,10 @@ test('CLI serve rejects ledger symlinks and non-regular files', (t) => {
   rmSync(ledgerFile)
   mkdirSync(ledgerFile)
   rejectsLedger()
+  rmSync(ledgerFile, { recursive: true })
+  const fifo = spawnSync('mkfifo', [ledgerFile], { timeout: 2_000, killSignal: 'SIGKILL' })
+  assert.equal(fifo.status, 0, fifo.error?.message ?? fifo.stderr?.toString())
+  rejectsLedger()
 })
 
 test('CLI serve rejects the book lock through a directory alias', (t) => {
@@ -110,6 +138,21 @@ test('CLI serve rejects the book lock through a directory alias', (t) => {
   const alias = join(dirname(bookFile), 'alias')
   symlinkSync(dirname(bookFile), alias, 'dir')
   serveError(bookFile, join(alias, `${basename(bookFile)}.lock`), 'book and ledger must be different files')
+})
+
+test('CLI serve rejects a book lock reached through a symlink followed by ..', (t) => {
+  const { bookFile } = paths(t)
+  const dir = dirname(bookFile)
+  const nested = join(dir, 'nested')
+  const alias = join(dir, 'alias')
+  const child = join(nested, 'child')
+  mkdirSync(child, { recursive: true })
+  symlinkSync(child, alias, 'dir')
+  // Keep `..` in the raw argument so the filesystem, not path.join, traverses it.
+  const otherBook = join(nested, basename(bookFile))
+  serveError(otherBook, `${alias}/../${basename(bookFile)}.lock`,
+    'book and ledger must be different files')
+  assert.equal(existsSync(`${otherBook}.lock`), false)
 })
 
 test('CLI serve rejects unavailable parent directories before listening', (t) => {
@@ -187,4 +230,44 @@ test('CLI bind validates arguments and the book without waiting for stdin', asyn
     const [code, signal] = await closed
     assert.deepEqual([code, signal, stderr.trim()], [status, null, `error: ${message}`])
   }
+})
+
+test('bind waits for the capability on stdin before it reports an unusable book directory', async (t) => {
+  const { bookFile } = paths(t)
+  const missing = join(dirname(bookFile), 'unavailable', 'book.json')
+  const child = spawn(process.execPath, [...cli, 'bind', '--book', missing, '--session', session], {
+    cwd, timeout: 2_000, killSignal: 'SIGKILL',
+  })
+  const closed = once(child, 'close')
+  let stderr = ''
+  child.stderr.setEncoding('utf8').on('data', text => { stderr += text })
+  child.stdin.on('error', () => {})
+  // Stdin left open with no newline or EOF: a capability read would block.
+  const [code, signal] = await closed
+  assert.deepEqual([code, signal, stderr.trim()], [1, null, 'error: cannot use book directory'])
+})
+
+test('--json success output (listening, bound) is text', async (t) => {
+  const { bookFile, ledgerFile, envelopeFile } = paths(t)
+  writeFileSync(envelopeFile, JSON.stringify(envelope))
+  const issued = run('issue', '--book', bookFile, '--envelope', envelopeFile, '--ttl-hours', '1', '--json')
+  assert.equal(issued.status, 0, issued.stderr)
+  const { capability } = JSON.parse(issued.stdout)
+  const bound = runWithInput(`${capability}\n`, 'bind', '--book', bookFile, '--session', session, '--json')
+  assert.deepEqual([bound.status, bound.stdout, bound.stderr],
+    [0, `${JSON.stringify({ bound: true })}\n`, ''])
+  const child = spawn(process.execPath, [...cli, 'serve', '--book', bookFile, '--ledger', ledgerFile,
+    '--port', '0', '--json'], { cwd, timeout: 10_000, killSignal: 'SIGKILL' })
+  const closed = once(child, 'close')
+  t.after(async () => { child.kill('SIGKILL'); await closed })
+  const lines = createInterface({ input: child.stdout })
+  t.after(() => lines.close())
+  let stderr = ''
+  child.stderr.setEncoding('utf8').on('data', text => { stderr += text })
+  const [line] = await Promise.race([
+    once(lines, 'line', { signal: AbortSignal.timeout(5_000) }),
+    closed.then(([code]) => assert.fail(`serve exited before listening (${code}): ${stderr}`)),
+  ])
+  assert.equal(line, JSON.stringify({ listening: JSON.parse(line).listening }))
+  assert.match(JSON.parse(line).listening, /^http:\/\/127\.0\.0\.1:[1-9]\d*$/)
 })

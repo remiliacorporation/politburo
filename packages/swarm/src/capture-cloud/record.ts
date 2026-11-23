@@ -47,17 +47,17 @@ export type SpendRecord = (
 
 export interface LedgerSink { append(record: SpendRecord): Promise<'appended' | 'duplicate'> }
 
-// STUB: single writer.
-export function jsonlLedger(path: string): LedgerSink {
+// STUB: single writer. A supplied append-mode descriptor stays owned by the caller.
+export function jsonlLedger(path: string, openFd?: number): LedgerSink {
   const keys = new Set<string>(), written = new Set<string>()
   let text: string | undefined, syncDir = false
   try {
-    const fd = openSync(path, 'r')
+    const fd = openFd ?? openSync(path, 'r')
     try {
       try { fsyncSync(fd) }
       catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
       text = readFileSync(fd, 'utf8')
-    } finally { closeSync(fd) }
+    } finally { if (openFd === undefined) closeSync(fd) }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     syncDir = true
@@ -66,7 +66,7 @@ export function jsonlLedger(path: string): LedgerSink {
   return { async append(record) {
     const key = record.dedupe_key
     if (keys.has(key)) return 'duplicate'
-    const fd = openSync(path, 'a', 0o600)
+    const fd = openFd ?? openSync(path, 'a', 0o600)
     try {
       if (!written.has(key)) {
         appendFileSync(fd, `${JSON.stringify(record)}\n`)
@@ -78,7 +78,7 @@ export function jsonlLedger(path: string): LedgerSink {
         try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
         syncDir = false
       }
-    } finally { closeSync(fd) }
+    } finally { if (openFd === undefined) closeSync(fd) }
     written.delete(key)
     keys.add(key)
     return 'appended'
