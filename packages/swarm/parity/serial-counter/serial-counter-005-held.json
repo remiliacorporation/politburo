@@ -1,0 +1,41 @@
+{
+  "case_id": "serial-counter-005-held",
+  "description": "Refuse to break an old lock held by a live allocator",
+  "expected": {
+    "directories": [
+      "mob-serial.lock"
+    ],
+    "exit_code": 2,
+    "files": {
+      "mob-serial.txt": "37\n"
+    },
+    "log_lines": [],
+    "stderr": "timeout waiting for lock\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argv": [
+      "--timeout",
+      "0"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M13",
+  "notes": "A separate descriptor holds an exclusive flock throughout the call.",
+  "setup": {
+    "files": {
+      "mob-serial.txt": "37\n"
+    },
+    "lock": {
+      "age_seconds": 600,
+      "held": true
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "case_id": "check-lock-009-dead-holder",
+  "description": "Reclaim a young lock when both the wrapper and its check are dead.",
+  "expected": {
+    "attempts": [
+      {
+        "lock_dir_exists": false,
+        "owner": {
+          "hostname": "example-host",
+          "pid": 120,
+          "pid_start": "345",
+          "started": 1767225600.0,
+          "tag": "example-worker",
+          "token": "00000000000000000000000000000001"
+        },
+        "sleeps": []
+      }
+    ],
+    "exit_code": null,
+    "files": {
+      "example-notes/mac-check.lock/owner.json": null
+    },
+    "lock_path": "example-notes/mac-check.lock",
+    "log_lines": [
+      "sec_push: broke check lock <WORK>/example-notes/mac-check.lock (pid=121, hostname=example-host): holder dead"
+    ],
+    "stale_directories": 0,
+    "stderr": "sec_push: broke check lock <WORK>/example-notes/mac-check.lock (pid=121, hostname=example-host): holder dead\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "attempts": [
+      {
+        "args": {
+          "tag": "example-worker",
+          "timeout": 0
+        }
+      }
+    ],
+    "collect": [
+      "example-notes/mac-check.lock/owner.json"
+    ],
+    "function": "take_lock",
+    "kind": "call",
+    "notes_root": "example-notes"
+  },
+  "matrix_row": "M11",
+  "notes": "",
+  "setup": {
+    "files": {
+      "example-notes/mac-check.lock/owner.json": "{\"pid\": 121, \"pid_start\": \"456\", \"hostname\": \"example-host\", \"token\": \"example-old\", \"check_pid\": 122, \"check_start\": \"567\"}\n",
+      "example-proc/120/stat": "120 (example fixture) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 345\n"
+    },
+    "hostname": "example-host",
+    "lock_age": 10,
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 120,
+    "proc_root": "example-proc"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py"
+    ]
+  }
+}
