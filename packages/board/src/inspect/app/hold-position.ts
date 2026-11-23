@@ -1,7 +1,7 @@
 import { useLayoutEffect, type RefObject } from 'react'
 
-export function useHoldPosition(list: RefObject<HTMLElement | null>, anchorId: string | null | undefined): void {
-  const row = () => anchorId == null ? null : list.current?.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(anchorId)}"]`)
+export function useHoldPosition(list: RefObject<HTMLElement | null>, anchorId: string | null | undefined, attribute = 'data-task-id'): void {
+  const row = () => anchorId == null ? null : list.current?.querySelector<HTMLElement>(`[${attribute}="${CSS.escape(anchorId)}"]`)
   // Read the old DOM during render; the layout effect runs after React updates it, before paint.
   // An offscreen anchor (focused, then scrolled away) must not be held: compensating
   // for it would scroll the rows the reader can still see.

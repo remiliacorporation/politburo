@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { claimOrder } from '../src/inspect/app/claim-order.ts'
 import { initialState, merge, type State, type TaskRoot, type Viewer } from '../src/inspect/app/store.ts'
-import { groupOf, projectWork, type Observation, type SwarmRecords } from '../src/inspect/app/work.ts'
+import { groupOf, homeOf, projectWork, type Observation, type SwarmRecords } from '../src/inspect/app/work.ts'
 
 const now = Date.parse('2026-10-01T12:00:00Z')
 const at = (offset: number) => new Date(now + offset).toISOString()
@@ -71,6 +71,29 @@ it('sends expired claims to repair and does not infer liveness from an unexpired
   const live = rows.find(({ workId }) => workId === 'wp-3')
   expect(live?.group).toBe('running')
   expect(live?.reason).toMatch(/active/i)
+})
+
+it('counts a claim due in 20 minutes but not 40 as expiring, and a lapsed claim as stale rather than running', () => {
+  const minute = 60_000
+  const home = (roots: TaskRoot[]) => homeOf(projectWork(snapshot(roots), null, viewer, now).rows, null, now)
+  const sooner = claimed(1, 20 * minute)
+  const later = claimed(2, 40 * minute)
+  const lapsed = claimed(3, -minute)
+  expect(home([sooner]).counts.expiring).toBe(1)
+  expect(home([later]).counts.expiring).toBe(0)
+  expect(home([sooner, later, lapsed]).health.total.stale).toBe(1)
+  expect(home([lapsed]).counts.running).toBe(0)
+})
+
+it('counts a lapsed claim in Needs you once in Health and never as Running', () => {
+  const fixtures = records({ 'wp-1': { contract: 'invalid' } })
+  const { groups, rows } = projectWork(snapshot([claimed(1, -60_000)]), fixtures, viewer, now)
+  expect(groups.map(({ title }) => title)).toEqual(['Needs you'])
+  const home = homeOf(rows, fixtures, now)
+  expect(home.needs.map(({ title }) => title)).toEqual(['Task 1'])
+  expect(home.health.total.stale).toBe(1)
+  expect(home.counts.running).toBe(0)
+  expect(home.running).toEqual([])
 })
 
 it('never shows a cached task outside the readable open list or a deleted task', () => {

@@ -6,7 +6,7 @@ import { ago, firstLine, until } from './words.ts'
 
 export type SwarmRecords = {
   source: 'fixtures'
-  parties: Record<string, { name: string; colour: string }>
+  parties: Record<string, { name: string; colour: string; openClaimLimit?: number }>
   observations: Record<string, Observation>
 }
 
@@ -34,6 +34,8 @@ const GROUPS = [
 ] as const
 export type WorkGroup = (typeof GROUPS)[number][0]
 
+export const workGroupTitle = (group: WorkGroup) => GROUPS.find(([key]) => key === group)![1]
+
 export type WorkRow = {
   root: TaskRoot
   workId: string
@@ -44,8 +46,12 @@ export type WorkRow = {
   group: WorkGroup
   reason: string
   claimText: string | null
+  leaseLive: boolean
+  evidenceStale: boolean
   prText: string
+  prHead: string | null
   spendText: string
+  spend: Observation['spend']
   trackers: NonNullable<Observation['trackers']>
   overlapText: string | null
   kind: 'code' | 'research' | 'report' | 'ops'
@@ -135,8 +141,12 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
       party: partyId ? { id: partyId, name: party?.name ?? partyId, colour: party?.colour ?? '' } : null,
       claimant: root.task.claim?.actor ?? null,
       claimText: claimText(root.task.claim, now),
+      leaseLive: obs?.leaseLive === true,
+      evidenceStale: obs?.evidenceStale === true,
       prText: prText(obs?.pr, group),
+      prHead: obs?.pr?.head ?? null,
       spendText: spendText(obs?.spend),
+      spend: obs?.spend,
       trackers: obs?.trackers ?? [],
       overlapText: obs?.overlap?.length ? `overlap: ${obs.overlap.map(({ kind, with: other }) => `${kind} with ${other}`).join(' · ')}` : null,
       kind: kind === 'research' || kind === 'report' || kind === 'ops' ? kind : 'code',
@@ -157,4 +167,73 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
     return [{ group, title, rows }]
   })
   return { rows: groups.flatMap(({ rows }) => rows), groups }
+}
+
+type Party = { id: string | null; name: string; colour: string; openClaimLimit?: number }
+type RunningRow = { row: WorkRow; liveness: 'live' | 'claimed; liveness not confirmed' }
+type RunningParty = { party: Party; cells: Map<string | null, RunningRow[]> }
+const byParty = (a: Party, b: Party) => Number(a.id === null) - Number(b.id === null) ||
+  a.name.localeCompare(b.name) || (a.id ?? '').localeCompare(b.id ?? '')
+
+function healthOf(rows: WorkRow[], now: number) {
+  let active = 0, expiring = 0, stale = 0, reviewWip = 0
+  let knownTokens = 0, unknownTokens = 0, unknownCoverage = 0, overlaps = 0
+  for (const { root, group, evidenceStale, spend, overlapText } of rows) {
+    const { state, claim } = root.task
+    const left = claim ? Date.parse(claim.until) - now : NaN
+    if (state === 'claimed' && left > 0) {
+      active++
+      if (left <= 30 * 60_000) expiring++
+    }
+    if (group !== 'done' && (lapsed(root, now) || evidenceStale)) stale++
+    if (group === 'review') reviewWip++
+    if (spend && spend.tokens !== null && Number.isFinite(spend.tokens) && spend.coverage !== 'unknown') knownTokens += spend.tokens
+    else unknownTokens++
+    if (!spend || spend.coverage === 'unknown' || spend.coverage === 'stale') unknownCoverage++
+    if (overlapText) overlaps++
+  }
+  return { active, expiring, stale, reviewWip, knownTokens, unknownTokens, unknownCoverage, overlaps }
+}
+
+export function homeOf(rows: WorkRow[], records: SwarmRecords | null, now: number) {
+  const needs: WorkRow[] = [], review: WorkRow[] = []
+  const parties = new Map<string | null, { party: Party; rows: WorkRow[] }>(
+    Object.entries(records?.parties ?? {}).map(([id, party]) => [id, { party: { ...party, id }, rows: [] }]),
+  )
+  const runningByParty = new Map<string | null, RunningParty>()
+  let runningCount = 0
+  for (const row of rows) {
+    const id = row.party?.id ?? null
+    let bucket = parties.get(id)
+    if (!bucket) {
+      bucket = { party: row.party ?? { id: null, name: 'external', colour: '' }, rows: [] }
+      parties.set(id, bucket)
+    }
+    bucket.rows.push(row)
+    if (row.group === 'needs') needs.push(row)
+    if (row.group === 'review') review.push(row)
+    if (row.group !== 'running') continue
+    runningCount++
+    let running = runningByParty.get(id)
+    if (!running) {
+      running = { party: bucket.party, cells: new Map() }
+      runningByParty.set(id, running)
+    }
+    const cell = running.cells.get(row.claimant) ?? []
+    cell.push({ row, liveness: row.leaseLive ? 'live' : 'claimed; liveness not confirmed' })
+    running.cells.set(row.claimant, cell)
+  }
+  const running = [...runningByParty.values()].sort((a, b) => byParty(a.party, b.party)).map(({ party, cells }) => ({
+    party,
+    cells: [...cells].sort(([a], [b]) => (a ?? '').localeCompare(b ?? '')).map(([claimant, rows]) => ({ claimant, rows })),
+  }))
+  const total = healthOf(rows, now)
+  const perParty = [...parties.values()].sort((a, b) => byParty(a.party, b.party)).map(({ party, rows }) => ({
+    party, ...healthOf(rows, now),
+  }))
+  const openClaimLimit = perParty.length > 0 && perParty.every(({ party }) => party.openClaimLimit !== undefined)
+    ? perParty.reduce((sum, { party }) => sum + party.openClaimLimit!, 0) : undefined
+  const health = { perParty, total: { ...total, openClaimLimit } }
+  const counts = { needs: needs.length, review: review.length, running: runningCount, expiring: total.expiring }
+  return { counts, needs, review, running, health }
 }
