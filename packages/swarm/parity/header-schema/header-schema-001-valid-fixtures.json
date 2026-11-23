@@ -1,0 +1,86 @@
+{
+  "case_id": "header-schema-001-valid-fixtures",
+  "description": "Validate legacy and v2 headers in both wire formats.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "dispatch.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "legacy-fenced.yaml": "# Example header in its wire fence\n```\nid: ex-0001 # assigned by example\nclass: sec.push\nurgency: p0\nfrom: \"ex 120-BEE\" # example sender\n\nref: {pr: 42, bead: 'example#one', check: \"queued # ok\"} # example refs\nsummary: 'It''s queued # for example' # example summary\nbody: ex-inbox/ex-0001.yaml\nat: 2026-11-20T21:14Z\n```\n",
+      "legacy-log.yaml": "id: ex-0003\nclass: sec.log\nurgency: p3\nfrom: ex 120-BEE\nsummary: Example legacy header\nat: 2026-11-20T21:14Z\n",
+      "legacy-retry.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"sec.retry\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"summary\": \"Example sec.retry at p0\",\n  \"ref\": {\n    \"pr\": 42,\n    \"bead\": \"example-01\"\n  },\n  \"body\": \"ex-inbox/ex-0002.yaml\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "legacy-fenced.yaml",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "legacy-retry.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "dispatch.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "legacy-log.yaml",
+          "phase": "schema",
+          "schema": "header"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "legacy-fenced.yaml",
+        "schema": "header"
+      },
+      {
+        "path": "legacy-retry.json",
+        "schema": "header"
+      },
+      {
+        "path": "dispatch.json",
+        "schema": "header"
+      },
+      {
+        "path": "legacy-log.yaml",
+        "schema": "header"
+      }
+    ]
+  },
+  "matrix_row": "M04",
+  "notes": "Recipient metadata is optional in the header schema; bodies are not read.",
+  "setup": {
+    "files": {
+      "dispatch.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "legacy-fenced.yaml": "# Example header in its wire fence\n```\nid: ex-0001 # assigned by example\nclass: sec.push\nurgency: p0\nfrom: \"ex 120-BEE\" # example sender\n\nref: {pr: 42, bead: 'example#one', check: \"queued # ok\"} # example refs\nsummary: 'It''s queued # for example' # example summary\nbody: ex-inbox/ex-0001.yaml\nat: 2026-11-20T21:14Z\n```\n",
+      "legacy-log.yaml": "id: ex-0003\nclass: sec.log\nurgency: p3\nfrom: ex 120-BEE\nsummary: Example legacy header\nat: 2026-11-20T21:14Z\n",
+      "legacy-retry.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"sec.retry\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"summary\": \"Example sec.retry at p0\",\n  \"ref\": {\n    \"pr\": 42,\n    \"bead\": \"example-01\"\n  },\n  \"body\": \"ex-inbox/ex-0002.yaml\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

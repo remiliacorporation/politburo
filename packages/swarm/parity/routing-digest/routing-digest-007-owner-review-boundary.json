@@ -1,0 +1,179 @@
+{
+  "case_id": "routing-digest-007-owner-review-boundary",
+  "description": "Advance the clock past a previously listed owner's review time.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:14:00Z\", \"event\": \"routed\", \"hash\": \"cdd145cd353ab3ec32cc3589372a4f6f61f788c2a26c59583f5c991748d89dd1\", \"id\": \"ex-0027\", \"to\": \"owner\"}\n",
+      "mail/owner/digest.yaml": "batch: \"owner-2026-11-20T21:14Z\"\nrepo: \"owner\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 1}\nact_on: []\nitems:\n  - {\"at\": \"2026-11-20T21:14Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Park the example item\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"review_by\": \"2026-11-20T21:24Z\", \"summary\": \"Example spawner.decide at p3\", \"urgency\": \"p3\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:14:00Z\", \"event\": \"routed\", \"hash\": \"cdd145cd353ab3ec32cc3589372a4f6f61f788c2a26c59583f5c991748d89dd1\", \"id\": \"ex-0027\", \"to\": \"owner\"}"
+    ],
+    "stderr": "",
+    "stdout": "digest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=1 invalid=0\ndigest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\ndigest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=0 invalid=0\ndigest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=0 invalid=0\n",
+    "timeline": [
+      {
+        "at": "2026-11-20T21:14:00Z",
+        "digest": {
+          "act_on": [],
+          "batch": "owner-2026-11-20T21:14Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "class": "spawner.decide",
+              "default_if_unanswered": "Park the example item",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "review_by": "2026-11-20T21:24Z",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "owner",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:14Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 1,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=1 invalid=0\n"
+      },
+      {
+        "at": "2026-11-20T21:23:59Z",
+        "digest": {
+          "act_on": [],
+          "batch": "owner-2026-11-20T21:14Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 0
+          },
+          "items": [],
+          "repo": "owner",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:14Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 1,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\n"
+      },
+      {
+        "at": "2026-11-20T21:24:00Z",
+        "digest": {
+          "act_on": [],
+          "batch": "owner-2026-11-20T21:14Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "class": "spawner.decide",
+              "default_if_unanswered": "Park the example item",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "review_by": "2026-11-20T21:24Z",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "owner",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:14Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 1,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=0 invalid=0\n"
+      },
+      {
+        "at": "2026-11-20T21:24:01Z",
+        "digest": {
+          "act_on": [],
+          "batch": "owner-2026-11-20T21:14Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "class": "spawner.decide",
+              "default_if_unanswered": "Park the example item",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "review_by": "2026-11-20T21:24Z",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "owner",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:14Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 1,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/owner/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=0 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/owner/digest.yaml",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "after_seconds": 0
+      },
+      {
+        "after_seconds": 599
+      },
+      {
+        "after_seconds": 600
+      },
+      {
+        "after_seconds": 601
+      }
+    ],
+    "tag": "owner"
+  },
+  "matrix_row": "M06",
+  "notes": "The same header and log survive the four scans; only the review clock changes.",
+  "setup": {
+    "files": {
+      "mail/owner/ex-0027.header.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0027.yaml\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Park the example item\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"needs\": \"owner\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"review_by\": \"2026-11-20T21:24Z\", \"summary\": \"Example spawner.decide at p3\", \"to\": \"owner\", \"urgency\": \"p3\"}\n"
+    },
+    "now": "2026-11-20T21:14:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "case_id": "serial-counter-004-stale",
+  "description": "Recover an old lock with no live holder",
+  "expected": {
+    "directories": [],
+    "exit_code": 0,
+    "files": {
+      "mob-serial.txt": "7\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "7\n"
+  },
+  "inputs": {
+    "argv": [
+      "--timeout",
+      "0"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M13",
+  "notes": "The old directory is empty and no process holds the notes flock.",
+  "setup": {
+    "files": {
+      "mob-serial.txt": "6\n"
+    },
+    "lock": {
+      "age_seconds": 600
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}

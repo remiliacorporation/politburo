@@ -1,0 +1,32 @@
+{
+  "case_id": "serial-counter-003-existing",
+  "description": "Allocate with a pre-existing counter",
+  "expected": {
+    "directories": [],
+    "exit_code": 0,
+    "files": {
+      "mob-serial.txt": "120\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "120\n"
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "cli"
+  },
+  "matrix_row": "M13",
+  "notes": "The initial counter already contains a decimal value.",
+  "setup": {
+    "files": {
+      "mob-serial.txt": "119\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}

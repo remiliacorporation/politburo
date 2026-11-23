@@ -1,0 +1,81 @@
+{
+  "case_id": "check-and-push-006-stale-origin",
+  "description": "Origin advances independently before the locally checked patch is pushed.",
+  "expected": {
+    "before": {
+      "am_in_progress": false,
+      "head_branch": "example-main",
+      "local_heads": {
+        "example-main": "<SHA1>"
+      },
+      "lock_present": false,
+      "origin_heads": {
+        "example-main": "<SHA2>"
+      },
+      "status": ""
+    },
+    "checked_commits": [
+      "<SHA3>"
+    ],
+    "exit_code": 1,
+    "files": {
+      "notes/mail/example/bodies/example-0001.txt": "To ../origin/.git\n ! [rejected]        [redacted] -> example-main (fetch first)\nerror: failed to push some refs to '../origin/.git'",
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"spawner.decide\"\nurgency: \"p1\"\nfrom: \"example secretary\"\nto: \"example\"\nref: {patch: \"example.patch\", submission: \"3c52c517361c\"}\nsummary: \"push failed: push: To ../origin/.git ! [rejected] [redacted] -> example-main (fetch first) error: failed to push some re\"\nbody: \"bodies/example-0001.txt\"\nat: \"2026-01-01T00:00:00Z\"\n",
+      "notes/mail/example/example-0002.yaml": null,
+      "repo/example.txt": "Example base\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-01-01T00:00:00Z\", \"event\": \"created\", \"hash\": \"7dc4930a0471b068ddcbe23e7c8cab4fd6c66748433672a5a33be1afe573cbed\", \"header\": {\"at\": \"2026-01-01T00:00:00Z\", \"body\": \"bodies/example-0001.txt\", \"class\": \"spawner.decide\", \"from\": \"example secretary\", \"id\": \"example-0001\", \"ref\": {\"patch\": \"example.patch\", \"submission\": \"3c52c517361c\"}, \"summary\": \"push failed: push: To ../origin/.git ! [rejected] [redacted] -> example-main (fetch first) error: failed to push some re\", \"to\": \"example\", \"urgency\": \"p1\"}, \"id\": \"example-0001\", \"key\": [\"example secretary\", {\"patch\": \"example.patch\", \"submission\": \"3c52c517361c\"}, \"spawner.decide\"], \"to\": \"example\"}"
+    ],
+    "runs": [
+      {
+        "am_in_progress": false,
+        "exit_code": 1,
+        "head_branch": "example-main",
+        "local_heads": {
+          "example-main": "<SHA1>"
+        },
+        "lock_present": false,
+        "origin_heads": {
+          "example-main": "<SHA2>"
+        },
+        "status": ""
+      }
+    ],
+    "stderr": "sec_push: push failed: push: To ../origin/.git ! [rejected] [redacted] -> example-main (fetch first) error: failed to push some re\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argvs": [
+      [
+        "--check-cmd",
+        "sh ../check.sh true"
+      ]
+    ],
+    "collect": [
+      "repo/example.txt",
+      "notes/mail/example/example-0001.yaml",
+      "notes/mail/example/bodies/example-0001.txt",
+      "notes/mail/example/example-0002.yaml"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M10",
+  "notes": "The candidate passes locally, but a non-fast-forward push is not forced.",
+  "setup": {
+    "files": {
+      "check.sh": "git rev-parse HEAD >> ../checked.log || exit 9\ntest -f ../notes/mac-check.lock/owner.json || exit 9\nexec \"$@\"\n",
+      "repo/example.txt": "Example base\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "patch_text": "Example patched text\n",
+    "remote_text": "Example upstream text\n"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}
