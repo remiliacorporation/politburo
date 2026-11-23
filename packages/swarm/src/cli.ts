@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]'
 
 class ReadError extends Error {}
 
@@ -95,7 +95,9 @@ function main(args: string[]): number {
 
 // One line per area: the subcommand's module exports run(argv): Promise<number>.
 const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
+  trackers: () => import('./trackers/cli.ts'),
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
