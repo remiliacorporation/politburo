@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { PartyConfig } from '../config/load.ts'
-import { generatedMarker, renderSkills } from './render.ts'
+import { isGeneratedText, renderSkills } from './render.ts'
 
 const blocked = /tigeryard/i
 
@@ -20,26 +20,38 @@ function destination(dir: string): { path: string; existing: string } {
   return { path: join(path, dir.slice(parent.length)), existing }
 }
 
+function findGit(dir: string): string | undefined {
+  for (let parent = dir; ; parent = dirname(parent)) {
+    if (lstatSync(join(parent, '.git'), { throwIfNoEntry: false })) return parent
+    if (dirname(parent) === parent) return undefined
+  }
+}
+
 function checkRemotes(dir: string) {
   const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C' }
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE',
     'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM']) delete env[key]
-  const git = (...args: string[]) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env })
-  const checkout = git('rev-parse', '--git-dir')
+  const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', env })
+  const checkout = git(dir, 'rev-parse', '--git-dir')
   if ((checkout.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
-    for (let parent = dir; ; parent = dirname(parent)) {
-      if (lstatSync(join(parent, '.git'), { throwIfNoEntry: false })) {
-        throw new Error('cannot check target git remotes')
-      }
-      if (dirname(parent) === parent) return
-    }
+    if (findGit(dir)) throw new Error('cannot check target git remotes')
+    return
   }
-  if (checkout.status === 128 && checkout.stderr.startsWith('fatal: not a git repository')) return
-  if (checkout.status !== 0) throw new Error('cannot check target git checkout')
+  let repo = dir
+  if (checkout.status === 128 && checkout.stderr.startsWith('fatal: not a git repository')) {
+    // Git discovery stops at mount boundaries; the parent walk does not.
+    const found = findGit(dir)
+    if (!found) return
+    const prefix = git(found, 'rev-parse', '--show-prefix')
+    if (prefix.status !== 0 || prefix.stdout.trim() !== '') throw new Error('cannot check target git checkout')
+    repo = found
+  } else if (checkout.status !== 0) {
+    throw new Error('cannot check target git checkout')
+  }
 
-  const configured = git('config', '--null', '--get-regexp', '^remote\\..*\\.(url|pushurl)$')
+  const configured = git(repo, 'config', '--null', '--get-regexp', '^remote\\..*\\.(url|pushurl)$')
   if (configured.status !== 0 && configured.status !== 1) throw new Error('cannot check target git remotes')
-  const effective = git('remote', '-v')
+  const effective = git(repo, 'remote', '-v')
   if (effective.status !== 0) throw new Error('cannot check target git remotes')
   const urls = [
     ...configured.stdout.split('\0').map((entry) => entry.slice(entry.indexOf('\n') + 1)),
@@ -69,7 +81,7 @@ export function syncSkills(config: PartyConfig, dir: string, dryRun = false, for
     }
     const content = Buffer.from(text)
     const previous = current && readFileSync(fullPath)
-    if (previous && !force && !previous.toString('utf8').split(/\r?\n/).includes(generatedMarker)) {
+    if (previous && !force && !isGeneratedText(previous.toString('utf8'))) {
       throw new Error(`refusing to overwrite unmarked file: ${path} (use --force)`)
     }
     const unchanged = previous?.equals(content)
