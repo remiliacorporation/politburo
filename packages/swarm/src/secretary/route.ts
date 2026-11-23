@@ -71,8 +71,11 @@ export type PreparedMail = FileMailItem & {
 }
 
 export function prepareMail({ file, receivedAt, result }: FileMailItem): PreparedMail {
-  const item = { file: redact(file), receivedAt, fileKey: key(file, receivedAt, result) }
-  if (!result.ok) return { ...item, result: { ok: false, reason: redact(result.reason) } }
+  // The sender claim is for the notice, not part of the existing rejection identity.
+  const fingerprint = result.ok ? result : { ok: false, reason: result.reason }
+  const item = { file: redact(file), receivedAt, fileKey: key(file, receivedAt, fingerprint) }
+  if (!result.ok) return { ...item, result: { ok: false, reason: redact(result.reason),
+    ...(result.from !== undefined && { from: redact(result.from) }) } }
   const message = result.message
   const header = safeHeader(message)
   return { ...item, result: { ok: true, message: { ...header, ...(message.expires && { expires: message.expires }) } },

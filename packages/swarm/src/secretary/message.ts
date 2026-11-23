@@ -14,7 +14,7 @@ export type SwarmMessage = {
   body?: string
 }
 
-export type HeaderResult = { ok: true; message: SwarmMessage } | { ok: false; reason: string }
+export type HeaderResult = { ok: true; message: SwarmMessage } | { ok: false; reason: string; from?: string }
 
 const required = ['id', 'class', 'urgency', 'from', 'summary', 'at']
 const ignored = ['needs', 'reply_to', 'thread', 'status', 'review_by', 'default_if_unanswered', 'answered_at']

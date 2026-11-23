@@ -20,7 +20,9 @@ export type ShadowOptions = {
 export type TickSummary = { at: number; ingested: number; appended: number }
 export type WakeReceipt = { wakeId: string; at: number; lane: Forward['lane']; ids: string[]; delivered: boolean; detail: string }
 type Ingest = PreparedMail & { key: string; kind: 'ingest'; tick: number; batchSize: number }
-type Event = Ingest | Decision | (Forward & { kind: 'lane'; wakeId: string })
+type Notice = { key: string; kind: 'notice'; file: string; id?: string; to: string | null; reason: string;
+  class: 'spawner.decide'; urgency: 'p2'; sent: false; detail: 'shadow: not sent' }
+type Event = Ingest | Decision | Notice | (Forward & { kind: 'lane'; wakeId: string })
   | (Digest & { kind: 'digest' }) | (WakeReceipt & { key: string; kind: 'wake'; shadow: boolean })
   | (Verdict & { key: string; kind: 'verdict'; id: string; lane: Forward['lane'] })
 export type DecisionRecord = Event & { v: 1; at: number; cycle: number }
@@ -146,16 +148,23 @@ export async function createShadow({ mailDir, tag, outDir, config, waker = shado
     items: PreparedMail[], tick: Tick) {
     items.sort(compareReceipt)
     const decisions = state.router.ingest(items, tick.at)
+    const notices: Notice[] = []
     const offset = decisions.length - items.length
     for (const [i, item] of items.entries()) {
       const decision = decisions[offset + i]!
+      if (decision.kind === 'reject') {
+        const { key, file, id, reason, header } = decision
+        const to = item.result.ok ? header?.from : item.result.from
+        notices.push({ key: hash('notice', key), kind: 'notice', file, ...(id !== undefined && { id }),
+          to: to ?? null, class: 'spawner.decide', urgency: 'p2', reason: reason!, sent: false, detail: 'shadow: not sent' })
+      }
       if ((decision.kind === 'accept' || decision.kind === 'revision') && item.identity?.redactedEvidence) {
         state.redactedEvidence.set(decision.id!, item.fileKey)
       }
     }
     const due = state.router.due(tick.at)
     decisions.push(...state.router.ingest([], tick.at))
-    return { ...tick, ...due, decisions }
+    return { ...tick, ...due, decisions, notices }
   }
 
   async function rebuild() {
@@ -179,9 +188,10 @@ export async function createShadow({ mailDir, tag, outDir, config, waker = shado
       const result = advance({ router, redactedEvidence }, items, tick)
       // Replay always advances state; keep only work still missing from the journal.
       return { ...result, decisions: result.decisions.filter(({ key }) => !keys.has(key)),
+        notices: result.notices.filter(({ key }) => !keys.has(key)),
         p0: result.p0.filter(laneNeedsWork), p1: result.p1.filter(laneNeedsWork),
         digests: result.digests.filter(({ key }) => !keys.has(key)) }
-    }).filter((r) => r.decisions.length || r.p0.length || r.p1.length || r.digests.length)
+    }).filter((r) => r.decisions.length || r.notices.length || r.p0.length || r.p1.length || r.digests.length)
     function laneNeedsWork(lane: Forward) {
       const id = wakeId(tag, lane.lane, lane.items.map(({ id }) => id), lane.key)
       return !keys.has(hash('wake', id)) || lane.items.some((item) =>
@@ -248,7 +258,7 @@ export async function createShadow({ mailDir, tag, outDir, config, waker = shado
       tick: now, batchSize: fresh.length })), current)
     for (const { fileKey } of fresh) state.seen.add(fileKey)
     const ticks = [...state.recovered, advance(state, fresh, current)]
-    for (const frame of ticks) await append(frame.decisions, frame)
+    for (const frame of ticks) await append([...frame.decisions, ...frame.notices], frame)
 
     async function forward(lane: Forward, frame: Tick) {
       const ids = lane.items.map(({ id }) => id)

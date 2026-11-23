@@ -25,7 +25,10 @@ The router logs the losing candidate as `less_urgent_same_at` or
 
 Use `diff --shadow FILE --live FILE` to compare `decisions.jsonl` with
 `secretary-live@1` JSONL. Use `outcome: "reject"` with a separate string
-`reason` on rejected message rows. Digest rows list ordered `items` as
+`reason` on rejected message rows. Notice rows are
+`{"type":"notice","file":"bad.md","to":"sender","reason":"bad_class"}`.
+Use the inbox filename and `to: null` when no sender claim was parsed.
+Shadow journals these notices without sending them. Digest rows list ordered `items` as
 `{"id":"…"}` or, for p3, `{"summary":"…"}`. Forward rows declare the expected
 `at`, `lane` and `ids` for each p0/p1 batch; no rows means no forwards expected.
 Use `replay --seed N --dir DIR` as the gate check:

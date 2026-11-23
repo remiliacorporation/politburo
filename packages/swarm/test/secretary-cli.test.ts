@@ -227,6 +227,24 @@ test('diff compares rejection reasons containing spaces', (t) => {
   assert.equal(JSON.parse(mismatch.stdout).differences[0].id, id)
 })
 
+test('diff reports missing, extra, misaddressed and wrong-reason reject notices', (t) => {
+  const expected = { type: 'notice', file: 'bad.md', to: 'sprite', reason: 'unknown_field:unknown key' }
+  const { type: _type, ...fields } = expected
+  const notice = { kind: 'notice', ...fields, file: join(temp(t), 'bad.md') }
+  for (const [name, rows, live, status] of [
+    ['match', [notice], [expected], 0],
+    ['missing', [], [expected], 1],
+    ['extra', [notice], [], 1],
+    ['wrong sender', [{ ...notice, to: 'other sprite' }], [expected], 1],
+    ['wrong reason', [{ ...notice, reason: 'bad_class' }], [expected], 1],
+    ['wrong file', [{ ...notice, file: 'other.md' }], [expected], 1],
+  ] as const) {
+    const result = diffFixture(t, [...rows], [...live], '--json')
+    assert.equal(result.status, status, `${name}: ${result.stderr || result.stdout}`)
+    assert.equal(JSON.parse(result.stdout).result, status ? 'diff' : 'zero diff', name)
+  }
+})
+
 function mailbox(dir: string) {
   const mail = join(dir, 'mail'), inbox = join(mail, 'pb', 'inbox')
   mkdirSync(inbox, { recursive: true })

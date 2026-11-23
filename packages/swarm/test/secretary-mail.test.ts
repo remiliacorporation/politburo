@@ -69,6 +69,20 @@ test('invalid file mail is not dropped or accepted without a rejection reason', 
   assert.deepEqual(router.due(start + 30 * min), { p0: [], p1: [], digests: [] })
 })
 
+test('rejected file mail carries only a bounded string sender claim', async (t) => {
+  const { root, put } = await inbox(t)
+  const sender = '🐝'.repeat(200)
+  for (const [i, from] of [sender + 'x', '', 42, undefined].entries()) {
+    await put(`${i}.md`, fenced(raw('bad', { class: 'disabled', from, body: 'private pointer' })))
+  }
+  assert.deepEqual((await readFileMail(root, 'abc')).map(({ result }) => result), [
+    { ok: false, reason: 'bad_class', from: sender },
+    { ok: false, reason: 'bad_class' },
+    { ok: false, reason: 'bad_class' },
+    { ok: false, reason: 'missing_field:from' },
+  ])
+})
+
 test('file mail does not change the tree or lose mtime/filename receipt order', async (t) => {
   const { root, put } = await inbox(t)
   assert.deepEqual(await readFileMail(root, 'missing'), [])

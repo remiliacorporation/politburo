@@ -12,8 +12,10 @@ export type LiveDigest = { type: 'digest'; from: string; to: string; items: Dige
 type ForwardBatch = { at: string; lane: 'p0_now' | 'p1_batch'; ids: string[] }
 export type LiveForward = { type: 'forward' } & ForwardBatch
 type LiveMessage = { type: 'message'; id: string } & { outcome: Outcome }
-export type LiveLine = LiveDigest | LiveForward | LiveMessage | ({ type: 'message'; id: string } & Rejection)
-type Value = (Outcome | Rejection)[] | ForwardBatch[] | Pick<LiveDigest, 'items' | 'counts' | 'act_on' | 'at'>
+export type LiveNotice = { type: 'notice'; file: string; to: string | null; reason: string }
+export type LiveLine = LiveDigest | LiveForward | LiveNotice | LiveMessage | ({ type: 'message'; id: string } & Rejection)
+type NoticeTarget = Pick<LiveNotice, 'to' | 'reason'>
+type Value = (Outcome | Rejection)[] | ForwardBatch[] | NoticeTarget[] | Pick<LiveDigest, 'items' | 'counts' | 'act_on' | 'at'>
 export type Difference = { id: string; expected: Value | null; got: Value | null }
 
 export function jsonLines(text: string): unknown[] {
@@ -40,6 +42,10 @@ export function liveLines(lines: unknown[]): LiveLine[] {
         || row.outcome === 'expire' || row.outcome === 'duplicate') {
         return { type: 'message', id: row.id, outcome: row.outcome }
       }
+    }
+    if (row?.type === 'notice' && typeof row.file === 'string' && row.file
+      && (row.to === null || typeof row.to === 'string') && typeof row.reason === 'string') {
+      return { type: 'notice', file: row.file, to: row.to, reason: row.reason }
     }
     if (row?.type === 'forward' && typeof row.at === 'string' && strings(row.ids) && row.ids.length > 0
       && (row.lane === 'p0_now' || row.lane === 'p1_batch')) {
@@ -103,6 +109,8 @@ function shadowLines(records: DecisionRecord[], timedWindows: Set<string>): Live
       const line = { type: 'message', id, outcome } as const
       lines.push(line)
       if (r.kind === 'accept' || r.kind === 'revision') accepts.set(occurrence, line)
+    } else if (r?.kind === 'notice' && typeof r.file === 'string') {
+      lines.push({ type: 'notice', file: basename(r.file), to: r.to, reason: r.reason })
     } else if (!r || !['ingest', 'lane', 'wake', 'verdict'].includes(r.kind)) {
       throw new Error('invalid shadow record')
     }
@@ -124,6 +132,18 @@ function indexForwards(forwards: ForwardBatch[]) {
   return byId
 }
 
+function indexNotices(lines: LiveLine[]) {
+  const files = new Map<string, Map<string, NoticeTarget>>()
+  for (const row of lines) {
+    if (row.type !== 'notice') continue
+    const { file, to, reason } = row
+    const targets = files.get(file) ?? new Map<string, NoticeTarget>()
+    targets.set(JSON.stringify([to, reason]), { to, reason })
+    files.set(file, targets)
+  }
+  return new Map([...files].map(([file, targets]) => [file, [...targets.keys()].sort().map((key) => targets.get(key)!)]))
+}
+
 export function compareJournal(records: DecisionRecord[], expected: LiveLine[]): Difference[] {
   const digest = ({ items, counts, act_on, at }: LiveDigest) => ({ items, counts, act_on, at })
   function index(lines: LiveLine[]) {
@@ -143,7 +163,8 @@ export function compareJournal(records: DecisionRecord[], expected: LiveLine[]):
   }
   const live = liveLines(expected)
   const timedWindows = new Set(live.flatMap((row) => row.type === 'digest' && row.at !== undefined ? [windowId(row)] : []))
-  const want = index(live), got = index(shadowLines(records, timedWindows))
+  const shadow = shadowLines(records, timedWindows)
+  const want = index(live), got = index(shadow)
   const forwards = indexForwards(live.filter((row) => row.type === 'forward'))
   const lanes = indexForwards(records.flatMap((row) => row.kind === 'lane'
     ? [{ lane: row.lane, at: new Date(row.at).toISOString(), ids: row.items.map(({ id }) => id) }] : []))
@@ -155,5 +176,6 @@ export function compareJournal(records: DecisionRecord[], expected: LiveLine[]):
       return JSON.stringify(expected) === JSON.stringify(actual) ? [] : [{ id: prefix + id, expected, got: actual }]
     })
   return [...want.flatMap((group, i) => compare(group, got[i]!)),
-    ...compare(forwards, lanes, 'lane '), ...compare(forwards, wakes, 'forward ')]
+    ...compare(forwards, lanes, 'lane '), ...compare(forwards, wakes, 'forward '),
+    ...compare(indexNotices(live), indexNotices(shadow), 'notice ')]
 }

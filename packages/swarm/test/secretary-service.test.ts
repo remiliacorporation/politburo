@@ -79,10 +79,58 @@ test('invalid and unparseable files are logged with reasons, never forwarded', a
   await writeFile(join(inbox, 'no-header.md'), 'No fenced header')
   await put('missing-from', { from: undefined, urgency: 'p0' })
   await runShadow(opts, start + 30 * minute)
-  assert.deepEqual((await records()).filter((r) => r.kind !== 'ingest').map((r) => [r.kind,
+  const log = (await records()).filter((r) => r.kind !== 'ingest')
+  assert.deepEqual(log.filter((r) => r.kind !== 'notice').map((r) => [r.kind,
     'file' in r && basename(r.file), 'reason' in r && r.reason]).sort(), [
     ['reject', 'missing-from.md', 'missing_field:from'], ['reject', 'no-header.md', 'no_header'],
   ])
+  assert.deepEqual(log.flatMap((r) => r.kind === 'notice' ? [[basename(r.file), r.to, r.reason]] : []).sort(), [
+    ['missing-from.md', null, 'missing_field:from'], ['no-header.md', null, 'no_header'],
+  ])
+})
+
+test('a rejected header yields one unsent notice with a redacted sender and reason but no body', async (t) => {
+  const { opts, inbox, records, text } = await mailbox(t)
+  const file = join(inbox, 'bad.md')
+  const secret = 'ghp_fake_reject_fixture'
+  await writeFile(file, `Summary\n\`\`\`yaml\n${JSON.stringify({
+    ...header('bad', { from: `sprite ${secret}` }), [secret]: 'unexpected',
+  })}\n\`\`\`\n${body}`)
+  const before = await treeHash(opts.mailDir)
+  await runShadow(opts, start)
+  const log = await records()
+  assert.deepEqual(log.filter((r) => r.kind !== 'ingest').map((r) => r.kind), ['reject', 'notice'])
+  const notices = log.filter((r) => r.kind === 'notice')
+  for (const { key, ...notice } of notices) {
+    assert.ok(key && key !== log.find((r) => r.kind === 'reject')?.key)
+    assert.deepEqual(notice, { v: 1, kind: 'notice', at: start, cycle: 1, file, to: 'sprite [redacted]',
+      class: 'spawner.decide', urgency: 'p2', reason: 'unknown_field:[redacted]', sent: false, detail: 'shadow: not sent' })
+  }
+  assert.doesNotMatch(await text(), /ghp_fake_reject_fixture|private body pointer fixture|"body"/)
+  assert.equal(await treeHash(opts.mailDir), before, 'recording the notice must not touch the mailbox')
+})
+
+test('repeated ticks and restart append no second reject notice and recover a missing one', async (t) => {
+  const { opts, out, put, text, records } = await mailbox(t)
+  await put('bad', { class: 'disabled' })
+  const service = await createShadow(opts)
+  let original: string
+  try {
+    await service.tick(start)
+    original = await text()
+    assert.equal((await records()).filter((r) => r.kind === 'notice').length, 1)
+    await service.tick(start + 1)
+    assert.equal(await text(), original, 'repeated tick')
+  } finally { await service.close() }
+  await runShadow(opts, start + 2)
+  assert.equal(await text(), original, 'restart')
+
+  // Simulate an interrupted append ending just after the reject decision.
+  await writeFile(join(out, 'decisions.jsonl'), original.split('\n').filter((line) =>
+    !line || JSON.parse(line).kind !== 'notice').join('\n'))
+  await rm(join(opts.mailDir, tag), { recursive: true })
+  await runShadow(opts, start + 3)
+  assert.equal(await text(), original, 'recover the notice from the journal without the original mail')
 })
 
 test('each shadow forward has one undelivered receipt and digests do not wake', async (t) => {
@@ -335,7 +383,7 @@ test('mail content and evidence errors cannot leak credentials or bodies into an
   ] as const) {
     assert.doesNotMatch(serialized, /ghp_fake_(?:header|evidence)_fixture|private body pointer fixture|"body"/, label)
   }
-  assert.deepEqual(log.map((r) => r.kind).sort(), ['accept', 'digest', 'ingest', 'ingest', 'lane', 'reject', 'verdict', 'wake'])
+  assert.deepEqual(log.map((r) => r.kind).sort(), ['accept', 'digest', 'ingest', 'ingest', 'lane', 'notice', 'reject', 'verdict', 'wake'])
   assert.deepEqual(log.filter((r) => r.kind === 'verdict').map((r) => [r.id, r.action, r.reason, r.missing]),
     [['alert', 'hold', 'unknown', ['evidence']]])
   assert.equal(packets.length, 1)
@@ -360,7 +408,11 @@ test('restart forwards archived pending mail and rejects reuse of its ID', async
   await put('collision', { id: 'ghp_fake_archived', ref: 'other', urgency: 'p0' }, start + minute)
   await runShadow(opts, start + 10 * minute)
   const log = await records()
-  assert.deepEqual(log.flatMap((r) => r.kind === 'reject' ? [r.reason] : []), ['id_collision'])
+  const rejects = log.flatMap((r) => r.kind === 'reject' ? [{ id: r.id, reason: r.reason }] : [])
+  assert.deepEqual(rejects.map((r) => r.reason), ['id_collision'])
+  assert.ok(rejects[0]?.id)
+  assert.deepEqual(log.flatMap((r) => r.kind === 'notice' ? [[r.id, r.to, r.reason]] : []),
+    [[rejects[0].id, 'sprite', 'id_collision']])
   assert.deepEqual(log.flatMap((r) => r.kind === 'wake' ? [r.lane] : []), ['p1_batch'])
 })
 

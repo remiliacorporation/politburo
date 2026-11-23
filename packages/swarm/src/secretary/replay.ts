@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rmdir, utimes, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import defaults from '../config/defaults.json' with { type: 'json' }
-import { compareJournal, liveFormat, parseLive, readJournal, type LiveDigest, type LiveForward, type LiveLine, type Outcome, type Rejection } from './diff.ts'
+import { compareJournal, liveFormat, parseLive, readJournal, type LiveDigest, type LiveForward, type LiveLine, type LiveNotice, type Outcome, type Rejection } from './diff.ts'
 import type { SwarmMessage, Urgency } from './message.ts'
 import { redact } from './redact.ts'
 import { createShadow } from './shadow.ts'
@@ -30,6 +30,7 @@ function mulberry32(seed: number) {
 function recordedDay(seed: number) {
   const random = mulberry32(seed)
   const mail: { file: RecordedFile; decision: LiveLine; member?: SwarmMessage }[] = []
+  const notices: LiveNotice[] = []
   const timestamp = (offset: number) => iso(start + offset * minute)
   const header = (offset: number, urgency: Urgency, mailClass: string, id = `m${mail.length}`): SwarmMessage =>
     ({ id, urgency, class: mailClass, from: 'synthetic', ref: id, summary: `fixture ${id}`, at: timestamp(offset) })
@@ -38,9 +39,11 @@ function recordedDay(seed: number) {
     const name = `${String(mail.length).padStart(4, '0')}.md`
     mail.push({ file: { name, content, mtimeMs: start + offset * minute },
       decision: { type: 'message', id: id ?? name, ...(typeof outcome === 'string' ? { outcome } : outcome) }, member })
+    return name
   }
-  function reject(offset: number, content: string, reason: string, id?: string) {
-    inject(offset, content, { outcome: 'reject', reason }, id)
+  function reject(offset: number, content: string, reason: string, to: string | null, id?: string) {
+    const file = inject(offset, content, { outcome: 'reject', reason }, id)
+    notices.push({ type: 'notice', file, to, reason })
   }
   function accept(offset: number, message: SwarmMessage, listed = true) {
     inject(offset, encode(message), lane[message.urgency], message.id, listed ? message : undefined)
@@ -50,18 +53,18 @@ function recordedDay(seed: number) {
   accept(1, original, false) // The pending original is superseded before the digest closes.
   inject(2, encode(original), 'duplicate', original.id)
   accept(3, { ...original, id: 'newer', at: timestamp(3) })
-  reject(4, encode({ ...original, id: 'older' }), 'older_at', 'older')
-  reject(4, encode({ ...original, ref: 'other' }), 'id_collision', original.id)
+  reject(4, encode({ ...original, id: 'older' }), 'older_at', original.from, 'older')
+  reject(4, encode({ ...original, ref: 'other' }), 'id_collision', original.from, original.id)
   for (const [urgency, expires] of [['p3', 5], ['p2', 6]] as const) {
     const message = { ...header(0, urgency, 'policy'), expires: timestamp(expires) }
     inject(5, encode(message), 'expire', message.id) // Expired on ingest, then expired while pending.
   }
   const candidate = header(6, 'p0', 'sec.log')
-  reject(6, encode({ ...candidate, class: 'not-a-class' }), 'bad_class')
-  reject(6, encode({ ...candidate, from: undefined }), 'missing_field:from')
-  reject(6, encode({ ...candidate, expires: timestamp(7) }), 'expires_on_p0p1')
-  reject(6, 'x'.repeat(65_537), 'oversize')
-  reject(6, 'garbage', 'no_header')
+  reject(6, encode({ ...candidate, class: 'not-a-class' }), 'bad_class', candidate.from)
+  reject(6, encode({ ...candidate, from: undefined }), 'missing_field:from', null)
+  reject(6, encode({ ...candidate, expires: timestamp(7) }), 'expires_on_p0p1', candidate.from)
+  reject(6, 'x'.repeat(65_537), 'oversize', null)
+  reject(6, 'garbage', 'no_header', null)
   accept(7, header(7, 'p1', 'sec.log'))
   accept(7, { ...header(7, 'p0', 'sec.log'), body: bodyCanary, summary: `fixture ${credentialCanary}` })
   accept(7, header(7, 'p0', 'sec.log'))
@@ -69,7 +72,7 @@ function recordedDay(seed: number) {
   const shared = { from: 'synthetic', ref: 'same-at', class: 'policy' as const, at: timestamp(9) }
   accept(9, { ...header(9, 'p2', 'policy', 'same-at-p2'), ...shared }, false)
   accept(9, { ...header(9, 'p1', 'policy', 'same-at-p1'), ...shared, summary: 'escalate' })
-  reject(9, encode({ ...header(9, 'p2', 'policy', 'same-at-lower'), ...shared }), 'less_urgent_same_at', 'same-at-lower')
+  reject(9, encode({ ...header(9, 'p2', 'policy', 'same-at-lower'), ...shared }), 'less_urgent_same_at', shared.from, 'same-at-lower')
   inject(10, encode({
     ...header(10, 'p2', 'policy', 'annotated'),
     needs: 'context', reply_to: 'parent', thread: 'thread-1', status: 'open',
@@ -116,7 +119,7 @@ function recordedDay(seed: number) {
     }
     windows.set(from, digest)
   }
-  return { files: mail.map(({ file }) => file), expected: [...expected, ...forwards, ...windows.values()] }
+  return { files: mail.map(({ file }) => file), expected: [...expected, ...notices, ...forwards, ...windows.values()] }
 }
 
 export function validSegment(name: string) {

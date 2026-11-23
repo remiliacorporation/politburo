@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { open, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { parseDocument } from 'yaml'
+import { isMap, parseDocument } from 'yaml'
 import defaults from '../config/defaults.json' with { type: 'json' }
 import { parseHeader, type HeaderResult } from './message.ts'
 
@@ -17,7 +17,12 @@ function parseMail(text: string, opts: { classes: string[] }): HeaderResult {
   try {
     const doc = parseDocument(match[1]!)
     if (doc.errors.length || doc.warnings.length) return { ok: false, reason: 'bad_yaml' }
-    return parseHeader(doc.toJS({ maxAliasCount: 0 }), opts)
+    const raw = doc.toJS({ maxAliasCount: 0 })
+    const result = parseHeader(raw, opts)
+    // A rejected file can still claim a sender. This is not authenticated provenance.
+    const from: unknown = !result.ok && isMap(doc.contents) && Object.hasOwn(raw, 'from') ? raw.from : undefined
+    return !result.ok && typeof from === 'string' && from
+      ? { ...result, from: [...from].slice(0, 200).join('') } : result
   } catch {
     return { ok: false, reason: 'bad_yaml' }
   }
