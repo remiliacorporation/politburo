@@ -25,27 +25,25 @@ index `<out>/.backup-index.json` records each published backup's name, token,
 directory device and inode, and SHA-256 digest of the exact manifest bytes.
 
 `--keep N` keeps the newest N eligible backups, where N is positive. A
-candidate must be in the index, have a manifest digest, and match its manifest
-token and directory device and inode. Pruning never deletes in place: the
-candidate moves to a private `.pruning-<random>` name and is checked against
-the index token, directory identity, and digest. It also checks that the files
-under `files/` match the manifest's paths, sizes, and hashes, with nothing extra,
-and is deleted only if it verifies. If verification fails, backup warns and tries
-to move the directory back without overwriting anything at its original name. If
-the name is taken, the quarantine stays.
+candidate must have a manifest digest in the index. Pruning moves it to a private
+`.pruning-<random>` name and checks the manifest token, directory identity, and
+digest against the index. It also checks that the files under `files/` match
+the manifest's paths, sizes, and hashes, with nothing extra. If verification
+fails, backup warns and tries to move the directory back without overwriting
+anything at its original name. If the name is taken, the quarantine stays.
 
 Pruning unlinks only verified files and removes verified directories from the
 bottom up, never recursively. A file arriving after verification survives and
-backup warns where the quarantine remains. A `.pruning-*` leftover after a crash
-is never deleted by the tool; a person removes it. Copied, recreated or edited
-backups, unindexed backups, and entries without directory identity or a manifest
-digest are not pruned. No pruning happens without `--keep`.
+backup warns where the quarantine remains. A person removes leftover
+`.pruning-*` directories. Copied, recreated or edited backups, unindexed backups,
+and entries without directory identity or a manifest digest are not pruned.
+No pruning happens without `--keep`.
 
 The backup records the board directory's device and inode at the start. It
 checks them and resolves the original `--dir` path again after the snapshots and
-before publishing. If the directory was replaced, a symlink points somewhere
-else, or the path no longer names the same directory, it fails with
-`board directory changed during the backup; retry` and publishes nothing.
+before publishing. If the directory was replaced or a symlink points somewhere
+else, it fails with `board directory changed during the backup; retry` and
+publishes nothing.
 
 Backup syncs the new backup tree, index, and `<out>` before pruning older
 backups. If a sync fails, backup publishes, warns on stderr, exits 0, and prunes
