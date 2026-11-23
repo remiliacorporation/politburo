@@ -8,10 +8,8 @@ const usage = 'usage: swarm skills sync --dir DIR [--party FILE] [--repo FILE] [
 const planUsage = 'usage: swarm skills plan-mob --skills DIR --tag TAG --job JOB --serial N\n' +
   '       [--live A,B] [--sprite JOB]... [--party FILE] [--repo FILE] [--json]'
 
-function escapeControls(text: string) {
-  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, (char) =>
-    `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  )
+function escapeControls(text: string, controls = /[\x00-\x1f\x7f-\x9f]/g) {
+  return text.replace(controls, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }
 
 function printError(message: string) {
@@ -120,8 +118,11 @@ export function skillsMain(args: string[]): number {
   try {
     const config = loadConfig({ party: readLayer(values.party), repo: readLayer(values.repo) })
     const files = syncSkills(config, values.dir, values['dry-run'], values.force)
-    if (values.json) console.log(JSON.stringify({ files }))
-    else for (const { path, action } of files) console.log(`${action}  ${escapeControls(path)}`)
+    if (values.json) {
+      console.log(escapeControls(JSON.stringify({ files }), /[\x7f-\x9f]/g))
+    } else {
+      for (const { path, action } of files) console.log(`${action}  ${escapeControls(path)}`)
+    }
     return 0
   } catch (error) {
     return failure(error)
