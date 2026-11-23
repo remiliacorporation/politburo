@@ -459,6 +459,16 @@ export function createBoardClient(options: ClientOptions) {
   /** A claim as a handle answers it: the task, the claim, and what the claim does. */
   const claimed = (task: MessageView, claim: TaskClaim): ClaimedTask => ({ task, ...claim, ...held(task.id, claim) })
 
+  async function checkedClaim(task: MessageView, claim: TaskClaim, hold: number | undefined): Promise<ClaimedTask> {
+    const result = claimed(task, claim)
+    if (hold !== undefined && !claim.holdUntil) {
+      // Discovery and the write can land on different versions. Never hand out an uncapped lease.
+      await result.release().catch(() => undefined)
+      throw new BoardError('no_claim_hold', 'the board did not honor the hard end for the claim', 501, { origin: 'handle' })
+    }
+    return result
+  }
+
   /**
    * Starts a thread in `target` as a task, or with `{ re }` makes the thread that message roots
    * one, as it is. Starting one needs `post` there, and `label` for its labels; `{ re }` needs
@@ -509,7 +519,7 @@ export function createBoardClient(options: ClientOptions) {
     if (typeof target === 'string') {
       const route = body.binding !== undefined ? boundTaskPaths.claimTask.replace(':id', () => path(target)) : `/tasks/${path(target)}/claim`
       const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', route, { body, ...signal, claim: body.token !== undefined })
-      return claimed(task, claim)
+      return checkedClaim(task, claim, body.hold)
     }
     const { wait, ...ready } = target
     const route = ready.binding !== undefined ? boundTaskPaths.claimReadyTask : '/tasks/claim'
@@ -519,7 +529,7 @@ export function createBoardClient(options: ClientOptions) {
       // The board holds each request up to its own limit: it asks again until `wait` runs out.
       const hold = Math.max(0, Math.min(CLAIM_WAIT_S, (deadline - asked) / 1000))
       const answer = await call<{ task: MessageView; claim: TaskClaim } | { task: null }>('POST', route, { body: { ...ready, ...(hold > 0 ? { wait: hold } : {}) }, ...signal, claim: ready.token !== undefined })
-      if (answer.task) return claimed(answer.task, answer.claim)
+      if (answer.task) return checkedClaim(answer.task, answer.claim, ready.hold)
       if (Date.now() >= deadline || opts.signal?.aborted) return null
       // A board that answered at once instead of holding isn't asked again right away.
       const pause = Math.min(CLAIM_AGAIN_MS - (Date.now() - asked), deadline - Date.now())

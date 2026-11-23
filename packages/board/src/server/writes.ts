@@ -20,6 +20,7 @@ import type { MessageView } from '../api/routes.ts'
 import type { WriteSource } from './middleware.ts'
 import type { Via, WriteOrigin } from './origin.ts'
 import { workOpen, type createControl } from './control.ts'
+import { expiredClaim } from './task-lease.ts'
 
 export { syncTarget, type SyncTarget }
 
@@ -731,7 +732,9 @@ async function commitEdit(ctx: WriteContext, input: EditInput, message: Message)
         await appendFrom(ctx, async () => {
           const { position, found } = await asOfNow(ctx, message.id)
           if (revision !== undefined) atRevision(found, message.id, revision)
-          return { position, events: [...events, ...heldByEdit(found, input.identity)] }
+          const hold = heldByEdit(found, input.identity)
+          const expired = hold.length && found?.task?.claim ? expiredClaim(found, Date.now(), (await ctx.work.at(position)).status.pauseEpoch) : []
+          return { position, events: [...expired, ...events, ...hold] }
         })
       : revision === undefined
         ? await ctx.session.append(...events)
@@ -776,7 +779,10 @@ export async function writeDelete(
           const { position, found } = await asOfNow(ctx, message.id)
           if (revision !== undefined) atRevision(found, message.id, revision)
           // Deleted in between: there's nothing left to delete, or to cancel.
-          return { position, events: found?.deleted ? [] : [...canceledByDelete(found, input.identity), ...deleted] }
+          if (found?.deleted) return { position, events: [] }
+          const canceled = canceledByDelete(found, input.identity)
+          const expired = canceled.length && found?.task?.claim ? expiredClaim(found, Date.now(), (await ctx.work.at(position)).status.pauseEpoch) : []
+          return { position, events: [...expired, ...canceled, ...deleted] }
         })
       : revision === undefined
         ? await ctx.session.append(...deleted)
