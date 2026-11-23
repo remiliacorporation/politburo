@@ -311,6 +311,16 @@ test('plan-mob does not miss live species with whitespace or numeric suffixes', 
   }
 })
 
+test('plan-mob does not reject a numeric suffix on an eight-character species', (t) => {
+  const root = tempDir(t)
+  const dir = join(root, 'skills')
+  const flags = party(root, species(['PILLAGER', 'OTTER']))
+  install(dir, ...flags)
+  const { status, stdout, stderr } = plan(dir, {}, ...flags, '--live', 'PILLAGER,OTTER', '--json')
+  assert.equal(status, 0, stderr)
+  assert.equal(JSON.parse(stdout).mob, '280-PILLAGER2')
+})
+
 test('plan-mob refuses species with embedded newlines or lowercase letters', (t) => {
   const dir = tempDir(t)
   install(dir)
@@ -338,6 +348,22 @@ for (const [label, text] of [
     assert.doesNotMatch(stderr, /tigeryard/i)
   })
 }
+
+test('plan-mob does not let entity- or percent-encoded protected references through', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const path = join(dir, 'mob-creation/brief-template.md')
+  const template = readFileSync(path, 'utf8')
+  const attempts = ['&#84;igeryard', '%54igeryard'].map((text) => {
+    writeFileSync(path, `${template}${text}\n`)
+    return plan(dir)
+  })
+  assert.deepEqual(attempts.map(({ status }) => status), [1, 1])
+  for (const { stdout, stderr } of attempts) {
+    assert.equal(stdout, '')
+    assert.equal(stderr, 'error: protected repo reference in brief\n')
+  }
+})
 
 test('plan-mob does not emit an unusable brief or hash different bytes from what it prints', (t) => {
   const dir = tempDir(t)

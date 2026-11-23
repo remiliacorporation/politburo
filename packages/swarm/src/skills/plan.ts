@@ -3,18 +3,18 @@ import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PartyConfig } from '../config/load.ts'
 import { tagProblems } from '../tags.ts'
-import { generatedMarker } from './render.ts'
+import { generatedMarker, hasBlockedReference } from './render.ts'
 
 type PlanOptions = { skills: string; tag: string; job: string; serial: string; live?: string; sprite?: string[] }
 type Pools = Record<string, string[]>
 
-function firstFree(pool: string[], used: Set<string>): string {
+function firstFree(pool: string[], used: Set<string>) {
   const free = pool.find((name) => !used.has(name))
-  if (free !== undefined) return free
+  if (free !== undefined) return { base: free, suffix: '' }
   const base = pool[0]!
   let suffix = 2
   while (used.has(`${base}${suffix}`)) suffix++
-  return `${base}${suffix}`
+  return { base, suffix: String(suffix) }
 }
 
 const disallowedControls = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/
@@ -47,9 +47,11 @@ export function planMob(config: PartyConfig, { skills, tag, job, serial, live, s
     liveNames.add(name)
     liveNames.add(name.replace(/\d+$/, ''))
   }
-  function pick(pool: string[], used: Set<string>, pattern: RegExp) {
-    const name = firstFree(pool, used)
-    if (!pattern.test(name) || pool.some((candidate) => !pattern.test(candidate))) {
+  function pick(pool: string[], used: Set<string>, basePattern: RegExp, maxNameLength = Infinity) {
+    const { base, suffix } = firstFree(pool, used)
+    const name = `${base}${suffix}`
+    if (pool.length === 0 || pool.some((candidate) => !basePattern.test(candidate)) ||
+      !/^\d*$/.test(suffix) || name.length > maxNameLength) {
       throw new Error(`invalid name in names.mob_species.${mobClass}.${job}`)
     }
     return name
@@ -61,7 +63,7 @@ export function planMob(config: PartyConfig, { skills, tag, job, serial, live, s
   const items: Pools = config.names.sprite_items
   const sprites = (sprite ?? []).map((spriteJob) => {
     if (!Object.hasOwn(items, spriteJob)) throw new Error(`unknown sprite job ${spriteJob}`)
-    const item = pick(items[spriteJob]!, usedItems, /^[A-Z0-9]{1,12}$/)
+    const item = pick(items[spriteJob]!, usedItems, /^[A-Z0-9]{1,12}$/, 12)
     usedItems.add(item)
     return `${mob}.${item}`
   })
@@ -83,7 +85,7 @@ export function planMob(config: PartyConfig, { skills, tag, job, serial, live, s
   const placeholders = /<<[^\r\n]*?>>/g
   const brief = template.replace(placeholders, (match) => fields.get(match.slice(2, -2)) ?? match)
   if (disallowedControls.test(brief)) throw new Error('control character in brief')
-  if (/tigeryard/i.test(brief)) throw new Error('protected repo reference in brief')
+  if (hasBlockedReference(brief)) throw new Error('protected repo reference in brief')
   return {
     mob, title, class: mobClass, sprites,
     brief_sha256: createHash('sha256').update(brief).digest('hex'),
