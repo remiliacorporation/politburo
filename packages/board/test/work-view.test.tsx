@@ -49,9 +49,9 @@ async function workBoard() {
     },
     client,
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
-    async open(params = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void) {
+    async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void) {
       browser.setViewport({ width: 1280, height: 900 })
-      browser.setURL(`http://work-${++visit}.test/work${params}`)
+      browser.setURL(`http://work-${++visit}.test${address.startsWith('/') ? address : `/work${address}`}`)
       const html = new DOMParser().parseFromString(shell({ token: 'inspector-test', base: '', profile: null, named: false }), 'text/html')
       document.head.replaceChildren(...html.head.querySelectorAll('meta, style'))
       document.body.innerHTML = '<div id="root"></div>'
@@ -87,7 +87,7 @@ async function workBoard() {
 
 const queue = () => [...document.querySelectorAll('main h2')].find((h) => h.textContent === 'Queue')!.parentElement!
 const headings = () => [...queue().querySelectorAll('h3')].map((h) => h.textContent!.split(' (')[0])
-const taskLinks = () => [...queue().querySelectorAll<HTMLAnchorElement>('li a')]
+const taskLinks = () => [...queue().querySelectorAll<HTMLAnchorElement>('li a[href*="thread="]')]
 const titles = () => taskLinks().map((link) => link.textContent)
 const peek = () => document.querySelector('main aside[aria-label="Work peek"]')
 const field = () => document.querySelector<HTMLInputElement>('input[aria-label="Filter work"]')!
@@ -111,6 +111,250 @@ function press(key: string, modifiers: KeyboardEventInit = {}) {
     key, bubbles: true, cancelable: true, ...modifiers,
   })))
 }
+
+const mainTitle = () => document.querySelector('main h1')?.textContent
+const boardAddress = new URL(BOARD_URL)
+const link = (name: string, within: ParentNode = document) => [...within.querySelectorAll<HTMLAnchorElement>('a')]
+  .find((a) => a.textContent === name)
+const sidebar = () => document.querySelector('.sidebar')!
+
+function visitScope(path: string) {
+  history.pushState(null, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+it('keeps Standing Committee rows and health in their own party and shows no work for an unknown party', async () => {
+  const { create, open } = await workBoard()
+  await create('plb-4', 'Build Blue release', { claim: true })
+  await create('plb-2', 'Build rival release', { party: 'default', claim: true })
+  await open('/party/blue?swarm=fixtures')
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Standing Committee')
+    expect(titles()).toEqual(['Build Blue release'])
+    const health = document.querySelector('main table')?.textContent
+    expect(health).toMatch(/Blue Party.*1 \/ 2.*51000 known/)
+    expect(health).not.toMatch(/People's Party|142000|193000/)
+    expect(document.querySelector('main')?.textContent).not.toContain('Build rival release')
+  })
+
+  visitScope('/party/unknown?swarm=fixtures')
+  await vi.waitFor(() => {
+    expect(statuses()).toContain('no party with that id')
+    expect(document.querySelector('main li a[href*="thread="]')).toBeNull()
+  })
+})
+
+it('asks which party to use in Presidium, reveals rival claims on request, and shows real work without swarm records', async () => {
+  const { create, actor, open } = await workBoard()
+  const rival = await actor('u_rival')
+  await create(1, 'Blue release')
+  const { task } = await create(2, 'Rival release', { party: 'default' })
+  await rival.tasks.claim(task.id)
+  await open('/presidium?swarm=fixtures')
+  const chooser = await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Presidium')
+    expect(document.querySelector('main')?.textContent).toContain('choose a party:')
+    expect(link("The People's Party", document.querySelector('main')!)).toBeDefined()
+    const blue = link('Blue Party', document.querySelector('main')!)
+    expect(blue).toBeDefined()
+    return blue!
+  })
+  chooser.click()
+  await vi.waitFor(() => expect(titles()).toEqual(['Blue release']))
+  link('all parties')!.click()
+  await vi.waitFor(() => {
+    expect(titles().sort()).toEqual(['Blue release', 'Rival release'])
+    expect(row('Rival release').textContent).toContain('u_rival')
+  })
+
+  visitScope('/presidium')
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Presidium')
+    expect(document.querySelector('main')?.textContent).toContain(`${boardAddress.host} · ${boardAddress.pathname}`)
+    expect(titles().sort()).toEqual(['Blue release', 'Rival release'])
+  })
+})
+
+it('names only the Blue Presidium Chapter in the tab, header and sidebar, and keeps the plain subtitle', async () => {
+  const { open } = await workBoard()
+  await open('/presidium?party=blue&swarm=fixtures')
+  for (const [party, name] of [['blue', 'Chapter'], ['default', 'Presidium']] as const) {
+    if (party === 'default') visitScope('/presidium?party=default&swarm=fixtures')
+    await vi.waitFor(() => {
+      expect(mainTitle()).toBe(name)
+      expect(document.title).toBe(`${name} · ${boardAddress.host}`)
+      expect(document.querySelector('main header')?.textContent).toContain(`Presidium: ${boardAddress.host} repo`)
+      const repoLink = link(name, sidebar())
+      expect(repoLink?.pathname).toBe('/presidium')
+      expect(new URL(repoLink!.href).searchParams.get('party')).toBe(party)
+    })
+  }
+})
+
+it('shows only the Cell claimant’s work and clock, PR and spend, without write controls even in its thread', async () => {
+  const { create, actor, open } = await workBoard()
+  const other = await actor('u_other')
+  const mine = await create('plb-2', 'Repair my build', { claim: true })
+  const theirs = await create(2, 'Repair another build')
+  await other.tasks.claim(theirs.task.id)
+  const claim = mine.task.task!.claim!
+  await open(`/cell/${encodeURIComponent(claim.actor)}?party=blue&swarm=fixtures`)
+  const expectNoWrites = (scope: ParentNode) => {
+    const buttons = [...scope.querySelectorAll('button')].map((button) =>
+      [button.getAttribute('aria-label'), button.title, button.textContent].filter(Boolean).join(' '))
+    expect(buttons.join('\n')).not.toMatch(/\b(claim|release|accept|pause|resume)\b/i)
+  }
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Cell')
+    expect(titles()).toEqual(['Repair my build'])
+    expect(document.querySelector('main')?.textContent).not.toContain('Repair another build')
+    const own = row('Repair my build')
+    expect(own.textContent).toMatch(/expires .*board time/)
+    expect(own.querySelector('time')?.textContent).toBe(claim.until)
+    expect(own.textContent).toContain('PR #41 open · CI failed')
+    expect(own.textContent).toContain('142k tokens · partial')
+    const back = link('back to Chapter')
+    expect(back?.pathname).toBe('/presidium')
+    expect(new URL(back!.href).searchParams.get('party')).toBe('blue')
+    expectNoWrites(document.querySelector('main')!)
+  })
+
+  taskLinks()[0]!.click()
+  await vi.waitFor(() => {
+    const thread = document.querySelector('aside[aria-label="Thread"]')!
+    expect(thread?.textContent).toContain('Repair my build')
+    expect(thread.querySelector('textarea')).toBeNull()
+    expect(thread.querySelector('button[title="more"], button[aria-label="more"]')).toBeNull()
+    expectNoWrites(thread)
+  })
+  await mine.claim!.release()
+  await vi.waitFor(() => {
+    expect(statuses()).toContain('nothing claimed by this cell')
+    expect(titles()).toEqual([])
+  })
+})
+
+it('keeps the Cell thread pane scoped to its claimant as claims change live', async () => {
+  const { create, actor, open } = await workBoard()
+  const bob = await actor('u_bob')
+  const aliceText = 'Prepare the release notes'
+  const bobText = 'Investigate the build failure'
+  const alice = await create(1, aliceText, { claim: true })
+  const { task: bobsTask } = await create(2, bobText)
+  await bob.tasks.claim(bobsTask.id)
+  const cellPath = `/cell/${encodeURIComponent(alice.task.task!.claim!.actor)}`
+  const thread = () => document.querySelector('aside[aria-label="Thread"]')
+  const expectOutsideCell = (taskText: string) => {
+    expect(thread()?.textContent).not.toContain(taskText)
+    expect(thread()?.textContent?.trim()).toBe('not in this cell close')
+  }
+
+  await open(`${cellPath}?party=blue&thread=${bobsTask.id}`)
+  await vi.waitFor(() => {
+    expect(titles()).toEqual([aliceText])
+    expectOutsideCell(bobText)
+  })
+
+  taskLinks()[0]!.click()
+  await vi.waitFor(() => {
+    expect(param('thread')).toBe(alice.task.id)
+    expect(thread()?.textContent).toContain(aliceText)
+  })
+
+  await alice.claim!.release()
+  await vi.waitFor(() => {
+    expect(statuses()).toContain('nothing claimed by this cell')
+    expect(param('thread')).toBe(alice.task.id)
+    expectOutsideCell(aliceText)
+  })
+
+  link('close', thread()!)!.click()
+  await vi.waitFor(() => {
+    expect(thread()).toBeNull()
+    expect(param('thread')).toBeNull()
+    expect(location.pathname).toBe(cellPath)
+    expect(param('party')).toBe('blue')
+  })
+})
+
+it('hides the Cell thread pane when the thread read has already reassigned the task', async () => {
+  const { create, actor, client, open } = await workBoard()
+  const bob = await actor('u_bob')
+  const text = 'Prepare the release notes'
+  const alice = await create(1, text, { claim: true })
+  const cellActor = alice.task.task!.claim!.actor
+  const stale = await client.tasks.list({ state: 'open' })
+  await alice.claim!.release()
+  await bob.tasks.claim(alice.task.id)
+  const thread = () => document.querySelector('aside[aria-label="Thread"]')
+  await open(`/cell/${encodeURIComponent(cellActor)}?party=blue&thread=${alice.task.id}&swarm=fixtures`, async () => {
+    return Response.json(stale)
+  })
+  await vi.waitFor(() => {
+    expect(thread()?.textContent).not.toContain(text)
+    expect(thread()?.textContent?.trim()).toBe('not in this cell close')
+  })
+})
+
+it('shows the open-task refusal in the Cell thread pane instead of loading forever', async () => {
+  const { create, open } = await workBoard()
+  const mine = await create(1, 'Task the cell cannot list', { claim: true })
+  const cellActor = mine.task.task!.claim!.actor
+  const requested = Promise.withResolvers<void>()
+  const respond = Promise.withResolvers<void>()
+  releaseGates.push(respond.resolve)
+  const refusal = 'This board cannot list open tasks'
+  const thread = () => document.querySelector('aside[aria-label="Thread"]')
+  await open(`/cell/${encodeURIComponent(cellActor)}?party=blue&thread=${mine.task.id}&swarm=fixtures`, async () => {
+    requested.resolve()
+    await respond.promise
+    return Response.json({ error: { code: 'forbidden', message: refusal } }, { status: 403 })
+  })
+  await requested.promise
+  await vi.waitFor(() => {
+    expect(thread()?.querySelector('[role="status"]')?.textContent).toContain('loading…')
+  })
+  respond.resolve()
+  await vi.waitFor(() => {
+    expect(thread()?.textContent).not.toContain('Task the cell cannot list')
+    expect(thread()?.textContent).not.toContain('loading…')
+    expect(thread()?.textContent?.trim()).toBe(`${refusal} close`)
+  })
+})
+
+it('never shows a cached task missing from the latest read in any scope and links the claimant to their Cell', async () => {
+  const { create, client, open } = await workBoard()
+  const old = await create(1, 'Old claim', { claim: true })
+  const current = await create(2, 'Current claim', { claim: true })
+  const claimant = current.task.task!.claim!.actor
+  let readable = old.task.id
+  // Change the proxy's open list while the task itself remains open and cached.
+  await open('/party/blue?swarm=fixtures', async () => {
+    const page = await client.tasks.list({ state: 'open' })
+    return Response.json({ ...page, tasks: page.tasks.filter(({ message }) => message.id === readable) })
+  })
+  await vi.waitFor(() => expect(titles()).toEqual(['Old claim']))
+
+  readable = current.task.id
+  visitScope('/presidium?party=blue&swarm=fixtures')
+  const onlyCurrent = () => {
+    expect(titles()).toEqual(['Current claim'])
+    expect(document.querySelector('main')?.textContent).not.toContain('Old claim')
+  }
+  await vi.waitFor(onlyCurrent)
+  const cell = link('u_reader', row('Current claim'))
+  expect(cell?.pathname).toBe(`/cell/${encodeURIComponent(claimant)}`)
+  cell!.click()
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Cell')
+    onlyCurrent()
+  })
+  visitScope('/party/blue?swarm=fixtures')
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Standing Committee')
+    onlyCurrent()
+  })
+})
 
 it('shows only matching open rows and an explicit zero when a search finds none', async () => {
   const { create, open } = await workBoard()

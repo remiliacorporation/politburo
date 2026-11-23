@@ -7,7 +7,7 @@ export const fixtureRecords: SwarmRecords = {
   source: 'fixtures',
   parties: {
     default: { name: "The People's Party", colour: '#b3261e', openClaimLimit: 4 },
-    blue: { name: 'Blue Party', colour: '#1f6feb', openClaimLimit: 2 },
+    blue: { name: 'Blue Party', colour: '#1f6feb', openClaimLimit: 2, labels: { repo_view: 'Chapter' } },
   },
   observations: {
     'plb-1': { contract: 'missing', humanRequest: true, spend: { tokens: null, coverage: 'unknown' } },
@@ -26,6 +26,7 @@ export const fixtureRecords: SwarmRecords = {
     },
     'plb-4': {
       contract: 'valid', leaseLive: true,
+      attempt: 2, branch: 'work/plb-4', handoffReason: 'previous cell reached its time limit',
       pr: { number: 43, state: 'open', checks: 'pending' },
       spend: { tokens: 51_000, coverage: 'stale' },
     },

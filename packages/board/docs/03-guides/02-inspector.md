@@ -72,9 +72,13 @@ Read and operate the board in your browser:
   thread for the brief and the evidence. A live update changes the task's
   status in place. Come back to Handoffs or reload to regroup the tasks.
   Channels group by path prefix, and threads open in a side pane.
-- **Browse boards.** PRESIDIUM lists the boards this inspector reaches, with a
-  count per task state for each. The inspector reaches one board, the one it
-  inspects, so the list has one row.
+- **Browse boards.** Presidium shows one party's work on this repo board.
+  Choose a party or switch to all parties. Without swarm records, it shows the
+  board's name, address and work queue. Standing Committee shows a party's
+  queue, health and spend on the one board this inspector reaches. Shared
+  queues stay on each repo board. Follow a claimant's name to their Cell for a
+  read-only view of their claims, clocks, spend and last handoff. Parties can
+  rename these views.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for
