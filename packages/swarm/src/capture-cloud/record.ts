@@ -49,17 +49,19 @@ export interface LedgerSink { append(record: SpendRecord): Promise<'appended' | 
 
 // STUB: single writer.
 export function jsonlLedger(path: string): LedgerSink {
-  const keys = new Set<string>()
+  const keys = new Set<string>(), written = new Set<string>()
   const text = readIfPresent(path)
   let syncDir = text === undefined
   for (const line of (text ?? '').split('\n')) if (line.trim()) keys.add(JSON.parse(line).dedupe_key)
   return { async append(record) {
-    if (keys.has(record.dedupe_key)) return 'duplicate'
+    const key = record.dedupe_key
+    if (keys.has(key)) return 'duplicate'
     const fd = openSync(path, 'a', 0o600)
     try {
-      appendFileSync(fd, `${JSON.stringify(record)}\n`)
-      // Register before fsync so a failed fsync cannot be retried as a second row.
-      keys.add(record.dedupe_key)
+      if (!written.has(key)) {
+        appendFileSync(fd, `${JSON.stringify(record)}\n`)
+        written.add(key)
+      }
       fsyncSync(fd)
       if (syncDir) {
         const dirfd = openSync(dirname(path), 'r')
@@ -67,6 +69,8 @@ export function jsonlLedger(path: string): LedgerSink {
         syncDir = false
       }
     } finally { closeSync(fd) }
+    written.delete(key)
+    keys.add(key)
     return 'appended'
   } }
 }

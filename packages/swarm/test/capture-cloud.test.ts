@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync,
-  unlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants, existsSync, mkdtempSync, openSync, readFileSync,
+  readSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -313,4 +313,32 @@ test('Book does not steal a live lock as stale so a revoke cannot race a slow wr
   unlinkSync(lock)
   other.revoke(capability)
   assert.equal(other.byCapability(capability, Date.now()), undefined)
+})
+
+// Catches a retry after a failed sync acknowledging an unsynced row.
+test('retry after a failed sync acknowledges an unsynced row', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
+  const ledger = jsonlLedger(ledgerFile)
+  assert.equal(spawnSync('mkfifo', [ledgerFile]).status, 0)
+  const fifo = openSync(ledgerFile, constants.O_RDWR | constants.O_NONBLOCK)
+  t.after(() => {
+    try { closeSync(fifo) } catch { /* already closed */ }
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const server = await createReceiver({ book, ledger }).listen(0)
+  t.after(() => server.close())
+  const url = `http://127.0.0.1:${server.port}`
+  const first = await post(url, capability)
+  assert.notEqual(first.status, 200, 'failed sync acknowledged as settled')
+  const retry = await post(url, capability)
+  assert.notEqual(retry.status, 200, 'retry acknowledged an unsynced row')
+  const buf = Buffer.alloc(8192)
+  let text = ''
+  try { text = buf.subarray(0, readSync(fifo, buf)).toString('utf8') }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') throw error }
+  assert.equal(text.trim().split('\n').filter(Boolean).length, 1, 'expected exactly one record')
 })
