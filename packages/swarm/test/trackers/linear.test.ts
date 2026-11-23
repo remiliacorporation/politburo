@@ -72,6 +72,16 @@ test('Linear get and scan expose an issue outside the configured team', async (t
   await assert.rejects(adapter.scan(), { name: 'TrackerError', reason: 'bad_response' })
 })
 
+test('Linear get and scan treat empty or non-string identifier as inaccessible or gone', async (t) => {
+  const issue = linearIssue(7, 'triage', 1)
+  const ref = { source, itemId: issue.id, displayId: issue.identifier, url: issue.url }
+  for (const identifier of ['', 7]) {
+    const adapter = await setup(t, { singleIssue: { ...issue, identifier } as typeof issue })
+    await assert.rejects(adapter.get(ref), { name: 'TrackerError', reason: 'bad_response' }, `get: ${inspect(identifier)}`)
+    await assert.rejects(adapter.scan(), { name: 'TrackerError', reason: 'bad_response' }, `scan: ${inspect(identifier)}`)
+  }
+})
+
 for (const [failure, reason] of [['errors', 'bad_response'], ['rate', 'rate_limited'], [401, 'unauthorized'],
   [500, 'unavailable'], ['missing-labels', 'bad_response']] as const) {
   test(`Linear scan fails to report ${failure} as ${reason} or leaks its credential`, async (t) => {
