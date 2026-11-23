@@ -1,0 +1,40 @@
+{
+  "case_id": "serial-counter-006-stale-boundary",
+  "description": "Try an unheld lock exactly at the stale threshold",
+  "expected": {
+    "directories": [
+      "mob-serial.lock"
+    ],
+    "exit_code": 2,
+    "files": {
+      "mob-serial.txt": "37\n"
+    },
+    "log_lines": [],
+    "stderr": "timeout waiting for lock\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argv": [
+      "--timeout",
+      "0"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M13",
+  "notes": "The mtime is exactly 60 seconds before the fake wall clock.",
+  "setup": {
+    "files": {
+      "mob-serial.txt": "37\n"
+    },
+    "lock": {
+      "age_seconds": 60
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}

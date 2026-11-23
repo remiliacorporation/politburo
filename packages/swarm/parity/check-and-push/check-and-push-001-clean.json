@@ -1,0 +1,80 @@
+{
+  "case_id": "check-and-push-001-clean",
+  "description": "A passing check publishes the commit it examined.",
+  "expected": {
+    "before": {
+      "am_in_progress": false,
+      "head_branch": "example-main",
+      "local_heads": {
+        "example-main": "<SHA1>"
+      },
+      "lock_present": false,
+      "origin_heads": {
+        "example-main": "<SHA1>"
+      },
+      "status": ""
+    },
+    "checked_commits": [
+      "<SHA2>"
+    ],
+    "exit_code": 0,
+    "files": {
+      "notes/mail/example/bodies/example-0001.txt": null,
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"sec.log\"\nurgency: \"p2\"\nfrom: \"example secretary\"\nto: \"example\"\nref: {push: \"<SHA2>\"}\nsummary: \"pushed example-main <SHA2>\"\nat: \"2026-01-01T00:00:00Z\"\n",
+      "notes/mail/example/example-0002.yaml": null,
+      "repo/example.txt": "Example patched text\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-01-01T00:00:00Z\", \"event\": \"created\", \"hash\": \"68b75e59588b7fe7cf497b255dd610ce9c4c5698509137aeef40cde9b919e5b3\", \"header\": {\"at\": \"2026-01-01T00:00:00Z\", \"class\": \"sec.log\", \"from\": \"example secretary\", \"id\": \"example-0001\", \"ref\": {\"push\": \"<SHA2>\"}, \"summary\": \"pushed example-main <SHA2>\", \"to\": \"example\", \"urgency\": \"p2\"}, \"id\": \"example-0001\", \"key\": [\"example secretary\", {\"push\": \"<SHA2>\"}, \"sec.log\"], \"to\": \"example\"}"
+    ],
+    "runs": [
+      {
+        "am_in_progress": false,
+        "exit_code": 0,
+        "head_branch": "example-main",
+        "local_heads": {
+          "example-main": "<SHA2>"
+        },
+        "lock_present": false,
+        "origin_heads": {
+          "example-main": "<SHA2>"
+        },
+        "status": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "argvs": [
+      [
+        "--check-cmd",
+        "sh ../check.sh true"
+      ]
+    ],
+    "collect": [
+      "repo/example.txt",
+      "notes/mail/example/example-0001.yaml",
+      "notes/mail/example/bodies/example-0001.txt",
+      "notes/mail/example/example-0002.yaml"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M10",
+  "notes": "Compare the check's HEAD with the only updated head on the bare origin.",
+  "setup": {
+    "files": {
+      "check.sh": "git rev-parse HEAD >> ../checked.log || exit 9\ntest -f ../notes/mac-check.lock/owner.json || exit 9\nexec \"$@\"\n",
+      "repo/example.txt": "Example base\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "patch_text": "Example patched text\n"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}
