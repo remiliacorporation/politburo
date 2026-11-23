@@ -59,6 +59,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
   const [frozen, setFrozen] = useState(false)
   const order = useRef(new Map<string, number>())
   const list = useRef<HTMLDivElement>(null)
+  const layout = useRef<HTMLDivElement>(null)
   const focused = useRef<HTMLElement>(null)
   const hovered = useRef(false)
   const hoveredKey = useRef<string | undefined>(undefined)
@@ -69,8 +70,10 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
       : []
   }
   const selected = selectionInList()
-  const anchor = rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean)
-  useHoldPosition(list, anchor, 'data-work-row')
+  const peekHasFocus = Boolean(pane.current?.contains(document.activeElement))
+  const rowAnchor = peekHasFocus ? undefined : (rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean))
+  useHoldPosition(list, rowAnchor, 'data-work-row')
+  useHoldPosition(layout, peekHasFocus ? 'peek' : undefined, 'data-work-row')
   const release = (target: EventTarget | null) => {
     if (hovered.current || (target instanceof Node && list.current?.contains(target))) return
     if (!selectionInList().length) setFrozen(false)
@@ -139,7 +142,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
           </p>
         )}
         <p role="status">{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
-        <div className="work-layout">
+        <div ref={layout} className="work-layout">
           <div ref={list} tabIndex={-1} aria-label="Work board tasks" className="work-list"
             onFocus={(event) => {
               focused.current = event.target
@@ -199,7 +202,7 @@ export function Work({ state, now, lead }: { state: State; now: number; lead: Re
             </div>
           </div>
           {peekId !== null && (
-            <aside ref={pane} id="work-peek" className="work-peek" aria-label="Work peek">
+            <aside ref={pane} id="work-peek" className="work-peek" data-work-row="peek" aria-label="Work peek">
               {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p>
                 : peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} />
                 : <p role="status">no longer on the board</p>}
