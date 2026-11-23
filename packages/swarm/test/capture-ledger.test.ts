@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { once } from 'node:events'
-import { appendFile, mkdtemp, open, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, open, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -81,27 +81,68 @@ for (const kind of ['spend', 'envelopes'] as const) {
   })
 }
 
-for (const stale of ['dead PID', 'older than 60 seconds'] as const) {
-  test(`a lock with ${stale} does not block a ledger append`, async t => {
-    const { dir, spend } = await fixture(t)
-    const lock = join(dir, '.lock')
-    let pid = process.pid
-    if (stale === 'dead PID') {
-      const child = exec(process.execPath, ['-e', ''])
-      pid = child.child.pid!
-      await child
-      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
-    }
-    await writeFile(lock, `${pid}\n`)
-    if (stale === 'older than 60 seconds') {
-      const old = new Date(Date.now() - 61_000)
-      await utimes(lock, old, old)
-    }
-    assert.deepEqual(await jsonlLedger(dir).append(record), { written: true })
-    assert.deepEqual(JSON.parse(await readFile(spend, 'utf8')), record)
-    await assert.rejects(readFile(lock), { code: 'ENOENT' })
-  })
-}
+test('a live lock older than 60 seconds is not stolen; the waiting writer times out', async t => {
+  const { dir, spend } = await fixture(t)
+  const lock = join(dir, '.lock')
+  const owner = `${process.pid}\n`
+  await writeFile(lock, owner)
+  const old = new Date(Date.now() - 61_000)
+  await utimes(lock, old, old)
+
+  await assert.rejects(jsonlLedger(dir).append(record), /capture ledger lock timed out/)
+  assert.equal(await readFile(lock, 'utf8'), owner)
+  await assert.rejects(readFile(spend), { code: 'ENOENT' })
+  await unlink(lock)
+  assert.deepEqual(await jsonlLedger(dir).append(record), { written: true })
+})
+
+test('two concurrent writers recover a dead PID lock and only one writes the dedupe key', async t => {
+  const { dir, spend } = await fixture(t)
+  const lock = join(dir, '.lock')
+  const dead = exec(process.execPath, ['-e', ''])
+  const pid = dead.child.pid!
+  await dead
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  await writeFile(lock, `${pid}\n`)
+
+  const code = `
+    import { once } from 'node:events'
+    import { jsonlLedger } from ${JSON.stringify(new URL('../src/capture/ledger.ts', import.meta.url).href)}
+    const start = once(process.stdin, 'end')
+    process.stdin.resume()
+    console.log('ready')
+    await start
+    const ledger = jsonlLedger(process.argv[1])
+    console.log((await ledger.append(JSON.parse(process.argv[2]))).written)
+  `
+  const children = [0, 1].map(() => exec(process.execPath, ['--input-type=module', '-e', code, dir, JSON.stringify(record)], {
+    timeout: 10_000,
+  }))
+  const done = Promise.all(children)
+  try {
+    await Promise.race([Promise.all(children.map(({ child }) => once(child.stdout!, 'data'))), done])
+  } finally {
+    for (const { child } of children) child.stdin!.end()
+    await Promise.allSettled(children)
+  }
+  const results = (await done).map(({ stdout }) => stdout.trim().split('\n').at(-1)).sort()
+  assert.deepEqual(results, ['false', 'true'])
+  const lines = (await readFile(spend, 'utf8')).split('\n')
+  assert.equal(lines.pop(), '', 'last row was not newline-terminated')
+  assert.deepEqual(lines.map(line => JSON.parse(line)), [record])
+  await assert.rejects(readFile(lock), { code: 'ENOENT' })
+})
+
+test('a read failure after lock creation removes the lock and allows the next append', async t => {
+  const { dir, spend } = await fixture(t)
+  const lock = join(dir, '.lock')
+  await mkdir(spend) // Reading the ledger fails before any append can occur.
+  const ledger = jsonlLedger(dir)
+  await assert.rejects(ledger.append(record), { code: 'EISDIR' })
+  await assert.rejects(readFile(lock), { code: 'ENOENT' })
+  await rm(spend, { recursive: true })
+  assert.deepEqual(await ledger.append(record), { written: true })
+})
 
 test('a replay after reopening the ledger does not write a second line', async t => {
   const { dir, spend } = await fixture(t)

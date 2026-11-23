@@ -1,7 +1,6 @@
 // Stub until WP-103's ledger store lands; same interface.
-import { lstatSync, unlinkSync } from 'node:fs'
-import type { Stats } from 'node:fs'
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { link, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
@@ -97,17 +96,6 @@ async function serialized<T>(path: string, action: () => Promise<T>): Promise<T>
   }
 }
 
-function unlinkLock(path: string, owner: Stats): void {
-  // A waiter may have already replaced the stale lock, or our own lease may have expired.
-  // Keep the identity check and unlink in the same turn.
-  try {
-    const current = lstatSync(path, { throwIfNoEntry: false })
-    if (current?.dev === owner.dev && current.ino === owner.ino) unlinkSync(path)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-}
-
 function pidIsDead(raw: string): boolean {
   const pid = Number(raw)
   if (!Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff) return false
@@ -121,45 +109,107 @@ function pidIsDead(raw: string): boolean {
   }
 }
 
-async function reapStaleLock(path: string): Promise<void> {
-  const file = await open(path, 'r').catch((error: NodeJS.ErrnoException) => {
+async function lockPathIsFree(path: string): Promise<boolean> {
+  const owner = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error
   })
-  if (!file) return
+  if (owner === undefined) return true
+  if (!pidIsDead(owner)) return false
+
+  const tombstone = `${path}.stale.${process.pid}.${randomUUID()}`
   try {
-    const owner = await file.stat()
-    if (Date.now() - owner.mtimeMs > 60_000 || pidIsDead(await file.readFile('utf8'))) unlinkLock(path, owner)
+    await rename(path, tombstone)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+  const moved = await readFile(tombstone, 'utf8')
+  if (moved === owner && pidIsDead(moved)) {
+    await unlink(tombstone)
+    return true
+  }
+  // Never replace another owner's marker while restoring. If the path is
+  // occupied, leave the tombstone alone and wait for the current owner.
+  try {
+    await link(tombstone, path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw error
+  }
+  await unlink(tombstone) // Only remove the extra name; the marker is restored.
+  return false
+}
+
+async function withOwnerMarker<T>(path: string, action: () => Promise<T>): Promise<T> {
+  const draft = `${path}.owner.${process.pid}.${randomUUID()}`
+  const file = await open(draft, 'wx', 0o600)
+  let ownsMarker = false
+  try {
+    try {
+      await file.writeFile(`${process.pid}\n`)
+      await link(draft, path) // Publish the complete PID atomically, without replacing a marker.
+      ownsMarker = true
+    } finally {
+      try {
+        await file.close()
+      } finally {
+        await unlink(draft)
+      }
+    }
+    return await action()
   } finally {
-    await file.close()
+    if (ownsMarker) await unlink(path)
+  }
+}
+
+function openGuard(path: string) {
+  // Keep Node 22's SQLite startup warning out of capture's JSON CLI output.
+  const emitWarning = process.emitWarning
+  process.emitWarning = ((warning: string | Error, ...args: unknown[]) => {
+    if (typeof warning === 'string' && args[0] === 'ExperimentalWarning'
+      && warning.startsWith('SQLite is an experimental feature')) return
+    Reflect.apply(emitWarning, process, [warning, ...args])
+  }) as typeof process.emitWarning
+  try {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+    return new DatabaseSync(path)
+  } finally {
+    process.emitWarning = emitWarning
   }
 }
 
 async function withLock<T>(root: string, action: () => Promise<T>): Promise<T> {
-  const path = join(root, '.lock')
+  await mkdir(root, { recursive: true })
+  const dir = await realpath(root)
+  const path = join(dir, '.lock')
   return serialized(path, async () => {
-    await mkdir(root, { recursive: true })
-    const deadline = performance.now() + 5000
-    while (true) {
-      const file = await open(path, 'wx', 0o600).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'EEXIST') throw error
-      })
-      if (file) {
+    // As with the board's directory lock, SQLite holds an OS lock on a stable
+    // inode. Never unlink the guard file. It serializes recovery, publication,
+    // writes and release, and the OS releases it when a process dies. Stop
+    // writers from versions that don't use the guard before upgrading.
+    const guard = openGuard(join(dir, '.lock.guard'))
+    try {
+      const deadline = performance.now() + 5000
+      while (true) {
+        let acquired = false
         try {
-          const owner = await file.stat()
-          try {
-            await file.writeFile(`${process.pid}\n`)
-            return await action()
-          } finally {
-            unlinkLock(path, owner)
-          }
-        } finally {
-          await file.close()
+          guard.exec('BEGIN IMMEDIATE')
+          acquired = true
+        } catch (error) {
+          const { code, errcode } = error as { code?: string; errcode?: number }
+          // SQLite's primary SQLITE_BUSY code is 5, including extended codes.
+          if (code !== 'ERR_SQLITE_ERROR' || errcode === undefined || (errcode & 0xff) !== 5) throw error
         }
+        if (acquired) {
+          if (await lockPathIsFree(path)) return await withOwnerMarker(path, action)
+          guard.exec('ROLLBACK')
+        }
+        const remaining = deadline - performance.now()
+        if (remaining <= 0) throw new Error('capture ledger lock timed out')
+        await sleep(Math.min(25, remaining))
       }
-      await reapStaleLock(path)
-      const remaining = deadline - performance.now()
-      if (remaining <= 0) throw new Error('capture ledger lock timed out')
-      await sleep(Math.min(25, remaining))
+    } finally {
+      guard.close()
     }
   })
 }
