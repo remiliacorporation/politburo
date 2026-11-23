@@ -1,0 +1,96 @@
+{
+  "case_id": "expiry-007-router-without-sweep",
+  "description": "The standalone router does not enforce mailbox expiry.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/ex/.wake.lock": null,
+      "mail/ex/bodies/ex-0005.txt": "Example detail for ex-0005.\n",
+      "mail/ex/bodies/ex-0012.txt": "Example detail for ex-0012.\n",
+      "mail/ex/bodies/ex-0019.txt": "Example detail for ex-0019.\n",
+      "mail/ex/bodies/ex-0026.txt": "Example detail for ex-0026.\n",
+      "mail/ex/digest.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 1, \"p1\": 1, \"p2\": 1, \"p3\": 1}\nact_on: [ex-0005, ex-0012, ex-0019]\nitems:\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0005.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"ex\", \"urgency\": \"p0\"}\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0012.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"ex\", \"urgency\": \"p1\"}\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n  - {\"at\": \"2026-11-20T21:14Z\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"summary\": \"Example spawner.dispatch at p3\", \"urgency\": \"p3\"}\n",
+      "mail/ex/ex-0005.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0005.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"ex\", \"urgency\": \"p0\"}\n",
+      "mail/ex/ex-0012.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0012.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"ex\", \"urgency\": \"p1\"}\n",
+      "mail/ex/ex-0019.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n",
+      "mail/ex/ex-0026.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0026.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30:00Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p3\", \"to\": \"ex\", \"urgency\": \"p3\"}\n",
+      "mail/ex/id-counter.txt": null,
+      "mail/ex/sec-queue.yaml": null,
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0005.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"ex\", \"urgency\": \"p0\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0012.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"ex\", \"urgency\": \"p1\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0026.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30:00Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p3\", \"to\": \"ex\", \"urgency\": \"p3\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0005.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"ex\", \"urgency\": \"p0\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0012.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"ex\", \"urgency\": \"p1\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0026.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30:00Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p3\", \"to\": \"ex\", \"urgency\": \"p3\"}"
+    ],
+    "snapshots": [
+      {
+        "digest": {
+          "act_on": [
+            "ex-0005",
+            "ex-0012",
+            "ex-0019"
+          ],
+          "counts": {
+            "p0": 1,
+            "p1": 1,
+            "p2": 1,
+            "p3": 1
+          },
+          "item_ids": [
+            "ex-0005",
+            "ex-0012",
+            "ex-0019",
+            "ex-0026"
+          ]
+        }
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\"forward_now\": [{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0005.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"ex\", \"urgency\": \"p0\"}], \"alerts\": [], \"forward_batch\": [{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0012.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"ex\", \"urgency\": \"p1\"}], \"secretary_queue\": [], \"digest_path\": \"<WORK>/mail/ex/digest.yaml\", \"counts\": {\"p0\": 1, \"p1\": 1, \"p2\": 1, \"p3\": 1}, \"new\": 4, \"invalid\": []}\n"
+  },
+  "inputs": {
+    "collect": [
+      "mail/ex/.wake.lock",
+      "mail/ex/bodies/ex-0005.txt",
+      "mail/ex/bodies/ex-0012.txt",
+      "mail/ex/bodies/ex-0019.txt",
+      "mail/ex/bodies/ex-0026.txt",
+      "mail/ex/digest.yaml",
+      "mail/ex/ex-0005.json",
+      "mail/ex/ex-0012.json",
+      "mail/ex/ex-0019.json",
+      "mail/ex/ex-0026.json",
+      "mail/ex/id-counter.txt",
+      "mail/ex/sec-queue.yaml",
+      "mail/log.yaml"
+    ],
+    "kind": "router",
+    "repo": "ex",
+    "tag": "ex"
+  },
+  "matrix_row": "M07",
+  "notes": "Bypassing wake leaves expired headers available to build_digest, including schema-valid urgent deadlines.",
+  "setup": {
+    "files": {
+      "mail/ex/bodies/ex-0005.txt": "Example detail for ex-0005.\n",
+      "mail/ex/bodies/ex-0012.txt": "Example detail for ex-0012.\n",
+      "mail/ex/bodies/ex-0019.txt": "Example detail for ex-0019.\n",
+      "mail/ex/bodies/ex-0026.txt": "Example detail for ex-0026.\n",
+      "mail/ex/ex-0005.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0005.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"ex\", \"urgency\": \"p0\"}\n",
+      "mail/ex/ex-0012.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0012.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:29:59Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"ex\", \"urgency\": \"p1\"}\n",
+      "mail/ex/ex-0019.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0019.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"ex\", \"urgency\": \"p2\"}\n",
+      "mail/ex/ex-0026.json": "{\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0026.txt\", \"class\": \"spawner.dispatch\", \"expires\": \"2026-11-20T21:30:00Z\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0026\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p3\", \"to\": \"ex\", \"urgency\": \"p3\"}\n"
+    },
+    "now": "2026-11-20T21:30:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_wake.py"
+    ]
+  }
+}

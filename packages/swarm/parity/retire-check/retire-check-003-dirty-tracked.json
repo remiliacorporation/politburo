@@ -1,0 +1,45 @@
+{
+  "case_id": "retire-check-003-dirty-tracked",
+  "description": "A tracked file is modified after publishing the branch tip.",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "repo/ex.txt": "edited without staging\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "unpushed work: example-mob: ex-main\nex-main: unpushed (local <SHA1>, remote <SHA1>)\nworktree: dirty\n"
+  },
+  "inputs": {
+    "argv": [
+      "--repo-dir",
+      "repo",
+      "--mob",
+      "example-mob",
+      "--dry-run",
+      "--worktree",
+      "repo",
+      "--branch",
+      "ex-main"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M12",
+  "notes": "",
+  "setup": {
+    "files": {
+      "repo/ex.txt": "base\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "worktree_files": {
+      "ex.txt": "edited without staging\n"
+    }
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_retire.py",
+      "supervisor/sec_push.py"
+    ]
+  }
+}
