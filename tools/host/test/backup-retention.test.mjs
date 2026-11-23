@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -21,7 +21,7 @@ process.on('warning', (warning) => {
 const backup = fileURLToPath(new URL('../board-backup.mjs', import.meta.url))
 const manifestPath = (dir) => join(dir, 'MANIFEST.json')
 
-async function fixture(t) {
+async function fixture(t, fileCount = 1) {
   const home = await mkdtemp(join(tmpdir(), 'backup-retention-test-'))
   const dir = join(home, 'board')
   const out = join(home, 'backups')
@@ -52,8 +52,9 @@ async function fixture(t) {
     child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk })
     const done = once(child, 'close').then(([code]) => {
       assert.equal(code, 0, stderr)
-      const match = /^backup  (.+)\ndatabases  1  files  1\n$/.exec(stdout)
+      const match = /^backup  (.+)\ndatabases  1  files  (\d+)\n$/.exec(stdout)
       assert.ok(match, stdout)
+      assert.equal(Number(match[2]), fileCount)
       return { path: match[1], stderr }
     })
     // Allow a test to inspect a running command before awaiting its result.
@@ -110,9 +111,10 @@ test('--keep prunes only older backups registered at their own names', { timeout
   const { dev, ino } = await lstat(newest, { bigint: true })
   const index = JSON.parse(await readFile(f.index, 'utf8'))
   assert.equal(index.version, 1)
-  assert.deepEqual(index.backups.find(({ name }) => name === basename(newest)), {
-    name: basename(newest), token, dev: String(dev), ino: String(ino),
-  })
+  const entry = index.backups.find(({ name }) => name === basename(newest))
+  assert.equal(entry.token, token)
+  assert.equal(entry.dev, String(dev))
+  assert.equal(entry.ino, String(ino))
   assert.equal((await lstat(f.index)).mode & 0o777, 0o600)
 })
 
@@ -147,6 +149,44 @@ test('--keep preserves a backup indexed without directory identity', { timeout: 
   await f.save('--keep', '1')
   assert.deepEqual(await readFile(manifestPath(older)), manifest, 'legacy backup should survive')
   await assert.rejects(lstat(genuine), { code: 'ENOENT' })
+})
+
+// Catches pruning a legacy backup without a manifest digest or disabling pruning for its whole index.
+test('--keep preserves a backup indexed without a manifest digest', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: legacy } = await f.save()
+  const { path: genuine } = await f.save()
+  const index = JSON.parse(await readFile(f.index, 'utf8'))
+  delete index.backups.find(({ name }) => name === basename(legacy)).manifest
+  await writeFile(f.index, JSON.stringify(index))
+  const manifest = await readFile(manifestPath(legacy))
+
+  await f.save('--keep', '1')
+  assert.deepEqual(await readFile(manifestPath(legacy)), manifest)
+  await assert.rejects(lstat(genuine), { code: 'ENOENT' })
+})
+
+// Catches trusting an edited manifest that lists an added file with its correct hash.
+test('--keep refuses a rewritten manifest even when every file matches it', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: older } = await f.save()
+  const path = manifestPath(older)
+  const original = await readFile(path)
+  const index = JSON.parse(await readFile(f.index, 'utf8'))
+  assert.equal(index.backups.find(({ name }) => name === basename(older)).manifest,
+    createHash('sha256').update(original).digest('hex'))
+  const edited = JSON.parse(original)
+  const extra = Buffer.from('keep me')
+  const extraPath = join(older, 'files', 'extra.txt')
+  await writeFile(extraPath, extra)
+  edited.files.push({ path: 'extra.txt', size: extra.length, sha256: createHash('sha256').update(extra).digest('hex') })
+  const changed = JSON.stringify(edited)
+  await writeFile(path, changed)
+
+  const { stderr } = await f.save('--keep', '1')
+  assert.deepEqual(await readFile(extraPath), extra)
+  assert.equal(await readFile(path, 'utf8'), changed)
+  assert.ok(stderr.split('\n').includes(`warning: backup ${basename(older)} did not verify; not deleted`), stderr)
 })
 
 // Catches pruning an indexed directory whose current manifest does not match its registered token.
@@ -227,6 +267,54 @@ test('--keep keeps an indexed backup that gained an extra file and prunes a genu
   assert.deepEqual(await pruning(f.out), [])
 })
 
+// Catches recursive deletion of a file arriving after quarantine verification.
+test('a file added after verification survives in quarantine', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: older } = await f.save()
+  const warnings = []
+  t.mock.method(console, 'error', (line) => warnings.push(line))
+  await makeBackup(f.dir, f.out, 1, {
+    afterQuarantine: ({ holding }) => writeFile(join(holding, 'files', 'late.txt'), 'keep me'),
+  })
+
+  const [held] = await pruning(f.out)
+  assert.ok(held, 'quarantine was removed')
+  assert.equal(await readFile(join(f.out, held, 'files', 'late.txt'), 'utf8'), 'keep me')
+  assert.ok(warnings.includes(`warning: backup ${basename(older)} changed during pruning; left at ${held}`))
+  const index = JSON.parse(await readFile(f.index, 'utf8'))
+  assert.ok(index.backups.some(({ name }) => name === basename(older)))
+})
+
+// Catches rollback replacing a new empty directory at the original backup name.
+test('rollback does not overwrite an empty directory that appeared during quarantine', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t)
+  const { path: older } = await f.save()
+  await writeFile(join(older, 'files', 'extra.txt'), 'keep me')
+  const warnings = []
+  t.mock.method(console, 'error', (line) => warnings.push(line))
+  await makeBackup(f.dir, f.out, 1, { afterQuarantine: ({ dir }) => mkdir(dir) })
+
+  assert.deepEqual(await readdir(older), [], 'rollback overwrote the new empty directory')
+  const [held] = await pruning(f.out)
+  assert.ok(held, 'quarantine was removed')
+  assert.equal(await readFile(join(f.out, held, 'files', 'extra.txt'), 'utf8'), 'keep me')
+  assert.ok(warnings.some((line) => line.includes(`left at ${held}`)))
+})
+
+// Catches copying empty directories that make a genuine backup fail prune verification.
+test('--keep prunes backups from a board with empty and populated attachment directories', { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, 2)
+  await mkdir(join(f.dir, 'empty', 'nested'), { recursive: true })
+  await mkdir(join(f.dir, 'blobs', 'nested'), { recursive: true })
+  await writeFile(join(f.dir, 'blobs', 'nested', 'note.txt'), 'attachment')
+  const { path: older } = await f.save()
+  const { path: newer } = await f.save('--keep', '1')
+
+  await assert.rejects(lstat(older), { code: 'ENOENT' })
+  await assert.rejects(lstat(join(newer, 'files', 'empty')), { code: 'ENOENT' })
+  assert.equal(await readFile(join(newer, 'files', 'blobs', 'nested', 'note.txt'), 'utf8'), 'attachment')
+})
+
 // Catches leaving a .pruning-* directory in --out after a successful prune.
 test('--keep leaves no .pruning-* directory after a normal prune', { timeout: 15000 }, async (t) => {
   const f = await fixture(t)
@@ -252,3 +340,29 @@ test('a swapped board directory is not published', { timeout: 15000 }, async (t)
     assert.ok(index.equals(await readFile(f.index)), `index changed after ${hook}`)
   }
 })
+
+for (const hook of ['afterSnapshots', 'beforePublish']) {
+  // Catches publishing the old board after the requested --dir symlink is retargeted.
+  test(`a retargeted --dir symlink is refused at ${hook}`, { timeout: 15000 }, async (t) => {
+    const f = await fixture(t)
+    const requested = `${f.dir}.link`
+    const other = `${f.dir}.other`
+    await cp(f.dir, other, { recursive: true })
+    await symlink(f.dir, requested, 'dir')
+    await symlink(other, `${requested}.next`, 'dir')
+    const hooks = { [hook]: () => rename(`${requested}.next`, requested) }
+    if (hook === 'afterSnapshots') {
+      // Restore the link before the second check so it cannot catch the first change.
+      await symlink(f.dir, `${requested}.original`, 'dir')
+      hooks.beforePublish = () => rename(`${requested}.original`, requested)
+    }
+
+    await assert.rejects(
+      () => makeBackup(requested, f.out, undefined, hooks),
+      { message: 'board directory changed during the backup; retry' },
+    )
+    assert.deepEqual(await published(f.out), [])
+    assert.deepEqual((await readdir(f.out)).filter((name) => name.startsWith('.partial-')), [])
+    await assert.rejects(lstat(f.index), { code: 'ENOENT' })
+  })
+}
