@@ -138,6 +138,7 @@ async function rollbackLocked(tag: string, ctx: Context) {
   const op = session(tag, ctx), { service, oldLoop } = ctx.ports
   const s = await readState(ctx.stateDir, tag)
   const health = await op.status(service), old = await op.status(oldLoop)
+  const live = s.mode === 'service' && s.pending !== 'applying' && health === 'running'
   const stopNeeded = needsServiceStop(s, health)
   if (!stopNeeded && old === 'running') return op.report('already rolled back')
   s.pending = 'rolling_back'
@@ -150,8 +151,12 @@ async function rollbackLocked(tag: string, ctx: Context) {
   } catch (error) {
     if (!(error instanceof CutoverError) || error.reason !== 'files_stale') throw error
     if (!ctx.allowStale) {
-      // A pending old-loop start can land during the drain. Confirm it is stopped before restoring the service.
+      if (!live) {
+        throw new CutoverError('files_stale', `files are stale; fix the bridge or re-run swarm cutover rollback ${tag} --execute --allow-stale`)
+      }
+      // A pending old-loop start can land during the drain. Stop it before restoring the service.
       if (old === 'running' || await op.status(oldLoop).catch(ignorePortFailure) !== 'stopped') throw error
+      await op.stop(oldLoop)
       try { await op.start(service) } catch {
         throw new CutoverError('no_router', 'no router running: start the service or the old loop by hand')
       }
