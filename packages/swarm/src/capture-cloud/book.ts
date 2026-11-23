@@ -21,6 +21,54 @@ function privateFile(stat: BigIntStats) {
 }
 const versionOf = (stat: BigIntStats) => `${stat.dev}:${stat.ino}:${stat.ctimeNs}`
 const sleep = new Int32Array(new SharedArrayBuffer(4))
+const errno = (error: unknown) => (error as NodeJS.ErrnoException).code
+
+function createLock(path: string) {
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+  try { writeFileSync(fd, `${process.pid}\n`); return fd } catch (error) {
+    closeSync(fd)
+    try { unlinkSync(path) } catch { /* incomplete lock must not stay */ }
+    throw error
+  }
+}
+
+function lockPid(path: string) {
+  let fd: number
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) }
+  catch { return }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile() || stat.size > 11) return
+    const text = readFileSync(fd, 'utf8').trim()
+    if (/^[1-9][0-9]*$/.test(text) && Number(text) <= 0x7fffffff) return Number(text)
+  } finally { closeSync(fd) }
+}
+
+function deadHolder(path: string) {
+  const pid = lockPid(path)
+  if (pid === undefined) return false
+  try { process.kill(pid, 0); return false } catch (error) { return errno(error) === 'ESRCH' }
+}
+
+function takeDeadLock(path: string) {
+  if (!deadHolder(path)) return
+  const temp = `${path}.tmp`
+  let fd: number
+  try { fd = createLock(temp) } catch { return }
+  let keep = false
+  try {
+    if (!deadHolder(path)) return
+    renameSync(temp, path)
+    if (lockPid(path) !== process.pid) return
+    keep = true
+    return fd
+  } finally {
+    if (!keep) {
+      try { unlinkSync(temp) } catch { /* takeover abandoned */ }
+      closeSync(fd)
+    }
+  }
+}
 
 export class Book {
   #file?: string
@@ -67,15 +115,11 @@ export class Book {
     const lock = `${this.#file}.lock`, deadline = performance.now() + 2000
     let fd: number
     for (;;) {
-      try { fd = openSync(lock, 'wx', 0o600); break } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      try { fd = createLock(lock); break } catch (error) {
+        if (errno(error) !== 'EEXIST') throw error
       }
-      const held = lstatSync(lock, { throwIfNoEntry: false })
-      if (held && Date.now() - held.mtimeMs > 10_000) {
-        try { unlinkSync(lock) } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        }
-      }
+      const taken = takeDeadLock(lock)
+      if (taken !== undefined) { fd = taken; break }
       const remaining = deadline - performance.now()
       if (remaining <= 0) throw new BookError('book is locked')
       Atomics.wait(sleep, 0, 0, Math.min(20, remaining))

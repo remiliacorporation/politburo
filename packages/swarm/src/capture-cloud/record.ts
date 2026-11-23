@@ -1,5 +1,6 @@
 // stand-in until WP-103's ledger API lands; the sink is the only seam
 import { appendFileSync, closeSync, fsyncSync, openSync, readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 export interface Envelope {
   party: string
@@ -49,16 +50,23 @@ export interface LedgerSink { append(record: SpendRecord): Promise<'appended' | 
 // STUB: single writer.
 export function jsonlLedger(path: string): LedgerSink {
   const keys = new Set<string>()
-  const text = readIfPresent(path) ?? ''
-  for (const line of text.split('\n')) if (line.trim()) keys.add(JSON.parse(line).dedupe_key)
+  const text = readIfPresent(path)
+  let syncDir = text === undefined
+  for (const line of (text ?? '').split('\n')) if (line.trim()) keys.add(JSON.parse(line).dedupe_key)
   return { async append(record) {
     if (keys.has(record.dedupe_key)) return 'duplicate'
     const fd = openSync(path, 'a', 0o600)
     try {
       appendFileSync(fd, `${JSON.stringify(record)}\n`)
+      // Register before fsync so a failed fsync cannot be retried as a second row.
+      keys.add(record.dedupe_key)
       fsyncSync(fd)
+      if (syncDir) {
+        const dirfd = openSync(dirname(path), 'r')
+        try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
+        syncDir = false
+      }
     } finally { closeSync(fd) }
-    keys.add(record.dedupe_key)
     return 'appended'
   } }
 }

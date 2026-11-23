@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { once } from 'node:events'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync,
-  utimesSync, writeFileSync } from 'node:fs'
+  unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -283,17 +284,33 @@ test('Book only loads private regular files, not symlinks', (t) => {
 
 test('Book takes the lock and preserves both bind and revoke in either order', (t) => {
   const { bookFile } = paths(t), lock = `${bookFile}.lock`, issuer = new Book({ file: bookFile })
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid
+  assert.ok(deadPid)
   for (const [i, bindFirst] of [true, false].entries()) {
     const bound = issuer.issue(envelope, { ttlMs: 60_000 }).capability
     const revoked = issuer.issue(envelope, { ttlMs: 60_000 }).capability
     const binder = new Book({ file: bookFile }), revoker = new Book({ file: bookFile })
     const bind = () => binder.bind(bound, `${session}-${i}`), revoke = () => revoker.revoke(revoked)
-    writeFileSync(lock, '')
+    writeFileSync(lock, `${deadPid}\n`)
     utimesSync(lock, 0, 0)
     for (const write of bindFirst ? [bind, revoke] : [revoke, bind]) write()
     const final = new Book({ file: bookFile })
     assert.equal(final.byCapability(bound, Date.now())?.session, `${session}-${i}`, 'binding was lost')
     assert.equal(final.byCapability(revoked, Date.now()), undefined, 'revocation was lost')
-    assert.equal(existsSync(lock), false, 'stale lock was not replaced and released')
+    assert.equal(existsSync(lock), false, 'dead holder lock was not replaced and released')
   }
+})
+
+// Catches stealing a live lock by age so a slow writer can restore a revoked capability.
+test('Book does not steal a live lock as stale so a revoke cannot race a slow writer', (t) => {
+  const { bookFile } = paths(t), lock = `${bookFile}.lock`, issuer = new Book({ file: bookFile })
+  const { capability } = issuer.issue(envelope, { ttlMs: 60_000 })
+  writeFileSync(lock, `${process.pid}\n`)
+  utimesSync(lock, 0, 0)
+  const other = new Book({ file: bookFile })
+  assert.throws(() => other.revoke(capability), /book is locked/)
+  assert.ok(other.byCapability(capability, Date.now()), 'revoked by stealing a live lock')
+  unlinkSync(lock)
+  other.revoke(capability)
+  assert.equal(other.byCapability(capability, Date.now()), undefined)
 })
