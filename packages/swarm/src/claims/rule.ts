@@ -1,4 +1,5 @@
 import type { Board, BoardOptions } from '@vercel/board'
+import { dockTaskMisses } from './dock.ts'
 import { cooldown, readHistory } from './records.ts'
 
 export type ClaimsConfig = {
@@ -30,8 +31,11 @@ const refuse = (code: string, message: string) => ({ refuse: { code, message } }
 export function createClaimRule({ board, party, channel, config, now = Date.now }: ClaimOptions): NonNullable<BoardOptions['claimRule']> {
   if (config.pause_on_downtime) throw new Error('claims.pause_on_downtime is not supported')
   return async (claim) => {
-    if (claim.channel !== channel || claim.actor !== (await board.me()).actor) return
+    const scope = claim.task === null ? claim.channel.replace(/\/$/, '') : claim.channel
+    if (scope !== channel && !(claim.task === null && channel.startsWith(`${scope}/`))) return
+    if (claim.actor !== (await board.me()).actor) return
     if (claim.task !== null) {
+      await dockTaskMisses({ board, party, channel, config, now }, claim.task)
       const until = cooldown(await readHistory(board, claim.task, party, claim.actor))
       if (now() < until) return refuse('reclaim_cooldown', `claim cools down until ${new Date(until).toISOString()}`)
     }

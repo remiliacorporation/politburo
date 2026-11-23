@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { test, type TestContext } from 'node:test'
-import { board } from '@vercel/board'
+import { board, BoardError, type Board } from '@vercel/board'
 import { local } from '@vercel/board/backend-local'
 import { createClaimRule, dockMisses, writeRecord, type ClaimsConfig, type Validate } from '../src/index.ts'
 import { run } from '../src/claims/cli.ts'
@@ -65,6 +66,26 @@ test('open cap refuses another claim even if the live attempt has an artifact', 
   assert.ok(await f.blue.tasks.claim(next, { hold }))
 })
 
+test('open cap refuses claim-next in a parent channel', async (t) => {
+  const f = setup(t, { open_claims_per_repo: 1 })
+  const first = await f.red.tasks.claim(await f.task(), { hold })
+  const { task: next } = await f.red.tasks.create(channel, 'Next work item')
+  for (const parent of ['work/', 'work']) {
+    await assert.rejects(f.red.tasks.claim({ channel: parent, hold }), { status: 409, code: 'open_claims_per_repo' })
+  }
+  assert.equal((await f.team.thread(next.id)).message.task?.state, 'ready')
+  await first.release()
+  assert.equal((await f.red.tasks.claim({ channel: 'work/', hold }))?.task.id, next.id)
+})
+
+test('two simultaneous claims by one party for distinct tickets respect open cap one', async (t) => {
+  const f = setup(t, { open_claims_per_repo: 1 })
+  const first = await f.task(), second = await f.task()
+  const outcomes = await Promise.allSettled([f.red.tasks.claim(first, { hold }), f.red.tasks.claim(second, { hold })])
+  assert.equal(outcomes.filter(({ status }) => status === 'fulfilled').length, 1)
+  assert.equal(outcomes.find((result) => result.status === 'rejected')?.reason.code, 'open_claims_per_repo')
+})
+
 test('uncommitted cap refuses until the claimant links an artifact for the live epoch', async (t) => {
   const f = setup(t)
   const task = await f.task()
@@ -87,11 +108,62 @@ test('a hold miss refuses reclaim up to but not including hold end plus fifteen 
   await holdAttempt(t, f, id)
   t.mock.timers.tick(21 * 60_000) // Detect the miss a minute late; detection time must not shift the cooldown.
   await (await f.blue.tasks.claim(id, { hold }))!.release() // Records expiry even if the timer has not run.
-  await dockMisses(f.options('red'))
   t.mock.timers.tick(hardEnd + cooldownMs - 1 - Date.now())
   await assert.rejects(f.red.tasks.claim(id, { hold }), { status: 409, code: 'reclaim_cooldown' })
   t.mock.timers.tick(1)
   assert.ok(await f.red.tasks.claim(id, { hold }))
+})
+
+test('claim by id docks an expired hold before the timer or dock scan runs', async (t) => {
+  clock(t)
+  const f = setup(t)
+  const id = await f.task()
+  const claim = await f.red.tasks.claim(id, { hold: 30 })
+  const hardEnd = Date.parse(claim.until)
+  t.mock.timers.setTime(hardEnd + 1)
+  assert.equal((await f.team.poll({ re: id, wait: 0 })).events.some(({ type }) => type === 'task.expired'), false)
+  await assert.rejects(f.red.tasks.claim(id, { hold }), {
+    status: 409, code: 'reclaim_cooldown', message: `claim cools down until ${new Date(hardEnd + cooldownMs).toISOString()}`,
+  })
+  await (await f.blue.tasks.claim(id, { hold })).release()
+  await dockMisses(f.options('red'))
+  assert.equal((await f.team.thread(id)).replies.length, 1)
+})
+
+// Use the board-wide IDs of the posts API; local reply() prefixes keys by profile.
+function rawReply(handle: Board): Board['reply'] {
+  return async (re, input) => {
+    const response = await handle.request('/messages', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ re, ...(typeof input === 'string' ? { text: input } : input) })),
+    })
+    const body = await response.json()
+    if (!response.ok) throw new BoardError(body.error.code, body.error.message, response.status)
+    return body.message
+  }
+}
+
+test('a foreign dock id collision does not stop a later miss from being docked', async (t) => {
+  clock(t)
+  const f = setup(t)
+  const first = await f.task(), second = await f.task()
+  const actorHash = createHash('sha256').update((await f.red.me()).actor).digest('hex').slice(0, 16)
+  for (const id of [first, second]) {
+    const { epoch } = await f.red.tasks.claim(id, { hold: 30 })
+    const suffix = id === first ? `:${actorHash}` : ''
+    await rawReply(f.blue)(id, { id: `swarm-dock:red:${id}:${epoch}${suffix}`, text: 'Foreign record' })
+    t.mock.timers.tick(30_000)
+    await (await f.blue.tasks.claim(id, { hold })).release()
+  }
+  await assert.rejects(dockMisses({ ...f.options('red'), board: { ...f.red, reply: rawReply(f.red) } }), (error) => {
+    assert.ok(error instanceof AggregateError)
+    assert.ok(error.message.includes(first))
+    assert.equal(error.errors.length, 1)
+    assert.equal(error.errors[0].cause.code, 'duplicate_id')
+    return true
+  })
+  const { replies } = await f.team.thread(second)
+  assert.deepEqual(replies.map(({ by }) => by.actor), [(await f.blue.me()).actor, (await f.red.me()).actor])
 })
 
 test('repeated dock scans write exactly one correctly attributed dock per expired hold', async (t) => {

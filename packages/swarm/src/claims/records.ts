@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Board, MessageView } from '@vercel/board'
 
 export type Attempt = { v: 1; party: string; task: string; epoch: number }
@@ -12,10 +13,11 @@ export type Entry = {
 
 const fence = '```json\n'
 
-export function writeRecord<K extends Kind>(board: Board, kind: K, attempt: Attempt, payload: Payloads[K]) {
+export async function writeRecord<K extends Kind>(board: Board, kind: K, attempt: Attempt, payload: Payloads[K]) {
   const { v, party, task, epoch } = attempt
+  const suffix = kind === 'dock' ? `:${createHash('sha256').update((await board.me()).actor).digest('hex').slice(0, 16)}` : ''
   return board.reply(task, {
-    id: `swarm-${kind}:${party}:${task}:${epoch}`,
+    id: `swarm-${kind}:${party}:${task}:${epoch}${suffix}`,
     text: `${fence}${JSON.stringify({ ...payload, v, kind, party, task, epoch })}\n\`\`\``,
     labels: { 'swarm.kind': kind, 'swarm.party': party, 'swarm.epoch': String(epoch) },
     noSync: true,
