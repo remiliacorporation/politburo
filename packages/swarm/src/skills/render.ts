@@ -57,8 +57,8 @@ export function isGeneratedText(text: string): boolean {
 
 function hasEncodedReference(text: string): boolean {
   if (/&#(?:[0-9]+|[xX][0-9a-fA-F]+)/.test(text)) return true
-  for (const match of text.matchAll(/%([0-9a-fA-F]{2})/g)) {
-    if (/[A-Za-z]/.test(String.fromCharCode(Number.parseInt(match[1], 16)))) return true
+  for (const [encoded] of text.matchAll(/%[0-9a-fA-F]{2}/g)) {
+    if (/[A-Za-z]/.test(String.fromCharCode(Number.parseInt(encoded.slice(1), 16)))) return true
   }
   return false
 }

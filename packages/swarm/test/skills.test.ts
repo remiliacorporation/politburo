@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 const skills = ['mob', 'mob-creation', 'policy', 'research', 'reviewer', 'spawner']
-const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
 
 function run(dir: string, ...flags: string[]) {
   return runWithEnv(env, dir, ...flags)
