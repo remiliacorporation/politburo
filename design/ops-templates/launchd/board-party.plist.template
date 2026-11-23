@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+board-party loopback board. Runs as BOARD_PARTY_USER; reads board-party.env under CONFIG_ROOT.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL_PREFIX}}.board-party</string>
+  <key>UserName</key>
+  <string>{{BOARD_PARTY_USER}}</string>
+  <key>GroupName</key>
+  <string>{{SERVICE_GROUP}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{HOST_BIN}}/run-with-env.sh</string>
+    <string>{{CONFIG_ROOT}}/board-party.env</string>
+    <string>--</string>
+    <string>{{NODE}}</string>
+    <string>{{BOARD_CLI}}</string>
+    <string>serve</string>
+    <string>--swarm</string>
+    <string>--no-inspect</string>
+    <string>--dir</string>
+    <string>{{DATA_ROOT}}/board-party</string>
+    <string>--port</string>
+    <string>{{PORT_PARTY}}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{DATA_ROOT}}/board-party</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ExitTimeOut</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>{{LOG_ROOT}}/board-party.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_ROOT}}/board-party.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{SERVICE_PATH}}</string>
+    <key>HOME</key>
+    <string>{{HOME_ROOT}}/board-party</string>
+  </dict>
+</dict>
+</plist>
