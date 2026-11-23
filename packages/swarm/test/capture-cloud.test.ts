@@ -371,3 +371,29 @@ test('restart acknowledges a row that was never synced', async (t) => {
   const response = await post(`http://127.0.0.1:${server.port}`, capability)
   assert.notEqual(response.status, 200, 'restart acknowledged a row that was never synced')
 })
+
+// Catches a restart acknowledging a row whose directory entry was never synced.
+test('restart acknowledges a row whose directory entry was never synced', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const dedupe_key = `claude_cloud:${createHash('sha256')
+    .update(JSON.stringify([envelope.trace.execution_id, claim.source_event_key])).digest('hex').slice(0, 40)}`
+  writeFileSync(ledgerFile, `${JSON.stringify({ dedupe_key })}\n`)
+  const keep = openSync(ledgerFile, 'r')
+  t.after(() => { try { closeSync(keep) } catch { /* already closed */ } })
+  let ledger: ReturnType<typeof jsonlLedger>
+  try {
+    ledger = jsonlLedger(`/proc/self/fd/${keep}`)
+  } catch (error) {
+    assert.match((error as Error).message, /failed to sync existing ledger/)
+    return
+  }
+  const server = await createReceiver({ book, ledger }).listen(0)
+  t.after(() => server.close())
+  const response = await post(`http://127.0.0.1:${server.port}`, capability)
+  assert.notEqual(response.status, 200, 'restart acknowledged a row whose directory was never synced')
+})
