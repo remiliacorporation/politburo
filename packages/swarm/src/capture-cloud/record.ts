@@ -47,6 +47,11 @@ export type SpendRecord = (
 
 export interface LedgerSink { append(record: SpendRecord): Promise<'appended' | 'duplicate'> }
 
+function syncParent(path: string): void {
+  const fd = openSync(dirname(path), 'r')
+  try { fsyncSync(fd) } finally { closeSync(fd) }
+}
+
 // STUB: single writer. A supplied append-mode descriptor stays owned by the caller.
 export function jsonlLedger(path: string, openFd?: number): LedgerSink {
   const keys = new Set<string>(), written = new Set<string>()
@@ -62,6 +67,9 @@ export function jsonlLedger(path: string, openFd?: number): LedgerSink {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     syncDir = true
   }
+  // The caller may have just created this file, or reopened it after a failed
+  // directory sync. Persist its name before accepting claims or duplicates.
+  if (openFd !== undefined) syncParent(path)
   for (const line of (text ?? '').split('\n')) if (line.trim()) keys.add(JSON.parse(line).dedupe_key)
   return { async append(record) {
     const key = record.dedupe_key
@@ -74,8 +82,7 @@ export function jsonlLedger(path: string, openFd?: number): LedgerSink {
       }
       fsyncSync(fd)
       if (syncDir) {
-        const dirfd = openSync(dirname(path), 'r')
-        try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
+        syncParent(path)
         syncDir = false
       }
     } finally { if (openFd === undefined) closeSync(fd) }

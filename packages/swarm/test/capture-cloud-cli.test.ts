@@ -87,6 +87,33 @@ test('CLI issues, binds and serves a claim into the ledger', async (t) => {
   assert.deepEqual(row.tokens, claim.tokens)
 })
 
+test('CLI serve refuses to listen when the new ledger directory cannot be synced', (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  const dir = dirname(ledgerFile)
+  const preload = join(dir, 'fail-directory-sync.cjs')
+  // Inject an I/O failure for this directory only, leaving ledger file fsync intact.
+  writeFileSync(preload, `
+    const fs = require('node:fs')
+    const { dev, ino } = fs.statSync(${JSON.stringify(dir)}, { bigint: true })
+    const sync = fs.fsyncSync
+    fs.fsyncSync = fd => {
+      const stat = fs.fstatSync(fd, { bigint: true })
+      if (stat.dev === dev && stat.ino === ino) {
+        throw Object.assign(new Error('injected directory fsync failure'), { code: 'EIO' })
+      }
+      return sync(fd)
+    }
+    require('node:module').syncBuiltinESMExports()
+  `)
+  const result = spawnSync(process.execPath, ['--require', preload, ...cli,
+    'serve', '--book', bookFile, '--ledger', ledgerFile, '--port', '0'], {
+    cwd, encoding: 'utf8', timeout: 2_000, killSignal: 'SIGKILL',
+  })
+  assert.equal(result.stdout, '', 'must not listen with an unsynced ledger directory')
+  if (result.error) throw result.error
+  assert.deepEqual([result.status, result.stderr.trim()], [1, 'error: cannot serve capture-cloud'])
+})
+
 test('CLI serve does not write claims to a replacement ledger path', async (t) => {
   const { bookFile, ledgerFile } = paths(t)
   const book = new Book({ file: bookFile })
