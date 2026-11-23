@@ -61,7 +61,7 @@ export async function runMail(action: string | undefined, args: string[], clock:
     let body = v.body
     if (body === undefined) {
       const bytes = await readFile(v['body-file']!).catch(() => misuse('body-file', 'cannot read body'))
-      try { body = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+      try { body = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
       catch { misuse('body-file', 'not valid UTF-8') }
     }
     const time = new Date(clock.now())

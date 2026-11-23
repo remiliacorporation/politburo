@@ -56,6 +56,11 @@ export function commandLedger([program, ...args]: [string, ...string[]]): Ledger
 
 const needsAck = (r: LedgerRecord) => r.urgency === 'p0' || r.urgency === 'p1'
 
+function soakTime(text: string): number {
+  // Date.parse truncates fractional seconds beyond milliseconds.
+  return isoDateTime(text) && !/\.\d{4}/.test(text) ? Date.parse(text) : NaN
+}
+
 export async function soak(tag: string, ledger: LedgerPort, since?: string, p1Minutes = 10) {
   const counts = { p0: 0, p1: 0, p2: 0, p3: 0 }
   const missedP0P1: string[] = [], duplicates: string[] = [], unknownDeliveries: string[] = []
@@ -67,8 +72,7 @@ export async function soak(tag: string, ledger: LedgerPort, since?: string, p1Mi
     if (deliveries === undefined || !Number.isFinite(deliveries)) unknownDeliveries.push(r.id)
     else if (deliveries > 1) duplicates.push(r.id)
     if (!r.deliveredAt && needsAck(r)) missedP0P1.push(r.id)
-    const delay = r.deliveredAt && isoDateTime(r.deliveredAt) && isoDateTime(r.at)
-      ? Date.parse(r.deliveredAt) - Date.parse(r.at) : NaN
+    const delay = r.deliveredAt ? soakTime(r.deliveredAt) - soakTime(r.at) : NaN
     const knownDelay = Number.isFinite(delay) && delay >= 0
     if (!knownDelay || (r.ackedAt !== undefined && !isoDateTime(r.ackedAt))) unknownTimes++
     if (knownDelay && r.urgency === 'p0' && delay > 60_000) lateP0.push(r.id)

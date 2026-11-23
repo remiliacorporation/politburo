@@ -33,7 +33,7 @@ function poster(t: TestContext, failTag = '') {
     if (result.error) throw result.error
     return result
   }
-  function received(): { tag: string; message: { id: string; at: string } }[] {
+  function received(): { tag: string; message: { id: string; at: string; body: string } }[] {
     return readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
   }
   return { dir, send, received, clear: () => writeFileSync(log, '') }
@@ -137,6 +137,15 @@ test('mail send rejects invalid UTF-8 in a body file without posting', (t) => {
   const result = f.send({ body: undefined, 'body-file': bodyFile })
   refusal(result, 2, /^error: body-file: not valid UTF-8\n$/)
   assert.deepEqual(f.received(), [])
+})
+
+test('mail send preserves a leading U+FEFF in a UTF-8 body file', (t) => {
+  const f = poster(t)
+  const bodyFile = join(f.dir, 'leading-bom.txt')
+  writeFileSync(bodyFile, Buffer.from([0xef, 0xbb, 0xbf, 0x61]))
+  const result = f.send({ to: 'def', body: undefined, 'body-file': bodyFile })
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(f.received().map(({ message }) => message.body), ['\uFEFFa'])
 })
 
 test('CLI mail send does not lose its route or change the p0 message on the way to the poster', (t) => {

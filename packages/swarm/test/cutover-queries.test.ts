@@ -102,6 +102,16 @@ test('soak counts a delivery before send as an unknown time', (t) => {
   assert.equal(report.verdict, 'not clean')
 })
 
+test('soak counts a sub-millisecond delivery before send as an unknown time', (t) => {
+  const run = ledger(t, [mail('early-fraction', 'p0', {
+    at: '2025-01-01T12:00:00.0009Z', deliveredAt: '2025-01-01T12:00:00.0001Z', deliveries: 1,
+  })])
+  const report = document(run('soak', '--json'), 1)
+  assert.equal(report.unknownTimes, 1)
+  assert.deepEqual(report.lateP0, [])
+  assert.equal(report.verdict, 'not clean')
+})
+
 test('soak counts impossible send and delivery dates as unknown times', (t) => {
   const run = ledger(t, [
     mail('invalid-send', 'p0', { at: '2025-02-30T12:00:00Z', deliveredAt: '2025-03-02T12:00:30Z', deliveries: 1 }),

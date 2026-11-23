@@ -94,13 +94,16 @@ function main(args: string[]): number {
 }
 
 // One line per area: the subcommand's module exports run(argv): Promise<number>.
-const subcommands: Record<string, () => Promise<{ run(argv: string[], command?: string): Promise<number> }>> = {
+const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
   check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
   trackers: () => import('./trackers/cli.ts'),
   cutover: () => import('./cutover/cli.ts'),
-  mail: () => import('./cutover/cli.ts'),
+  mail: async () => {
+    const { run } = await import('./cutover/cli.ts')
+    return { run: (argv) => run(argv, 'mail') }
+  },
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
-process.exitCode = area ? await (await area()).run(subargs, subcommand) : main(process.argv.slice(2))
+process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))
