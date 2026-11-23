@@ -172,6 +172,23 @@ test('the owner email could impersonate the owner, or a registry downgrade could
   } finally { await next.close() }
 })
 
+test('a member removed from the registry can still read a channel through /messages?channel=', async (t) => {
+  const dir = await tempDir(t)
+  const jwt = await sign()
+  const path = '/messages?channel=work'
+  const first = await start(t, [member, manager], dir)
+  try {
+    await status(first.request('/messages', jwt, post), 201)
+    await status(first.request(path, jwt), 200)
+  } finally { await first.close() }
+
+  const next = await start(t, [{ ...member, can: { other: ['read'] } }, manager], dir)
+  try {
+    await status(next.request('/messages?channel=other', jwt), 200)
+    await status(next.request(path, jwt), 403)
+  } finally { await next.close() }
+})
+
 test('parallel requests can write as the wrong verified colleague', async (t) => {
   const { request, handle } = await start(t, [member, manager])
   const [one, two] = await Promise.all([sign(), sign({ email: managerEmail })])
@@ -228,6 +245,51 @@ test('an empty registry or one without board-wide manage can strand the board', 
   assert.equal(result.stderr, 'error: no_administrator\n')
 })
 
+test('a registry whose only administrator has a narrower channel rule can start and cannot resume a paused board', async (t) => {
+  const members = [{ ...manager, can: { '*': ['manage'], work: ['read'] } }]
+  await assert.rejects(serveBoard({ teamDomain, audience, memory: true, members: parseMembers({ members }) }),
+    { message: 'no_administrator' })
+  const result = cli(...await serveArgs(await tempDir(t), members))
+  assert.equal(result.status, 1)
+  assert.equal(result.stderr, 'error: no_administrator\n')
+})
+
+test('an owner who edited a starting grant in place has it silently revoked', async (t) => {
+  const dir = await tempDir(t)
+  const edited = await onDisk(dir, async (handle) => [
+    await handle.updateGrant('g1', {
+      add: [{ kind: 'user', userId: 'guest.at.company.example' }],
+      remove: [{ kind: 'all-users' }],
+      can: { work: ['read'] },
+    }),
+    // Even an owner using the reconciliation writer's profile can edit a starting grant.
+    await handle.as('swarm-members').updateGrant('g2', {
+      add: [{ kind: 'user', userId: 'reviewer.at.company.example' }],
+      remove: [{ kind: 'all-projects', environments: ['production', 'preview', 'development'] }],
+      can: { review: ['read', 'post'] },
+    }),
+  ])
+  const running = await serveBoard({ dir, teamDomain, audience, keys: createLocalJWKSet({ keys: [] }),
+    members: parseMembers({ members: [manager] }) })
+  t.after(running.close)
+  const grants = await running.handle.grants()
+  for (const { grant } of edited) {
+    assert.deepEqual(grants.find(({ id }) => id === grant.id), grant, `edited ${grant.id} must survive startup`)
+  }
+  assert.equal(grants.some(({ id }) => id === 'g3'), false)
+})
+
+test('a customised broad starting grant skips the unexpected-grant check', async (t) => {
+  const dir = await tempDir(t)
+  const saved = await onDisk(dir, async (handle) => {
+    await handle.as('swarm-members').updateGrant('g1', { can: { '*': ['read'] } })
+    return await handle.grants()
+  })
+  await assert.rejects(serveBoard({ dir, teamDomain, audience, keys: createLocalJWKSet({ keys: [] }),
+    members: parseMembers({ members: [member, manager] }) }), { message: 'unexpected_grant', reason: 'unexpected_grant' })
+  assert.deepEqual(await onDisk(dir, (handle) => handle.grants()), saved)
+})
+
 test('a failed replacement write can remove old grants, including the starting grants', async (t) => {
   const dir = await tempDir(t)
   const saved = await onDisk(dir, async (handle) => {
@@ -269,6 +331,32 @@ test('a signed member can redeem a valid invite through the tunnel', async (t) =
   assert.equal(response.status, 403)
   assert.equal((await response.json()).error?.code, 'not_on_tunnel')
   assert.equal((await handle.invites())[0]?.state, 'pending')
+})
+
+test('a member with manage can change grants through the tunnel', async (t) => {
+  const { handle, tunnelUrl } = await start(t)
+  const jwt = await sign({ email: managerEmail })
+  const memberGrant = (await handle.grants()).find(({ principals }) =>
+    principals.some((p) => p.kind === 'user' && p.userId === 'owner.at.company.example'))
+  assert.ok(memberGrant)
+  const extra = { principals: [{ kind: 'user', userId: 'extra.at.company.example' }], can: { '*': 'all' } }
+  for (const [method, path, body] of [
+    ['POST', '/grants', extra],
+    ['POST', '/grants/batch', { grants: [extra] }],
+    ['PATCH', `/grants/${memberGrant.id}`, { can: { '*': 'all' } }],
+    ['POST', `/grants/${memberGrant.id}/revoke`, {}],
+  ] as const) {
+    await t.test(`${method} ${path.replace(memberGrant.id, ':id')}`, async () => {
+      const before = await handle.grants()
+      const response = await fetch(tunnelUrl + path, {
+        method, headers: { 'cf-access-jwt-assertion': jwt, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      assert.equal(response.status, 403)
+      assert.equal((await response.json()).error?.code, 'not_on_tunnel')
+      assert.deepEqual(await handle.grants(), before)
+    })
+  }
 })
 
 test('a board-issued bearer can override a verified Cloudflare person', async (t) => {

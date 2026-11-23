@@ -10,7 +10,7 @@ import { local, type LocalOptions } from '@vercel/board/backend-local'
 import { decodeJwt } from 'jose'
 import { parseConfigText } from '../config/load.ts'
 import { accessIssuer } from './assertion.ts'
-import { accessKeys, parseMembers, personAuthenticator, principalId, type AssertionOptions, type Members } from './index.ts'
+import { accessKeys, memberFor, parseMembers, personAuthenticator, principalId, type AssertionOptions, type Members } from './index.ts'
 
 type ServeOptions = Omit<AssertionOptions, 'keys'> & {
   keys?: AssertionOptions['keys']
@@ -25,6 +25,11 @@ type ServeOptions = Omit<AssertionOptions, 'keys'> & {
 const loopback = '127.0.0.1'
 const assertion = 'cf-access-jwt-assertion'
 const grantWriter = 'swarm-members'
+const startingGrants = {
+  g1: { principals: [{ kind: 'all-users' }], can: { '*': 'all' } },
+  g2: { principals: [{ kind: 'all-projects', environments: ['production', 'preview', 'development'] }], can: { '*': ['read', 'post', 'react', 'label', 'sync'] } },
+  g3: { principals: [{ kind: 'all-apps' }], can: { '*': ['read', 'post', 'react', 'label'] } },
+}
 
 type StartupReason = 'member_grant_collision' | 'unexpected_grant' | 'no_administrator'
 class StartupError extends Error {
@@ -36,7 +41,7 @@ class StartupError extends Error {
 }
 
 function administrators(members: Members) {
-  return [...members.values()].filter(({ can }) => can['*'] === 'all' || can['*']?.includes('manage'))
+  return [...members.values()].filter(({ can }) => compileAccess(can).everywhere('manage'))
 }
 
 async function seed(handle: Board, members: Members) {
@@ -51,8 +56,10 @@ async function seed(handle: Board, members: Members) {
   const starting: string[] = []
   const stale: string[] = []
   for (const { id, by, principals, can } of await writer.grants()) {
-    if (id === 'g1' || id === 'g2' || id === 'g3') starting.push(id)
-    else if (by === `board:client:${grantWriter}`) {
+    const start = id === 'g1' || id === 'g2' || id === 'g3' ? startingGrants[id] : undefined
+    // Edited starting IDs go through validation, even if the edit used the registry writer's profile.
+    if (start && isDeepStrictEqual({ principals, can }, start)) starting.push(id)
+    else if (!start && by === `board:client:${grantWriter}`) {
       const [principal] = principals
       if (principals.length === 1 && principal?.kind === 'user' && !kept.has(principal.userId) &&
         isDeepStrictEqual(can, wanted.get(principal.userId)?.canonical)) {
@@ -93,7 +100,6 @@ export async function serveBoard(options: ServeOptions): Promise<{ tunnelUrl?: s
   const hosts = new Set(options.publicHosts?.map((host) => new URL(accessIssuer(host)).hostname))
   const authenticatePerson = personAuthenticator({ ...options, keys: options.keys ?? accessKeys(options.teamDomain) })
   const verified = new WeakMap<Headers, HostPrincipal>()
-  const memberAccess = new Map([...members.values()].map(({ email, can }) => [principalId(email), compileAccess(can)]))
   const signIn = () => reject(401, 'unauthorized', 'Cloudflare Access sign-in required')
   const attentionResponders = options.attentionResponders ?? { '*': responders.map(({ email }) => principalId(email)) }
   let backend: ReturnType<typeof local> | undefined
@@ -136,10 +142,15 @@ export async function serveBoard(options: ServeOptions): Promise<{ tunnelUrl?: s
     const url = new URL(`${origin}${req.url}`)
     url.pathname = url.pathname.replace(/\/+$/, '') || '/'
     if (method === 'POST' && url.pathname === '/invites/redeem') return writeResponse(res, reject(403, 'not_on_tunnel'))
+    // Registry grants change only at start-up; a manage member must not write them through the tunnel.
+    if (!read && (url.pathname === '/grants' || url.pathname.startsWith('/grants/'))) {
+      return writeResponse(res, reject(403, 'not_on_tunnel'))
+    }
     const channel = url.searchParams.get('channel')
-    // Board filters list results; an explicitly requested channel outside the registry gets a 403.
-    if (method === 'GET' && url.pathname === '/messages' && channel && !memberAccess.get(caller.id)?.readable(channel)) {
-      return writeResponse(res, reject(403, 'forbidden'))
+    // Use the same registry lookup as authentication, not a separate grant snapshot.
+    if (method === 'GET' && url.pathname === '/messages' && channel) {
+      const member = typeof claims.email === 'string' ? memberFor(members, claims.email) : null
+      if (!member || !compileAccess(member.can).readable(channel)) return writeResponse(res, reject(403, 'forbidden'))
     }
 
     if (res.destroyed) return

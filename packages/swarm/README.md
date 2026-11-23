@@ -22,6 +22,9 @@ stale and starting grants. Owner administration uses the in-process
 Invite redemption is unavailable on the tunnel. `/schemas` is shared metadata
 for signed-in members. Requests have an 8 MiB body cap, below the board's
 25 MiB import limit.
+Revoke the all-person grant (g1) and install explicit user grants before use.
+The host must refuse to start if a registered member's ID suffix matches the
+suffix of an existing board user grant.
 
 ```bash
 pnpm --filter @remilia/politburo-swarm build
