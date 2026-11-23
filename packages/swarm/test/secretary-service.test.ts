@@ -230,7 +230,7 @@ test('unknown retire, push and policy evidence never passes and is surfaced in t
 
 test('retry is allowed once and only for a listed transient code', () => {
   const item = header('retry', { class: 'sec.retry' })
-  const job = () => ({ repo: tag, ref: item.ref, expectedBase: 'base', artifactDigest: 'digest', check: 'test' })
+  const job = (repo: string, ref: string) => ({ repo, ref, expectedBase: 'base', artifactDigest: 'digest', check: 'test' })
   for (const [code, retries, action] of [
     ['ETIMEDOUT', 0, 'retry'], ['ETIMEDOUT', 1, 'needs_spawner'], ['EINVAL', 0, 'needs_spawner'],
   ] as const) assert.equal(handlePush(item, tag, { job, base: () => 'base', failure: () => ({ code, retries }) }).action,

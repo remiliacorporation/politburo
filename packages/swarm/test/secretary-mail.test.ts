@@ -524,7 +524,7 @@ test('optional Tigeryard header fields and a missing ref are accepted rather tha
     ['duplicate', undefined, false], ['reject', 'id_collision', false],
   ])
   const { digests } = router.due(start + 30 * min)
-  const packet = compilePacket({ tag: 'abc', lane: 'digest', now: start,
+  const packet = compilePacket({ tag: 'abc', lane: 'p1_batch', now: start,
     items: decisions.flatMap((decision) => decision.header ?? []) })
   const blob = JSON.stringify({ decisions, digests, packet })
   for (const field of Object.keys(tigeryardOptional)) assert.doesNotMatch(blob, new RegExp(`"${field}"`))
