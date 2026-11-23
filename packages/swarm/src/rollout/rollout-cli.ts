@@ -34,9 +34,17 @@ function escapeControls(text: string): string {
     `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }
 
+function safeJson(data: object): string {
+  return escapeControls(JSON.stringify(data))
+}
+
+function printLine(text: string): void {
+  console.log(escapeControls(text))
+}
+
 function printFailure(message: string, code: 1 | 2, json: boolean): number {
   if (json) {
-    console.error(escapeControls(JSON.stringify({ status: 'error', reason: code === 2 ? 'misuse' : 'rollout_failed', message })))
+    console.error(safeJson({ status: 'error', reason: code === 2 ? 'misuse' : 'rollout_failed', message }))
     return code
   }
   console.error(`error: ${escapeControls(message)}`)
@@ -69,20 +77,20 @@ export function rolloutMain(args: string[]): number {
 
   const { subject, version, audience, summary, recipient, json } = values
   const ledger = openLedger(dir)
-  const output = (data: object, text: () => void) => json ? console.log(JSON.stringify(data)) : text()
+  const output = (data: object, text: () => void) => json ? console.log(safeJson(data)) : text()
   try {
     if (action === 'stale') {
       const stale = ledger.stale({ subject, version })
       output({ stale }, () => {
-        for (const row of stale) console.log(`${row.subject}  ${row.version}  ${row.recipient}  ${row.state}`)
+        for (const row of stale) printLine(`${row.subject}  ${row.version}  ${row.recipient}  ${row.state}`)
       })
     } else if (action === 'show') {
       const entries = ledger.show({ subject, version })
       output({ entries }, () => {
         for (const [index, entry] of entries.entries()) {
-          if (index) console.log('')
-          console.log(`${entry.subject}  ${entry.version}`)
-          for (const row of entry.recipients) console.log(`  ${row.recipient}  ${row.state}`)
+          if (index) printLine('')
+          printLine(`${entry.subject}  ${entry.version}`)
+          for (const row of entry.recipients) printLine(`  ${row.recipient}  ${row.state}`)
         }
       })
     } else {
@@ -91,12 +99,12 @@ export function rolloutMain(args: string[]): number {
       if (action === 'add') {
         if (audience === undefined) return fail('missing --audience', 2)
         const { entry, added } = ledger.addEntryWithOutcome({ subject, version, audience: audience.split(','), summary })
-        output({ entry, added }, () => console.log(`${added ? 'added' : 'exists'} ${subject} ${version}`))
+        output({ entry, added }, () => printLine(`${added ? 'added' : 'exists'} ${subject} ${version}`))
       } else {
         if (recipient === undefined) return fail('missing --recipient', 2)
         const record = ledger[action]({ subject, version, recipient })
         const verb = action === 'notify' ? 'notified' : 'acked'
-        output({ [record.type]: record }, () => console.log(`${verb} ${subject} ${version} ${recipient}`))
+        output({ [record.type]: record }, () => printLine(`${verb} ${subject} ${version} ${recipient}`))
       }
     }
     return 0

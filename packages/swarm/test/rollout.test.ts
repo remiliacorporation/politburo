@@ -19,13 +19,14 @@ function fixture(t: TestContext) {
   return { dir, file, ledger, bytes: () => readFileSync(file) }
 }
 
-async function race(t: TestContext, values: string[], operation: string) {
+async function race(t: TestContext, values: string[], operation: string, beforeReady = '') {
   const { dir: gate } = fixture(t)
   const children = values.map((value) => spawn(process.execPath, ['--input-type=module', '-e', `
-    import { existsSync, writeSync } from 'node:fs'
+    import { appendFileSync, existsSync, writeSync } from 'node:fs'
     import { openLedger } from './src/rollout/ledger.ts'
     const [gate, value] = process.argv.slice(1)
     const open = (dir, at) => openLedger(dir, { now: () => {
+      ${beforeReady}
       writeSync(1, 'ready\\n')
       const pause = new Int32Array(new SharedArrayBuffer(4))
       while (!existsSync(gate + '/go')) Atomics.wait(pause, 0, 0, 5)
@@ -47,7 +48,7 @@ async function race(t: TestContext, values: string[], operation: string) {
 }
 
 function records(bytes: Buffer) {
-  return bytes.toString().trimEnd().split('\n').map((line) => JSON.parse(line))
+  return bytes.toString().split('\n').filter(Boolean).map((line) => JSON.parse(line))
 }
 
 test('20+20 concurrent ack writers lose or replace effective receipts, tear records, or create a lock', { timeout: 30_000 }, async (t) => {
@@ -93,16 +94,17 @@ test('racing adds with different audiences both succeed, or identical adds are n
   }
 })
 
-test('a torn final line is folded or concurrent recovery rewrites bytes or poisons appends', async (t) => {
+test('two real writers recover after each leaves a torn fragment', { timeout: 15_000 }, async (t) => {
   const { dir, file, ledger, bytes } = fixture(t)
   ledger.addEntry({ ...config, audience: ['pb', 'ty'] })
   const ack = JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' })
-  appendFileSync(file, ack.slice(0, ack.length / 2))
+  appendFileSync(file, '\n' + ack.slice(0, ack.length / 2))
   const damaged = bytes()
   assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['pb', 'ty'])
   assert.deepEqual(bytes(), damaged)
   const results = await race(t, ['pb', 'ty'], `open(${JSON.stringify(dir)}, ${JSON.stringify(at)})
-    .notify({ ...${JSON.stringify(config)}, recipient: value })`)
+    .notify({ ...${JSON.stringify(config)}, recipient: value })`,
+    `appendFileSync(${JSON.stringify(file)}, '\\n' + JSON.stringify({ type: 'ack', recipient: value }).slice(0, -1))`)
   for (const result of results) assert.equal(result.status, 0, result.stderr)
   assert.deepEqual(bytes().subarray(0, damaged.length), damaged)
   assert.deepEqual(ledger.stale().map(({ state }) => state), ['waiting', 'waiting'])
@@ -110,13 +112,13 @@ test('a torn final line is folded or concurrent recovery rewrites bytes or poiso
   assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['ty'])
 })
 
-test('a short write after preflight swallows the next record', (t) => {
+test('a fragment followed by a record does not swallow the record', (t) => {
   const { dir, file, ledger } = fixture(t)
   ledger.addEntry({ ...config, audience: ['pb', 'ty'] })
   ledger.ack({ ...config, recipient: 'pb' })
   const record = JSON.stringify({ type: 'ack', at, ...config, recipient: 'ty' })
   const writer = openLedger(dir, { now: () => {
-    appendFileSync(file, record.slice(0, record.length / 2))
+    appendFileSync(file, '\n' + record.slice(0, record.length / 2))
     assert.deepEqual(ledger.stale().map(({ recipient }) => recipient), ['ty'])
     return new Date(at)
   } })
@@ -130,8 +132,9 @@ test('a short write after preflight swallows the next record', (t) => {
 test('a short write inside a Unicode character poisons later reads', (t) => {
   const { file, ledger } = fixture(t)
   ledger.addEntry({ ...config, audience: ['pb'] })
-  const partial = Buffer.from('{"type":"entry","summary":"😀')
+  const partial = Buffer.from('\n{"type":"entry","summary":"😀')
   appendFileSync(file, partial.subarray(0, -2))
+  assert.equal(ledger.stale()[0]?.state, 'not notified')
   ledger.ack({ ...config, recipient: 'pb' })
   assert.deepEqual(ledger.stale(), [])
 })
@@ -139,33 +142,35 @@ test('a short write inside a Unicode character poisons later reads', (t) => {
 test('a blank line hides a later valid rollout record', (t) => {
   const { file, ledger } = fixture(t)
   ledger.addEntry({ ...config, audience: ['pb'] })
-  appendFileSync(file, '\n')
-  appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }) + '\n')
+  appendFileSync(file, '\n\n')
+  appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }))
   assert.deepEqual(ledger.stale(), [])
 })
 
-test('a corrupt newline-terminated last line is ignored or a writer appends after it', (t) => {
-  for (const garbage of ['garbage\n', '{}\n', '{"type":"ack",\n\n']) {
-    const { file, ledger, bytes } = fixture(t)
-    ledger.addEntry({ ...config, audience: ['pb'] })
-    appendFileSync(file, garbage)
-    const damaged = bytes()
-    assert.throws(() => ledger.show(), /corrupt rollout ledger at line 2$/)
-    assert.throws(() => ledger.ack({ ...config, recipient: 'pb' }), /corrupt rollout ledger at line 2$/)
-    assert.deepEqual(bytes(), damaged)
-  }
+test('a lone separator after a fragment still permits reads and a prefixed append', (t) => {
+  const { file, ledger, bytes } = fixture(t)
+  const entry = ledger.addEntry({ ...config, audience: ['pb'] })
+  const initial = bytes().toString()
+  assert.ok(initial.startsWith('{') && initial.endsWith('}'))
+  assert.equal(JSON.parse(initial).subject, entry.subject)
+  appendFileSync(file, '\n{\n') // A torn record, then a writer that only wrote its separator.
+  assert.equal(ledger.stale()[0]?.state, 'not notified')
+  const ack = ledger.ack({ ...config, recipient: 'pb' })
+  assert.equal(bytes().toString(), `${initial}\n{\n\n${JSON.stringify(ack)}`)
+  assert.deepEqual(ledger.stale(), [])
 })
 
 test('middle corruption is ignored or reported at the wrong line', (t) => {
   const invalidUtf8 = Buffer.from(`{"type":"entry","at":"${at}","subject":"setup","version":"1","audience":["pb"],"summary":"\xff"}\n`, 'latin1')
-  for (const garbage of ['garbage\n', invalidUtf8]) {
+  for (const garbage of ['{}\n', invalidUtf8]) {
     const { file, ledger, bytes } = fixture(t)
     ledger.addEntry({ ...config, audience: ['pb'] })
+    appendFileSync(file, '\nunknown fragment\n')
     appendFileSync(file, garbage)
-    appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }) + '\n')
+    appendFileSync(file, JSON.stringify({ type: 'ack', at, ...config, recipient: 'pb' }))
     const before = bytes()
-    assert.throws(() => ledger.show(), /line 2\b/)
-    assert.throws(() => ledger.ack({ ...config, recipient: 'pb' }), /line 2\b/)
+    assert.throws(() => ledger.show(), /line 3\b/)
+    assert.throws(() => ledger.ack({ ...config, recipient: 'pb' }), /line 3\b/)
     assert.deepEqual(bytes(), before)
   }
 })
@@ -191,7 +196,7 @@ test('a later duplicate notice replaces the first notice timestamp', (t) => {
   ledger.addEntry({ ...config, audience: ['pb'] })
   const delivery = { ...config, recipient: 'pb' }
   const notice = ledger.notify(delivery)
-  appendFileSync(file, JSON.stringify({ ...notice, at: new Date(0).toISOString() }) + '\n')
+  appendFileSync(file, '\n' + JSON.stringify({ ...notice, at: new Date(0).toISOString() }))
   const before = bytes()
   assert.equal(ledger.show()[0]?.recipients[0]?.notifiedAt, at)
   assert.deepEqual(ledger.notify(delivery), notice)
@@ -204,7 +209,7 @@ test('superseding a version conflates recipient states or makes stale reports se
   const audience = ['pb', 'ty', 'rw', 'core']
   const earlier = ledger.addEntry({ ...config, audience })
   ledger.addEntry({ ...current, audience })
-  appendFileSync(file, JSON.stringify(earlier) + '\n')
+  appendFileSync(file, '\n' + JSON.stringify(earlier))
   ledger.addEntry({ subject: 'setup', version: 'v1', audience: ['pb'] })
   ledger.notify({ ...config, recipient: 'pb' })
   ledger.ack({ ...config, recipient: 'core' }) // late ack of the earlier entry
@@ -286,6 +291,24 @@ test('a symlink ledger or file directory is accepted, or new paths have broad pe
   assert.deepEqual(readFileSync(target), before)
 })
 
+test('alias/.. writes and reads in the symlink target parent', (t) => {
+  const { dir, file } = fixture(t)
+  const target = join(dir, 'target')
+  mkdirSync(join(target, 'child'), { recursive: true })
+  try { symlinkSync(join(target, 'child'), join(dir, 'alias'), 'dir') } catch (error) {
+    if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') return
+    throw error
+  }
+  const aliasParent = `${join(dir, 'alias')}/..` // join would erase the symlink component.
+  const added = cli(dir, 'add', '--dir', aliasParent, '--subject', 'config', '--version', 'v2', '--audience', 'pb')
+  assert.equal(added.status, 0, added.stderr)
+  assert.ok(!existsSync(file), 'wrote to the lexical parent')
+  assert.equal(openLedger(target).show()[0]?.subject, 'config')
+  const shown = cli(dir, 'show', '--dir', aliasParent, '--json')
+  assert.equal(shown.status, 0, shown.stderr)
+  assert.deepEqual(JSON.parse(shown.stdout).entries, openLedger(target).show())
+})
+
 test('read commands report missing directories or unknown filters as healthy, or create directories', (t) => {
   const { dir, file, ledger } = fixture(t)
   const missing = join(dir, 'missing')
@@ -339,6 +362,32 @@ test('JSON error stderr emits a raw C1 control character', () => {
   assert.ok(!result.stderr.includes('\u009b'), 'stderr contains a raw U+009B')
   assert.match(result.stderr, /bad\\u009bcommand/)
   assert.equal(JSON.parse(result.stderr).message, 'unknown rollout command bad\u009bcommand')
+})
+
+test('a handwritten U+009B summary is corruption, not CLI output', (t) => {
+  const { dir, file } = fixture(t)
+  writeFileSync(file, JSON.stringify({ type: 'entry', at, ...config, audience: ['pb'], summary: 'bad\u009bsummary' }))
+  for (const flags of [[], ['--json']]) {
+    for (const args of [['show'], ['add', '--subject', 'config', '--version', 'v2', '--audience', 'pb']]) {
+      const result = cli(dir, ...args, ...flags)
+      assert.ok(!(result.stdout + result.stderr).includes('\u009b'), 'a raw U+009B was printed')
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /corrupt rollout ledger at line 1/)
+    }
+  }
+})
+
+test('matching JSON add escapes a stored line separator and does not echo unknown fields', (t) => {
+  const { dir, file } = fixture(t)
+  const summary = 'line\u2028separator'
+  const entry = { type: 'entry', at, ...config, audience: ['pb'], summary }
+  writeFileSync(file, JSON.stringify({ ...entry, extra: 'raw\u009bcontrol' }))
+  const result = cli(dir, 'add', '--json', '--subject', 'config', '--version', 'v2', '--audience', 'pb', '--summary', summary)
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(!result.stdout.includes('\u2028'), 'a raw U+2028 was printed')
+  assert.ok(!result.stdout.includes('\u009b'), 'a raw U+009B was printed')
+  assert.deepEqual(JSON.parse(result.stdout), { entry, added: false })
 })
 
 test('the rollout CLI misreports writes, reports stale as failure, or breaks JSON and error exits', (t) => {

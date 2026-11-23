@@ -1,5 +1,6 @@
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 type Version = { subject: string; version: string }
@@ -16,7 +17,6 @@ type RecipientState = 'not notified' | 'waiting' | 'acked' | 'behind'
 const limit = 4000
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 const noFollow = constants.O_NOFOLLOW ?? 0
-const recordStarts = ['{"type":"entry"', '{"type":"notice"', '{"type":"ack"']
 
 function token(field: string, value: unknown): void {
   if (typeof value !== 'string' || !value.length || value.length > 64 || /[^A-Za-z0-9._-]/.test(value)) {
@@ -59,8 +59,9 @@ function fold(subjects: Subjects, record: RolloutRecord): void {
     let history = subjects.get(record.subject)
     if (history?.has(record.version)) return
     if (!history) subjects.set(record.subject, history = new Map())
-    const { writeId, ...entry } = record
-    history.set(record.version, { entry, writeId, notices: new Map(), acks: new Map() })
+    const { type, at, subject, version, audience, summary, writeId } = record
+    const entry = { type, at, subject, version, audience, ...(summary === undefined ? {} : { summary }) }
+    history.set(version, { entry, writeId, notices: new Map(), acks: new Map() })
   } else {
     const { notices, acks } = deliveryTarget(subjects, record)
     const times = record.type === 'notice' ? notices : acks
@@ -68,13 +69,18 @@ function fold(subjects: Subjects, record: RolloutRecord): void {
   }
 }
 
-function read(dir: string, file: string, create = false) {
+function resolveDirectory(dir: string, create: boolean) {
   const directory = statSync(dir, { throwIfNoEntry: false })
   if (directory && !directory.isDirectory()) throw new Error(`not a rollout directory: ${dir}`)
   if (!directory) {
     if (!create) throw new Error(`missing rollout directory ${dir}`)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
+  // Unlike lexical normalization, native realpath follows a symlink before `..`.
+  return realpathSync.native(dir)
+}
+
+function read(dir: string, file: string, create = false) {
   const ledger = lstatSync(file, { throwIfNoEntry: false })
   if (ledger?.isSymbolicLink()) throw new Error(`symlinked rollout ledger: ${file}`)
   if (ledger && !ledger.isFile()) throw new Error(`not a rollout ledger file: ${file}`)
@@ -85,13 +91,10 @@ function read(dir: string, file: string, create = false) {
   const text = ledger ? readFileSync(file, { encoding: 'latin1', flag: constants.O_RDONLY | noFollow }) : ''
   const subjects: Subjects = new Map()
   const lines = text.split('\n')
-  lines.pop() // Ignore an unterminated tail, even if it parses.
   const corrupt = (line: number) => new Error(`corrupt rollout ledger at line ${line}`)
-  let fragment: number | undefined
   for (const [i, line] of lines.entries()) {
     if (!line) continue
     try {
-      if (line.length + 1 >= limit) throw new Error('oversize record')
       const bytes = Buffer.from(line, 'latin1')
       let decoded: string
       let incompleteUtf8 = false
@@ -105,25 +108,23 @@ function read(dir: string, file: string, create = false) {
       let record: RolloutRecord
       try {
         record = JSON.parse(decoded)
-      } catch (error) {
-        // Only a line that starts like a writer's record can be a sealed tear.
-        // A later successfully folded record must confirm recovery.
-        if (line[0] !== '{' || !recordStarts.some((start) => start.startsWith(line) || line.startsWith(start))) throw error
-        fragment ??= i + 1
+      } catch {
+        // Skip torn records, even if a subsequent writer only left a separator.
         continue
       }
       if (incompleteUtf8) throw new Error('incomplete UTF-8 after complete JSON')
+      if (bytes.length + 1 >= limit) throw new Error('oversize record')
       validate(record)
       if (typeof record.at !== 'string' || new Date(record.at).toISOString() !== record.at) {
         throw new Error('invalid timestamp')
       }
+      // A complete record whose writer died before reporting is still committed,
+      // even without a trailing newline.
       fold(subjects, record)
-      fragment = undefined
     } catch {
-      throw corrupt(fragment ?? i + 1)
+      throw corrupt(i + 1)
     }
   }
-  if (fragment !== undefined) throw corrupt(fragment)
   return subjects
 }
 
@@ -159,19 +160,29 @@ function view(subjects: Subjects, { subject, version }: Filter) {
 
 /** Open a live, append-only view of rollout.jsonl on a local filesystem. */
 export function openLedger(dir: string, { now = () => new Date() }: { now?: () => Date } = {}) {
-  const file = join(dir, 'rollout.jsonl')
+  function location(create = false) {
+    const directory = resolveDirectory(dir, create)
+    return [directory, join(directory, 'rollout.jsonl')] as const
+  }
 
-  function append(record: RolloutRecord) {
+  function append(file: string, record: RolloutRecord) {
     record.at = now().toISOString()
-    const bytes = Buffer.from(`${JSON.stringify(record)}\n`)
+    const bytes = Buffer.from(`\n${JSON.stringify(record)}`)
     if (bytes.length >= limit) throw new Error('rollout record must be under 4000 bytes')
-    const fd = openSync(file, constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | noFollow, 0o600)
+    const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | noFollow, 0o600)
     try {
-      const { size } = fstatSync(fd)
-      const last = Buffer.alloc(1)
-      const seal = size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a
-      if (seal && bytes.length + 1 >= limit) throw new Error('rollout record must be under 4000 bytes')
-      appendFileSync(fd, seal ? Buffer.concat([Buffer.from('\n'), bytes]) : bytes)
+      let { size } = fstatSync(fd)
+      if (size === 0) {
+        // Only empty files need coordination: two unprefixed first writes could fuse.
+        // flock stays on the inherited descriptor until we close it, even if we die.
+        const lock = spawnSync('perl', ['-MFcntl=:flock', '-e',
+          'open(my $f, ">&=3") or die $!; flock($f, LOCK_EX) or die $!;'],
+        { stdio: ['ignore', 'ignore', 'ignore', fd] })
+        if (lock.error || lock.status !== 0) throw new Error('could not lock empty rollout ledger (requires Perl flock)')
+        size = fstatSync(fd).size
+      }
+      // Do not inspect the tail: another writer may leave a fragment before us.
+      appendFileSync(fd, size > 0 ? bytes : bytes.subarray(1))
     } finally { closeSync(fd) }
   }
 
@@ -180,10 +191,10 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
     const entry = { type: 'entry' as const, at: '', subject, version, audience, summary, writeId: randomUUID() }
     validate(entry)
     entry.audience = [...audience]
-    const subjects = read(dir, file, true)
-    const existing = subjects.get(subject)?.get(version)
-    if (!existing) append(entry)
-    const effective = existing ?? read(dir, file).get(subject)?.get(version)
+    const path = location(true)
+    const existing = read(...path, true).get(subject)?.get(version)
+    if (!existing) append(path[1], entry)
+    const effective = existing ?? read(...path).get(subject)?.get(version)
     if (!effective || effective.entry.summary !== summary ||
       JSON.stringify(effective.entry.audience) !== JSON.stringify(entry.audience)) {
       throw new Error(`conflicting entry ${subject} ${version}`)
@@ -194,7 +205,8 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
   function receipt<T extends 'notice' | 'ack'>(type: T, { subject, version, recipient }: Delivery) {
     const record = { type, at: '', subject, version, recipient }
     validate(record)
-    const subjects = read(dir, file)
+    const path = location()
+    const subjects = read(...path)
     // An ack is the recipient's own statement, not proof of notice. A recipient
     // who learned of the version elsewhere can be acked with null notifiedAt.
     const timestamp = (state: Subjects) => {
@@ -203,8 +215,8 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
     }
     const at = timestamp(subjects)
     if (at !== undefined) return { ...record, at }
-    append(record)
-    const effective = timestamp(read(dir, file))
+    append(path[1], record)
+    const effective = timestamp(read(...path))
     if (effective === undefined) throw new Error(`missing ${type} after append: ${subject} ${version} ${recipient}`)
     return { ...record, at: effective }
   }
@@ -214,8 +226,8 @@ export function openLedger(dir: string, { now = () => new Date() }: { now?: () =
     addEntryWithOutcome,
     notify: (delivery: Delivery) => receipt('notice', delivery),
     ack: (delivery: Delivery) => receipt('ack', delivery),
-    show: (filter: Filter = {}) => view(read(dir, file), filter),
-    stale: (filter: Filter = {}) => view(read(dir, file), filter).flatMap(({ subject, version, recipients }) =>
+    show: (filter: Filter = {}) => view(read(...location()), filter),
+    stale: (filter: Filter = {}) => view(read(...location()), filter).flatMap(({ subject, version, recipients }) =>
       recipients.filter(({ state }) => state !== 'acked').map((recipient) => ({ subject, version, ...recipient }))),
   }
 }
