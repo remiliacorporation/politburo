@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import childProcess, { spawnSync, type ChildProcess } from 'node:child_process'
+import childProcess, { spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -76,6 +77,42 @@ function rehearsal(t: TestContext, mode: State['mode'] = 'files', pending?: Stat
       for (const event of events) assert.ok(!(event.oldLoop && event.service), `both running after ${event.action}`)
     },
   }
+}
+
+function cliRehearsal(t: TestContext, f: ReturnType<typeof rehearsal>) {
+  const commands = join(f.dir, 'commands.json')
+  const { service, oldLoop, bridge } = f.ctx.ports
+  const health = { running: 0, stopped: 1, unknown: 2 }
+  const handlers: Record<string, () => Promise<number | void>> = {
+    'service.start': () => service.start(tag), 'service.stop': () => service.stop(tag),
+    'service.status': async () => health[await service.status(tag)],
+    'oldLoop.start': () => oldLoop.start(tag), 'oldLoop.stop': () => oldLoop.stop(tag),
+    'oldLoop.status': async () => health[await oldLoop.status(tag)],
+    'bridge.sync': async () => (await bridge.sync(tag)).current ? 0 : 1,
+    'bridge.status': async () => (await bridge.status(tag)).current ? 0 : 1,
+  }
+  writeFileSync(commands, JSON.stringify({ [tag]: {
+    service: { start: ['service.start'], stop: ['service.stop'], status: ['service.status'] },
+    oldLoop: { start: ['oldLoop.start'], stop: ['oldLoop.stop'], status: ['oldLoop.status'] },
+    bridge: { sync: ['bridge.sync'], status: ['bridge.status'] },
+  } }))
+  const spawnReal = childProcess.spawn
+  const spawn = t.mock.method(childProcess, 'spawn', (command: string, args: string[], options: SpawnOptions) => {
+    // The lock helper is real; no service, old-loop, or bridge command is spawned.
+    if (command === 'perl') return spawnReal(command, args, options)
+    const child = new EventEmitter() as ChildProcess
+    void Promise.resolve().then(() => handlers[command]?.() ?? 2)
+      .then((code) => child.emit('close', code ?? 0), (error) => child.emit('error', error))
+    return child
+  })
+  syncBuiltinESMExports()
+  t.after(() => { spawn.mock.restore(); syncBuiltinESMExports() })
+  const output: string[] = []
+  t.mock.method(console, 'log', (line: string) => output.push(line))
+  const execute = (action: 'apply' | 'rollback', stateDir = f.ctx.stateDir, file = commands) => run([
+    action, tag, '--execute', '--commands', file, '--state-dir', stateDir, '--gate', f.gateFile, '--json',
+  ])
+  return { commands, output, execute }
 }
 
 test('apply does not touch the loops without a gate file', async (t) => {
@@ -154,6 +191,87 @@ test('apply takes over a lock left by a dead cutover', async (t) => {
   })
   assert.equal((await apply(tag, f.ctx)).message, 'applied')
   assert.equal(existsSync(lock), false)
+})
+
+test('stale cleanup excludes a contender until the new owner has finished', { timeout: 5000 }, async (t) => {
+  const f = rehearsal(t, 'files', 'applying')
+  const lock = join(f.ctx.stateDir, `${tag}.lock`)
+  const deadPid = 0x7fffffff
+  writeFileSync(lock, `${deadPid}\n`)
+  const kill = process.kill
+  t.mock.method(process, 'kill', (pid: number, signal: number) => {
+    if (pid === deadPid && signal === 0) throw Object.assign(new Error('no such process'), { code: 'ESRCH' })
+    return kill(pid, signal)
+  })
+  const reaping = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>()
+  const rmReal = fs.rm
+  let pause = true
+  const rm = t.mock.method(fs, 'rm', async (...args: Parameters<typeof fs.rm>) => {
+    if (pause && args[0] === lock) {
+      pause = false
+      // Pause after the stale marker is gone but before the reaper publishes its PID.
+      await rmReal(...args)
+      reaping.resolve()
+      await resume.promise
+      return
+    }
+    return rmReal(...args)
+  })
+  syncBuiltinESMExports()
+  t.after(() => { rm.mock.restore(); syncBuiltinESMExports() })
+  const applying = apply(tag, f.ctx)
+  try {
+    await Promise.race([reaping.promise, applying])
+    await assert.rejects(rollback(tag, f.ctx), { reason: 'locked' })
+    assert.equal(existsSync(lock), false)
+    assert.deepEqual(f.events, [])
+  } finally {
+    resume.resolve()
+    assert.equal((await applying).message, 'applied')
+  }
+  f.assertNoOverlap()
+})
+
+for (const text of ['', 'incomplete pid']) {
+  test(`apply recovers an aged ${text ? 'malformed' : 'empty'} lock but refuses a fresh one`, async (t) => {
+    const f = rehearsal(t, 'files', 'applying')
+    const lock = join(f.ctx.stateDir, `${tag}.lock`)
+    writeFileSync(lock, text)
+    await assert.rejects(apply(tag, f.ctx), { reason: 'locked' })
+    assert.equal(readFileSync(lock, 'utf8'), text)
+    assert.deepEqual(f.events, [])
+    const old = new Date(Date.now() - 61_000)
+    utimesSync(lock, old, old)
+    assert.equal((await apply(tag, f.ctx)).message, 'applied')
+    assert.equal(existsSync(lock), false)
+    f.assertNoOverlap()
+  })
+}
+
+test('CLI refuses concurrent cutovers for the same commands through a symlink and different state dir', { timeout: 5000 }, async (t) => {
+  const f = rehearsal(t)
+  const entered = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>()
+  const service = f.ctx.ports.service, start = service.start
+  service.start = async (tag) => {
+    entered.resolve()
+    await resume.promise
+    await start(tag)
+  }
+  const cli = cliRehearsal(t, f)
+  const alias = join(f.dir, 'alias.json'), other = join(f.dir, 'other-state')
+  symlinkSync(cli.commands, alias)
+  const applying = cli.execute('apply')
+  try {
+    await Promise.race([entered.promise, applying])
+    assert.equal(await cli.execute('rollback', other, alias), 1)
+    assert.equal(JSON.parse(cli.output.at(-1)!).reason, 'locked')
+    assert.equal(existsSync(other), false)
+    assert.equal(f.running.oldLoop, false)
+  } finally {
+    resume.resolve()
+    assert.equal(await applying, 0)
+  }
+  f.assertNoOverlap()
 })
 
 test('apply does not overlap the loops or repeat a completed handoff', async (t) => {
@@ -275,6 +393,34 @@ for (const pending of ['applying', 'rolling_back'] as const) {
   })
 }
 
+for (const unconfirmed of [false, true]) {
+  test(`CLI rollback ${unconfirmed ? 'fails closed on' : 'stops'} a service start that lands after starting the old loop`, async (t) => {
+    const f = rehearsal(t, 'service')
+    const old = f.ctx.ports.oldLoop, start = old.start
+    old.start = async (tag) => {
+      await start(tag)
+      // A delayed service start lands after the confirmed stop and final drain.
+      f.running.service = true
+      if (unconfirmed) f.controls.unconfirmedStop = 'service'
+    }
+    const status = f.ctx.ports.service.status
+    if (unconfirmed) f.ctx.ports.service.status = async (tag) => f.running.oldLoop ? 'unknown' : status(tag)
+    const cli = cliRehearsal(t, f)
+    assert.equal(await cli.execute('rollback'), unconfirmed ? 1 : 0)
+    const result = JSON.parse(cli.output.join('\n'))
+    assert.equal(f.events.find((e) => e.action === 'oldLoop.start')?.current, true)
+    if (unconfirmed) {
+      assert.equal(result.reason, 'both_running_detected')
+      assert.equal(f.state().pending, 'rolling_back')
+      assert.deepEqual(f.running, { oldLoop: false, service: true })
+    } else {
+      assert.equal(result.message, 'rolled back')
+      assert.equal(f.state().pending, undefined)
+      assert.deepEqual(f.running, { oldLoop: true, service: false })
+    }
+  })
+}
+
 test('rollback stops an unknown service before a stale drain when the old loop is running', async (t) => {
   const f = rehearsal(t)
   f.running.service = true
@@ -289,35 +435,9 @@ test('rollback stops an unknown service before a stale drain when the old loop i
 test('rollback does not start the old loop on a stale final drain and does not get stuck on retry', async (t) => {
   const f = rehearsal(t, 'service')
   f.controls.sync = () => f.running.service ? 'current' : 'stale'
-  // Exercise the real CLI exit mapping without spawning any rollback commands.
-  const commands = join(f.dir, 'commands.json')
-  const { service, oldLoop, bridge } = f.ctx.ports
-  const handlers: Record<string, () => Promise<number | void>> = {
-    'service.stop': () => service.stop(tag), 'service.status': async () => (await service.status(tag)) === 'running' ? 0 : 1,
-    'oldLoop.start': () => oldLoop.start(tag), 'oldLoop.status': async () => (await oldLoop.status(tag)) === 'running' ? 0 : 1,
-    'bridge.sync': async () => (await bridge.sync(tag)).current ? 0 : 1,
-  }
-  writeFileSync(commands, JSON.stringify({ [tag]: {
-    service: { start: ['service.start'], stop: ['service.stop'], status: ['service.status'] },
-    oldLoop: { start: ['oldLoop.start'], stop: ['oldLoop.stop'], status: ['oldLoop.status'] },
-    bridge: { sync: ['bridge.sync'], status: ['bridge.status'] },
-  } }))
-  const spawn = t.mock.method(childProcess, 'spawn', (command: string) => {
-    const child = new EventEmitter() as ChildProcess
-    void Promise.resolve().then(() => handlers[command]?.() ?? 2)
-      .then((code) => child.emit('close', code ?? 0), (error) => child.emit('error', error))
-    return child
-  })
-  syncBuiltinESMExports()
-  const output: string[] = []
-  t.mock.method(console, 'log', (line: string) => output.push(line))
-  try {
-    assert.equal(await run(['rollback', tag, '--execute', '--commands', commands, '--state-dir', f.ctx.stateDir, '--json']), 1)
-  } finally {
-    spawn.mock.restore()
-    syncBuiltinESMExports()
-  }
-  const failure = JSON.parse(output.join('\n'))
+  const cli = cliRehearsal(t, f)
+  assert.equal(await cli.execute('rollback'), 1)
+  const failure = JSON.parse(cli.output.join('\n'))
   assert.equal(failure.reason, 'files_stale')
   assert.match(failure.headline, /swarm cutover rollback pb --execute with the same --commands and --state-dir/)
   assert.deepEqual(f.events.map((e) => e.action), ['bridge.current', 'service.stop', 'bridge.stale'])
