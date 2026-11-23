@@ -3,7 +3,7 @@
  * mob-serial.txt is read-only for legacy consumers.
  */
 import { randomUUID } from 'node:crypto'
-import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 function hasCode(error: unknown, code: string): boolean {
@@ -35,79 +35,34 @@ function highestClaim(claims: string): number {
   return highest
 }
 
-function ownerIsDead(owner: string): boolean {
-  try {
-    const pid = Number(readFileSync(owner, 'utf8'))
-    if (!Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff) return false
-    process.kill(pid, 0)
-    return false
-  } catch (error) {
-    return hasCode(error, 'ESRCH')
-  }
-}
-
-const spin = new Int32Array(new SharedArrayBuffer(4))
-
+/**
+ * Best-effort mirror of the highest claim into mob-serial.txt.
+ * serials/ is the authority. The mirror converges when allocators finish and may lag meanwhile.
+ */
 function mirror(dir: string, claims: string, counter: string): void {
-  const lock = join(dir, '.counter.lock')
-  const owner = join(lock, 'pid')
-  const deadline = performance.now() + 3000
-  for (;;) {
-    if (performance.now() >= deadline) return
-    try {
-      mkdirSync(lock)
-      break
-    } catch (error) {
-      if (!hasCode(error, 'EEXIST')) throw error
-    }
-    const seen = lstatSync(lock, { throwIfNoEntry: false })
-    if (!seen) continue
-    if (!seen.isDirectory()) return
-    if (Date.now() - seen.mtimeMs > 30_000 || ownerIsDead(owner)) {
-      const latest = lstatSync(lock, { throwIfNoEntry: false })
-      if (latest?.ino === seen.ino && latest.dev === seen.dev && latest.mtimeMs === seen.mtimeMs) {
-        const stale = `${lock}-${randomUUID()}`
-        try {
-          renameSync(lock, stale)
-        } catch (error) {
-          if (hasCode(error, 'ENOENT')) continue
-          throw error
-        }
-        rmSync(stale, { recursive: true })
-        continue
-      }
-    }
-    const remaining = deadline - performance.now()
-    if (remaining <= 0) return
-    Atomics.wait(spin, 0, 0, Math.min(10, remaining))
-  }
-
-  const identity = lstatSync(lock)
-  const ownsLock = () => {
-    const current = lstatSync(lock, { throwIfNoEntry: false })
-    return current?.ino === identity.ino && current.dev === identity.dev
-  }
+  const temp = join(dir, `.mob-serial-${randomUUID()}.tmp`)
   try {
-    writeFileSync(owner, `${process.pid}\n`, { flag: 'wx' })
-    const temp = join(dir, `.mob-serial-${randomUUID()}.tmp`)
-    while (ownsLock()) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       const current = readCounter(counter)
-      const target = Math.max(current, highestClaim(claims))
-      if (current === target) return
+      const m = Math.max(current, highestClaim(claims))
+      if (!(current < m)) return
       try {
-        writeFileSync(temp, `${target}\n`, { flag: 'wx' })
-        if (readCounter(counter) < target && ownsLock()) renameSync(temp, counter)
+        writeFileSync(temp, `${m}\n`, { flag: 'wx' })
+        const latest = readCounter(counter)
+        if (latest < m) renameSync(temp, counter)
       } finally {
         rmSync(temp, { force: true })
       }
     }
   } finally {
-    if (ownsLock()) rmSync(lock, { recursive: true })
+    rmSync(temp, { force: true })
   }
 }
 
 /** Allocate a serial permanently; retirement never frees a serial. */
 export function allocateSerial(dir: string): number {
+  mkdirSync(dir, { recursive: true })
+  dir = realpathSync(dir)
   const claims = join(dir, 'serials')
   const counter = join(dir, 'mob-serial.txt')
   const existing = lstatSync(claims, { throwIfNoEntry: false })
