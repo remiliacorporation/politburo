@@ -1,0 +1,57 @@
+{
+  "case_id": "mail-delivery-001-direct-body",
+  "description": "Deliver a valid JSON header with a separate body file.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "detail.txt": "Example body: café\nSecond line\n",
+      "incoming.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/ex/bodies/ex-0002.txt": "Example body: café\nSecond line\n",
+      "mail/ex/ex-0002.yaml": "id: \"ex-0002\"\nclass: \"spawner.dispatch\"\nurgency: \"p1\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {report: \"example-two\"}\nsummary: \"Example batch dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14Z\"\n",
+      "mail/ex/id-counter.txt": "2\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"6b575ce3dbb853be032cfcef34baff280251fabb797b4b832c470947467d7be5\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"6b575ce3dbb853be032cfcef34baff280251fabb797b4b832c470947467d7be5\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "deliver",
+          "<WORK>/incoming.json",
+          "--body-file",
+          "<WORK>/detail.txt"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "Uses the valid secretary_v2 fixture verbatim; the body is separate from the audit record.",
+  "setup": {
+    "files": {
+      "detail.txt": "Example body: café\nSecond line\n",
+      "incoming.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
