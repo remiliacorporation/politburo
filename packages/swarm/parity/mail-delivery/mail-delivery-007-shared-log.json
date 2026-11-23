@@ -1,0 +1,82 @@
+{
+  "case_id": "mail-delivery-007-shared-log",
+  "description": "Deliver and route against a single log that begins with foreign text.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "incoming.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/ex/digest.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 1, \"p2\": 0, \"p3\": 0}\nact_on: [ex-0002]\nitems:\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}\n",
+      "mail/ex/ex-0002.yaml": "id: \"ex-0002\"\nclass: \"spawner.dispatch\"\nurgency: \"p1\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {report: \"example-two\"}\nsummary: \"Example batch dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14Z\"\n",
+      "mail/ex/id-counter.txt": "2\n",
+      "mail/log.yaml": "watch: example\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"6b575ce3dbb853be032cfcef34baff280251fabb797b4b832c470947467d7be5\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}\n"
+    },
+    "log_lines": [
+      "watch: example",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"6b575ce3dbb853be032cfcef34baff280251fabb797b4b832c470947467d7be5\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}"
+    ],
+    "stderr": "skipped 1 foreign log lines; first at line 1: not a tool event line\nskipped 1 foreign log lines; first at line 1: not a tool event line\nskipped 1 foreign log lines; first at line 1: not a tool event line\n",
+    "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0002 p1 spawner.dispatch ex2 120-BEE: Example batch dispatch\n\ndigest: <WORK>/mail/ex/digest.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\ndigest: <WORK>/mail/ex/digest.yaml counts p0=0 p1=1 p2=0 p3=0 new=0 invalid=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "skipped 1 foreign log lines; first at line 1: not a tool event line\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "skipped 1 foreign log lines; first at line 1: not a tool event line\n",
+        "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0002 p1 spawner.dispatch ex2 120-BEE: Example batch dispatch\n\ndigest: <WORK>/mail/ex/digest.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "skipped 1 foreign log lines; first at line 1: not a tool event line\n",
+        "stdout": "digest: <WORK>/mail/ex/digest.yaml counts p0=0 p1=1 p2=0 p3=0 new=0 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "deliver",
+          "<WORK>/incoming.json"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      },
+      {
+        "argv": [
+          "--repo",
+          "ex"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      },
+      {
+        "argv": [
+          "--repo",
+          "ex"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "The unterminated foreign line survives. A delivery event is not a router receipt; the second router run is quiet.",
+  "setup": {
+    "files": {
+      "incoming.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/log.yaml": "watch: example"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
