@@ -139,6 +139,20 @@ test('OTLP rejects present invalid numeric attributes', async (t) => {
   assert.equal(f.rows()[0]?.tokens.input_uncached, null)
 })
 
+test('OTLP rejects rounded token counts and inexact or unsafe numeric timestamps', async (t) => {
+  const f = fixture(t), post = await f.listen()
+  const tokens = JSON.stringify(payload([log('inexact', { input_tokens: 100_000_000 })]))
+    .replace('"intValue":100000000', '"intValue":100000000.000000001')
+  const withStamp = (id: string, value: string) => JSON.stringify(payload([log(id)]))
+    .replace('"1795348802345999999"', value)
+  assert.deepEqual([
+    await post(null, { body: tokens }),
+    await post(null, { body: withStamp('fractional-stamp', '1000000.00000000001') }),
+    await post(null, { body: withStamp('unsafe-stamp', '1795348802345999999') }),
+  ], Array.from({ length: 3 }, () => error(400, 'invalid')))
+  assert.deepEqual(f.rows(), [])
+})
+
 test('an AnyValue with both intValue and doubleValue books the intValue', async (t) => {
   const f = fixture(t), post = await f.listen()
   const both = log('both', { input_tokens: { intValue: 10, doubleValue: 3 } })
@@ -200,6 +214,36 @@ test('a late refund after the bucket refilled lets a second burst through', asyn
   const third = await post(payload(batch(40, 20)))
   assert.equal(third.status, 429, 'late duplicate refunds must not credit a refilled bucket')
   assert.equal(f.rows().length, 40)
+})
+
+test('a late duplicate refund credits only the unrefilled part of the debit', async (t) => {
+  const f = fixture(t)
+  let post = await f.listen()
+  assert.deepEqual(await post(payload(batch(0, 20))), ok)
+  const inner = jsonlLedger(f.file)
+  let releaseHeld = () => {}
+  const held = new Promise<void>(resolve => { releaseHeld = resolve })
+  let started = 0
+  let releaseStarted = () => {}
+  const startedDupe = new Promise<void>(resolve => { releaseStarted = resolve })
+  post = await f.listen({ async append(record) {
+    const result = await inner.append(record)
+    if (result === 'duplicate') {
+      if (++started === 1) releaseStarted()
+      await held
+    }
+    return result
+  } })
+  const dupe = post(payload([log('r0')]))
+  await startedDupe
+  assert.deepEqual(await post(payload(batch(20, 19))), ok)
+  f.advance(100) // Refill pays half the duplicate's debit before the write returns.
+  releaseHeld()
+  assert.deepEqual(await dupe, ok)
+  assert.deepEqual(await post(payload([log('r39')])), ok)
+  f.advance(100)
+  assert.equal((await post(payload([log('r40')]))).status, 429,
+    'a refund must not credit the part of the debit that refill already paid')
 })
 
 test('OTLP mixed batches report permanent rejects without losing valid records', async (t) => {

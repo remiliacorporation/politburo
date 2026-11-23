@@ -80,12 +80,15 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     const received = now()
     const entry = cap ? book.byCapability(cap, received) : undefined
     if (cap && !entry) return send(404, 'unknown_envelope')
-    let body: unknown
-    try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return send(400, 'invalid') }
-    if (entry) return respond(req, res, await accept(body, entry, received))
+    const text = Buffer.concat(chunks).toString('utf8')
+    if (entry) {
+      let body: unknown
+      try { body = JSON.parse(text) } catch { return send(400, 'invalid') }
+      return respond(req, res, await accept(body, entry, received))
+    }
     const addressRetry = addressLimit(address).retry
     if (addressRetry) return respond(req, res, limited(addressRetry), true)
-    const result = await acceptOtlp(body, async (sessionId, claim) => {
+    const result = await acceptOtlp(text, async (sessionId, claim) => {
       const match = book.bySession(sessionId, now())
       return match ? accept(claim, match, received, `session:${sessionId}`, limited) : [404, 'unknown_envelope']
     })
