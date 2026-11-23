@@ -1,0 +1,94 @@
+{
+  "case_id": "header-schema-002-invalid-fields",
+  "description": "Reject a missing field, bad urgency, wrong type, and unknown field.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "bad-urgency.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p4\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"report\": \"example-two\"\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "missing-summary.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"report\": \"example-two\"\n  },\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "numeric-summary.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"report\": \"example-two\"\n  },\n  \"summary\": 42,\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "unknown-field.json": "{\n  \"id\": \"ex-0004\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"to\": \"ex2\",\n  \"summary\": \"Example invalid header\",\n  \"at\": \"2026-11-20T21:14Z\",\n  \"extra\": \"Example unknown field\"\n}\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": false,
+          "errors": [
+            "$.summary: required"
+          ],
+          "path": "missing-summary.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.urgency: enum"
+          ],
+          "path": "bad-urgency.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.summary: type"
+          ],
+          "path": "numeric-summary.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.extra: additionalProperties"
+          ],
+          "path": "unknown-field.json",
+          "phase": "schema",
+          "schema": "header"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "missing-summary.json",
+        "schema": "header"
+      },
+      {
+        "path": "bad-urgency.json",
+        "schema": "header"
+      },
+      {
+        "path": "numeric-summary.json",
+        "schema": "header"
+      },
+      {
+        "path": "unknown-field.json",
+        "schema": "header"
+      }
+    ]
+  },
+  "matrix_row": "M04",
+  "notes": "The unknown-field input is the original invalid fixture, not a generated mutation.",
+  "setup": {
+    "files": {
+      "bad-urgency.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p4\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"report\": \"example-two\"\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "missing-summary.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"report\": \"example-two\"\n  },\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "numeric-summary.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"report\": \"example-two\"\n  },\n  \"summary\": 42,\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "unknown-field.json": "{\n  \"id\": \"ex-0004\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"to\": \"ex2\",\n  \"summary\": \"Example invalid header\",\n  \"at\": \"2026-11-20T21:14Z\",\n  \"extra\": \"Example unknown field\"\n}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
