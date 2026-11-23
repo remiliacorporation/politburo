@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs'
+import { appendFileSync, closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Action, QuestionKey } from './questions.ts'
 
@@ -21,26 +21,25 @@ function read<T>(path: string): T[] {
     throw error
   }
   const lines = text.split('\n')
-  return lines.flatMap((line, i) => {
+  lines.pop() // A record is complete only once its newline is written.
+  return lines.flatMap((line) => {
     if (!line) return []
-    try { return [JSON.parse(line) as T] } catch {
-      if (i === lines.length - 1) return []
-      throw new Error('invalid classifier log')
-    }
+    try { return [JSON.parse(line) as T] } catch { throw new Error('invalid classifier log') }
   })
 }
 
-function tailSeparator(path: string): string {
+function discardTornTail(path: string): void {
   let fd: number
-  try { fd = openSync(path, 'r') } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
+  try { fd = openSync(path, 'r+') } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
   }
   try {
     const size = fstatSync(fd).size
     const last = Buffer.alloc(1)
-    if (size > 0) readSync(fd, last, 0, 1, size - 1)
-    return size > 0 && last[0] !== 10 ? '\n' : ''
+    if (size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10) {
+      ftruncateSync(fd, readFileSync(fd).lastIndexOf(10) + 1)
+    }
   } finally { closeSync(fd) }
 }
 
@@ -49,7 +48,8 @@ export function openClassifierStore(dir: string) {
   const switches = join(dir, 'switches.jsonl')
   function append(path: string, record: CallRecord | OutcomeRecord | SwitchRecord) {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
-    appendFileSync(path, `${tailSeparator(path)}${JSON.stringify(record)}\n`, { mode: 0o600 })
+    discardTornTail(path)
+    appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 })
   }
   return {
     readCalls: () => read<CallRecord | OutcomeRecord>(calls),

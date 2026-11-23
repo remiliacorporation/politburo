@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -27,9 +27,9 @@ function tempDir(t: TestContext) {
   return dir
 }
 
-function service(dir: string, classifier = dropClassifier, state = 'live', key = 'needs_spawner') {
+function service(dir: string, classifier = dropClassifier, state = 'live', key = 'needs_spawner', limit = '1/500') {
   return createClassifier({ dir, classifier, config: {
-    secretary: { questions: { [key]: { enabled: true, state, threshold: 0.97, late_p1_rate_limit: '1/500' } } },
+    secretary: { questions: { [key]: { enabled: true, state, threshold: 0.97, late_p1_rate_limit: limit } } },
   } })
 }
 
@@ -105,21 +105,54 @@ test('a costly breach does not stay latched or a reasoned clear does not release
   assert.equal((await service(dir).ask({ ...mail, case_ref: 'review-4' })).action, 'drop')
 })
 
-test('a missing breach switch lets a high-confidence drop suppress a wake', async (t) => {
+test('a breach with a missing switch ages out after non-costly outcomes and suppresses a wake', async (t) => {
   const dir = tempDir(t)
-  const live = service(dir)
-  for (const case_ref of ['review-1', 'review-2']) {
-    const { call_id } = await live.ask({ ...mail, case_ref })
+  const open = () => service(dir, dropClassifier, 'live', 'needs_spawner', '1/3')
+  const live = open()
+  const ids: string[] = []
+  for (let i = 0; i < 6; i++) {
+    const { call_id } = await live.ask({ ...mail, case_ref: `review-${i}` })
     assert.ok(call_id)
-    live.outcome(call_id, { spawner_did: 'wake', costly: true })
+    ids.push(call_id)
+  }
+  for (const [i, id] of ids.entries()) {
+    live.outcome(id, { spawner_did: 'wake', costly: i < 2 })
   }
   rmSync(join(dir, 'switches.jsonl'))
 
-  const reopened = service(dir)
-  const decision = await reopened.ask({ ...mail, case_ref: 'review-3' })
+  const reopened = open()
+  const decision = await reopened.ask({ ...mail, case_ref: 'review-next' })
   assert.equal(decision.action, 'wake')
   assert.equal(decision.action_would, 'drop')
   assert.equal(reopened.report().find(({ id }) => id === 'J2')?.latched, true)
+})
+
+test('appending after torn tails corrupts classifier logs or loses complete records', async (t) => {
+  const dir = tempDir(t)
+  const live = service(dir)
+  const { call_id } = await live.ask(mail)
+  assert.ok(call_id)
+  live.clear('J2', 'Initial review')
+  const switches = join(dir, 'switches.jsonl')
+  const callsBefore = callLog(dir)
+  const switchesBefore = readFileSync(switches, 'utf8')
+  appendFileSync(join(dir, 'calls.jsonl'), '{"call_id":')
+  appendFileSync(switches, '{"type":')
+
+  live.outcome(call_id, { spawner_did: 'wake', costly: true })
+  live.clear('J2', 'Reviewed the missed wake')
+
+  const reopened = service(dir)
+  const row = reopened.report().find(({ id }) => id === 'J2')
+  assert.equal(row?.calls, 1)
+  assert.equal(row?.costly, 1)
+  const callsAfter = callLog(dir)
+  const switchesAfter = readFileSync(switches, 'utf8')
+  assert.ok(callsAfter.startsWith(callsBefore))
+  assert.ok(switchesAfter.startsWith(switchesBefore))
+  const clear = JSON.parse(switchesAfter.slice(switchesBefore.length))
+  assert.equal(clear.type, 'clear')
+  assert.equal(clear.reason, 'Reviewed the missed wake')
 })
 
 test('pre-clear outcomes cause one new costly outcome to breach again', async (t) => {

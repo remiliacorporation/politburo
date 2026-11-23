@@ -37,11 +37,21 @@ export function createClassifier({ classifier, dir, config, now = () => new Date
       const { calls, outcomes } = callHistory(records, clear?.type === 'clear' ? clear.call_cursor ?? 0 : 0)
       const policy = policies[question], limit = policy.late_p1_rate_limit
       const [max, window] = rateLimit(limit)
-      const recent = calls.filter((c) => c.question === question && c.label !== null && outcomes.has(c.id)).slice(-window)
-      const costly = recent.filter((c) => outcomes.get(c.id)?.costly).length
-      if (costly <= max) return policy.state
-      store.appendSwitch({ type: 'breach', question, at: at(), reason: 'costly mistake limit exceeded',
-        costly, classified: recent.length, limit })
+      const classified = new Set(calls.filter((c) => c.question === question && c.label !== null).map((c) => c.id))
+      // Replay windows in outcome order: a breach in any window survives until clear.
+      const history: number[] = []
+      let costly = 0
+      for (const [id, outcome] of outcomes) {
+        if (!classified.has(id)) continue
+        const mistake = Number(outcome.costly)
+        history.push(mistake)
+        costly += mistake - (history[history.length - window - 1] ?? 0)
+        if (costly <= max) continue
+        store.appendSwitch({ type: 'breach', question, at: at(), reason: 'costly mistake limit exceeded',
+          costly, classified: Math.min(history.length, window), limit })
+        return 'shadow'
+      }
+      return policy.state
     } catch {
       // Unreadable history or a failed latch write must never permit a live action.
     }
