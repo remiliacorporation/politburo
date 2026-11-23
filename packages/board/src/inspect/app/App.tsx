@@ -10,7 +10,7 @@ import { Home } from './home.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { here, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { here, isTypingTarget, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Presidium } from './presidium.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
@@ -201,12 +201,13 @@ export function App() {
       if (element && element.isConnected && element.getClientRects().length && !element.closest('[inert]')) element.focus({ preventScroll: true })
       else focus(fallback)
     }
+    const mainFocus = route(where.path).view === 'work' ? '.main .work-list' : '.main [data-view-title]'
     if (nav) focus('.sidebar')
     else if (old?.nav && old.path === where.path && old.thread === where.thread && narrow) {
       restore(navOpener.current, `${where.thread === null ? '.main' : '.pane'} .header [aria-label="Show sidebar"]`)
     } else if (where.thread !== null && (old?.thread !== where.thread || old.nav || (narrow && !root.querySelector('.pane')?.contains(document.activeElement)))) focus('.pane [data-view-title]')
-    else if (old?.path !== where.path || old.nav) focus('.main [data-view-title]')
-    else if (old.thread !== null && where.thread === null) restore(threadOpener.current, '.main [data-view-title]')
+    else if (old?.path !== where.path || old.nav) focus(mainFocus)
+    else if (old.thread !== null && where.thread === null) restore(threadOpener.current, mainFocus)
   }, [where.path, where.thread, nav, narrow, ready])
 
   // Served from an app, the page reads nothing until you've named who you post as.
@@ -231,8 +232,9 @@ export function App() {
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if ((event.target as HTMLElement).closest('textarea, input, [role="menu"], [role="dialog"]')) return
+      if (event.key !== 'Escape' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"]')) return
       if (nav) setNav(false)
       else if (where.thread !== null) navigate(here({ thread: null }))
     }

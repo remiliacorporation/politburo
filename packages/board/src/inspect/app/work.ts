@@ -11,6 +11,7 @@ export type SwarmRecords = {
 }
 
 export type Observation = {
+  urls?: { source?: string; pr?: string; evidence?: string }
   pr?: { number: number; state: 'draft' | 'open' | 'merged' | 'closed'; checks: 'pass' | 'fail' | 'pending' | 'none' | 'unknown'; head?: string }
   spend?: { tokens: number | null; coverage: 'complete' | 'partial' | 'unknown' | 'stale' }
   trackers?: { kind: 'gh' | 'lin' | 'bd' | 'native'; id: string }[]
@@ -33,6 +34,7 @@ const GROUPS = [
   ['done', 'Done'],
 ] as const
 export type WorkGroup = (typeof GROUPS)[number][0]
+export const OPEN_WORK_GROUPS = GROUPS.map(([group]) => group).filter((group) => group !== 'done')
 
 export const workGroupTitle = (group: WorkGroup) => GROUPS.find(([key]) => key === group)![1]
 
@@ -48,6 +50,8 @@ export type WorkRow = {
   claimText: string | null
   leaseLive: boolean
   evidenceStale: boolean
+  pr?: Observation['pr']
+  urls?: Observation['urls']
   prText: string
   prHead: string | null
   spendText: string
@@ -143,6 +147,8 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
       claimText: claimText(root.task.claim, now),
       leaseLive: obs?.leaseLive === true,
       evidenceStale: obs?.evidenceStale === true,
+      pr: obs?.pr,
+      urls: obs?.urls,
       prText: prText(obs?.pr, group),
       prHead: obs?.pr?.head ?? null,
       spendText: spendText(obs?.spend),

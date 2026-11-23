@@ -20,6 +20,7 @@ export const fixtureRecords: SwarmRecords = {
     'plb-3': {
       contract: 'valid',
       pr: { number: 42, state: 'open', checks: 'pass', head: '1ab23cd' },
+      urls: { source: 'https://example.com/issues/812', pr: 'https://example.com/pull/42' },
       spend: { tokens: 81_000, coverage: 'complete' },
       trackers: [{ kind: 'gh', id: '812' }, { kind: 'lin', id: 'ENG-123' }],
     },

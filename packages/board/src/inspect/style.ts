@@ -520,6 +520,11 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .work-view li { flex-wrap: nowrap; white-space: nowrap; }
 .work-view li > * { flex: none; }
 .work-view li:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.work-view li[aria-current='true'] { background: var(--selected); }
+.work-view.comfortable li { padding-block: 8px; }
+.work-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-block-end: 6px; }
+.work-controls [aria-current='page'] { font-weight: 700; }
+.work-controls input[type='search'] { cursor: text; }
 .work-list h3, .work-list h4 { font-size: inherit; margin: 4px 0 0; }
 .work-list h3 small { margin-inline-start: 4px; font-weight: normal; }
 .work-queue, .work-peek { margin-block-start: 12px; }

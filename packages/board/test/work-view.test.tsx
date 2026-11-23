@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createBoardClient } from '../src/client/client.ts'
+import type { SwarmRecords } from '../src/inspect/app/work.ts'
 import { shell } from '../src/inspect/shell.ts'
 import { BOARD_URL, localBoard, personToken } from './harness.ts'
 
@@ -39,14 +40,16 @@ async function workBoard() {
   const token = await personToken('u_reader', BOARD_URL)
   const clientFor = (token: string) => createBoardClient({ url: BOARD_URL, token, profile: null, fetch: (input, init) => api.fetch(new Request(input, init)) })
   const client = clientFor(token)
+  const writes: string[] = []
   return {
-    create: (workId: number | string, text: string, options: { claim?: boolean; priority?: 'urgent'; party?: string } = {}) => {
+    writes,
+    create: (workId: number | string, text: string, options: { claim?: boolean; priority?: 'urgent'; party?: string; needs?: string[] } = {}) => {
       const { party = 'blue', ...task } = options
       return client.tasks.create('work', { text, labels: { 'work.id': typeof workId === 'number' ? `wp-${workId}` : workId, party }, ...task })
     },
     client,
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
-    async open(params = '', openTasksResponse?: () => Promise<Response>) {
+    async open(params = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void) {
       browser.setViewport({ width: 1280, height: 900 })
       browser.setURL(`http://work-${++visit}.test/work${params}`)
       const html = new DOMParser().parseFromString(shell({ token: 'inspector-test', base: '', profile: null, named: false }), 'text/html')
@@ -61,6 +64,7 @@ async function workBoard() {
           return Response.json({ error: { code: 'closed', message: 'page closed' } }, { status: 403 })
         }
         if (isStream) streaming = true
+        if (request.method !== 'GET' && request.method !== 'HEAD') writes.push(request.method)
         const url = new URL(request.url)
         if (openTasksResponse && request.method === 'GET' && `${url.origin}${url.pathname}` === `${proxy}/tasks` && url.searchParams.get('state') === 'open') {
           return openTasksResponse()
@@ -73,6 +77,7 @@ async function workBoard() {
         }))
       })
       vi.resetModules()
+      if (seed) seed((await import('../src/inspect/app/work-fixtures.ts')).fixtureRecords)
       const { App } = await import('../src/inspect/app/App.tsx')
       const mounted = root = createRoot(document.getElementById('root')!)
       flushSync(() => mounted.render(<App />))
@@ -85,6 +90,300 @@ const headings = () => [...queue().querySelectorAll('h3')].map((h) => h.textCont
 const taskLinks = () => [...queue().querySelectorAll<HTMLAnchorElement>('li a')]
 const titles = () => taskLinks().map((link) => link.textContent)
 const peek = () => document.querySelector('main aside[aria-label="Work peek"]')
+const field = () => document.querySelector<HTMLInputElement>('input[aria-label="Filter work"]')!
+const param = (name: string) => new URLSearchParams(location.search).get(name)
+const statuses = () => [...document.querySelectorAll('main [role="status"]')].map((el) => el.textContent)
+const row = (title: string) => taskLinks().find((link) => link.textContent === title)!.closest('li')!
+const selected = () => taskLinks().find((link) => link.closest('li')?.getAttribute('aria-current') === 'true')?.textContent
+const keyHelp = () => document.querySelector('[role="region"][aria-label="Work keyboard shortcuts"]')
+
+function typeFilter(text: string) {
+  const input = field()
+  flushSync(() => {
+    input.focus()
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, text)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function press(key: string, modifiers: KeyboardEventInit = {}) {
+  flushSync(() => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', {
+    key, bubbles: true, cancelable: true, ...modifiers,
+  })))
+}
+
+it('shows only matching open rows and an explicit zero when a search finds none', async () => {
+  const { create, open } = await workBoard()
+  await create(1, 'Build release')
+  await create(2, 'Build preview')
+  const archived = await create(3, 'Archived release', { claim: true })
+  await archived.claim!.complete()
+  // Load a closed task in the thread, outside the Queue's open read.
+  await open(`?thread=${archived.task.id}`)
+  await vi.waitFor(() => {
+    expect(document.querySelector('aside[aria-label="Thread"]')?.textContent).toContain('Archived release')
+    expect(titles()).toEqual(['Build release', 'Build preview'])
+  })
+
+  typeFilter('build release')
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(['Build release'])
+    expect(statuses()).toContain('1 of 2 rows')
+  })
+  typeFilter('archived release')
+  await vi.waitFor(() => {
+    expect(titles()).toEqual([])
+    expect(statuses()).toContain('0 of 2 rows')
+    expect(statuses().join(' ')).toMatch(/no rows match/i)
+  })
+})
+
+it('keeps the typed filter, its URL, and input focus when work arrives live', async () => {
+  const { create, open } = await workBoard()
+  await create(1, 'Build release')
+  await create(2, 'Publish notes')
+  await open()
+  await vi.waitFor(() => expect(titles()).toEqual(['Build release', 'Publish notes']))
+
+  typeFilter('build')
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(['Build release'])
+    expect(param('q')).toBe('build')
+  })
+  await create(3, 'Build preview')
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(['Build release', 'Build preview'])
+    expect(statuses()).toContain('2 of 3 rows')
+  })
+  expect(field().value).toBe('build')
+  expect(param('q')).toBe('build')
+  expect(document.activeElement).toBe(field())
+})
+
+it('defaults to all open groups and keeps a text search inside the selected saved view', async () => {
+  const { create, open } = await workBoard()
+  await create('plb-1', 'Deploy approval')
+  await create('plb-2', 'Fix failed checks')
+  await create('plb-3', 'Review patch')
+  await create('plb-4', 'Deploy build', { claim: true })
+  await create(5, 'Run benchmarks', { claim: true })
+  const { task } = await create(6, 'Prepare package')
+  await create(7, 'Publish package', { needs: [task.id] })
+  await open('?swarm=fixtures')
+  await vi.waitFor(() => expect(headings()).toEqual([
+    'Needs you', 'Repair or reconcile', 'Ready to review', 'Running', 'Ready to pull', 'Waiting or parked',
+  ]))
+
+  const choose = (name: string) => [...document.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Saved work views"] a')]
+    .find((link) => link.textContent === name)!.click()
+  choose('Exceptions')
+  await vi.waitFor(() => {
+    expect(param('view')).toBe('exceptions')
+    expect(headings()).toEqual(['Needs you', 'Repair or reconcile'])
+    expect(titles()).toEqual(['Deploy approval', 'Fix failed checks'])
+  })
+  choose('Live claims')
+  await vi.waitFor(() => {
+    expect(param('view')).toBe('live')
+    expect(headings()).toEqual(['Running'])
+    expect(titles().sort()).toEqual(['Deploy build', 'Run benchmarks'])
+  })
+  typeFilter('deploy')
+  await vi.waitFor(() => expect(titles()).toEqual(['Deploy build']))
+})
+
+it('leaves typing and modified keys alone but lets bare shortcuts navigate visible work', async () => {
+  const { create, open } = await workBoard()
+  const { task: first } = await create(1, 'Build release', { priority: 'urgent' })
+  await create(2, 'Publish notes', { priority: 'urgent' })
+  const { task: last } = await create(3, 'Build preview')
+  await open('?q=build')
+  await vi.waitFor(() => expect(titles()).toEqual(['Build release', 'Build preview']))
+
+  press('j')
+  await vi.waitFor(() => expect(selected()).toBe('Build release'))
+  for (const modifiers of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+    press('j', modifiers)
+    expect(selected()).toBe('Build release')
+    expect(document.activeElement).toBe(row('Build release'))
+  }
+  press('/')
+  await vi.waitFor(() => expect(document.activeElement).toBe(field()))
+  for (const key of ['j', 'k', 'g', '?', ' ', 'Enter']) {
+    press(key)
+    expect(selected(), key).toBe('Build release')
+    expect(document.activeElement, key).toBe(field())
+    expect(peek(), key).toBeNull()
+    expect(param('peek'), key).toBeNull()
+    expect(param('thread'), key).toBeNull()
+    expect(keyHelp(), key).toBeNull()
+  }
+
+  flushSync(() => field().blur())
+  press('j')
+  await vi.waitFor(() => expect(selected()).toBe('Build preview'))
+  press('k')
+  await vi.waitFor(() => expect(selected()).toBe('Build release'))
+  for (const dismiss of [' ', 'Escape']) {
+    press(' ')
+    await vi.waitFor(() => {
+      expect(param('peek')).toBe(first.id)
+      expect(peek()?.querySelector('h2')?.textContent).toBe('Build release')
+    })
+    press(dismiss)
+    await vi.waitFor(() => {
+      expect(param('peek')).toBeNull()
+      expect(peek()).toBeNull()
+    })
+  }
+  press('?')
+  await vi.waitFor(() => expect(keyHelp()).not.toBeNull())
+  press('j')
+  press('Enter')
+  await vi.waitFor(() => {
+    expect(param('thread')).toBe(last.id)
+    expect(document.querySelector('aside[aria-label="Thread"]')?.textContent).toContain('Build preview')
+  })
+})
+
+it('focuses the Work filter when typing on the body and the reply composer when typing in an open thread', async () => {
+  const { create, open } = await workBoard()
+  const { task } = await create(1, 'Check the build')
+  await open()
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(['Check the build'])
+    expect(field()).not.toBeNull()
+  })
+
+  expect(param('thread')).toBeNull()
+  flushSync(() => (document.activeElement as HTMLElement).blur())
+  expect(document.activeElement).toBe(document.body)
+  press('a')
+  expect(document.activeElement).toBe(field())
+
+  taskLinks()[0]!.click()
+  const { heading, reply } = await vi.waitFor(() => {
+    const pane = document.querySelector('aside[aria-label="Thread"]')
+    const heading = pane?.querySelector('h1')
+    const reply = pane?.querySelector('textarea[placeholder="reply to thread…"]')
+    expect(param('thread')).toBe(task.id)
+    expect(heading?.textContent).toBe('task')
+    expect(reply).toBeTruthy()
+    return { heading: heading!, reply: reply! }
+  })
+
+  flushSync(() => heading.focus())
+  expect(document.activeElement).toBe(heading)
+  press('a')
+  expect(document.activeElement).toBe(reply)
+})
+
+it('lets Space activate a focused thread-pane button and still focuses the reply composer from a letter', async () => {
+  const { create, open } = await workBoard()
+  const { task } = await create(1, 'Check the build')
+  await open()
+  await vi.waitFor(() => expect(titles()).toEqual(['Check the build']))
+
+  taskLinks()[0]!.click()
+  const { heading, reply, closeThread } = await vi.waitFor(() => {
+    const pane = document.querySelector('aside[aria-label="Thread"]')
+    const heading = pane?.querySelector('h1')
+    const reply = pane?.querySelector('textarea[placeholder="reply to thread…"]')
+    const closeThread = pane?.querySelector<HTMLButtonElement>('button[aria-label="Close thread"]')
+    expect(param('thread')).toBe(task.id)
+    expect(heading?.textContent).toBe('task')
+    expect(reply).toBeTruthy()
+    expect(closeThread).toBeTruthy()
+    return { heading: heading!, reply: reply!, closeThread: closeThread! }
+  })
+
+  flushSync(() => heading.focus())
+  expect(document.activeElement).toBe(heading)
+  press('a')
+  expect(document.activeElement).toBe(reply)
+
+  flushSync(() => closeThread.focus())
+  expect(document.activeElement).toBe(closeThread)
+  press(' ')
+  expect(document.activeElement).toBe(closeThread)
+  // Space activates a focused button on keyup; happy-dom does not, so click the still-focused control.
+  closeThread.click()
+  await vi.waitFor(() => {
+    expect(param('thread')).toBeNull()
+    expect(document.querySelector('aside[aria-label="Thread"]')).toBeNull()
+  })
+})
+
+it('jumps to queue groups and hides a collapsed group without removing its work', async () => {
+  const { create, open } = await workBoard()
+  await create('plb-1', 'Answer request')
+  await create('plb-3', 'Review patch')
+  await create('plb-4', 'Run the build', { claim: true })
+  await create(5, 'Prepare package', { priority: 'urgent' })
+  await create(6, 'Write release notes')
+  await open('?swarm=fixtures&party=blue')
+  const jumps = { n: 'Answer request', r: 'Review patch', u: 'Run the build', w: 'Prepare package' }
+  const all = [...Object.values(jumps), 'Write release notes']
+  await vi.waitFor(() => expect(titles()).toEqual(all))
+
+  for (const [key, title] of Object.entries(jumps)) {
+    press('g')
+    press(key)
+    await vi.waitFor(() => {
+      expect(document.activeElement, key).toBe(row(title))
+      expect(selected(), key).toBe(title)
+    })
+  }
+  press('[')
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(all.slice(0, 3))
+    expect(statuses()).toContain('5 of 5 rows')
+    expect(document.activeElement?.textContent).toMatch(/^Ready to pull \(2\)/)
+  })
+  press(']')
+  await vi.waitFor(() => {
+    expect(titles()).toEqual(all)
+    expect(document.activeElement).toBe(row('Prepare package'))
+  })
+  press('g')
+  press('q')
+  await vi.waitFor(() => expect(document.activeElement).toBe(queue().querySelector('h2')))
+})
+
+it('opens only web links in new tabs and never sends a write from a work key', async () => {
+  const { create, open, writes } = await workBoard()
+  await create('plb-2', 'Fix failed checks')
+  await create('plb-3', 'Review patch')
+  await create(1, 'Task without links')
+  await open('?swarm=fixtures', undefined, ({ observations }) => {
+    observations['plb-2']!.urls = { evidence: 'http://example.com/checks' }
+    observations['plb-3']!.urls!.evidence = 'javascript:'
+  })
+  const openTab = vi.spyOn(window, 'open').mockReturnValue(null)
+  await vi.waitFor(() => expect(titles()).toEqual(['Fix failed checks', 'Review patch', 'Task without links']))
+  press('j')
+  press('e')
+  press('j')
+  press('o')
+  press('p')
+  press('e')
+  press('j')
+  for (const key of ['o', 'p', 'e']) press(key)
+  expect(openTab.mock.calls).toEqual([
+    ['http://example.com/checks', '_blank', 'noopener,noreferrer'],
+    ['https://example.com/issues/812', '_blank', 'noopener,noreferrer'],
+    ['https://example.com/pull/42', '_blank', 'noopener,noreferrer'],
+  ])
+  for (const key of ['c', 'x', 'd', 'r']) {
+    // An unbound printable key may focus the filter; start each on the row.
+    flushSync(() => row('Task without links').focus())
+    press(key)
+  }
+  // Wait for a real browser-to-board round trip after the key handlers run.
+  await create(2, 'Follow-up task')
+  await vi.waitFor(() => expect(titles()).toContain('Follow-up task'))
+  expect(writes).toEqual([])
+})
 
 it('keeps the four home sections in order and shows an empty message in each', async () => {
   const { open } = await workBoard()
