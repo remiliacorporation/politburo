@@ -1,11 +1,17 @@
 import { expect, it, vi } from 'vitest'
 import { http } from '../src/backend-http/index.ts'
 import { vercel } from '../src/backend-vercel/index.default.ts'
-import { BOARD_URL, board, localBoard, personToken, testBoard } from './harness.ts'
+import { bearer, BOARD_URL, board, localBoard, personToken, testBoard } from './harness.ts'
 
-it('clamps a claim-next renewal to the original hard end', async ({ onTestFinished }) => {
-  const team = localBoard()
-  onTestFinished(() => team.close())
+it('advertises claim holds in HTTP discovery and clamps a claim-next renewal', async ({ onTestFinished }) => {
+  const local = localBoard()
+  onTestFinished(() => local.close())
+  const discovery = await local.fetch(new Request(BOARD_URL))
+  expect(discovery.headers.get('x-board-task-claim-hold')).toBe('1')
+  expect(await discovery.json()).not.toHaveProperty('task_claim_hold')
+  const fetch = bearer((input, init) => local.fetch(new Request(input, init)), () => personToken())
+  const team = board({ backend: http(BOARD_URL, { fetch }) }).as(null)
+  expect(await team.discovery()).toMatchObject({ task_claim_hold: true })
   const { task } = await team.tasks.create('work', 'a fixed deadline')
   const claim = (await team.tasks.claim({ channel: 'work', lease: 30, hold: 60 }))!
   const end = claim.task.task?.claim?.holdUntil
