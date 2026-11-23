@@ -81,7 +81,7 @@ export function linearAdapter({ source, token, baseUrl = 'https://api.linear.app
     if (!isObject(item)) throw new TrackerError('bad_response')
     const { id, identifier, url, updatedAt, title, state, priority, labels, assignee } = item
     const assigneeId = assignee === null ? null : isObject(assignee) ? assignee.id : undefined
-    if (typeof id !== 'string' || !id || typeof identifier !== 'string'
+    if (typeof id !== 'string' || !id || typeof identifier !== 'string' || !identifier
       || typeof url !== 'string' || typeof title !== 'string'
       || typeof updatedAt !== 'string' || !Number.isFinite(Date.parse(updatedAt))
       || !isObject(state) || typeof state.name !== 'string' || typeof state.type !== 'string'

@@ -139,9 +139,18 @@ importers:
 
   packages/swarm:
     dependencies:
+      '@remilia/politburo-runtime':
+        specifier: workspace:^
+        version: link:../runtime
+      '@vercel/board':
+        specifier: workspace:^
+        version: link:../board
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
+      jose:
+        specifier: ^6.2.12
+        version: 6.2.12
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
