@@ -1,0 +1,61 @@
+{
+  "case_id": "check-lock-010-unknown-lock-contents",
+  "description": "Do not remove unrelated files from an otherwise stale lock.",
+  "expected": {
+    "attempts": [
+      {
+        "exception": "OSError",
+        "lock_dir_exists": true,
+        "message": "lock directory has unknown contents",
+        "sleeps": []
+      }
+    ],
+    "exit_code": null,
+    "files": {
+      "example-notes/mac-check.lock/example-work.txt": "Example work\n",
+      "example-notes/mac-check.lock/owner.json": null
+    },
+    "lock_path": "example-notes/mac-check.lock",
+    "log_lines": [],
+    "stale_directories": 0,
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "attempts": [
+      {
+        "args": {
+          "stale_ownerless": 1,
+          "tag": "example-worker",
+          "timeout": 0
+        }
+      }
+    ],
+    "collect": [
+      "example-notes/mac-check.lock/example-work.txt",
+      "example-notes/mac-check.lock/owner.json"
+    ],
+    "function": "take_lock",
+    "kind": "call",
+    "notes_root": "example-notes"
+  },
+  "matrix_row": "M11",
+  "notes": "",
+  "setup": {
+    "files": {
+      "example-notes/mac-check.lock/example-work.txt": "Example work\n",
+      "example-proc/120/stat": "120 (example fixture) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 345\n"
+    },
+    "hostname": "example-host",
+    "lock_age": 60,
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 120,
+    "proc_root": "example-proc"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py"
+    ]
+  }
+}

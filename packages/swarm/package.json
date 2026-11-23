@@ -31,6 +31,7 @@
     "@remilia/politburo-runtime": "workspace:^",
     "@vercel/board": "workspace:^",
     "ajv": "^8.17.1",
+    "jose": "^6.2.12",
     "yaml": "^2.9.1"
   }
 }
