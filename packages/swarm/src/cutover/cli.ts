@@ -16,7 +16,8 @@ export async function run([action, ...rest]: string[], command = 'cutover'): Pro
   if (action === '--help' && tag === undefined) { console.log(usage); return 0 }
   const string = { type: 'string' } as const, boolean = { type: 'boolean' } as const
   const options = { execute: boolean, gate: string, 'rename-to': string, rollback: boolean,
-    'budget-seconds': string, 'gate-max-age-days': string, 'state-dir': string, commands: string, json: boolean }
+    'budget-seconds': string, 'gate-max-age-days': string, 'state-dir': string, commands: string, json: boolean,
+    'allow-stale': boolean }
   let json = false
   const fail = (error: CutoverError, code: number) => {
     if (json) console.log(JSON.stringify({ reason: error.reason, headline: error.headline }))
@@ -34,7 +35,8 @@ export async function run([action, ...rest]: string[], command = 'cutover'): Pro
     const gateMaxAgeDays = Number(v['gate-max-age-days'] ?? 14)
     if (!(budgetMs > 0 && budgetMs <= 2_147_483_647) || !Number.isFinite(gateMaxAgeDays) ||
         gateMaxAgeDays < 0 || v['gate-max-age-days'] === '' || (v.rollback && action !== 'plan') ||
-        (v['rename-to'] !== undefined && !newTag.test(v['rename-to']))) {
+        (v['rename-to'] !== undefined && !newTag.test(v['rename-to'])) ||
+        (v['allow-stale'] && (action !== 'rollback' || !v.execute))) {
       return fail(new CutoverError('usage', 'invalid cutover flags'), 2)
     }
     const execute = action !== 'plan' && v.execute
@@ -42,7 +44,8 @@ export async function run([action, ...rest]: string[], command = 'cutover'): Pro
     if (execute && v.commands === undefined) throw new CutoverError('no_commands', 'execution requires --commands')
     const ctx: Context = { ports: await CommandPorts(tag, v.commands, controller.signal), clock: Date,
       stateDir: v['state-dir'] ?? join(homedir(), '.swarm', 'cutover'), budgetMs, gateMaxAgeDays,
-      gateFile: v.gate, renameTo: v['rename-to'], rollback: action === 'rollback' || v.rollback }
+      gateFile: v.gate, renameTo: v['rename-to'], rollback: action === 'rollback' || v.rollback,
+      allowStale: v['allow-stale'] }
     if (execute) {
       const result = await (action === 'rollback' ? rollback : apply)(tag, ctx)
       console.log(json ? JSON.stringify(result) : `${result.message}  ${result.elapsedMs} ms`)

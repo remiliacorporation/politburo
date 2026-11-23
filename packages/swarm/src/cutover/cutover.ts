@@ -12,6 +12,7 @@ export interface Context {
   gateFile?: string
   renameTo?: string
   rollback?: boolean
+  allowStale?: boolean
   log?: (line: string) => void
 }
 
@@ -137,13 +138,35 @@ async function rollbackLocked(tag: string, ctx: Context) {
   const op = session(tag, ctx), { service, oldLoop } = ctx.ports
   const s = await readState(ctx.stateDir, tag)
   const health = await op.status(service), old = await op.status(oldLoop)
+  const live = s.mode === 'service' && s.pending !== 'applying' && health === 'running'
   const stopNeeded = needsServiceStop(s, health)
   if (!stopNeeded && old === 'running') return op.report('already rolled back')
   s.pending = 'rolling_back'
   await writeState(ctx.stateDir, s)
   if (health !== 'stopped' && old !== 'running') await op.sync()
   if (stopNeeded) await op.stop(service)
-  await op.sync('files_stale', `files are stale; fix the bridge, then re-run swarm cutover rollback ${tag} --execute with the same --commands and --state-dir`)
+  let stale = false
+  try {
+    await op.sync('files_stale', `files are stale; fix the bridge, then re-run swarm cutover rollback ${tag} --execute with the same --commands and --state-dir`)
+  } catch (error) {
+    if (!(error instanceof CutoverError) || error.reason !== 'files_stale') throw error
+    if (!ctx.allowStale) {
+      if (!live) {
+        throw new CutoverError('files_stale', `files are stale; fix the bridge or re-run swarm cutover rollback ${tag} --execute --allow-stale`)
+      }
+      // A pending old-loop start can land during the drain. Stop it before restoring the service.
+      if (old === 'running' || await op.status(oldLoop).catch(ignorePortFailure) !== 'stopped') throw error
+      await op.stop(oldLoop)
+      try { await op.start(service) } catch {
+        throw new CutoverError('no_router', 'no router running: start the service or the old loop by hand')
+      }
+      delete s.pending
+      s.mode = 'service'
+      await writeState(ctx.stateDir, s)
+      throw new CutoverError('files_stale', `rollback refused: files are stale; the service was restored; fix the bridge, then re-run swarm cutover rollback ${tag} --execute`)
+    }
+    stale = true
+  }
   if (old !== 'running') {
     try { await op.start(oldLoop) } finally {
       // Even a failed old-loop start can land, as can a prior service start.
@@ -155,6 +178,10 @@ async function rollbackLocked(tag: string, ctx: Context) {
         throw new CutoverError('both_running_detected', 'could not confirm service stopped after starting the old loop')
       }
     }
+  }
+  if (stale) {
+    await op.finish(s, 'files', 'rolled_back_stale')
+    throw new CutoverError('rolled_back_stale', 'rollback finished: files were stale; the old loop is running')
   }
   return op.report('rolled back', await op.finish(s, 'files', 'rolled_back'))
 }
