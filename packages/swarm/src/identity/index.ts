@@ -2,3 +2,4 @@ export { AssertionError, verifyAssertion, type AssertionClaims, type AssertionOp
 export { accessKeys } from './keys.ts'
 export { parseMembers, memberFor, principalId, type Member, type Members } from './members.ts'
 export { personAuthenticator } from './person.ts'
+export { machineAuthenticator, receiver, type Machine } from './machine.ts'
