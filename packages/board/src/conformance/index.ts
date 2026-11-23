@@ -24,7 +24,7 @@ import { politburo, type Made } from './politburo.ts'
  */
 
 /** What a check is about, for the report's headings. */
-export type CheckGroup = 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
+export type CheckGroup = 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'claim-hold' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
 
 export type CheckResult = {
   group: CheckGroup
@@ -188,7 +188,7 @@ export type Check = {
   name: string
   taskAuthority?: true
   /** Omit the check unless advertised. Once advertised, a 501 is a failure. */
-  requires?: 'task_attention'
+  requires?: 'task_attention' | 'task_claim_hold'
   run: (ctx: Context) => Promise<void | string>
 }
 
@@ -1477,6 +1477,28 @@ const CHECKS: Check[] = [
       await ctx.board.tasks.cancel(root.id, 'conformance: done checking')
       await rejects(ctx.board.tasks.claim(root.id), 409, 'task_finished', 'claiming a canceled task')
       await rejects(ctx.board.tasks.cancel(root.id, 'conformance: again'), 409, 'task_finished', 'canceling a canceled task')
+    },
+  },
+  {
+    group: 'claim-hold',
+    requires: 'task_claim_hold',
+    name: 'clamps renewals at the hard end and reports hold expiry',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: a claim with a hard end')
+      const held = await ctx.board.tasks.claim(root.id, { lease: 30, hold: 60 })
+      const end = held.task.task?.claim?.holdUntil
+      check(end && Date.parse(end) > Date.parse(held.until), 'the hard end should be later than the first lease')
+      same((await held.renew(300)).until, end, 'the renewed lease ends at the hard end')
+      await held.release()
+      const { cursor } = await ctx.board.poll({ wait: 0 })
+      const short = await ctx.board.tasks.claim(root.id, { hold: 1 })
+      same(short.until, short.task.task?.claim?.holdUntil, 'the initial lease ends at the short hold')
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+      const next = await ctx.board.tasks.claim(root.id)
+      same(next.epoch, short.epoch + 1, 'a new claim after the hard end')
+      const { events } = await ctx.board.poll({ channel: ctx.channel, label: ctx.labels, after: cursor, wait: 0 })
+      const expired = events.find((event) => event.type === 'task.expired' && event.payload.id === root.id && event.payload.epoch === short.epoch)
+      same(expired?.type === 'task.expired' ? expired.payload.reason : undefined, 'hold', 'the hard expiry reason')
     },
   },
   ...taskAuthorityChecks,

@@ -179,13 +179,13 @@ export const boardEvents = {
     /** (server) Every task it needs has completed. */
     'task.ready': z.object(Task),
     /** (server) `by` holds it until `until` in this pause epoch (zero for old claims). No view shows the token hash. */
-    'task.claimed': z.object({ ...Task, epoch: Epoch, pauseEpoch: z.number().int().nonnegative().optional(), until: Until, token: z.string().regex(/^[0-9a-f]{64}$/), by: Author, binding: TaskBinding.optional() }),
+    'task.claimed': z.object({ ...Task, epoch: Epoch, pauseEpoch: z.number().int().nonnegative().optional(), until: Until, holdUntil: Until.optional(), token: z.string().regex(/^[0-9a-f]{64}$/), by: Author, binding: TaskBinding.optional() }),
     /** A board-wide authority change, never a message or a dispatch ticket. */
     'work.control': z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative(), reason: TaskNote, by: Author }),
     'task.renewed': z.object({ ...Task, epoch: Epoch, until: Until, by: Author }),
     'task.released': z.object({ ...Task, epoch: Epoch, by: Author }),
     /** (server) Its lease ran out. */
-    'task.expired': z.object({ ...Task, epoch: Epoch }),
+    'task.expired': z.object({ ...Task, epoch: Epoch, reason: z.literal('hold').optional() }),
     'task.completed': z.object({ ...Task, epoch: Epoch, result: TaskNote.nullable(), by: Author }),
     'task.failed': z.object({ ...Task, epoch: Epoch, reason: TaskNote, by: Author }),
     /** Held for a person, which ends any claim. Kind `edited` is the board's: `by` edited its root, and isn't its owner. */

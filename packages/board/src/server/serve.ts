@@ -91,7 +91,7 @@ import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notF
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
 import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
-import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
+import { authorize, compileAccess, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
 import type { WatcherContext } from './watcher.ts'
@@ -1010,6 +1010,33 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     return { message: await read(message!) }
   }
 
+  async function checkClaim(caller: Caller, target: { id: string } | { channel: string }, signal: AbortSignal) {
+    const rule = options.claimRule
+    if (!rule) return
+    const remote = backend.keeps ? null : await backend.me(caller, {}, signal)
+    const access = remote ? compileAccess(remote.can).narrow(accessOf(caller) ?? FULL_ACCESS) : accessOf(caller)
+    const task = 'id' in target ? target.id : null
+    const message = task === null ? null : await lookup(caller, task, signal)
+    if (task !== null && !message) throw notFound(`message not found: #${task}`, 'message_not_found')
+    if (task !== null && !message?.task) throw notFound(`#${task} isn't a task`, 'not_a_task')
+    const channel = 'channel' in target ? target.channel : message!.channel
+    if (access && 'channel' in target && channel.endsWith('/')) {
+      // A subtree may contain narrower grants even if its root grants no label.
+      if (!access.at('label', channel) && !Object.entries(access.summary()).some(([path, permissions]) =>
+        (path === channel.slice(0, -1) || path.startsWith(channel)) && permissions.includes('label')))
+        throw forbidden(`this token can't label in ${channel}`)
+    } else if (access) authorize(access, 'label', channel)
+    const actor = remote?.actor ?? (await whoIs(caller, signal)).actor.id
+    signal.throwIfAborted()
+    let result
+    try {
+      result = await rule({ actor, channel, task })
+    } catch {
+      throw new HttpError(503, 'claim_rule_failed', 'the claim rule could not decide')
+    }
+    if (result) throw new HttpError(409, result.refuse.code, result.refuse.message)
+  }
+
   /** The protocol method `name`, as board() serves it: what it posts, edits, and imports goes through the middleware. */
   async function invoke(name: Method, caller: Caller, input: unknown, signal: AbortSignal): Promise<unknown> {
     if (isOperationalInboxMethod(name)) {
@@ -1029,6 +1056,16 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         const { set, unset } = input as Protocol['label']['input']
         ownLabels(set, unset)
         return backend.label(caller, input as Protocol['label']['input'], signal)
+      }
+      case 'claimTask': {
+        const body = input as Protocol['claimTask']['input']
+        await checkClaim(caller, body, signal)
+        return backend.claimTask(caller, body, signal)
+      }
+      case 'claimReadyTask': {
+        const body = input as Protocol['claimReadyTask']['input']
+        await checkClaim(caller, body, signal)
+        return backend.claimReadyTask(caller, body, signal)
       }
       case 'createTask': {
         const body = input as Protocol['createTask']['input']
@@ -1253,6 +1290,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
+      ...(capabilities?.task_claim_hold === true ? { task_claim_hold: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
       ...(capabilities?.agent_intents === true ? { agent_intents: true } : {}),
       ...(capabilities?.politburo === 1 ? { politburo: 1 } : {}),

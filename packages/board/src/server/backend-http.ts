@@ -292,6 +292,10 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
         })
       }
     }
+    if ((method === 'claimTask' || method === 'claimReadyTask') && input.hold !== undefined &&
+        (await fetchDiscovery({ signal, cache: 'no-store' }))?.task_claim_hold !== true) {
+      throw new HttpError(501, 'no_claim_hold', 'the HTTP board does not advertise a hard end for claims', { origin: 'handle' })
+    }
     const agentOps = isAgentOpsMethod(method)
     if (agentOps) {
       // The mount can change. A registry-only mount can return discovery with 200 on an unknown intent or health GET.

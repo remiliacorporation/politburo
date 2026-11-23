@@ -207,7 +207,7 @@ export type TaskOptions = {
   binding?: TaskBindingInput
 }
 
-type ClaimOptions = Pick<TaskOptions, 'lease' | 'token' | 'binding'>
+type ClaimOptions = Pick<TaskOptions, 'lease' | 'token' | 'binding'> & { hold?: number }
 type ClaimNext = ClaimOptions & { channel: string; label?: Record<string, string>; from?: string[]; wait?: number }
 
 /** A new thread that's a task: its root's text, labels, `noSync`, `attachments`, and `id`, as a post takes them, and what makes it a task. */
@@ -444,7 +444,8 @@ export function createBoardClient(options: ClientOptions) {
       async renew(lease) {
         const { task, until } = await call<{ task: MessageView; until: string }>('POST', `/tasks/${path(id)}/renew`, { body: { epoch, token, ...(lease !== undefined ? { lease } : {}) }, claim: true })
         const binding = task.task?.claim?.binding
-        return claimed(task, { epoch, token, until, ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
+        const holdUntil = task.task?.claim?.holdUntil
+        return claimed(task, { epoch, token, until, ...(holdUntil ? { holdUntil } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
       },
       release: () => taskWrite(id, 'release', { epoch, token }, true),
       complete: (result) => taskWrite(id, 'complete', { epoch, token, ...(result !== undefined ? { result } : {}) }, true),
@@ -495,7 +496,7 @@ export function createBoardClient(options: ClientOptions) {
    * throws a 409 (`task_claimed`, `task_waiting`, ...); a channel with nothing ready answers
    * null, after waiting up to `wait` seconds for one. `lease` is how long you hold it, in seconds,
    * the board's default without one: a board says how short and how long one may be, and the
-   * claim's `until` says what it gave.
+   * claim's `until` says what it gave. `hold` caps the initial lease and all renewals at a fixed end.
    */
   async function claimTask(target: string, opts?: ClaimOptions & { signal?: AbortSignal }): Promise<ClaimedTask>
   async function claimTask(target: ClaimNext, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>

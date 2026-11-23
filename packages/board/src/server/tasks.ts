@@ -106,6 +106,8 @@ const stale = (task: Task, pauseEpoch: number) => task.claim !== null && (task.c
 export const claimFenced = (task: Task, status: WorkState) => status.paused || stale(task, status.pauseEpoch)
 
 /** Whether a task's claim has run out its lease or was fenced: it's claimable at once, whatever its label still says. */
+const holdEndsLease = (claim: NonNullable<Task['claim']>) => claim.until === claim.holdUntil
+const expiryReason = (task: Task, at: number) => holdEndsLease(task.claim!) && Date.parse(task.claim!.until) <= at ? { reason: 'hold' as const } : {}
 const lapsed = (task: Task, at: number, pauseEpoch: number) => task.state === 'claimed' && (stale(task, pauseEpoch) || Date.parse(task.claim!.until) <= at)
 
 /** A claim whose lease ran out or was fenced by pause no longer holds the task. */
@@ -177,12 +179,13 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       // Released, settled, held, or claimed again since: this claim is over already.
       if (!root || !task || task.state !== 'claimed' || task.epoch !== epoch) return { position, events: [] }
       const until = Date.parse(task.claim!.until)
-      if (until - Date.now() > EARLY_MS) {
+      const now = Date.now()
+      if (until - now > (holdEndsLease(task.claim!) ? 0 : EARLY_MS)) {
         // Renewed, with a timer of its own; or delivered early, and it waits again.
         if (until === at) read.early = task.claim!.until
         return { position, events: [] }
       }
-      return { position, events: [{ type: 'task.expired', payload: { id, thread: root.thread, epoch } }] }
+      return { position, events: [{ type: 'task.expired', payload: { id, thread: root.thread, epoch, ...expiryReason(task, now) } }] }
     })
     await untilApplied(ctx, rows)
     if (read.early !== null) await arm(id, epoch, read.early, `again-${context.event.index}`)
@@ -371,14 +374,16 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
    * A claim of a task as it stands, by `identity`: the events, and what the claim answers. A claim
    * whose lease ran out expires in the same append, so the log says what happened to it.
    */
-  function claiming(root: { id: number; thread: string }, task: Pick<Task, 'state' | 'epoch'> | null, identity: Identity, lease: number | undefined, token: string, pauseEpoch: number, binding: TaskBinding | undefined): { events: Events; claim: TaskClaim } {
+  function claiming(root: { id: number; thread: string }, task: Task | null, identity: Identity, lease: number | undefined, token: string, pauseEpoch: number, binding: TaskBinding | undefined, hold?: number): { events: Events; claim: TaskClaim } {
     const about = { id: root.id, thread: root.thread }
     const epoch = (task?.epoch ?? 0) + 1
-    const until = new Date(Date.now() + leaseOf(lease)).toISOString()
-    const metadata = binding === undefined ? {} : { binding }
+    const now = Date.now()
+    const hardEnd = hold === undefined ? Infinity : now + hold * 1000
+    const until = new Date(Math.min(now + leaseOf(lease), hardEnd)).toISOString()
+    const metadata = { ...(binding === undefined ? {} : { binding }), ...(hold === undefined ? {} : { holdUntil: new Date(hardEnd).toISOString() }) }
     return {
       events: [
-        ...(task?.state === 'claimed' ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
+        ...(task?.state === 'claimed' ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch, ...expiryReason(task, now) } }] : []),
         { type: 'task.claimed', payload: { ...about, epoch, ...(pauseEpoch === 0 ? {} : { pauseEpoch }), until, token: hashOf(token), by: identity.author, ...metadata } },
       ],
       claim: { epoch, token, until, pauseEpoch, ...metadata },
@@ -567,7 +572,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       }
       // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }
-      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding)
+      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding, input.hold)
       read.taken = { root, claim }
       return { position, events: seen ? [seen, ...events] : events }
     })
@@ -809,13 +814,13 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           if (stale(task, pauseEpoch)) throw claimLost(id)
           if (!lapsed(task, Date.now(), pauseEpoch) && (await claimedBy(found, identity)) && !lapsed(task, Date.now(), pauseEpoch)) {
             sameBinding(id, binding, current.binding)
-            made.claim = { epoch: task.epoch, token, until: current.until, pauseEpoch, ...(current.binding ? { binding: current.binding } : {}) }
+            made.claim = { epoch: task.epoch, token, until: current.until, pauseEpoch, ...(current.binding ? { binding: current.binding } : {}), ...(current.holdUntil ? { holdUntil: current.holdUntil } : {}) }
             made.replay = true
             return []
           }
         }
         claimable(found, identity, pauseEpoch)
-        const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding)
+        const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding, input.hold)
         made.claim = claimed.claim
         return claimed.events
       })
@@ -847,7 +852,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const made = { until: '' }
       const root = await changeTask(identity, id, async (found, position) => {
         await fenced(found, identity, proof, position)
-        made.until = new Date(Date.now() + leaseOf(lease)).toISOString()
+        const { holdUntil } = found.task.claim!
+        made.until = new Date(Math.min(Date.now() + leaseOf(lease), holdUntil === undefined ? Infinity : Date.parse(holdUntil))).toISOString()
         return [{ type: 'task.renewed', payload: { id, thread: found.thread, epoch: proof.epoch, until: made.until, by: identity.author } }]
       })
       await arm(id, proof.epoch, made.until)
@@ -1064,7 +1070,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         await acyclic(principal.access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
         const about = { id, thread: found.thread }
         return [
-          ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch } }] : []),
+          ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch, ...expiryReason(task, Date.now()) } }] : []),
           { type: 'task.needs_changed', payload: { ...about, needs: needs.ids, by: identity.author } },
           ...(needs.ids.length > 0 && needs.completed && task.state !== 'blocked' ? [{ type: 'task.ready' as const, payload: about }] : []),
         ]
