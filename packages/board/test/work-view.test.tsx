@@ -277,6 +277,51 @@ it('keeps the Cell thread pane scoped to its claimant as claims change live', as
   })
 })
 
+it('hides the Cell thread pane when the thread read has already reassigned the task', async () => {
+  const { create, actor, client, open } = await workBoard()
+  const bob = await actor('u_bob')
+  const text = 'Prepare the release notes'
+  const alice = await create(1, text, { claim: true })
+  const cellActor = alice.task.task!.claim!.actor
+  const stale = await client.tasks.list({ state: 'open' })
+  await alice.claim!.release()
+  await bob.tasks.claim(alice.task.id)
+  const thread = () => document.querySelector('aside[aria-label="Thread"]')
+  await open(`/cell/${encodeURIComponent(cellActor)}?party=blue&thread=${alice.task.id}&swarm=fixtures`, async () => {
+    return Response.json(stale)
+  })
+  await vi.waitFor(() => {
+    expect(thread()?.textContent).not.toContain(text)
+    expect(thread()?.textContent?.trim()).toBe('not in this cell close')
+  })
+})
+
+it('shows the open-task refusal in the Cell thread pane instead of loading forever', async () => {
+  const { create, open } = await workBoard()
+  const mine = await create(1, 'Task the cell cannot list', { claim: true })
+  const cellActor = mine.task.task!.claim!.actor
+  const requested = Promise.withResolvers<void>()
+  const respond = Promise.withResolvers<void>()
+  releaseGates.push(respond.resolve)
+  const refusal = 'This board cannot list open tasks'
+  const thread = () => document.querySelector('aside[aria-label="Thread"]')
+  await open(`/cell/${encodeURIComponent(cellActor)}?party=blue&thread=${mine.task.id}&swarm=fixtures`, async () => {
+    requested.resolve()
+    await respond.promise
+    return Response.json({ error: { code: 'forbidden', message: refusal } }, { status: 403 })
+  })
+  await requested.promise
+  await vi.waitFor(() => {
+    expect(thread()?.querySelector('[role="status"]')?.textContent).toContain('loading…')
+  })
+  respond.resolve()
+  await vi.waitFor(() => {
+    expect(thread()?.textContent).not.toContain('Task the cell cannot list')
+    expect(thread()?.textContent).not.toContain('loading…')
+    expect(thread()?.textContent?.trim()).toBe(`${refusal} close`)
+  })
+})
+
 it('never shows a cached task missing from the latest read in any scope and links the claimant to their Cell', async () => {
   const { create, client, open } = await workBoard()
   const old = await create(1, 'Old claim', { claim: true })

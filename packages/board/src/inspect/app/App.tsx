@@ -293,7 +293,7 @@ export function App() {
   ) : null
   const identity = board.getIdentity()
   const cellPaneStatus = current.view === 'cell' && where.thread !== null
-    ? !state.tasksCounted ? 'loading…' : cellHasThread(state, current.cell, where.thread) ? null : 'not in this cell'
+    ? state.tasksRefused ?? (!state.tasksCounted ? 'loading…' : cellHasThread(state, current.cell, where.thread) ? null : 'not in this cell')
     : null
   const paneIsFront = narrow && where.thread !== null
   const expand = paneIsFront ? null : headerLead

@@ -26,9 +26,12 @@ export function workScope(route: WorkRoute, params: URLSearchParams, records: Sw
 }
 
 /** Like the Cell's peek, check scope membership before display filters. */
-export function cellHasThread(state: Pick<State, 'openTaskRoots'>, actor: string, id: string): boolean {
+export function cellHasThread(state: Pick<State, 'openTaskRoots' | 'messages'>, actor: string, id: string): boolean {
   const root = Object.hasOwn(state.openTaskRoots, id) ? state.openTaskRoots[id] : undefined
-  return isTask(root) && !root.deleted && root.task.claim?.actor === actor
+  if (!(isTask(root) && !root.deleted && root.task.claim?.actor === actor)) return false
+  const known = Object.hasOwn(state.messages, id) ? state.messages[id] : undefined
+  const newest = known !== undefined && known.version > root.version ? known : root
+  return isTask(newest) && newest.task.claim?.actor === actor
 }
 
 /** Carry the preview across scopes, not the previous scope's filters or open row. */
