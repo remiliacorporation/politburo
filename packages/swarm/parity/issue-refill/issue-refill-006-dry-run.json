@@ -1,0 +1,203 @@
+{
+  "case_id": "issue-refill-006-dry-run",
+  "description": "Dry run bypasses the trigger and paused network",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 1, \"usage\": {\"file\": \"<WORK>/usage.json\"}}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [
+      [
+        "critic",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-defects",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-gaps",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-operability",
+        "example-project",
+        1200
+      ]
+    ],
+    "source_calls": [
+      [
+        "fetch_head",
+        "origin",
+        "main"
+      ],
+      [
+        "add_worktree",
+        "example-base"
+      ],
+      [
+        "pulls"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/cache.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/queue.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/export.py"
+      ],
+      [
+        "remove_worktree",
+        "example-project"
+      ]
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"outcome\": \"dry_run\",\n  \"reason\": \"enough ready work: 1 ready for 1 free slots\",\n  \"base_sha\": \"example-base\",\n  \"issues\": [\n    {\n      \"issue_key\": \"refill-001\",\n      \"title\": \"Guard an empty cache lookup\",\n      \"state\": \"ready\",\n      \"lane\": \"refill\",\n      \"priority\": 3,\n      \"approved_scope\": \"Scope written by the issue refill under this board's refill rules (non-behavioral work). No person reviewed it.\\n\\nProblem: The current implementation does not cover this case.\\n\\nWhere (default branch example-base):\\n- src/cache.py:2\\n\\nEvidence: The example inputs expose the missing branch of this routine.\\n\\nDone when: A regression test exercises the case and passes consistently.\\n\\nCategory: defect. Lens: defects.\",\n      \"depends_on\": [],\n      \"category\": \"defect\",\n      \"lens\": \"defects\",\n      \"where\": [\n        \"src/cache.py:2\"\n      ]\n    },\n    {\n      \"issue_key\": \"refill-002\",\n      \"title\": \"Bound queue processing\",\n      \"state\": \"proposed\",\n      \"lane\": \"refill\",\n      \"priority\": 3,\n      \"approved_scope\": \"Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\\n\\nProblem: The current implementation does not cover this case.\\n\\nWhere (default branch example-base):\\n- src/queue.py:2\\n\\nEvidence: The example inputs expose the missing branch of this routine.\\n\\nDone when: A regression test exercises the case and passes consistently.\\n\\nCategory: defect. Lens: defects.\",\n      \"depends_on\": [],\n      \"category\": \"defect\",\n      \"lens\": \"defects\",\n      \"where\": [\n        \"src/queue.py:2\"\n      ]\n    },\n    {\n      \"issue_key\": \"refill-003\",\n      \"title\": \"Correct export rounding\",\n      \"state\": \"proposed\",\n      \"lane\": \"refill\",\n      \"priority\": 3,\n      \"approved_scope\": \"Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\\n\\nProblem: The current implementation does not cover this case.\\n\\nWhere (default branch example-base):\\n- src/export.py:2\\n\\nEvidence: The pricing table and export use different precision.\\n\\nDone when: A regression test exercises the case and passes consistently.\\n\\nCategory: defect. Lens: defects.\",\n      \"depends_on\": [],\n      \"category\": \"defect\",\n      \"lens\": \"defects\",\n      \"where\": [\n        \"src/export.py:2\"\n      ]\n    }\n  ],\n  \"dropped\": [],\n  \"errors\": []\n}\n"
+  },
+  "inputs": {
+    "argv": [
+      "--dry-run",
+      "--json",
+      "--export-tree=export"
+    ],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "Missing usage allows research. An omitted critic behavior flag and product terms in evidence each yield proposed scope. Plans print without board writes or export files.",
+  "setup": {
+    "config": {
+      "slots": 1
+    },
+    "files": {},
+    "issues": [
+      {
+        "issue_key": "example-ready",
+        "state": "ready",
+        "title": "Refresh the example index"
+      }
+    ],
+    "network": "paused",
+    "now": "2026-01-01T12:00:00Z",
+    "proposals": {
+      "defects": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "queue",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return queue.pop()",
+          "title": "Bound queue processing",
+          "where": [
+            "src/queue.py:2"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The pricing table and export use different precision.",
+          "id": "rounding",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return list(rows)",
+          "title": "Correct export rounding",
+          "where": [
+            "src/export.py:2"
+          ]
+        }
+      ]
+    },
+    "source_files": {
+      "docs/queue.md": "Drain the queue after each batch.\n",
+      "src/cache.py": "def get(key):\n    return entries[key]\n",
+      "src/export.py": "def export_rows(rows):\n    return list(rows)\n",
+      "src/queue.py": "def drain(queue):\n    return queue.pop()\n"
+    },
+    "usage_file": "usage.json",
+    "verdicts": [
+      {
+        "changes_behavior": false,
+        "id": "defects:cache",
+        "keep": true,
+        "rank": 1
+      },
+      {
+        "id": "defects:queue",
+        "keep": true,
+        "rank": 2
+      },
+      {
+        "changes_behavior": false,
+        "id": "defects:rounding",
+        "keep": true,
+        "rank": 3
+      }
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

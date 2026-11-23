@@ -1,0 +1,299 @@
+{
+  "case_id": "identity-004-generation-drift",
+  "description": "Reject stale generation and same-generation rename",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "issue_priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": {
+        "board_events": [
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 1,
+            "event_type": "project_identity_reconciled",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"from_generation\": 0, \"reason\": \"Project identity generation reconciled\", \"reason_code\": \"identity_reconciled\", \"to_generation\": 2}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 2,
+            "event_type": "project_identity_valid",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"generation\": 2, \"reason\": \"Project identity status recorded\", \"reason_code\": \"identity_valid\", \"status\": \"valid\"}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 3,
+            "event_type": "project_identity_misconfigured",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"generation\": 1, \"reason\": \"board identity generation is newer than the configured profile\", \"reason_code\": \"identity_misconfigured\", \"status\": \"misconfigured\"}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 4,
+            "event_type": "project_identity_misconfigured",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"generation\": 2, \"reason\": \"display name conflicts with the same identity generation\", \"reason_code\": \"identity_misconfigured\", \"status\": \"misconfigured\"}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 5,
+            "event_type": "project_identity_valid",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"generation\": 2, \"reason\": \"Project identity status recorded\", \"reason_code\": \"identity_valid\", \"status\": \"valid\"}"
+          }
+        ],
+        "board_messages": [
+          {
+            "actionable": 1,
+            "archived_at": null,
+            "body": "Correct the private project identity profile (display name, project identifier, repository fingerprint and a higher generation for any change), then restart the spawner. New implementation and QA dispatch stays paused until identity validates. Running work is not affected.",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "dedup_key": "identity:board-identity-generation-is-newer-than-the-configured-profile:1:1",
+            "from_actor": "operator-01",
+            "issue_key": null,
+            "kind": "system",
+            "message_id": 1,
+            "payload_ref": null,
+            "priority": 5,
+            "status": "active",
+            "summary": "Project identity misconfigured: board identity generation is newer than the configured profile",
+            "supersedes_message_id": null,
+            "to_agent": null,
+            "to_role": "coordinator",
+            "topic_key": null,
+            "valid_until": null
+          },
+          {
+            "actionable": 1,
+            "archived_at": null,
+            "body": "Correct the private project identity profile (display name, project identifier, repository fingerprint and a higher generation for any change), then restart the spawner. New implementation and QA dispatch stays paused until identity validates. Running work is not affected.",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "dedup_key": "identity:display-name-conflicts-with-the-same-identity-generation:2:1",
+            "from_actor": "operator-01",
+            "issue_key": null,
+            "kind": "system",
+            "message_id": 2,
+            "payload_ref": null,
+            "priority": 5,
+            "status": "active",
+            "summary": "Project identity misconfigured: display name conflicts with the same identity generation",
+            "supersedes_message_id": null,
+            "to_agent": null,
+            "to_role": "coordinator",
+            "topic_key": null,
+            "valid_until": null
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "identity_generation",
+            "value": "2"
+          },
+          {
+            "key": "identity_reason",
+            "value": ""
+          },
+          {
+            "key": "identity_status",
+            "value": "valid"
+          },
+          {
+            "key": "identity_updated_at",
+            "value": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "project_display_name",
+            "value": "Example Workshop"
+          },
+          {
+            "key": "project_id",
+            "value": "example-project"
+          },
+          {
+            "key": "repository_fingerprint",
+            "value": "e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "sqlite_sequence": [
+          {
+            "name": "board_events",
+            "seq": 5
+          },
+          {
+            "name": "board_messages",
+            "seq": 2
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "project-identity.json": "{\"display_name\": \"Example Workshop\", \"generation\": 2, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n",
+      "same-generation.json": "{\"display_name\": \"Example Annex\", \"generation\": 2, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n",
+      "stale.json": "{\"display_name\": \"Example Workshop\", \"generation\": 1, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\n  \"generation\": 2,\n  \"ok\": true,\n  \"reason\": \"\",\n  \"status\": \"valid\"\n}\n{\n  \"generation\": 1,\n  \"ok\": false,\n  \"reason\": \"board identity generation is newer than the configured profile\",\n  \"status\": \"misconfigured\"\n}\n{\n  \"generation\": 2,\n  \"ok\": false,\n  \"reason\": \"display name conflicts with the same identity generation\",\n  \"status\": \"misconfigured\"\n}\n{\n  \"generation\": 2,\n  \"ok\": true,\n  \"reason\": \"\",\n  \"status\": \"valid\"\n}\n",
+    "steps": [
+      {
+        "db_changed": true,
+        "exit_code": 0,
+        "profile_modes": {
+          "project-identity.json": "0600",
+          "same-generation.json": "0600",
+          "stale.json": "0600"
+        }
+      },
+      {
+        "db_changed": true,
+        "exit_code": 1,
+        "profile_modes": {
+          "project-identity.json": "0600",
+          "same-generation.json": "0600",
+          "stale.json": "0600"
+        }
+      },
+      {
+        "db_changed": true,
+        "exit_code": 1,
+        "profile_modes": {
+          "project-identity.json": "0600",
+          "same-generation.json": "0600",
+          "stale.json": "0600"
+        }
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0,
+        "profile_modes": {
+          "project-identity.json": "0600",
+          "same-generation.json": "0600",
+          "stale.json": "0600"
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "project-identity.json",
+      "same-generation.json",
+      "stale.json"
+    ],
+    "commands": [
+      [
+        "identity-check"
+      ],
+      [
+        "identity-check",
+        "--profile",
+        "stale.json"
+      ],
+      [
+        "identity-check",
+        "--profile",
+        "same-generation.json"
+      ],
+      [
+        "identity-check"
+      ]
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M88",
+  "notes": "A lower generation and a different name at the same generation are refused. Returning to the original profile restores valid status.",
+  "setup": {
+    "files": {
+      "project-identity.json": "{\"display_name\": \"Example Workshop\", \"generation\": 2, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n",
+      "same-generation.json": "{\"display_name\": \"Example Annex\", \"generation\": 2, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n",
+      "stale.json": "{\"display_name\": \"Example Workshop\", \"generation\": 1, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n"
+    },
+    "now": "2026-01-03T00:00:00Z",
+    "profile_modes": {
+      "project-identity.json": "0600",
+      "same-generation.json": "0600",
+      "stale.json": "0600"
+    }
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/identity.py",
+      "board/board.py",
+      "board/history.py",
+      "board/schema.sql"
+    ]
+  }
+}
