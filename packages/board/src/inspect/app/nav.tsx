@@ -134,6 +134,8 @@ export function useTypeToFocus(composer: string) {
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
       const target = event.target instanceof Element ? event.target : document.activeElement
       if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return
+      // Space activates a focused control on keyup; stealing focus here would cancel that.
+      if (event.key === ' ' && target?.closest('button, [role="button"], summary, input[type="checkbox"], input[type="radio"]')) return
       const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]:not([inert] *)`)
       const area = find('thread') ?? find(composer)
       area?.focus()

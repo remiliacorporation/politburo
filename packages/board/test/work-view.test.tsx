@@ -278,6 +278,42 @@ it('focuses the Work filter when typing on the body and the reply composer when 
   expect(document.activeElement).toBe(reply)
 })
 
+it('lets Space activate a focused thread-pane button and still focuses the reply composer from a letter', async () => {
+  const { create, open } = await workBoard()
+  const { task } = await create(1, 'Check the build')
+  await open()
+  await vi.waitFor(() => expect(titles()).toEqual(['Check the build']))
+
+  taskLinks()[0]!.click()
+  const { heading, reply, closeThread } = await vi.waitFor(() => {
+    const pane = document.querySelector('aside[aria-label="Thread"]')
+    const heading = pane?.querySelector('h1')
+    const reply = pane?.querySelector('textarea[placeholder="reply to thread…"]')
+    const closeThread = pane?.querySelector<HTMLButtonElement>('button[aria-label="Close thread"]')
+    expect(param('thread')).toBe(task.id)
+    expect(heading?.textContent).toBe('task')
+    expect(reply).toBeTruthy()
+    expect(closeThread).toBeTruthy()
+    return { heading: heading!, reply: reply!, closeThread: closeThread! }
+  })
+
+  flushSync(() => heading.focus())
+  expect(document.activeElement).toBe(heading)
+  press('a')
+  expect(document.activeElement).toBe(reply)
+
+  flushSync(() => closeThread.focus())
+  expect(document.activeElement).toBe(closeThread)
+  press(' ')
+  expect(document.activeElement).toBe(closeThread)
+  // Space activates a focused button on keyup; happy-dom does not, so click the still-focused control.
+  closeThread.click()
+  await vi.waitFor(() => {
+    expect(param('thread')).toBeNull()
+    expect(document.querySelector('aside[aria-label="Thread"]')).toBeNull()
+  })
+})
+
 it('jumps to queue groups and hides a collapsed group without removing its work', async () => {
   const { create, open } = await workBoard()
   await create('plb-1', 'Answer request')
