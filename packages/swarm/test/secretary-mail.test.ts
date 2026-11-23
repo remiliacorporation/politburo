@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import {
-  createRouter, parseHeader, readFileMail, redact, type FileMailItem,
+  compilePacket, createRouter, parseHeader, readFileMail, redact, type FileMailItem,
 } from '../src/secretary/index.ts'
 
 const options = {
@@ -57,14 +57,14 @@ test('invalid file mail is not dropped or accepted without a rejection reason', 
   const { root, put } = await inbox(t)
   await put('missing.md', 'no YAML here')
   await put('broken.md', 'summary\n```yaml\nref: [\n```\n')
-  await put('no-ref.md', fenced({ ...raw('no-ref'), ref: undefined }))
+  await put('no-from.md', fenced({ ...raw('no-from'), from: undefined }))
   await put('oversize.md', fenced(raw('big')) + 'x'.repeat(64 * 1024))
   const items = await readFileMail(root, 'abc')
   const router = createRouter(options)
   const results = router.ingest(items, start)
   assert.deepEqual(results.map(({ kind, file, reason }) => [kind, basename(file), reason]), [
     ['reject', 'broken.md', 'bad_yaml'], ['reject', 'missing.md', 'no_header'],
-    ['reject', 'no-ref.md', 'missing_field:ref'], ['reject', 'oversize.md', 'oversize'],
+    ['reject', 'no-from.md', 'missing_field:from'], ['reject', 'oversize.md', 'oversize'],
   ])
   assert.deepEqual(router.due(start + 30 * min), { p0: [], p1: [], digests: [] })
 })
@@ -123,7 +123,7 @@ test('explicit class and urgency win over text, and only scalar ref mappings are
   assert.deepEqual(digests.map(({ act_on, items }) => [act_on, items.map(({ summary }) => summary)]), [[[], [text, 'string-ref']]])
 })
 
-test('dedupe distinguishes revisions, older mail, identical replays, ID collisions and same-at conflicts', () => {
+test('dedupe distinguishes revisions, older mail, identical replays and ID collisions', () => {
   const router = createRouter(options)
   const ref = 'pr=42,task=812'
   const old = mail('old', { ref: { task: 812, pr: 42 }, urgency: 'p1', body: 'thread 1' })
@@ -140,16 +140,16 @@ test('dedupe distinguishes revisions, older mail, identical replays, ID collisio
   const decisions = router.ingest(arrivals, start + min)
   assert.deepEqual(decisions.map(({ kind, reason }) => [kind, reason]), [
     ['accept', undefined], ['revision', undefined], ['duplicate', undefined], ['reject', 'older_at'],
-    ['reject', 'id_collision'], ['reject', 'conflict_same_at'], ['reject', 'id_collision'],
+    ['reject', 'id_collision'], ['revision', undefined], ['reject', 'id_collision'],
     ['accept', undefined], ['accept', undefined], ['accept', undefined],
   ])
-  assert.deepEqual(router.due(start + 11 * min).p1.map(({ items }) => items.map(({ id }) => id)), [['revision']])
+  assert.deepEqual(router.due(start + 11 * min).p1.map(({ items }) => items.map(({ id }) => id)), [])
   const followup = mail('followup', { ref, urgency: 'p1', at: iso(start + min) }, start + 12 * min)
   assert.equal(router.ingest([followup], start + 12 * min)[0]?.kind, 'revision')
   const { p1, digests } = router.due(start + 30 * min)
   assert.deepEqual(p1.map(({ items }) => items.map(({ id }) => id)), [['followup']])
   assert.deepEqual(digests.map(({ items }) => items.map(({ summary }) => summary).sort()), [
-    ['followup', 'other-class', 'other-ref', 'other-sender', 'revision'],
+    ['followup', 'other-class', 'other-ref', 'other-sender'],
   ])
 })
 
@@ -481,4 +481,80 @@ test('id and summary length limits count Unicode code points', () => {
   assert.ok(parseHeader(raw('short', { summary }), options).ok, '120 code points in summary')
   assert.deepEqual(parseHeader(raw(`${id}a`, { summary }), options), { ok: false, reason: 'id_too_long' })
   assert.deepEqual(parseHeader(raw(id, { summary: `${summary}a` }), options), { ok: false, reason: 'summary_too_long' })
+})
+
+const tigeryardOptional = {
+  needs: 'context', reply_to: 'parent', thread: 'thread-1', status: 'open',
+  review_by: 'core', default_if_unanswered: 'hold', answered_at: iso(start),
+}
+
+test('optional Tigeryard header fields and a missing ref are accepted rather than unknown_field', () => {
+  const accepted = parseHeader(raw('optional', tigeryardOptional), options)
+  assert.ok(accepted.ok, 'optional fields must not be unknown_field')
+  assert.deepEqual(Object.keys(accepted.message).sort(), ['at', 'class', 'from', 'id', 'ref', 'summary', 'urgency'])
+  const { ref: _ref, ...noRef } = raw('isolated')
+  const isolated = parseHeader(noRef, options)
+  assert.ok(isolated.ok, 'a missing ref must be accepted')
+  assert.ok(isolated.ok && !('ref' in isolated.message))
+  for (const field of Object.keys(tigeryardOptional)) {
+    assert.deepEqual(parseHeader(raw('bad', { [field]: '' }), options), { ok: false, reason: `bad_${field}` }, field)
+    assert.deepEqual(parseHeader(raw('bad', { [field]: '🐝'.repeat(201) }), options), { ok: false, reason: `bad_${field}` }, field)
+    assert.ok(parseHeader(raw('ok', { [field]: '🐝'.repeat(200) }), options).ok, field)
+  }
+  assert.deepEqual(parseHeader(raw('bad', { ref: [] }), options), { ok: false, reason: 'bad_ref' })
+  assert.deepEqual(parseHeader(raw('bad', { ref: '' }), options), { ok: false, reason: 'bad_ref' })
+  assert.deepEqual(parseHeader(raw('bad', { extra: 'nope' }), options), { ok: false, reason: 'unknown_field:extra' })
+  for (const field of ['id', 'class', 'urgency', 'from', 'summary', 'at'] as const) {
+    const { [field]: _omitted, ...missing } = raw('missing')
+    assert.deepEqual(parseHeader(missing, options), { ok: false, reason: `missing_field:${field}` }, field)
+  }
+
+  const item = (id: string, header: Record<string, unknown>, receivedAt = start): FileMailItem =>
+    ({ file: `/mail/abc/inbox/${id}.md`, receivedAt, result: parseHeader(header, options) })
+  const { ref: _peerRef, ...peer } = raw('peer')
+  const router = createRouter(options)
+  const decisions = router.ingest([
+    item('isolated', noRef),
+    item('peer', peer),
+    item('isolated-again', noRef, start + 1),
+    item('collision', { ...noRef, summary: 'changed' }, start + 2),
+  ], start + 2)
+  assert.deepEqual(decisions.map(({ kind, reason, header }) => [kind, reason, header && 'ref' in header]), [
+    ['accept', undefined, false], ['accept', undefined, false],
+    ['duplicate', undefined, false], ['reject', 'id_collision', false],
+  ])
+  const { digests } = router.due(start + 30 * min)
+  const packet = compilePacket({ tag: 'abc', lane: 'digest', now: start,
+    items: decisions.flatMap((decision) => decision.header ?? []) })
+  const blob = JSON.stringify({ decisions, digests, packet })
+  for (const field of Object.keys(tigeryardOptional)) assert.doesNotMatch(blob, new RegExp(`"${field}"`))
+  assert.ok(digests[0]?.items.every((entry) => !('ref' in entry)))
+})
+
+test('same-at p2 then p1 with the same from/ref/class in the same minute forwards p1 on warm and fresh routers', async (t) => {
+  const { root, put } = await inbox(t)
+  const shared = { from: 'sprite', ref: 'task=1', class: 'policy', at: iso(start) }
+  await put('a-routine.md', fenced(raw('routine-p2', { ...shared, urgency: 'p2', summary: 'routine' })), start)
+  const warm = createRouter(options)
+  warm.ingest(await readFileMail(root, 'abc'), start)
+  await put('b-escalate.md', fenced(raw('escalate-p1', { ...shared, urgency: 'p1', summary: 'escalate' })), start)
+  const files = await readFileMail(root, 'abc')
+  const now = start + 10 * min
+  for (const [label, router] of [['warm', warm], ['fresh', createRouter(options)]] as const) {
+    const decisions = router.ingest(files, now)
+    assert.equal(decisions.find((row) => row.id === 'escalate-p1')?.kind, 'revision', label)
+    const { p0, p1 } = router.due(now)
+    assert.deepEqual(p1.map(({ items }) => items.map(({ id }) => id)), [['escalate-p1']], label)
+    assert.deepEqual(p0, [], label)
+    const { digests } = router.due(start + 30 * min)
+    assert.deepEqual(digests.map(({ items }) => items.map((item) => 'id' in item ? [item.id, item.forwarded] : item)), [
+      [['escalate-p1', true]],
+    ], label)
+    assert.equal(router.ingest([
+      mail('stale', { ...shared, at: iso(start - min) }, now + 1),
+      mail('escalate-p1', { ...shared, urgency: 'p1', summary: 'escalate' }, now + 2),
+      mail('escalate-p1', { ...shared, urgency: 'p1', summary: 'other' }, now + 3),
+    ], now + 3).map(({ kind, reason }) => [kind, reason]).join(),
+    [['reject', 'older_at'], ['duplicate', undefined], ['reject', 'id_collision']].join(), label)
+  }
 })

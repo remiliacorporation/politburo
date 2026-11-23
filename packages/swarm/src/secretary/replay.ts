@@ -33,7 +33,7 @@ function recordedDay(seed: number) {
   const timestamp = (offset: number) => iso(start + offset * minute)
   const header = (offset: number, urgency: Urgency, mailClass: string, id = `m${mail.length}`): SwarmMessage =>
     ({ id, urgency, class: mailClass, from: 'synthetic', ref: id, summary: `fixture ${id}`, at: timestamp(offset) })
-  const encode = (fields: Partial<SwarmMessage>) => `fixture\n\`\`\`yaml\n${JSON.stringify(fields)}\n\`\`\`\n`
+  const encode = (fields: object) => `fixture\n\`\`\`yaml\n${JSON.stringify(fields)}\n\`\`\`\n`
   function inject(offset: number, content: string, outcome: Outcome | Rejection, id?: string, member?: SwarmMessage) {
     const name = `${String(mail.length).padStart(4, '0')}.md`
     mail.push({ file: { name, content, mtimeMs: start + offset * minute },
@@ -58,7 +58,7 @@ function recordedDay(seed: number) {
   }
   const candidate = header(6, 'p0', 'sec.log')
   reject(6, encode({ ...candidate, class: 'not-a-class' }), 'bad_class')
-  reject(6, encode({ ...candidate, ref: undefined }), 'missing_field:ref')
+  reject(6, encode({ ...candidate, from: undefined }), 'missing_field:from')
   reject(6, encode({ ...candidate, expires: timestamp(7) }), 'expires_on_p0p1')
   reject(6, 'x'.repeat(65_537), 'oversize')
   reject(6, 'garbage', 'no_header')
@@ -66,6 +66,15 @@ function recordedDay(seed: number) {
   accept(7, { ...header(7, 'p0', 'sec.log'), body: bodyCanary, summary: `fixture ${credentialCanary}` })
   accept(7, header(7, 'p0', 'sec.log'))
   accept(8, header(8, 'p1', 'spawner.decide'))
+  const shared = { from: 'synthetic', ref: 'same-at', class: 'policy' as const, at: timestamp(9) }
+  accept(9, { ...header(9, 'p2', 'policy', 'same-at-p2'), ...shared }, false)
+  accept(9, { ...header(9, 'p1', 'policy', 'same-at-p1'), ...shared, summary: 'escalate' })
+  inject(10, encode({
+    ...header(10, 'p2', 'policy', 'annotated'),
+    needs: 'context', reply_to: 'parent', thread: 'thread-1', status: 'open',
+    review_by: 'core', default_if_unanswered: 'hold', answered_at: timestamp(10),
+  }), 'digest', 'annotated', header(10, 'p2', 'policy', 'annotated'))
+  accept(11, { ...header(11, 'p2', 'policy', 'isolated'), ref: undefined })
   accept(29, header(29, 'p2', 'policy'))
   accept(30, header(30, 'p2', 'policy'))
   for (let slot = 0; slot < 285; slot++) {

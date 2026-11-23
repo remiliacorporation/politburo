@@ -21,7 +21,7 @@ export function compilePacket({ tag, lane, items, now, counts, act_on, missing =
     totals[urgency]++
     if (mailClass !== 'sec.log' || urgency === 'p0') {
       headers.push({ id: bounded(id), class: bounded(mailClass), urgency, from: bounded(from),
-        ref: bounded(ref), summary: bounded(summary), at: bounded(at) })
+        ...(ref !== undefined && { ref: bounded(ref) }), summary: bounded(summary), at: bounded(at) })
     }
   }
   // Inputs are in receipt order; stable sort keeps the oldest at equal urgency.

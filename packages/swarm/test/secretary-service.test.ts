@@ -77,11 +77,11 @@ test('a full tick leaves mail unchanged and writes valid heartbeat JSON outside 
 test('invalid and unparseable files are logged with reasons, never forwarded', async (t) => {
   const { opts, inbox, put, records } = await mailbox(t)
   await writeFile(join(inbox, 'no-header.md'), 'No fenced header')
-  await put('missing-ref', { ref: undefined, urgency: 'p0' })
+  await put('missing-from', { from: undefined, urgency: 'p0' })
   await runShadow(opts, start + 30 * minute)
   assert.deepEqual((await records()).filter((r) => r.kind !== 'ingest').map((r) => [r.kind,
     'file' in r && basename(r.file), 'reason' in r && r.reason]).sort(), [
-    ['reject', 'missing-ref.md', 'missing_field:ref'], ['reject', 'no-header.md', 'no_header'],
+    ['reject', 'missing-from.md', 'missing_field:from'], ['reject', 'no-header.md', 'no_header'],
   ])
 })
 
@@ -421,7 +421,7 @@ test('oversized p0 fields are marked as truncated instead of dropping the alert'
   assert.equal(packet.items.length, 1)
   assert.equal(packet.omitted, 0)
   assert.ok(JSON.stringify(packet).length <= 12_800)
-  for (const field of ['id', 'from', 'ref', 'summary'] as const) assert.match(packet.items[0]![field], /^x{199}…$/)
+  for (const field of ['id', 'from', 'ref', 'summary'] as const) assert.match(packet.items[0]![field]!, /^x{199}…$/)
   const mixed = compilePacket({ tag, lane: 'p1_batch', now: start, missing: ['x'.repeat(12_000)], items: [
     ...items, header('also urgent', { urgency: 'p0', ref: large }),
   ] })

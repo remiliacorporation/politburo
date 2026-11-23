@@ -5,7 +5,7 @@ export type SwarmMessage = {
   class: string
   urgency: Urgency
   from: string
-  ref: string
+  ref?: string
   summary: string
   at: string
   expires?: string
@@ -16,8 +16,9 @@ export type SwarmMessage = {
 
 export type HeaderResult = { ok: true; message: SwarmMessage } | { ok: false; reason: string }
 
-const required = ['id', 'class', 'urgency', 'from', 'ref', 'summary', 'at']
-const fields = [...required, 'expires', 'to', 'dispatch', 'body']
+const required = ['id', 'class', 'urgency', 'from', 'summary', 'at']
+const ignored = ['needs', 'reply_to', 'thread', 'status', 'review_by', 'default_if_unanswered', 'answered_at']
+const fields = [...required, 'ref', 'expires', 'to', 'dispatch', 'body', ...ignored]
 
 function isMapping(raw: unknown): raw is Record<string, unknown> {
   if (raw === null || typeof raw !== 'object') return false
@@ -63,14 +64,22 @@ export function parseHeader(raw: unknown, opts: { classes: string[] }): HeaderRe
   if (typeof mailClass !== 'string' || !opts.classes.includes(mailClass)) return reject('bad_class')
   if (urgency !== 'p0' && urgency !== 'p1' && urgency !== 'p2' && urgency !== 'p3') return reject('bad_urgency')
   if (typeof from !== 'string' || !from) return reject('bad_from')
-  const ref = canonicalRef(raw.ref)
-  if (ref === undefined) return reject('bad_ref')
   if (typeof summary !== 'string') return reject('bad_summary')
   if ([...summary].length > 120) return reject('summary_too_long')
   const at = timestamp(raw.at)
   if (at === undefined) return reject('bad_timestamp:at')
 
-  const message: SwarmMessage = { id, class: mailClass, urgency, from, ref, summary, at }
+  const message: SwarmMessage = { id, class: mailClass, urgency, from, summary, at }
+  if (Object.hasOwn(raw, 'ref')) {
+    const ref = canonicalRef(raw.ref)
+    if (ref === undefined) return reject('bad_ref')
+    message.ref = ref
+  }
+  for (const field of ignored) {
+    if (!Object.hasOwn(raw, field)) continue
+    const value = raw[field]
+    if (typeof value !== 'string' || !value || [...value].length > 200) return reject(`bad_${field}`)
+  }
   if (Object.hasOwn(raw, 'expires')) {
     if (urgency === 'p0' || urgency === 'p1') return reject('expires_on_p0p1')
     const expires = timestamp(raw.expires)

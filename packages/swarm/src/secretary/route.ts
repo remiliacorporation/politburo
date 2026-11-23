@@ -63,13 +63,14 @@ function key(...parts: unknown[]): string {
 
 function safeHeader({ id, class: mailClass, urgency, from, ref, summary, at }: SwarmMessage): MailHeader {
   const safeId = redact(id) === id ? id : `[redacted:${createHash('sha256').update(id).digest('hex').slice(0, 8)}]`
-  return { id: safeId, class: redact(mailClass), urgency, from: redact(from), ref: redact(ref), summary: redact(summary), at }
+  return { id: safeId, class: redact(mailClass), urgency, from: redact(from),
+    ...(ref !== undefined && { ref: redact(ref) }), summary: redact(summary), at }
 }
 
 // Dedupe uses the original canonical header, even when its persisted display fields collide.
 export type PreparedMail = FileMailItem & {
   fileKey: string
-  identity?: { id: string; tuple: string; payload: string; redactedEvidence: boolean }
+  identity?: { id: string; tuple?: string; payload: string; redactedEvidence: boolean }
 }
 
 export function prepareMail({ file, receivedAt, result }: FileMailItem): PreparedMail {
@@ -78,8 +79,9 @@ export function prepareMail({ file, receivedAt, result }: FileMailItem): Prepare
   const message = result.message
   const header = safeHeader(message)
   return { ...item, result: { ok: true, message: { ...header, ...(message.expires && { expires: message.expires }) } },
-    identity: { id: key(message.id), tuple: key(message.from, message.ref, message.class), payload: key(message),
-      redactedEvidence: header.id !== message.id || header.ref !== message.ref } }
+    identity: { id: key(message.id), payload: key(message),
+      redactedEvidence: header.id !== message.id || header.ref !== message.ref,
+      ...(message.ref !== undefined && { tuple: key(message.from, message.ref, message.class) }) } }
 }
 
 function digest(batchKey: string, repo: string, start: number, end: number, entries: Entry[]): Digest {
@@ -149,13 +151,12 @@ export function createRouter(opts: RouterOptions, repo?: string) {
     const seen = ids.get(id)
     if (seen !== undefined) return seen === fingerprint! ? record('duplicate') : record('reject', 'id_collision')
     ids.set(id, fingerprint!)
-    const tuple = prepared?.identity?.tuple ?? key(message.from, message.ref, message.class)
-    const previous = latest.get(tuple)
+    const tuple = prepared?.identity ? prepared.identity.tuple
+      : message.ref !== undefined ? key(message.from, message.ref, message.class) : undefined
+    const previous = tuple !== undefined ? latest.get(tuple) : undefined
     const order = previous ? Date.parse(message.at) - Date.parse(previous.header.at) : 1
-    if (message.urgency !== 'p0') {
-      if (order < 0) return record('reject', 'older_at')
-      if (order === 0) return record('reject', 'conflict_same_at')
-    }
+    const newer = order > 0 || (order === 0 && message.urgency !== 'p0')
+    if (message.urgency !== 'p0' && !newer) return record('reject', 'older_at')
     const decision = record(previous ? 'revision' : 'accept')
     const receiptStart = Math.floor(receivedAt / digestMs) * digestMs
     const receiptWindow = key('digest', repo ?? fileMailTag(file), receiptStart, receiptStart + digestMs)
@@ -169,14 +170,14 @@ export function createRouter(opts: RouterOptions, repo?: string) {
       needsAction: message.class.startsWith('spawner.') || message.class === 'core.escalate',
     }
     if (entry.expires <= now) return expire(entry)
-    if (order > 0) {
+    if (newer) {
       // A valid p0 is never held back, even by a revision before the next tick.
       if (previous && previous.header.urgency !== 'p0' && !previous.forwarded) {
         previous.forwardPending = false
         previous.digestPending = false
         prune(previous)
       }
-      latest.set(tuple, entry)
+      if (tuple !== undefined) latest.set(tuple, entry)
     }
     pending.add(entry)
     return decision

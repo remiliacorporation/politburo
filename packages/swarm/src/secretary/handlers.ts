@@ -26,6 +26,7 @@ const verdict = (action: Verdict['action'], reason: string, missing: string[] = 
 const transient = new Set(['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'])
 
 export function handlePush(item: Pick<MailHeader, 'ref' | 'class'>, tag: string, jobs?: JobSource): Verdict {
+  if (item.ref === undefined) return verdict('hold', 'hold_missing_job', ['job'])
   const job = jobs?.job(tag, item.ref)
   if (!job || job === 'unknown' || [job.repo, job.ref, job.expectedBase, job.artifactDigest, job.check]
     .some((value) => !value || value === 'unknown')) {
@@ -45,6 +46,7 @@ export function handlePush(item: Pick<MailHeader, 'ref' | 'class'>, tag: string,
 const retireChecks = ['headOnOrigin', 'cleanWorktree', 'noRunningSprite', 'noLiveClaim', 'approvedCompletion'] as const
 
 export function handleRetire(item: Pick<MailHeader, 'ref'>, tag: string, evidence?: RetireEvidence): Verdict {
+  if (item.ref === undefined) return verdict('hold', 'unknown', ['mob', 'sprites'])
   const snapshot = evidence?.inspect(tag, item.ref) ?? 'unknown'
   if (snapshot === 'unknown') return verdict('hold', 'unknown', ['mob', 'sprites'])
   const missing: string[] = []
@@ -67,6 +69,7 @@ export function handleRetire(item: Pick<MailHeader, 'ref'>, tag: string, evidenc
 }
 
 export function handleRolloutAck(item: Pick<MailHeader, 'ref'>, tag: string, ledger?: RolloutLedger): Verdict {
+  if (item.ref === undefined) return verdict('hold', 'unknown', ['rollout_validation'])
   const validated = ledger?.validated(tag, item.ref) ?? 'unknown'
   if (validated === 'unknown') return verdict('hold', 'unknown', ['rollout_validation'])
   return validated ? verdict('ack', 'version_validated') : verdict('hold', 'version_not_validated')
