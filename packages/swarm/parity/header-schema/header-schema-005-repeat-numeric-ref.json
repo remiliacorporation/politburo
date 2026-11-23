@@ -1,0 +1,105 @@
+{
+  "case_id": "header-schema-005-repeat-numeric-ref",
+  "description": "Replay the same integral, fractional, and boolean reference values twice.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "boolean.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"pr\": true\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "fractional.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"pr\": 42.5\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "integral.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"pr\": 42.0\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "integral.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.ref.pr: type"
+          ],
+          "path": "fractional.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.ref.pr: type"
+          ],
+          "path": "boolean.json",
+          "phase": "schema",
+          "schema": "header"
+        }
+      ],
+      [
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "integral.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.ref.pr: type"
+          ],
+          "path": "fractional.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.ref.pr: type"
+          ],
+          "path": "boolean.json",
+          "phase": "schema",
+          "schema": "header"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "integral.json",
+        "schema": "header"
+      },
+      {
+        "path": "fractional.json",
+        "schema": "header"
+      },
+      {
+        "path": "boolean.json",
+        "schema": "header"
+      }
+    ],
+    "repeat": 2
+  },
+  "matrix_row": "M04",
+  "notes": "Each pass reparses the same bytes and uses the same in-memory schema.",
+  "setup": {
+    "files": {
+      "boolean.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"pr\": true\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "fractional.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"pr\": 42.5\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "integral.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\n    \"pr\": 42.0\n  },\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
