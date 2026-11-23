@@ -1,0 +1,274 @@
+{
+  "case_id": "routing-digest-001-priority-timeline",
+  "description": "Route a mixed inbox and scan again as a p1 arrives.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/example/digest.yaml": "batch: \"example-2026-11-20T21:15Z\"\nrepo: \"example\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:15Z\"}\ncounts: {\"p0\": 2, \"p1\": 1, \"p2\": 2, \"p3\": 1}\nact_on: [ex-0005, ex-0012, ex-0019]\nitems:\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0005.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"urgency\": \"p0\"}\n  - {\"at\": \"2026-11-20T21:15Z\", \"body\": \"ex-inbox/ex-0012.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"urgency\": \"p1\"}\n  - {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"urgency\": \"p2\"}\n  - {\"at\": \"2026-11-20T21:14Z\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"summary\": \"Example spawner.decide at p3\", \"urgency\": \"p3\"}\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0001.yaml\", \"class\": \"sec.push\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0001\", \"ref\": {\"bead\": \"example#one\", \"check\": \"queued # ok\", \"pr\": 42}, \"summary\": \"It's queued # for example\", \"to\": \"example\", \"urgency\": \"p0\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0005.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"example\", \"urgency\": \"p0\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0015.yaml\", \"class\": \"sec.push\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0015\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example sec.push at p2\", \"to\": \"example\", \"urgency\": \"p2\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"example\", \"urgency\": \"p2\"}\n- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0027.yaml\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.decide at p3\", \"to\": \"example\", \"urgency\": \"p3\"}\n- {\"at\": \"2026-11-20T21:15Z\", \"body\": \"ex-inbox/ex-0012.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"example\", \"urgency\": \"p1\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0001.yaml\", \"class\": \"sec.push\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0001\", \"ref\": {\"bead\": \"example#one\", \"check\": \"queued # ok\", \"pr\": 42}, \"summary\": \"It's queued # for example\", \"to\": \"example\", \"urgency\": \"p0\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0005.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0005\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p0\", \"to\": \"example\", \"urgency\": \"p0\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0015.yaml\", \"class\": \"sec.push\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0015\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example sec.push at p2\", \"to\": \"example\", \"urgency\": \"p2\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"example\", \"urgency\": \"p2\"}",
+      "- {\"at\": \"2026-11-20T21:14Z\", \"body\": \"ex-inbox/ex-0027.yaml\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.decide at p3\", \"to\": \"example\", \"urgency\": \"p3\"}",
+      "- {\"at\": \"2026-11-20T21:15Z\", \"body\": \"ex-inbox/ex-0012.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"to\": \"example\", \"urgency\": \"p1\"}"
+    ],
+    "stderr": "",
+    "stdout": "FORWARD NOW (p0, one at a time)\nex-0005 p0 spawner.dispatch ex 120-BEE: Example spawner.dispatch at p0\nALERT ex-0001 p0 sec.push ex 120-BEE: It's queued # for example\n\nSECRETARY QUEUE\nnow ex-0001 p0 sec.push ex 120-BEE: It's queued # for example\nqueue ex-0015 p2 sec.push ex 120-BEE: Example sec.push at p2\n\ndigest: <WORK>/mail/example/digest.yaml counts p0=2 p1=0 p2=2 p3=1 new=5 invalid=0\nFORWARD BATCH (p1, within 10 minutes)\nex-0012 p1 spawner.dispatch ex 120-BEE: Example spawner.dispatch at p1\n\ndigest: <WORK>/mail/example/digest.yaml counts p0=2 p1=1 p2=2 p3=1 new=1 invalid=0\ndigest: <WORK>/mail/example/digest.yaml counts p0=2 p1=1 p2=2 p3=1 new=0 invalid=0\n",
+    "timeline": [
+      {
+        "at": "2026-11-20T21:14:00Z",
+        "digest": {
+          "act_on": [
+            "ex-0005",
+            "ex-0019"
+          ],
+          "batch": "example-2026-11-20T21:14Z",
+          "counts": {
+            "p0": 2,
+            "p1": 0,
+            "p2": 2,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-inbox/ex-0005.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0005",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p0",
+              "urgency": "p0"
+            },
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-inbox/ex-0019.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0019",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p2",
+              "urgency": "p2"
+            },
+            {
+              "at": "2026-11-20T21:14Z",
+              "class": "spawner.decide",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "example",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:14Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 5,
+        "stderr": "",
+        "stdout": "FORWARD NOW (p0, one at a time)\nex-0005 p0 spawner.dispatch ex 120-BEE: Example spawner.dispatch at p0\nALERT ex-0001 p0 sec.push ex 120-BEE: It's queued # for example\n\nSECRETARY QUEUE\nnow ex-0001 p0 sec.push ex 120-BEE: It's queued # for example\nqueue ex-0015 p2 sec.push ex 120-BEE: Example sec.push at p2\n\ndigest: <WORK>/mail/example/digest.yaml counts p0=2 p1=0 p2=2 p3=1 new=5 invalid=0\n"
+      },
+      {
+        "at": "2026-11-20T21:15:00Z",
+        "digest": {
+          "act_on": [
+            "ex-0005",
+            "ex-0012",
+            "ex-0019"
+          ],
+          "batch": "example-2026-11-20T21:15Z",
+          "counts": {
+            "p0": 2,
+            "p1": 1,
+            "p2": 2,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-inbox/ex-0005.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0005",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p0",
+              "urgency": "p0"
+            },
+            {
+              "at": "2026-11-20T21:15Z",
+              "body": "ex-inbox/ex-0012.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0012",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p1",
+              "urgency": "p1"
+            },
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-inbox/ex-0019.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0019",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p2",
+              "urgency": "p2"
+            },
+            {
+              "at": "2026-11-20T21:14Z",
+              "class": "spawner.decide",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "example",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:15Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 6,
+        "stderr": "",
+        "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0012 p1 spawner.dispatch ex 120-BEE: Example spawner.dispatch at p1\n\ndigest: <WORK>/mail/example/digest.yaml counts p0=2 p1=1 p2=2 p3=1 new=1 invalid=0\n"
+      },
+      {
+        "at": "2026-11-20T21:24:00Z",
+        "digest": {
+          "act_on": [
+            "ex-0005",
+            "ex-0012",
+            "ex-0019"
+          ],
+          "batch": "example-2026-11-20T21:15Z",
+          "counts": {
+            "p0": 2,
+            "p1": 1,
+            "p2": 2,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-inbox/ex-0005.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0005",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p0",
+              "urgency": "p0"
+            },
+            {
+              "at": "2026-11-20T21:15Z",
+              "body": "ex-inbox/ex-0012.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0012",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p1",
+              "urgency": "p1"
+            },
+            {
+              "at": "2026-11-20T21:14Z",
+              "body": "ex-inbox/ex-0019.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0019",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p2",
+              "urgency": "p2"
+            },
+            {
+              "at": "2026-11-20T21:14Z",
+              "class": "spawner.decide",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "example",
+          "window": {
+            "from": "2026-11-20T21:14Z",
+            "to": "2026-11-20T21:15Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 6,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=2 p1=1 p2=2 p3=1 new=0 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/example/digest.yaml",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "after_seconds": 0
+      },
+      {
+        "add_headers": {
+          "ex-0012.header.json": "{\"at\": \"2026-11-20T21:15Z\", \"body\": \"ex-inbox/ex-0012.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p1\", \"urgency\": \"p1\"}\n"
+        },
+        "after_seconds": 60
+      },
+      {
+        "after_seconds": 600
+      }
+    ],
+    "tag": "example"
+  },
+  "matrix_row": "M06",
+  "notes": "Scan at arrival for p0, on the next poll for new p1, and at +10 minutes.",
+  "setup": {
+    "files": {
+      "mail/example/ex-0001.header.yaml": "# Example header in its wire fence\n```\nid: ex-0001 # assigned by example\nclass: sec.push\nurgency: p0\nfrom: \"ex 120-BEE\" # example sender\n\nref: {pr: 42, bead: 'example#one', check: \"queued # ok\"} # example refs\nsummary: 'It''s queued # for example' # example summary\nbody: ex-inbox/ex-0001.yaml\nat: 2026-11-20T21:14Z\n```\n",
+      "mail/example/ex-0005.header.json": "{\n  \"id\": \"ex-0005\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p0\",\n  \"from\": \"ex 120-BEE\",\n  \"summary\": \"Example spawner.dispatch at p0\",\n  \"ref\": {\n    \"pr\": 42,\n    \"bead\": \"example-01\"\n  },\n  \"body\": \"ex-inbox/ex-0005.yaml\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/example/ex-0015.header.json": "{\n  \"id\": \"ex-0015\",\n  \"class\": \"sec.push\",\n  \"urgency\": \"p2\",\n  \"from\": \"ex 120-BEE\",\n  \"summary\": \"Example sec.push at p2\",\n  \"ref\": {\n    \"pr\": 42,\n    \"bead\": \"example-01\"\n  },\n  \"body\": \"ex-inbox/ex-0015.yaml\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/example/ex-0019.header.json": "{\n  \"id\": \"ex-0019\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p2\",\n  \"from\": \"ex 120-BEE\",\n  \"summary\": \"Example spawner.dispatch at p2\",\n  \"ref\": {\n    \"pr\": 42,\n    \"bead\": \"example-01\"\n  },\n  \"body\": \"ex-inbox/ex-0019.yaml\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/example/ex-0027.header.json": "{\n  \"id\": \"ex-0027\",\n  \"class\": \"spawner.decide\",\n  \"urgency\": \"p3\",\n  \"from\": \"ex 120-BEE\",\n  \"summary\": \"Example spawner.decide at p3\",\n  \"ref\": {\n    \"pr\": 42,\n    \"bead\": \"example-01\"\n  },\n  \"body\": \"ex-inbox/ex-0027.yaml\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n"
+    },
+    "now": "2026-11-20T21:14:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
