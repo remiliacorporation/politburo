@@ -1010,9 +1010,21 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     return { message: await read(message!) }
   }
 
-  async function checkClaim(caller: Caller, target: { id: string } | { channel: string }, signal: AbortSignal) {
+  let claims = Promise.resolve()
+  function admittingClaim<T>(caller: Caller, target: Protocol['claimTask']['input'] | Protocol['claimReadyTask']['input'], signal: AbortSignal, claim: () => Promise<T>): Promise<T> {
     const rule = options.claimRule
-    if (!rule) return
+    if (!rule || (target.binding && backend.supportsTaskAuthority === false)) return claim()
+    const next = claims.then(async () => {
+      signal.throwIfAborted()
+      await checkClaim(rule, caller, target, signal)
+      signal.throwIfAborted()
+      return claim()
+    })
+    claims = next.then(() => undefined, () => undefined)
+    return next
+  }
+
+  async function checkClaim(rule: NonNullable<typeof options.claimRule>, caller: Caller, target: Protocol['claimTask']['input'] | Protocol['claimReadyTask']['input'], signal: AbortSignal) {
     const remote = backend.keeps ? null : await backend.me(caller, {}, signal)
     const access = remote ? compileAccess(remote.can).narrow(accessOf(caller) ?? FULL_ACCESS) : accessOf(caller)
     const task = 'id' in target ? target.id : null
@@ -1026,7 +1038,11 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         (path === channel.slice(0, -1) || path.startsWith(channel)) && permissions.includes('label')))
         throw forbidden(`this token can't label in ${channel}`)
     } else if (access) authorize(access, 'label', channel)
-    const actor = remote?.actor ?? (await whoIs(caller, signal)).actor.id
+    if (target.binding && !remote && !('identity' in caller)) throw forbidden('a bound claim needs a verified claimant')
+    const who = remote ?? await whoIs(caller, signal)
+    const actor = typeof who.actor === 'string' ? who.actor : who.actor.id
+    if (target.binding && (target.binding.owner.principal !== who.principal || target.binding.owner.actor !== actor))
+      throw forbidden('the binding owner must be the verified claimant')
     signal.throwIfAborted()
     let result
     try {
@@ -1059,13 +1075,11 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       }
       case 'claimTask': {
         const body = input as Protocol['claimTask']['input']
-        await checkClaim(caller, body, signal)
-        return backend.claimTask(caller, body, signal)
+        return admittingClaim(caller, body, signal, () => backend.claimTask(caller, body, signal))
       }
       case 'claimReadyTask': {
         const body = input as Protocol['claimReadyTask']['input']
-        await checkClaim(caller, body, signal)
-        return backend.claimReadyTask(caller, body, signal)
+        return admittingClaim(caller, body, signal, () => backend.claimReadyTask(caller, body, signal))
       }
       case 'createTask': {
         const body = input as Protocol['createTask']['input']

@@ -16,6 +16,7 @@ import { indexOf, ref, toMessageFilter, view, whoIs } from './feed.ts'
 import type { MessageFilter, ThreadSummary } from '../store/types.ts'
 import { appendFrom, authorizeMessage, movedOn, ownedBy, seenFor, untilApplied, type Along, type AlongEach, type Events, type Identity, type WriteContext } from './writes.ts'
 import { workOpen } from './control.ts'
+import { expiredClaim, expiry, holdEndsLease, lapsed, stale } from './task-lease.ts'
 
 /** The shortest and the longest lease this board gives, in seconds. */
 export const LEASE_MIN_S = 30
@@ -99,16 +100,8 @@ const hashes = (token: string, hash: string) => timingSafeEqual(Buffer.from(hash
 /** A lease asked for in seconds, as this board gives it, in milliseconds. */
 const leaseOf = (seconds: number | undefined) => Math.min(seconds ?? LEASE_DEFAULT_S, LEASE_CAP_S) * 1000
 
-/** Whether a claim was made in an earlier pause epoch than the board's: a pause fenced it. */
-const stale = (task: Task, pauseEpoch: number) => task.claim !== null && (task.claim.pauseEpoch ?? 0) !== pauseEpoch
-
 /** A pause fences outstanding claims, and resume does not revive them. */
 export const claimFenced = (task: Task, status: WorkState) => status.paused || stale(task, status.pauseEpoch)
-
-/** Whether a task's claim has run out its lease or was fenced: it's claimable at once, whatever its label still says. */
-const holdEndsLease = (claim: NonNullable<Task['claim']>) => claim.until === claim.holdUntil
-const expiryReason = (task: Task, at: number) => holdEndsLease(task.claim!) && Date.parse(task.claim!.until) <= at ? { reason: 'hold' as const } : {}
-const lapsed = (task: Task, at: number, pauseEpoch: number) => task.state === 'claimed' && (stale(task, pauseEpoch) || Date.parse(task.claim!.until) <= at)
 
 /** A claim whose lease ran out or was fenced by pause no longer holds the task. */
 const stateNow = (task: Task, at: number, pauseEpoch: number): TaskState => (lapsed(task, at, pauseEpoch) ? 'ready' : task.state)
@@ -185,7 +178,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (until === at) read.early = task.claim!.until
         return { position, events: [] }
       }
-      return { position, events: [{ type: 'task.expired', payload: { id, thread: root.thread, epoch, ...expiryReason(task, now) } }] }
+      return { position, events: [expiry(root, task, now)] }
     })
     await untilApplied(ctx, rows)
     if (read.early !== null) await arm(id, epoch, read.early, `again-${context.event.index}`)
@@ -383,7 +376,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     const metadata = { ...(binding === undefined ? {} : { binding }), ...(hold === undefined ? {} : { holdUntil: new Date(hardEnd).toISOString() }) }
     return {
       events: [
-        ...(task?.state === 'claimed' ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch, ...expiryReason(task, now) } }] : []),
+        ...(task?.state === 'claimed' ? [expiry(root, task, now)] : []),
         { type: 'task.claimed', payload: { ...about, epoch, ...(pauseEpoch === 0 ? {} : { pauseEpoch }), until, token: hashOf(token), by: identity.author, ...metadata } },
       ],
       claim: { epoch, token, until, pauseEpoch, ...metadata },
@@ -889,15 +882,17 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       if (!input.proof) owns(identity, task)
       const { proof } = input
       const root = await changeTask(identity, id, async (found, position) => {
+        let expired: Events = []
         if (proof) await fenced(found, identity, proof, position)
         else {
           if (found.task.parked) throw parked(id)
-          const state = stateNow(found.task, Date.now(), await epochAt(position))
+          expired = expiredClaim(found, Date.now(), await epochAt(position))
+          const state = expired.length ? 'ready' : found.task.state
           if (state === 'claimed') throw conflict('task_claimed', `#${id} is claimed until ${found.task.claim!.until}: only its claim holds it`)
           if (state === 'blocked') throw conflict('task_blocked', `#${id} is held already: ${found.task.blocked!.reason}`)
           if (finished(found.task)) throw conflict('task_finished', `#${id} is ${found.task.state}`)
         }
-        return [{ type: 'task.blocked', payload: { id, thread: found.thread, kind: input.kind ?? null, reason: input.reason, by: identity.author } }]
+        return [...expired, { type: 'task.blocked', payload: { id, thread: found.thread, kind: input.kind ?? null, reason: input.reason, by: identity.author } }]
       })
       return { task: await shown(identity, root) }
     },
@@ -909,10 +904,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const requestId = randomUUID()
       const root = await changeTask(identity, id, async (found, position) => {
         const { task } = found
+        let expired: Events = []
         if (claim) await fenced(found, identity, claim, position)
         else {
           owns(identity, found)
-          if (stateNow(task, Date.now(), await epochAt(position)) === 'claimed') throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: only its claim holds it`)
+          expired = expiredClaim(found, Date.now(), await epochAt(position))
+          if (task.state === 'claimed' && !expired.length) throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: only its claim holds it`)
         }
         // A claimant may open a hold with its proof, but cannot delegate a failure it doesn't own.
         if (claim && draft.options.some(({ next }) => next === 'fail')) owns(identity, found)
@@ -926,7 +923,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (attentionExpired(draft, Date.now())) throw badRequest('expiresAt must be in the future')
         // The evidence read can take time; don't spend a claim that expired while checking it.
         if (claim) await fenced(found, identity, claim, position)
-        return [{ type: 'task.attention_requested', payload: { id, thread: found.thread, by: identity.author, requestId, epoch: task.epoch, draft, ...(replaces !== undefined ? { replaces } : {}) } }]
+        return [...expired, { type: 'task.attention_requested', payload: { id, thread: found.thread, by: identity.author, requestId, epoch: task.epoch, draft, ...(replaces !== undefined ? { replaces } : {}) } }]
       })
       return { task: await shown(identity, root), attention: attentionView(root.task!.attention!) }
     },
@@ -990,7 +987,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     /** Places or lifts an operator's hold without reviving any lease. */
     async park(identity: Identity, id: number, reason: string, action: 'park' | 'unpark'): Promise<{ task: MessageView }> {
       await taskOf(identity.principal.access, id)
-      const root = await changeTask(identity, id, async ({ task, thread, channel }, position) => {
+      const root = await changeTask(identity, id, async (found, position) => {
+        const { task, thread, channel } = found
         if (identity.principal.kind !== 'person' || identity.actor.kind !== 'person' || identity.author.profile !== null)
           throw forbidden('only a verified person acting as themselves can park or unpark a task')
         authorize(identity.principal.access, 'manage', channel)
@@ -1001,7 +999,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           if (task.parked) return []
           if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'claimed')
             throw conflict('task_blocked', `#${id} is already blocked`)
-          return [{ type: 'task.parked', payload: { ...about, reason, by, previous: task.state } }]
+          const expired = expiredClaim(found, Date.now(), await epochAt(position))
+          return [...expired, { type: 'task.parked', payload: { ...about, reason, by, previous: expired.length ? 'ready' : task.state } }]
         }
         if (!task.parked) return []
         const ready = !task.blocked && task.needs.length > 0 && (await satisfied(task, position))
@@ -1063,14 +1062,14 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const { task } = found
         if (finished(task)) throw conflict('task_finished', `#${id} is ${task.state}`)
         // A claim whose lease ran out is over: its expiry goes first, in the same append.
-        const over = lapsed(task, Date.now(), await epochAt(position))
-        if (task.state === 'claimed' && !over) throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: what it needs changes once no one holds it`)
+        const expired = expiredClaim(found, Date.now(), await epochAt(position))
+        if (task.state === 'claimed' && !expired.length) throw conflict('task_claimed', `#${id} is claimed until ${task.claim!.until}: what it needs changes once no one holds it`)
         const needs = await needsAt(principal.access, refs, position, id)
         if (needs.ids.length === task.needs.length && needs.ids.every((need) => task.needs.includes(need))) return []
         await acyclic(principal.access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
         const about = { id, thread: found.thread }
         return [
-          ...(over ? [{ type: 'task.expired' as const, payload: { ...about, epoch: task.epoch, ...expiryReason(task, Date.now()) } }] : []),
+          ...expired,
           { type: 'task.needs_changed', payload: { ...about, needs: needs.ids, by: identity.author } },
           ...(needs.ids.length > 0 && needs.completed && task.state !== 'blocked' ? [{ type: 'task.ready' as const, payload: about }] : []),
         ]
@@ -1078,16 +1077,18 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       return { task: await shown(identity, root) }
     },
 
-    /** Changes an open task's priority without changing its claim, state, or labels. */
+    /** Changes an open task's priority without disturbing a live claim. */
     async priority(identity: Identity, id: number, priority: TaskPriority, proof?: Proof): Promise<{ task: MessageView }> {
       await taskOf(identity.principal.access, id)
       const root = await changeTask(identity, id, async (found, position) => {
         const { task } = found
+        let expired: Events = []
         if (proof) await fenced(found, identity, proof, position)
         else {
           owns(identity, found)
+          if (task.claim) expired = expiredClaim(found, Date.now(), await epochAt(position))
           // A current holder cannot bypass the claim's limit by omitting its proof.
-          if (task.claim?.actor === identity.actor.id && !lapsed(task, Date.now(), await epochAt(position)))
+          if (task.claim?.actor === identity.actor.id && !expired.length)
             throw conflict('task_claimed', `#${id} is held by your claim: change priority through it`)
         }
         if (finished(task)) throw conflict('task_finished', `#${id} is ${task.state}`)
@@ -1095,7 +1096,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (proof && priorityRank(priority) > priorityRank(previous))
           throw new HttpError(403, 'priority_raise_forbidden', 'a claim may lower priority, not raise it')
         if (priority === previous) return []
-        return [{ type: 'task.priority_changed', payload: { id, thread: found.thread, priority, ...(proof ? { epoch: proof.epoch } : {}), by: identity.author } }]
+        return [...expired, { type: 'task.priority_changed', payload: { id, thread: found.thread, priority, ...(proof ? { epoch: proof.epoch } : {}), by: identity.author } }]
       })
       return { task: await shown(identity, root) }
     },
@@ -1103,9 +1104,10 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     /** Cancels a task that hasn't completed, ending any claim. What waits for it keeps waiting. */
     async cancel(identity: Identity, id: number, reason: string): Promise<{ task: MessageView }> {
       owns(identity, await taskOf(identity.principal.access, id))
-      const root = await changeTask(identity, id, (found) => {
+      const root = await changeTask(identity, id, async (found, position) => {
         if (found.task.state === 'completed' || found.task.state === 'canceled') throw conflict('task_finished', `#${id} is ${found.task.state}`)
-        return [{ type: 'task.canceled', payload: { id, thread: found.thread, reason, by: identity.author } }]
+        const expired = found.task.claim ? expiredClaim(found, Date.now(), await epochAt(position)) : []
+        return [...expired, { type: 'task.canceled', payload: { id, thread: found.thread, reason, by: identity.author } }]
       })
       return { task: await shown(identity, root) }
     },

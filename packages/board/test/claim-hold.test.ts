@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import { http } from '../src/backend-http/index.ts'
 import { vercel } from '../src/backend-vercel/index.default.ts'
-import { BOARD_URL, board, localBoard, personToken } from './harness.ts'
+import { BOARD_URL, board, localBoard, personToken, testBoard } from './harness.ts'
 
 it('clamps a claim-next renewal to the original hard end', async ({ onTestFinished }) => {
   const team = localBoard()
@@ -27,6 +27,25 @@ it('expires on the board timer with reason hold at the hard end', async ({ onTes
   const { events } = await team.poll({ after: cursor, wait: 0 })
   expect(events.find((event) => event.type === 'task.expired')).toMatchObject({ payload: { id: task.id, reason: 'hold' } })
   await expect(claim.complete()).rejects.toMatchObject({ status: 409, code: 'claim_lost' })
+})
+
+it.each([
+  { hold: 1, reason: 'hold' },
+  { hold: 60, reason: undefined },
+])('records expiry before an owner blocks without a lease timer (hold $hold seconds)', async ({ hold, reason }) => {
+  const team = testBoard() // no scheduler, as when the lease timer is lost
+  const { task } = await team.tasks.create('work', 'an expired claim')
+  const claim = await team.tasks.claim(task.id, { lease: 30, hold })
+  const { cursor } = await team.poll({ wait: 0 })
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(claim.until) + 1)
+  try {
+    await team.tasks.block(task.id, 'ready for review')
+    const { events } = await team.poll({ after: cursor, wait: 0 })
+    expect(events.map((event) => event.type)).toEqual(['task.expired', 'task.blocked'])
+    expect(events[0]?.payload).toEqual({ id: task.id, thread: expect.any(String), epoch: claim.epoch, ...(reason ? { reason } : {}) })
+  } finally {
+    clock.mockRestore()
+  }
 })
 
 it('rejects a hold above 86400 on both claim routes', async ({ onTestFinished }) => {
@@ -56,6 +75,27 @@ it('does not send a hold to an older HTTP board that would ignore it', async ({ 
   await expect(remote.tasks.claim(task.id, { hold: 1 })).rejects.toMatchObject({ status: 501, code: 'no_claim_hold' })
   await expect(remote.tasks.claim({ channel: 'work', hold: 1 })).rejects.toMatchObject({ status: 501, code: 'no_claim_hold' })
   expect((await remote.thread(task.id)).message.task?.state).toBe('ready')
+})
+
+it('releases a claim when an older HTTP instance ignores the advertised hold', async ({ onTestFinished }) => {
+  const team = localBoard()
+  onTestFinished(() => team.close())
+  const token = await personToken('u_ada')
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init)
+    if (request.url.replace(/\/$/, '') === BOARD_URL) return Response.json({ version: '0.0.0', task_claim_hold: true })
+    request.headers.set('authorization', `Bearer ${token}`)
+    if (!request.url.endsWith('/claim')) return team.fetch(request)
+    const body = await request.json()
+    delete body.hold
+    return team.fetch(new Request(request.url, { method: request.method, headers: request.headers, body: JSON.stringify(body) }))
+  }
+  const remote = board({ backend: http(BOARD_URL, { fetch }) })
+  const { task } = await remote.tasks.create('work', 'served by mixed versions')
+  for (const attempt of [() => remote.tasks.claim(task.id, { hold: 1 }), () => remote.tasks.claim({ channel: 'work', hold: 1 })]) {
+    await expect(attempt()).rejects.toMatchObject({ status: 501, code: 'no_claim_hold', origin: 'handle' })
+    expect((await remote.thread(task.id)).message.task?.state).toBe('ready')
+  }
 })
 
 it('refuses a hold on Vercel rather than falling back to an ordinary claim', async () => {
