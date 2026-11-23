@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+PLACEHOLDER: subcommand and flags are not built yet; confirm against packages/swarm when it lands; do not install this file until then.
+ledger daemon. Runs as LEDGER_USER; reads ledger.env under CONFIG_ROOT.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL_PREFIX}}.ledger</string>
+  <key>UserName</key>
+  <string>{{LEDGER_USER}}</string>
+  <key>GroupName</key>
+  <string>{{SERVICE_GROUP}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{HOST_BIN}}/run-with-env.sh</string>
+    <string>{{CONFIG_ROOT}}/ledger.env</string>
+    <string>--</string>
+    <string>{{NODE}}</string>
+    <string>{{SWARM_CLI}}</string>
+    <string>ledger</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{DATA_ROOT}}/ledger</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ExitTimeOut</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>{{LOG_ROOT}}/ledger.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_ROOT}}/ledger.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{SERVICE_PATH}}</string>
+    <key>HOME</key>
+    <string>{{HOME_ROOT}}/ledger</string>
+  </dict>
+</dict>
+</plist>

@@ -98,7 +98,7 @@ export async function plan(tag: string, ctx: Context) {
 export async function apply(tag: string, ctx: Context) {
   const gate = await verifyGate(tag, ctx.gateFile, ctx.clock, ctx.gateMaxAgeDays)
   if (ctx.renameTo !== undefined && !newTag.test(ctx.renameTo)) throw new CutoverError('invalid_tag', 'invalid rename tag')
-  return withStateLock(ctx.stateDir, tag, () => applyLocked(tag, ctx, gate))
+  return withStateLock(ctx.stateDir, tag, ctx.ports.commandsLock, () => applyLocked(tag, ctx, gate))
 }
 
 async function applyLocked(tag: string, ctx: Context, gate: Gate) {
@@ -130,7 +130,7 @@ async function applyLocked(tag: string, ctx: Context, gate: Gate) {
 }
 
 export async function rollback(tag: string, ctx: Context) {
-  return withStateLock(ctx.stateDir, tag, () => rollbackLocked(tag, ctx))
+  return withStateLock(ctx.stateDir, tag, ctx.ports.commandsLock, () => rollbackLocked(tag, ctx))
 }
 
 async function rollbackLocked(tag: string, ctx: Context) {
@@ -144,6 +144,17 @@ async function rollbackLocked(tag: string, ctx: Context) {
   if (health !== 'stopped' && old !== 'running') await op.sync()
   if (stopNeeded) await op.stop(service)
   await op.sync('files_stale', `files are stale; fix the bridge, then re-run swarm cutover rollback ${tag} --execute with the same --commands and --state-dir`)
-  if (old !== 'running') await op.start(oldLoop)
+  if (old !== 'running') {
+    try { await op.start(oldLoop) } finally {
+      // Even a failed old-loop start can land, as can a prior service start.
+      try {
+        if (await op.status(service).catch(ignorePortFailure) !== 'stopped') await op.stop(service)
+      } catch {
+        // Leave the handoff pending and try to end the overlap from the other side.
+        await op.stop(oldLoop).catch(() => {})
+        throw new CutoverError('both_running_detected', 'could not confirm service stopped after starting the old loop')
+      }
+    }
+  }
   return op.report('rolled back', await op.finish(s, 'files', 'rolled_back'))
 }

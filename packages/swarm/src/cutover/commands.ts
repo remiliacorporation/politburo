@@ -1,15 +1,19 @@
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { CutoverError, type Ports, type ProcessPort } from './ports.ts'
 
 type Action = 'start' | 'stop' | 'status' | 'sync'
 type Commands = Partial<Record<'service' | 'oldLoop' | 'bridge', Partial<Record<Action, string[]>>>>
 
 export async function CommandPorts(tag: string, file?: string, signal?: AbortSignal): Promise<Ports> {
-  let config: Commands | undefined
+  let config: Commands | undefined, commandsLock: string | undefined
   const invalid = () => new CutoverError('commands_invalid', 'invalid or missing commands for tag')
   if (file !== undefined) {
-    try { config = JSON.parse(await readFile(file, 'utf8'))?.[tag] } catch { throw invalid() }
+    try {
+      const canonical = await realpath(file)
+      config = JSON.parse(await readFile(canonical, 'utf8'))?.[tag]
+      commandsLock = `${canonical}.${tag}.cutover.lock`
+    } catch { throw invalid() }
     for (const group of ['service', 'oldLoop', 'bridge'] as const) {
       const actions = group === 'bridge' ? ['sync', 'status'] as const : ['start', 'stop', 'status'] as const
       for (const action of actions) {
@@ -36,7 +40,7 @@ export async function CommandPorts(tag: string, file?: string, signal?: AbortSig
       return code === 0 ? 'running' : code === 1 ? 'stopped' : 'unknown'
     } }
   }
-  return { service: process('service'), oldLoop: process('oldLoop'), bridge: {
+  return { commandsLock, service: process('service'), oldLoop: process('oldLoop'), bridge: {
     async status(tag) { return { current: await invoke('bridge', 'status', tag) === 0 } },
     async sync(tag) { return { current: await invoke('bridge', 'sync', tag) === 0 } },
   } }

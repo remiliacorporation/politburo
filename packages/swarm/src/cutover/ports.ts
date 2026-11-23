@@ -8,7 +8,7 @@ export interface BridgePort {
   sync(tag: string): Promise<{ current: boolean; detail?: string }>
   status(tag: string): Promise<{ current: boolean; at?: string }>
 }
-export interface Ports { service: ProcessPort; oldLoop: ProcessPort; bridge: BridgePort }
+export interface Ports { service: ProcessPort; oldLoop: ProcessPort; bridge: BridgePort; commandsLock?: string }
 export interface Clock { now(): number }
 
 export class CutoverError extends Error {
