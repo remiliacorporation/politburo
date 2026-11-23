@@ -57,6 +57,10 @@ export function jsonlLedger(path: string): LedgerSink {
       try { fsyncSync(fd) }
       catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
       text = readFileSync(fd, 'utf8')
+      try {
+        const dirfd = openSync(dirname(path), 'r')
+        try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
+      } catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
     } finally { closeSync(fd) }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
