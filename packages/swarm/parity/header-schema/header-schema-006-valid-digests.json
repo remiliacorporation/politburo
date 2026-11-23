@@ -1,0 +1,60 @@
+{
+  "case_id": "header-schema-006-valid-digests",
+  "description": "Validate a populated digest and a digest with zero counts and empty arrays.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "populated.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 1, \"p2\": 1, \"p3\": 0}\nact_on: [ex-0002, ex-0001]\nitems:\n  - {\"id\": \"ex-0002\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-two\"}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14Z\"}\n  - {\"id\": \"ex-0001\", \"class\": \"spawner.decide\", \"urgency\": \"p2\", \"from\": \"ex 120-BEE\", \"to\": \"owner\", \"reply_to\": \"ex\", \"thread\": \"example.v2_01-owner\", \"needs\": \"owner\", \"status\": \"answered\", \"ref\": {\"report\": \"example-one\", \"count\": 2}, \"summary\": \"Example owner answer\", \"body\": \"bodies/ex-0001.txt\", \"at\": \"2026-11-20T21:14Z\", \"expires\": \"2026-11-20T21:30Z\", \"answered_at\": \"2026-11-20T21:15:00Z\"}\n",
+      "zero-counts.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 0}\nact_on: []\nitems: []\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "populated.yaml",
+          "phase": "schema",
+          "schema": "digest"
+        },
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "zero-counts.yaml",
+          "phase": "schema",
+          "schema": "digest"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "populated.yaml",
+        "schema": "digest"
+      },
+      {
+        "path": "zero-counts.yaml",
+        "schema": "digest"
+      }
+    ]
+  },
+  "matrix_row": "M04",
+  "notes": "Digest items allow the legacy owner fixture without its default; compare case 003.",
+  "setup": {
+    "files": {
+      "populated.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 1, \"p2\": 1, \"p3\": 0}\nact_on: [ex-0002, ex-0001]\nitems:\n  - {\"id\": \"ex-0002\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-two\"}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14Z\"}\n  - {\"id\": \"ex-0001\", \"class\": \"spawner.decide\", \"urgency\": \"p2\", \"from\": \"ex 120-BEE\", \"to\": \"owner\", \"reply_to\": \"ex\", \"thread\": \"example.v2_01-owner\", \"needs\": \"owner\", \"status\": \"answered\", \"ref\": {\"report\": \"example-one\", \"count\": 2}, \"summary\": \"Example owner answer\", \"body\": \"bodies/ex-0001.txt\", \"at\": \"2026-11-20T21:14Z\", \"expires\": \"2026-11-20T21:30Z\", \"answered_at\": \"2026-11-20T21:15:00Z\"}\n",
+      "zero-counts.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20T21:14Z\", \"to\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 0}\nact_on: []\nitems: []\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-digest.v1.json"
+    ]
+  }
+}

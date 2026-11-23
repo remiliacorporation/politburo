@@ -1,0 +1,89 @@
+{
+  "case_id": "header-schema-004-empty-header",
+  "description": "Distinguish an empty YAML header, empty JSON object, and empty JSON text.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "blank.json": "",
+      "blank.yaml": "",
+      "empty-object.json": "{}\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": false,
+          "errors": [
+            "$.id: required",
+            "$.class: required",
+            "$.urgency: required",
+            "$.from: required",
+            "$.summary: required",
+            "$.at: required"
+          ],
+          "path": "blank.yaml",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.id: required",
+            "$.class: required",
+            "$.urgency: required",
+            "$.from: required",
+            "$.summary: required",
+            "$.at: required"
+          ],
+          "path": "empty-object.json",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "Expecting value: line 1 column 1 (char 0)"
+          ],
+          "path": "blank.json",
+          "phase": "parse",
+          "schema": "header"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "blank.yaml",
+        "schema": "header"
+      },
+      {
+        "path": "empty-object.json",
+        "schema": "header"
+      },
+      {
+        "path": "blank.json",
+        "schema": "header"
+      }
+    ]
+  },
+  "matrix_row": "M04",
+  "notes": "Keep parser errors separate from missing-field schema errors.",
+  "setup": {
+    "files": {
+      "blank.json": "",
+      "blank.yaml": "",
+      "empty-object.json": "{}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
