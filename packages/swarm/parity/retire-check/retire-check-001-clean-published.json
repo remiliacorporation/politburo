@@ -1,0 +1,55 @@
+{
+  "case_id": "retire-check-001-clean-published",
+  "description": "Both requested branch heads are published and the worktree is clean.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "repo/ex.txt": "base\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "safe to retire example-mob\n"
+  },
+  "inputs": {
+    "argv": [
+      "--repo-dir",
+      "repo",
+      "--mob",
+      "example-mob",
+      "--dry-run",
+      "--worktree",
+      "repo",
+      "--branch",
+      "ex-main",
+      "--branch",
+      "ex-other"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M12",
+  "notes": "",
+  "setup": {
+    "files": {
+      "repo/ex.txt": "base\n"
+    },
+    "git": [
+      [
+        "branch",
+        "ex-other"
+      ],
+      [
+        "push",
+        "origin",
+        "ex-other"
+      ]
+    ],
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_retire.py",
+      "supervisor/sec_push.py"
+    ]
+  }
+}

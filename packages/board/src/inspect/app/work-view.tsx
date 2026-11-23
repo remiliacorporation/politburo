@@ -112,6 +112,7 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
   const [frozen, setFrozen] = useState(false)
   const order = useRef(new Map<string, number>())
   const list = useRef<HTMLDivElement>(null)
+  const layout = useRef<HTMLDivElement>(null)
   const focused = useRef<HTMLElement>(null)
   const hovered = useRef(false)
   const hoveredKey = useRef<string | undefined>(undefined)
@@ -122,11 +123,13 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
       : []
   }
   const selected = selectionInList()
+  const peekHasFocus = Boolean(pane.current?.contains(document.activeElement))
   // Hold the row being read even with peek open; only fall back to the keyboard
-  // selection when reading the list alone.
-  const anchor = rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean) ??
-    (frozen && peekId === null ? selection : null)
-  useHoldPosition(list, anchor, 'data-work-row')
+  // selection when reading the list alone. Skip the row when peek itself has focus.
+  const rowAnchor = peekHasFocus ? undefined : (rowKey(focused.current) ?? hoveredKey.current ?? selected.map(rowKey).find(Boolean) ??
+    (frozen && peekId === null ? selection : null))
+  useHoldPosition(list, rowAnchor, 'data-work-row')
+  useHoldPosition(layout, peekHasFocus ? 'peek' : undefined, 'data-work-row')
   const release = (target: EventTarget | null) => {
     if (hovered.current || target === field.current ||
         (target instanceof Node && (list.current?.contains(target) || pane.current?.contains(target)))) return
@@ -348,7 +351,7 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
         )}
         <p role="status" className={repoView && !records ? 'faint' : undefined}>{records ? 'swarm records: seeded fixtures (not live data)' : 'swarm records: none (add ?swarm=fixtures to preview seeded fixtures)'}</p>
         {/* Handle list shortcuts before the document-level type-to-focus listener. */}
-        <div className="work-layout" onKeyDown={(event) => onKey(event.nativeEvent, event.target instanceof Element ? event.target : null)}>
+        <div ref={layout} className="work-layout" onKeyDown={(event) => onKey(event.nativeEvent, event.target instanceof Element ? event.target : null)}>
           <div ref={list} tabIndex={-1} aria-label="Work board tasks" className="work-list"
             onFocus={(event) => {
               focused.current = event.target
@@ -413,7 +416,7 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
             </div>
           </div>
           {peekId !== null && (
-            <aside ref={pane} id="work-peek" className="work-peek" aria-label="Work peek" onBlur={(event) => release(event.relatedTarget)}>
+            <aside ref={pane} id="work-peek" className="work-peek" data-work-row="peek" aria-label="Work peek" onBlur={(event) => release(event.relatedTarget)}>
               {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p>
                 : peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} />
                 : <p role="status">no longer on the board</p>}
