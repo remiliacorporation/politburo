@@ -99,6 +99,10 @@ const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<n
   watch: () => import('./watch/cli.ts'),
   trackers: () => import('./trackers/cli.ts'),
   cutover: () => import('./cutover/cli.ts'),
+  mail: async () => {
+    const { run } = await import('./cutover/cli.ts')
+    return { run: (argv) => run(argv, 'mail') }
+  },
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
