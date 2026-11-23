@@ -154,3 +154,102 @@ it('/work holds a focused row at the same viewport offset during live regrouping
   expect(scroll.scrollTop).toBe(20 + blockHeight)
   expect(row.getBoundingClientRect().top).toBe(top - blockHeight)
 })
+
+it('/work holds a focused row at the same viewport offset when the page fits the viewport', async () => {
+  const { create, actor, open } = await workBoard()
+  const worker = await actor('u_worker')
+  const { task: first } = await create(1, 'First ready task')
+  await create(2, 'Reading this task')
+  await open()
+  await vi.waitFor(() => {
+    expect(headings()).toEqual(['Ready to pull'])
+    expect(titles()).toEqual(['First ready task', 'Reading this task'])
+  })
+
+  const scroll = document.querySelector<HTMLElement>('main .work-view')!
+  const list = scroll.querySelector<HTMLElement>('[tabindex]')!
+  const blockHeight = 40
+  const viewport = 900
+  const extraBelow = () => {
+    const pad = (el: HTMLElement | null) => el ? parseFloat(el.style.paddingBottom) || 0 : 0
+    let extra = pad(scroll) + pad(list)
+    for (const root of [scroll, list]) {
+      for (const child of root.children) {
+        if (!(child instanceof HTMLElement) || child.matches('section, p')) continue
+        extra += parseFloat(child.style.height) || 0
+      }
+    }
+    return extra
+  }
+  const blocksHeight = () =>
+    [...scroll.querySelectorAll('section h2, section li[data-task-id]')].length * blockHeight
+  Object.defineProperty(scroll, 'clientHeight', { configurable: true, get: () => viewport })
+  Object.defineProperty(scroll, 'scrollHeight', { configurable: true, get: () => blocksHeight() + extraBelow() })
+  let y = 0
+  Object.defineProperty(scroll, 'scrollTop', {
+    configurable: true,
+    get: () => y,
+    set(value) {
+      const max = Math.max(0, scroll.scrollHeight - scroll.clientHeight)
+      y = Math.max(0, Math.min(Number(value) || 0, max))
+    },
+  })
+  const getRect = Element.prototype.getBoundingClientRect
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (!this.matches('li[data-task-id]') || !scroll.contains(this)) return getRect.call(this)
+    const blocks = [...scroll.querySelectorAll('section h2, section li[data-task-id]')]
+    return new DOMRect(0, blocks.indexOf(this) * blockHeight - scroll.scrollTop, 100, blockHeight)
+  })
+  const reading = taskLinks()[1]!
+  const row = reading.closest('li')!
+  flushSync(() => reading.focus())
+  expect(document.activeElement).toBe(reading)
+  expect(scroll.scrollHeight).toBeLessThanOrEqual(scroll.clientHeight)
+  const top = row.getBoundingClientRect().top
+
+  const claim = await worker.tasks.claim(first.id)
+  await vi.waitFor(() => expect(headings()).toEqual(['Running', 'Ready to pull']))
+  expect(row.getBoundingClientRect().top).toBe(top)
+  expect(document.activeElement).toBe(reading)
+
+  await claim.release()
+  await vi.waitFor(() => expect(headings()).toEqual(['Ready to pull']))
+  expect(row.getBoundingClientRect().top).toBe(top)
+  expect(scroll.scrollHeight).toBe(blocksHeight())
+  expect(document.activeElement).toBe(reading)
+})
+
+it('/work ignores a focused row that was scrolled offscreen during live regrouping', async () => {
+  const { create, actor, open } = await workBoard()
+  const worker = await actor('u_worker')
+  const { task: first } = await create(1, 'First ready task')
+  await create(2, 'Reading this task')
+  await open()
+  await vi.waitFor(() => {
+    expect(headings()).toEqual(['Ready to pull'])
+    expect(titles()).toEqual(['First ready task', 'Reading this task'])
+  })
+
+  const scroll = document.querySelector<HTMLElement>('main .work-view')!
+  const blockHeight = 40
+  const getRect = Element.prototype.getBoundingClientRect
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (!this.matches('li[data-task-id]') || !scroll.contains(this)) return getRect.call(this)
+    const blocks = [...scroll.querySelectorAll('section h2, section li[data-task-id]')]
+    return new DOMRect(0, blocks.indexOf(this) * blockHeight - scroll.scrollTop, 100, blockHeight)
+  })
+  const reading = taskLinks()[1]!
+  const row = reading.closest('li')!
+  flushSync(() => reading.focus())
+  expect(document.activeElement).toBe(reading)
+  scroll.scrollTop = 200
+  expect(row.getBoundingClientRect().bottom).toBeLessThanOrEqual(0)
+  const top = row.getBoundingClientRect().top
+  const y = scroll.scrollTop
+
+  await worker.tasks.claim(first.id)
+  await vi.waitFor(() => expect(headings()).toEqual(['Running', 'Ready to pull']))
+  expect(scroll.scrollTop).toBe(y)
+  expect(row.getBoundingClientRect().top).toBe(top + blockHeight)
+  expect(document.activeElement).toBe(reading)
+})
