@@ -1533,7 +1533,7 @@ function build(options: A2Options, binding: BoardBinding) {
  */
 const serialized: ReadonlySet<Method> = new Set([
   'createChannel', 'post', 'edit', 'delete', 'react', 'label', 'pause', 'resume',
-  'schedule', 'cancelSchedule', 'registerOpsAgent', 'heartbeatOpsAgent', 'retireOpsAgent',
+  'schedule', 'cancelSchedule', 'upload', 'registerOpsAgent', 'heartbeatOpsAgent', 'retireOpsAgent',
   'issueOpsIntent', 'issueOpsRoleIntent', 'takeOpsIntent', 'reportOpsIntent',
   'createTask', 'createTasks', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask',
   'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'assignTask',
