@@ -10,6 +10,11 @@ The swarm layer is a third package, `@remilia/politburo-swarm`, in
 runtime only. Start with [the swarm overview](./design/swarm-overview.md): it
 says what is on `main`, which rulings apply, and where to begin.
 
+A person who claims work without agent tooling starts at
+[the contributor quickstart](./docs/contributing-quickstart.md).
+[Starter items](./docs/starter-items.md) are small first patches, each
+verified in the code on `main`.
+
 ## Try the local development loop
 
 Use the [local task and review walkthrough](./LOCAL-DEVELOPMENT.md) to build
