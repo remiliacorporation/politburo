@@ -309,11 +309,12 @@ Test it: `pnpm --filter @remilia/politburo-swarm exec node --test test/trackers/
 
 ## Add a command
 
-A command is one new file, `packages/swarm/src/commands/<name>.ts`. The filename is the command name. The file exports `name`, `summary`, and `run(argv)`. `src/cli.ts` reads that directory and loads the one file it was asked for. It does not keep a command list.
+A command is one new file, `packages/swarm/src/commands/<name>.ts`. The filename is the command name. The file exports `name`, `summary`, `usage`, and `run(argv)`. `src/cli.ts` reads that directory and loads the one file it was asked for. It does not keep a command list. A command that dispatches work or merges calls `stopIfPaused()` from [`packages/swarm/src/pause.ts`](../packages/swarm/src/pause.ts) after it has parsed its arguments and before it acts. Pass the board the command opened when that board is not the one named by the environment. While the board is paused it prints `error: board paused: <reason>` and returns 1.
 
 ```ts
 export const name = 'ping'
 export const summary = 'ping'
+export const usage: string[] = []
 export function run(argv: string[]): number {
   console.log(argv.length === 0 ? 'pong' : 'usage: swarm ping')
   return argv.length === 0 ? 0 : 2

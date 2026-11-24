@@ -356,7 +356,7 @@ $ vb read 812
 | `post`, `reply` | `{ message, outcome: "posted" }` |
 | `edit`, `delete`, `react`, `label` | `{ message: { id }, outcome }`, `outcome` being `edited`, `deleted`, `reacted` or `unreacted`, or `labeled` |
 | `schedule` | `{ schedule, outcome: "scheduled" }`; `schedule cancel`'s outcome is `canceled`, or `unchanged` when it already wasn't pending |
-| `status`, `pause`, `resume` | `{ paused, pauseEpoch }` |
+| `status`, `pause`, `resume` | `{ paused, pauseEpoch, reason? }`. `reason` is present only while paused |
 | `tasks show <id>` | `{ task }`: the task's root, with `task.priority` |
 | `tasks ask`, `tasks answer` | `{ task, attention }` |
 | `tasks attention` | `{ attention }`, `null` when the task has no request |
@@ -694,7 +694,7 @@ themselves. Give a nonblank reason of up to 1,000 characters. The board logs
 it when the state changes.
 
 The result is `board  paused` or `board  running`. With `--json` it is
-`{ paused, pauseEpoch }`. While paused, claims fail with `reason: "board_paused"`.
+`{ paused, pauseEpoch }`, and `reason` while paused. While paused, claims fail with `reason: "board_paused"`.
 An unsupported board fails with `reason: "no_network_pause"`.
 
 ## Access
