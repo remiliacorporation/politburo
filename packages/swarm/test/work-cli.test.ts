@@ -17,6 +17,23 @@ function swarm(...args: string[]) {
 
 const run = (...args: string[]) => swarm('work', ...args)
 
+const configUsage =
+  'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
+  '       swarm ledger <dispatch|append|rollup> --db FILE [options]\n' +
+  '       swarm party <list|show|add|remove|member|jockey> ...\n' +
+  '       registry file: --registry FILE or SWARM_REGISTRY\n' +
+  '       swarm score <leaderboard|card|history|drill> ...\n' +
+  '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n' +
+  '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n' +
+  '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n' +
+  '       swarm capture <run|collect>\n' +
+  '       swarm mirror sync --repo owner/name [--json]\n' +
+  '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n' +
+  '       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n' +
+  '       swarm classifier report <dir> [--json]\n' +
+  '       swarm classifier clear <dir> <question> --why TEXT\n' +
+  '       swarm serve --help\n'
+
 async function assembledUsage() {
   const commands = await loadCommands()
   const config = commands.find((command) => command.name === 'config')
@@ -38,9 +55,11 @@ test('config help must print each catalog command and not work usage', async () 
   const result = swarm('config', '--help')
   assert.equal(result.status, 0)
   assert.equal(result.stdout, expected.catalog)
+  assert.equal(result.stdout, configUsage)
   assert.equal(result.stderr, '')
   assert.ok(result.stdout.includes(expected.configLine))
   assert.equal(result.stdout.includes(expected.workLine), false)
+  assert.doesNotMatch(result.stdout, /swarm work /)
 })
 
 test('config misuse must not append work usage to the catalog diagnostic', async () => {
@@ -48,7 +67,9 @@ test('config misuse must not append work usage to the catalog diagnostic', async
   const result = swarm('config', 'bogus')
   assert.equal(result.status, 2)
   assert.equal(result.stderr, `error: unknown config command bogus\n${expected.catalog}`)
+  assert.equal(result.stderr, `error: unknown config command bogus\n${configUsage}`)
   assert.equal(result.stderr.includes(expected.workLine), false)
+  assert.doesNotMatch(result.stderr, /swarm work /)
 })
 
 test('swarm --help must print the assembled catalog and each help-only command', async () => {
@@ -56,6 +77,7 @@ test('swarm --help must print the assembled catalog and each help-only command',
   const result = swarm('--help')
   assert.equal(result.status, 0)
   assert.equal(result.stdout, expected.help)
+  assert.ok(result.stdout.startsWith(configUsage))
   assert.ok(result.stdout.includes(expected.configLine))
   assert.ok(result.stdout.includes(expected.workLine))
 })
