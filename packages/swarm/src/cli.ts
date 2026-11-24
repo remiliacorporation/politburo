@@ -111,6 +111,7 @@ const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<n
   secretary: async () => ({ run: (await import('./secretary/cli.ts')).secretaryMain }),
   mirror: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['mirror', ...argv]) }),
   overlap: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['overlap', ...argv]) }),
+  outcome: async () => ({ run: (argv) => import('./outcomes/cli.ts').then((mod) => mod.outcomeCommand(argv, console)) }),
   setup: async () => ({ run: async (argv) => runSetup(argv) }),
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
