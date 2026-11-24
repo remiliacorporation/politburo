@@ -99,7 +99,7 @@ test('mirror prs copies pull request state, checks, and head onto open tasks', a
     15: pull('d', 'closed', [[{ status: 'in_progress', conclusion: null }]]),
   }
   const open = await team.tasks.create('work', {
-    text: 'failing checks', labels: { 'pr.number': '12', 'work.id': 'plb-12', 'pr.state': 'closed' },
+    text: 'failing checks', labels: { 'pr.number': '12', 'work.id': 'zzz-12', 'pr.state': 'closed' },
   })
   const held = await team.tasks.create('work', { text: 'draft', labels: { 'pr.number': '13' } })
   await team.tasks.block(held.task.id, 'held')
@@ -122,7 +122,7 @@ test('mirror prs copies pull request state, checks, and head onto open tasks', a
     return { state: row['pr.state'], checks: row['pr.checks'], head: row['pr.head'], number: row['pr.number'] }
   }
   assert.deepEqual(await facts(open.task.id), { number: '12', state: 'open', checks: 'fail', head: short('a') })
-  assert.equal((await labels(open.task.id))['work.id'], 'plb-12')
+  assert.equal((await labels(open.task.id))['work.id'], 'zzz-12')
   assert.equal((await labels(open.task.id))['board.task'], 'ready')
   assert.deepEqual(await facts(held.task.id), { number: '13', state: 'draft', checks: 'none', head: short('b') })
   assert.equal((await labels(held.task.id))['board.task'], 'blocked')
@@ -254,6 +254,47 @@ test('mirror prs with no matching tasks prints that and does not read GitHub', a
   assert.equal(result.stdout, 'no open tasks with a pr\n')
   const json = await run(send, ['--json'])
   assert.equal(json.stdout, '{"tasks":[]}\n')
+})
+
+test('mirror prs does not copy this repo onto a task for another repo', async (t) => {
+  const { team, run, labels, version } = fixture(t)
+  const specs = { 12: pull('a', 'open', [[done('success')]]) }
+  const home = await team.tasks.create('work', { text: 'this repo', labels: { 'pr.number': '12' } })
+  const named = await team.tasks.create('plb/queue', {
+    text: 'named as this repo', labels: { 'pr.number': '12', 'pr.repo': repo, 'work.id': 'plb-9' },
+  })
+  const otherRepo = await team.tasks.create('work', {
+    text: 'other repo label', labels: { 'pr.number': '12', 'pr.repo': 'other/lib', 'pr.state': 'closed', note: 'keep' },
+  })
+  const otherTag = await team.tasks.create('work', {
+    text: 'other work id', labels: { 'pr.number': '12', 'work.id': 'plb-4', 'pr.state': 'closed', note: 'keep' },
+  })
+  const otherChannel = await team.tasks.create('plb/queue', {
+    text: 'other channel', labels: { 'pr.number': '12', 'pr.state': 'closed', note: 'keep' },
+  })
+  const before = await version(otherRepo.task.id)
+  let asked = false
+  const send = github(specs)
+  const result = await run(async (url) => {
+    asked = asked || /\/pulls\/(?!12$)/.test(new URL(url).pathname)
+    return send(url)
+  })
+  assert.equal(result.code, 0, result.stderr)
+  assert.equal(asked, false)
+  assert.equal((await labels(home.task.id))['pr.state'], 'open')
+  assert.equal((await labels(home.task.id))['pr.checks'], 'pass')
+  assert.equal((await labels(home.task.id))['pr.head'], short('a'))
+  assert.equal((await labels(named.task.id))['pr.state'], 'open')
+  assert.equal((await labels(named.task.id))['pr.checks'], 'pass')
+  assert.equal((await labels(named.task.id))['work.id'], 'plb-9')
+  for (const id of [otherRepo.task.id, otherTag.task.id, otherChannel.task.id]) {
+    const row = await labels(id)
+    assert.equal(row['pr.state'], 'closed')
+    assert.equal(row['pr.checks'], undefined)
+    assert.equal(row['pr.head'], undefined)
+    assert.equal(row.note, 'keep')
+  }
+  assert.equal(await version(otherRepo.task.id), before)
 })
 
 test('mirror prs misuse exits 2', async () => {

@@ -44,8 +44,10 @@ export async function readRegistry(file?: string): Promise<unknown> {
   return parse(readFileSync(registryPath(file), 'utf8'))
 }
 
+export type TagRecord = { tag: string; repo?: string }
+
 export type OpenedTagRegistry =
-  | { status: 'ok'; tags: { tag: string }[] }
+  | { status: 'ok'; tags: TagRecord[] }
   | { status: 'unreadable'; message: string }
   | { status: 'invalid'; problems: string[] }
 
@@ -65,7 +67,7 @@ export function openTagRegistry(file?: string): OpenedTagRegistry {
   }
   const problems = tagProblems(registry)
   if (problems.length) return { status: 'invalid', problems }
-  return { status: 'ok', tags: (registry as { tags: { tag: string }[] }).tags }
+  return { status: 'ok', tags: (registry as { tags: TagRecord[] }).tags }
 }
 
 export function canonicalTag(tags: readonly { tag: string }[], tag: string): string | undefined {
