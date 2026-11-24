@@ -273,6 +273,22 @@ test('Book persists private, exclusive session bindings only until expiry', (t) 
   assert.equal(reopened.bySession(session, f.now()), undefined)
 })
 
+// Catches a live reader skipping a bind when inode and ctime look unchanged.
+test('an already-open Book picks up a bind from another instance', (t) => {
+  const { bookFile } = paths(t)
+  const now = () => Date.parse('2026-11-22T12:01:00Z')
+  const writer = new Book({ file: bookFile, now })
+  const { capability } = writer.issue(envelope, { ttlMs: 3_600_000 })
+  writer.bind(capability, session)
+  const reader = new Book({ file: bookFile, now })
+  assert.equal(reader.bySession(session, now())?.session, session)
+  const extra = writer.issue({ ...envelope, trace: { ...envelope.trace, execution_id: 'exec-other' } },
+    { ttlMs: 3_600_000 }).capability
+  writer.bind(extra, 'other-session')
+  assert.equal(reader.bySession('other-session', now())?.session, 'other-session',
+    'reader missed a bind written after it opened')
+})
+
 test('Book only loads private regular files, not symlinks', (t) => {
   const f = fixture(t), alias = `${f.bookFile}.alias`
   chmodSync(f.bookFile, 0o644)
