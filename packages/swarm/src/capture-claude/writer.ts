@@ -1,5 +1,5 @@
 import { appendFileSync, closeSync, openSync, readSync, statSync, truncateSync } from 'node:fs'
-import { noteSpendRecord, rollbackSpend, tokenFingerprint, type SpendRecord } from './record.ts'
+import { tokenFingerprint, type SpendRecord } from './record.ts'
 
 export interface SpendWriter {
   append(record: SpendRecord): 'written' | 'duplicate' | 'differs'
@@ -11,9 +11,32 @@ type Entry = { record_id: string; fingerprint: string }
 // Thin stand-in for WP-103. Refresh sees completed appends; it does not lock concurrent writes.
 export function jsonlWriter(path: string): SpendWriter {
   const keys = new Map<string, Entry>()
+  const rootOf = new Map<string, string>()
+  const headOf = new Map<string, string>()
   const entry = (record: SpendRecord): Entry => ({ record_id: record.record_id, fingerprint: tokenFingerprint(record.tokens) })
   const remember = (record: SpendRecord | null) => {
     if (record && !keys.has(record.dedupe_key)) keys.set(record.dedupe_key, entry(record))
+  }
+  // One linear pass over records already read, including a last record that
+  // parses without a trailing newline. A successor extends the head only when
+  // it revises that head, so a fork does not replace it. An invalid torn tail
+  // does not parse and is still truncated on the next append.
+  const indexChain = (record: SpendRecord) => {
+    if (rootOf.has(record.record_id)) return
+    const revises = record.revises ?? null
+    if (!revises) {
+      rootOf.set(record.record_id, record.record_id)
+      if (!headOf.has(record.record_id)) headOf.set(record.record_id, record.record_id)
+      return
+    }
+    const root = rootOf.get(revises) ?? revises
+    rootOf.set(revises, root)
+    rootOf.set(record.record_id, root)
+    if ((headOf.get(root) ?? root) === revises) headOf.set(root, record.record_id)
+  }
+  const headFor = (anchor: string) => {
+    const root = rootOf.get(anchor) ?? anchor
+    return headOf.get(root) ?? root
   }
   let offset = 0, tail = Buffer.alloc(0), tailRecord: SpendRecord | null = null
   let failed = false
@@ -50,9 +73,10 @@ export function jsonlWriter(path: string): SpendWriter {
       if (i === 0 && tail.length && !tailRecord && bytes[0] === 10) return
       const record = parse(line, !remainder.length && i === lines.length - 1)
       remember(record)
-      if (record) noteSpendRecord(record)
+      if (record) indexChain(record)
     })
     tailRecord = parse(remainder.toString(), true)
+    if (tailRecord) indexChain(tailRecord)
     tail = Buffer.from(remainder)
     offset = size
   }
@@ -80,18 +104,16 @@ export function jsonlWriter(path: string): SpendWriter {
           tail = Buffer.alloc(0)
         }
         const prior = lookup(record.dedupe_key)
-        if (prior) {
-          rollbackSpend(record)
-          return prior.fingerprint === tokenFingerprint(record.tokens) ? 'duplicate' : 'differs'
-        }
+        if (prior) return prior.fingerprint === tokenFingerprint(record.tokens) ? 'duplicate' : 'differs'
+        if (record.revises) record.revises = headFor(record.revises)
         const line = `${tail.length || failed ? '\n' : ''}${JSON.stringify(record)}\n`
         appendFileSync(path, line, { flush: true })
         failed = false
-        noteSpendRecord(record)
+        remember(record)
+        indexChain(record)
         return 'written'
       } catch (error) {
         failed = true
-        rollbackSpend(record)
         throw error
       }
     },

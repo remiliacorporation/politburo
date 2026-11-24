@@ -507,6 +507,107 @@ test('a reopened writer does not move the conflict head on a duplicate replay', 
   assert.equal(stored.filter((record) => !revised.has(record.record_id)).length, 1)
 })
 
+test('a batch of anonymous outputs 3 and 4 then a batch of output 4 stores output 4 once', (t) => {
+  const path = spendPath(t)
+  const anonymous = (output: number) => log({
+    request_id: {}, 'message.id': {}, response_id: {}, output_tokens: { intValue: output },
+  })
+  const store = (values: number[]) => {
+    const { facts } = parseOtlpLogs(batch(...values.map(anonymous)))
+    const writer = jsonlWriter(path)
+    return reconcile(facts, []).records.map((item) => writer.append(buildRecord(item, envelope, now)))
+  }
+  assert.deepEqual(store([3, 4]), ['written', 'written'])
+  assert.deepEqual(store([4]), ['duplicate'])
+  assert.deepEqual(outputs(path), [3, 4])
+})
+
+test('a fresh process keeps one conflict head when the replay is built before the writer opens', (t) => {
+  const path = spendPath(t)
+  const writer = jsonlWriter(path)
+  const original = reported()
+  writer.append(original)
+  for (const value of [90, 89, 88]) {
+    assert.equal(writer.append(capture.conflictSuccessor(original, reported(value), 'reviewer')), 'written')
+  }
+  const child = spawnSync(process.execPath, ['-e', `
+    import { readFileSync } from 'node:fs'
+    import * as capture from ${JSON.stringify(new URL('../src/capture-claude/index.ts', import.meta.url).href)}
+    const { buildRecord, conflictSuccessor, jsonlWriter, parseOtlpLogs, reconcile } = capture
+    const session = ${JSON.stringify(session)}
+    const now = new Date(${JSON.stringify(now.toISOString())})
+    const envelope = ${JSON.stringify(envelope)}
+    function log(attributes) {
+      return {
+        timeUnixNano: '1795348806000000123',
+        attributes: Object.entries({
+          'event.name': { stringValue: 'claude_code.api_request' },
+          'session.id': { stringValue: session },
+          request_id: { stringValue: 'req-1' },
+          'message.id': { stringValue: 'msg-1' },
+          model: { stringValue: 'claude-example' },
+          input_tokens: { intValue: '240' },
+          output_tokens: { intValue: 91 },
+          cache_read_tokens: { intValue: 0 },
+          ...attributes,
+        }).map(([key, value]) => ({ key, value })),
+      }
+    }
+    function reported(output) {
+      const { facts } = parseOtlpLogs({ resourceLogs: [{ scopeLogs: [{ logRecords: [log({
+        request_id: { stringValue: 'req-1' }, output_tokens: { intValue: output },
+      })] }] }] })
+      return buildRecord(reconcile(facts, []).records[0], envelope, now)
+    }
+    const path = process.argv[1]
+    const lines = readFileSync(path, 'utf8').trimEnd().split('\\n').map((line) => JSON.parse(line))
+    const original = lines[0]
+    const replayRecord = conflictSuccessor(original, reported(90), 'reviewer')
+    const added = conflictSuccessor(original, reported(87), 'reviewer')
+    const writer = jsonlWriter(path)
+    const replay = writer.append(replayRecord)
+    const written = writer.append(added)
+    const stored = readFileSync(path, 'utf8').trimEnd().split('\\n').map((line) => JSON.parse(line))
+    const revised = new Set(stored.map((record) => record.revises).filter((id) => id !== null))
+    const heads = stored.filter((record) => !revised.has(record.record_id))
+    console.log(JSON.stringify({
+      replay, written, heads: heads.length,
+      revises: stored.at(-1).revises, previous: lines[3].record_id, replayId: replayRecord.record_id,
+    }))
+  `, path], { encoding: 'utf8' })
+  assert.equal(child.status, 0, child.stderr)
+  const result = JSON.parse(child.stdout)
+  assert.equal(result.replay, 'duplicate')
+  assert.equal(result.written, 'written')
+  assert.equal(result.heads, 1)
+  assert.equal(result.revises, result.previous)
+  assert.notEqual(result.revises, result.replayId)
+  const stored = readFileSync(path, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line))
+  const revised = new Set(stored.map((record) => record.revises).filter((id: string | null) => id !== null))
+  assert.equal(stored.filter((record) => !revised.has(record.record_id)).length, 1)
+})
+
+test('outputs 90 and 87 after a no-newline tail leave one head', (t) => {
+  const path = spendPath(t)
+  const writer = jsonlWriter(path)
+  const original = reported()
+  writer.append(original)
+  assert.equal(writer.append(capture.conflictSuccessor(original, reported(88), 'reviewer')), 'written')
+  const text = readFileSync(path, 'utf8')
+  assert.equal(text.endsWith('\n'), true)
+  writeFileSync(path, text.slice(0, -1))
+
+  const reopened = jsonlWriter(path)
+  assert.equal(reopened.append(capture.conflictSuccessor(original, reported(90), 'reviewer')), 'written')
+  assert.equal(reopened.append(capture.conflictSuccessor(original, reported(87), 'reviewer')), 'written')
+  const stored = readFileSync(path, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(stored.map((record) => record.tokens.output), [91, 88, 90, 87])
+  const revised = new Set(stored.map((record) => record.revises).filter((id: string | null) => id !== null))
+  assert.equal(stored.filter((record) => !revised.has(record.record_id)).length, 1)
+  assert.equal(stored[2].revises, stored[1].record_id)
+  assert.equal(stored[3].revises, stored[2].record_id)
+})
+
 test('conflict successors preserve distinct changed reports and link to the original', (t) => {
   const path = spendPath(t)
   const writer = jsonlWriter(path)

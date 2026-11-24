@@ -13,7 +13,7 @@ export type RequestFact = {
     reasoning: number | null
   }
   occurred: string | null
-  /** Set when the event has neither request nor response id, so each gap stays distinct. */
+  /** Per-parse disambiguator when the event has neither request nor response id. Not part of durable identity. */
   gap?: number
 }
 
