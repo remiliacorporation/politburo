@@ -1,5 +1,105 @@
 # vboard
 
+## 0.55.0
+
+### Minor Changes
+
+- 1b06bf7: Invite teammates to a self-hosted board without a Vercel login. Create, list, or revoke single-use invites with `vb invite`, and redeem an invite with `vb join` to save a board-specific credential. Invites grant read, post, react, and label access by default, with optional channel-specific permissions. The board handle and HTTP API expose the same flow.
+- cffd279: Send generation-fenced command intents to an agent or role on opt-in local boards. Use `vb agents` or `team.agents` to issue, list, take, and report intents, and to check whether a fresh status probe confirms a task is working.
+- 8abee63: Add `vb serve --swarm` to enable agent ops and let the local owner answer structured task attention. Swarm boards advertise `politburo: 1` in discovery.
+- fe77d31: Ask for and answer commit-bound human attention requests on board tasks.
+- 2186d6f: Add durable network pause for local boards, with status, pause, and resume in the SDK, HTTP API, and CLI.
+- 7d00d78: Add operator parking, assignment bindings, and immutable task handoffs.
+  
+  Custom backends: `parkTask`, `unparkTask`, and `handoffTask` are now required on `Backend`, so a backend written against an earlier version must implement them to compile.
+- e82261b: **Breaking:** In 0.54.0, a grant's OIDC `sub` matches by prefix only if its
+  sole `*` comes at the end, right after a `:` or `/` with a character other than a line break before
+  that separator. The rule applies even to existing grants. `job:archive*`
+  still matches exactly, even though the audit lists it.
+  
+  Before upgrading to 0.54.0, you must audit stored OIDC subjects on every
+  existing board whose grants this code stores. This includes `local()` boards
+  such as those run by `vb serve` or viewed with `vb inspect`. Vercel's API
+  decides its own grants, so its operators choose whether to audit them.
+  See [Before you upgrade](https://github.com/remiliacorporation/politburo/blob/main/packages/board/docs/01-board/09-access.md#before-you-upgrade)
+  for the command. The audit lists every stored OIDC `sub` ending in `*`; if it
+  succeeds with no rows, there is nothing to do.
+  
+  The operator makes any decision about a listed grant with the grant's owner;
+  do not edit grants on a live board until you use `vb grants explain` on a
+  copy of the policy to check what every affected caller can reach before and
+  after the proposed edit, and do not edit if you cannot establish that.
+- 4c2c55b: Include the board pause epoch in local task claims. Make the runtime return `paused` and cancel interrupted attempts through the harness, while leaving queue priority to the board.
+- 47867df: `vb inspect` and the inspector in `vb serve` have an Attention view at `/attention`. It lists held tasks with their questions and options so you can answer in place. If the board refuses an answer, the view shows why and disables options for that snapshot. The sidebar flags refusals you have not seen.
+- 3b09bee: Add five task priorities, with `normal` as the default. Claim-next takes the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. Set priority through the SDK or `vb tasks`, and lower it through a live claim. Custom backends implement `setTaskPriority` and return priority in task views.
+- 94d570b: Self-host a team board with per-person tokens. Set the listen address and data directory, and share the board URL without a Vercel account.
+- 9626455: Add repeatable `vb serve --responder <principal>` to choose who can answer task attention without granting channel access. With `--swarm`, listed responders join the local owner.
+- ea5dc5b: Add a private operational inbox to local boards. Send to a verified principal or role from the SDK, then read, acknowledge, and archive messages with `vb inbox`. For a raw sync key named `read`, `ack`, `archive`, or `raw`, use `vb inbox raw <key>`.
+- bb86c1a: Add an opt-in agent registry for local boards. Use `vb serve --agent-ops` to enable it and `vb agents` or `team.agents` to list, register, heartbeat, and retire agents.
+- 3035bb8: Add fixed task claim deadlines with `hold` and a `board()` `claimRule` option for claim admission.
+- 2fc0437: Add a Work view to the inspector (`/work`) that groups open tasks by who acts next: needs you, repair or reconcile, ready to review, running, ready to pull, and waiting or parked.
+- 8a1de3b: **Breaking:** In the release after 0.54.0, the CLI reads `thr_` followed by 36
+  hex digits or hyphens as a thread's own ID, the root of that thread, wherever
+  it takes a message ID. It read that spelling as a channel's name, and it is
+  still a valid one. `vb post`, `schedule`, `tasks create --file`, and every
+  other command given such a channel now act on that thread, or fail as a
+  message that isn't there, and no longer reach the channel.
+  
+  Before upgrading, you must audit every existing board any of your CLIs reach
+  for a channel named `thr_` and 36 hex digits or hyphens, and for pending
+  schedules that post to one. See
+  [Before you upgrade](https://github.com/remiliacorporation/politburo/blob/main/packages/board/docs/04-reference/01-cli.md#before-you-upgrade-thread-ids)
+  for the command. The audit lists each one; if it succeeds with no rows, there
+  is nothing to do.
+  
+  What to do about a listed channel is an operator decision.
+- 2fc0437: Add a filter field, saved views and a keyboard map to the inspector's Work view. Typing in an open thread pane still focuses its reply box.
+- 2fc0437: Add the home sections (needs you, ready to review, running now, health and spend) and a peek pane to the inspector's Work view. Health counts each lapsed or stale claim once.
+- 2fc0437: Add Standing Committee and Cell work views with party labels, and replace the old Presidium boards page with a party view of the shared repo queue. The Cell thread pane only shows tasks currently in that Cell.
+
+### Patch Changes
+
+- 721428a: `vb conformance` deletes only the messages and tasks it created, and only while they read back as it made them: by the same principal, in the same channel, from the same moment. If the mount is pointed at another board mid-run, a message there with the same ID stays, and the check that made it reports what was left. The run-health check also skips on a mount with no health route (its own 404, or discovery JSON), skips when claiming or releasing the probe task says the board keeps no tasks, and fails when it can't retire its probe agent.
+- 5123186: Strip unknown fields from HTTP agent registry, intent, and health replies. Report `502 remote_error` when a `not_confirmed` health reply carries `validUntil`.
+- 85314f5: Keep task hold recovery commands on the selected board, and report when the CLI can't read the task instead of guessing how to lift the hold. On registry-only boards, report missing agent intents and run health without saying the registry is missing.
+- d73458d: `vb read <channel>` on a team's default board, with `--scope` and no `--name`, now says that's the board it read when the channel isn't there, and how to read another of the team's boards with `--name`. Its "see its channels" step keeps `--scope`.
+- 5447ac2: Reject run probes for claims fenced by a board pause, and stop reporting those runs as working even after resume.
+- da5258e: Pending run probes whose claim a pause fenced no longer show in `agents.intents`, so a worker never lists one `take` refuses with 409 `claim_lost`. A board advertises command intents and run health with `agent_intents: true` in discovery, apart from `agent_ops`, and a client on `http()` sends those calls only to a board that does, so an older mount's discovery page is never read as health and conformance skips the run health check there. A failed claim on a parked task suggests `unpark`, not `unblock`.
+- f2e1d7b: The inspector shows and filters task priorities. Tasks and Handoffs Runnable share the complete task read and its claim-next ordering. Runnable says `more loading` while later pages are pending. A lease ending updates the Tasks rows and badges together. Delayed feed frames cannot restore tasks omitted by a fresh read, and a transient thread refresh failure keeps unsent reply text and attachments.
+- c98c51b: Serialize local board writes with grant and pause changes. Recheck access before writing and refuse task writes whose claim expires before insertion.
+- f6bcf96: Make the inspector's default theme maroon and gold, with a cream and maroon theme for light color schemes.
+- b509531: Lock each local board directory to one process, including while `vb serve` moves legacy files. If another process owns it, the error omits the directory path and says to use `--url` to reach the running board.
+- b7f2e73: Make the inspector's landing page Handoffs, name the boards page PRESIDIUM, give buttons a bevel and a per-button pentatonic thunk, and remove its Activity, Global Chat, new-channel, Schedules and Sync surfaces.
+- 3f1412a: Add a Presidium page for the inspector’s connected board and use condensed uppercase styling for inspector page headings.
+- 3f1412a: List Global Chat once and keep old channel links working. Hide sync controls on boards with no discovered integrations, and use channel permissions to avoid offering message and composer actions the viewer cannot use.
+- 5f2ed85: Use the top-left Politburo emblem to return to Handoffs. Tighten spacing between handoff sections and keep the sidebar within reach on narrow screens.
+- 5850115: Show when work is paused across the inspector without moving what you’re reading, and let board managers pause or resume with a reason. Show who is acting in the sidebar and move profile switching to developer options in Settings. Keep operator actions in the task pane and leave claiming and settling tasks to the CLI.
+- 3f1412a: Give Inspector buttons an inset press and a quiet two-hit click sound, with a mute preference in Settings.
+- 2e42015: A claim's token is never sent to another URL. A claim's write that the board answers with a redirect now fails with `redirect_refused` instead of following it. A direct `request()` that carries a claim's token passes `claim: true` to get the same.
+- 2c08681: A file the inspector uploads through a handle on another board is never redirected, and a claim's request answered with a redirect in the Node transport is refused with `redirect_refused` whatever its `Location` is.
+- ff9b300: Keep Handoffs in place on live updates and focus the thread reply when you type. Restore Schedules and Sync in Settings. Show avatar initials and link to markdown images instead of loading external images. Keep the default cursor on controls and hairlines below headers.
+- 0d470c0: The inspector opens on Needs action, with open decisions, overdue claims you cannot take, and ready work in claim-next order, including expired claims you can take. Handoffs moved to `/handoffs`. Needs action drops revoked or deleted tasks, rechecks the open thread, and updates the queue when a claim expires.
+- 03e9af9: Pause and resume timeouts now say the change may have landed.
+  A board can recover its initial pause from its log alone.
+- a0ad5c7: `vb conformance` skips the run health check without leaving a probe agent or task on registry-only boards, and without registering a probe agent on boards that keep no tasks. If intents become unavailable during the probe, the check skips and still tries to release the claim and retire the agent.
+- c04ef2c: A watcher retry creates a new task with a bound claim only once.
+  Interrupted agent intent writes warn that the change may have landed.
+- 80a1502: When a task's hold is lifted after a refusal, `vb tasks cancel` and
+  `vb tasks unblock` suggest reading the task without asking you to retry.
+- a65cb8b: The CLI takes a thread's own ID (`thr_…`, a message's `thread` in `--json`) wherever it takes a message ID, as that thread's root: `board read thr_…` reads the thread instead of looking for a channel of that name.
+- 3de67b0: On a local board, retry create-and-claim with the same task creation ID and caller-supplied token to recover the original claim while it is still live.
+- 1841881: Reload the inspector's schedules when switching profiles and show Cancel only to callers who can use it. Keep the default cursor over read-only text.
+- f6db189: The inspector shows relative times with the local date and time on hover. Commit hashes show seven characters, with the full hash on hover.
+- 3f1412a: Land on Home to find ready, claimed, and completed tasks, with links to their queues and threads. Global Chat and Activity are separate destinations. The inspector uses a maroon and gold palette with light and dark modes.
+- c98c51b: Check current write access in the local board's writer queue before saving attachments uploaded in a single request.
+- c810570: `agents.intents` omits pending run probes whose issuer no longer has authority
+  to issue them. Other pending intents are listed as before.
+- b303dde: `agents.intents` no longer lists a pending run probe whose lease has run out or whose task is gone, so a worker is never listed one `take` refuses. A handle on `http()` throws 502 `remote_error` when an older mount answers an agent call with anything but its response, so discovery is never read as health, and conformance skips the run health check on a board that has no agent intents, even when its discovery was cached. A refused claim on a held task whose hold was lifted since says so and suggests only a read, and the `claim` order is documented as priority, then assigned to the caller, then oldest.
+- bff12dc: On Vercel's board, `tasks.list()` asks for each task's latest reply with the list, so a page of tasks costs one request instead of one more for every task that has replies. On an API that doesn't send them yet, it reads each reply by ID as before.
+- 16f5b90: When `vb` suggests unparking a task, it tells operators to unset `BOARD_PROFILE`
+  if it's set so they can unpark as themselves.
+- 8435f68: Show a person's profile picture when the host's authentication verifier supplies an HTTPS avatar URL. Missing or invalid pictures leave the existing fallback in place.
+
 ## 0.54.0
 
 ### Minor Changes

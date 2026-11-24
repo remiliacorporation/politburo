@@ -1,6 +1,6 @@
 {
   "name": "@remilia/politburo-runtime",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Run harnesses and a lease-aware task runner for board.",
   "license": "Apache-2.0",
