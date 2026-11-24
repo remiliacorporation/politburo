@@ -1,5 +1,6 @@
 // `inspect`: the inspector's page, as you, until Ctrl-C. Only the standalone `board` has it
 // (`local.ts`), and loads it only when it runs, with the page it's installed with.
+import { createBoardClient } from '../client/client.ts'
 import { page as installed } from '../inspect/page.ts'
 import { startInspector } from '../inspect/server.ts'
 import { Failed, type CommandContext } from './main.ts'
@@ -48,8 +49,12 @@ export async function inspect({ flags, out, usage, portFlag, client, openBrowser
   const port = portFlag()
   const hosts = allowedHosts({ flags, usage })
   const page = await pageOf()
-  const inspector = await startInspector({ client: client(), page, hosts, ...(port !== undefined ? { port } : {}) })
-  out(`inspecting ${inspector.board} as ${who(inspector.me)} at ${inspector.url}  (Ctrl-C to stop)`)
+  const own = client()
+  const signIn = flags['sign-in']
+    ? { acting: (credential: string) => createBoardClient({ url: own.url, token: credential }) }
+    : undefined
+  const inspector = await startInspector({ client: own, page, hosts, ...(port !== undefined ? { port } : {}), ...(signIn ? { signIn } : {}) })
+  out(`inspecting ${inspector.board} as ${inspector.me ? who(inspector.me) : 'whoever signs in'} at ${inspector.url}  (Ctrl-C to stop)`)
   if (!flags['no-open']) openBrowser(inspector.url)
   await stopped()
   await inspector.close()

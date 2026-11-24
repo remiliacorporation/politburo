@@ -100,7 +100,7 @@ function expectNoToken(output: string) {
   expect(output.includes(ada) || output.includes(bo), 'CLI output contains a team token').toBe(false)
 }
 
-it('advertises the API and share URLs without opening an inspector or minting an owner token', async () => {
+it('advertises the API and share URLs, serves a sign-in inspector, and mints no owner token', async () => {
   const child = spawn(process.execPath, args('--host', '127.0.0.2', '--team-tokens', teamTokens, '--allow-host', shareHost), { cwd: dir, env })
   const closed = once(child, 'close')
   let stdout = ''
@@ -124,8 +124,60 @@ it('advertises the API and share URLs without opening an inspector or minting an
     expect(proxied.statusCode).toBe(200)
     expect(await json(proxied)).toMatchObject({ url: shareUrl, audience: shareUrl })
 
-    expect((await fetch(new URL('/', url))).status).toBe(404)
+    const origin = new URL(url).origin
+    const signedOut = await fetch(origin)
+    expect(signedOut.status).toBe(200)
+    const signedOutPage = await signedOut.text()
+    expect(signedOutPage).toContain('<h1>Sign in</h1>')
+    expect(signedOutPage.includes(ada) || signedOutPage.includes(bo)).toBe(false)
+    expect((await fetch(`${origin}/board/me`)).status).toBe(401)
+    const refused = await fetch(`${origin}/sign-in`, {
+      method: 'POST', redirect: 'manual',
+      headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token: 'f'.repeat(64) }),
+    })
+    expect(refused.status).toBe(401)
+    expect(refused.headers.get('set-cookie')).toBeNull()
+    expect((await refused.text()).includes('f'.repeat(64))).toBe(false)
+    const signed = await fetch(`${origin}/sign-in`, {
+      method: 'POST', redirect: 'manual',
+      headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token: ada }),
+    })
+    expect(signed.status).toBe(303)
+    const cookie = signed.headers.get('set-cookie') ?? ''
+    expect(cookie.split(';').slice(1).map((part) => part.trim())).toEqual(expect.arrayContaining(['HttpOnly', 'SameSite=Strict', 'Path=/']))
+    const home = await fetch(origin, { headers: { cookie: cookie.split(';')[0]! } })
+    const homePage = await home.text()
+    expect(homePage.includes(ada)).toBe(false)
+    const pageToken = /<meta name="inspect-token" content="([^"]+)">/.exec(homePage)?.[1]
+    const me = await fetch(`${origin}/board/me`, { headers: { cookie: cookie.split(';')[0]!, 'x-inspect-token': pageToken ?? '' } })
+    expect(await me.json()).toMatchObject({ principal: 'team:user:ada' })
+    const api = await fetch(`${url}/me`, { headers: { cookie: cookie.split(';')[0]! } })
+    expect(api.status).toBe(401)
     expect(existsSync(localTokenFile(url))).toBe(false)
+    child.kill('SIGINT')
+    expect((await closed)[0]).toBe(0)
+  } finally {
+    child.kill('SIGKILL')
+    await closed
+    expectNoToken(stdout + stderr)
+  }
+}, CLI_TIMEOUT)
+
+it('serves no inspector when --no-inspect is set', async () => {
+  const child = spawn(process.execPath, args('--host', '127.0.0.2', '--team-tokens', teamTokens, '--no-inspect'), { cwd: dir, env })
+  const closed = once(child, 'close')
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk) => (stdout += chunk))
+  child.stderr.on('data', (chunk) => (stderr += chunk))
+  const boardLine = /^board  (http:\/\/127\.0\.0\.2:\d+\/api\/board)\r?$/m
+  try {
+    await expect.poll(() => boardLine.test(stdout), { timeout: CLI_TIMEOUT - 2_000 }).toBe(true)
+    const origin = new URL(boardLine.exec(stdout)![1]!).origin
+    expect(stdout.includes('inspector at')).toBe(false)
+    expect((await fetch(origin)).status).toBe(404)
     child.kill('SIGINT')
     expect((await closed)[0]).toBe(0)
   } finally {

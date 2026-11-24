@@ -54,7 +54,13 @@ export type LocalBoard = ServingBoard & {
   token: string
 }
 
-type TeamBoard = ServingBoard & { mode: 'team' }
+type TeamBoard = ServingBoard & {
+  mode: 'team'
+  /** Answers every request outside `/api/board` with `handler`: the inspector. */
+  page(handler: Handler): void
+  /** A handle that acts as this team token, or as no one when `credential` is empty. */
+  viewer(credential: string): BoardClient
+}
 
 type ServeOptions = {
   dir: string
@@ -244,7 +250,20 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
     await team.channels({ limit: 1 })
     if (!('sign' in auth)) {
       handler = team.fetch
-      return { mode: 'team', ...serving }
+      return {
+        mode: 'team',
+        ...serving,
+        page(next) {
+          page = next
+        },
+        viewer(credential: string) {
+          return createBoardClient({
+            url,
+            ...(credential ? { token: credential } : {}),
+            fetch: (input, init) => team.fetch(new Request(input, init)),
+          })
+        },
+      }
     }
     token = await auth.sign(url, handle)
     file = localTokenFile(url)
@@ -368,9 +387,16 @@ async function forward(handler: (request: Request) => Promise<Response>, origin:
       body = new Uint8Array(Buffer.concat(chunks))
     }
     const headers = new Headers()
-    for (const [key, value] of Object.entries(req.headers))
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (key.toLowerCase() === 'cookie') {
+        const parts = (Array.isArray(value) ? value : [value]).flatMap((item) => (item ?? '').split(';'))
+        const kept = parts.map((part) => part.trim()).filter((part) => part !== '' && !part.toLowerCase().startsWith('board_viewer='))
+        if (kept.length > 0) headers.set('cookie', kept.join('; '))
+        continue
+      }
       if (typeof value === 'string') headers.set(key, value)
       else if (Array.isArray(value)) for (const item of value) headers.append(key, item)
+    }
     const response = await handler(
       new Request(`${origin}${req.url ?? '/'}`, {
         method: req.method ?? 'GET',

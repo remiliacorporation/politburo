@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { Me } from '../api/routes.ts'
-import type { BoardClient, ProfileOption } from '../client/client.ts'
+import { BoardError, type BoardClient, type ProfileOption } from '../client/client.ts'
 import { InvalidProfileHeader, parseProfileHeader } from '../contract/profile-header.ts'
 import { ATTACHMENT_BYTES_MAX } from '../contract/schemas.ts'
 import { CSP, relative, shell } from './shell.ts'
@@ -11,14 +11,20 @@ import { CSP, relative, shell } from './shell.ts'
 export type Inspector = {
   url: string
   board: string
-  me: Me
+  /** Who it starts as. Null when each viewer signs in with their own token. */
+  me: Me | null
   close(): Promise<void>
+}
+
+/** How a shared inspector turns a viewer's team token into a handle. The token never reaches the page. */
+export type InspectorSignIn = {
+  acting(credential: string): BoardClient
 }
 
 /** The inspector for one board, before a server has it: who it acts as, and what answers its requests there. */
 export type InspectorPage = {
   board: string
-  me: Me
+  me: Me | null
   /**
    * What answers the page, its bundle, and its proxy on a server listening at `port` on this
    * machine: `handle` takes every request meant for them, and `close` stops the streams it has open.
@@ -39,11 +45,13 @@ const bundle = async () => (await import('./page.ts')).page()
  * on 127.0.0.1 to answer with. Because the proxy acts as you, it answers only its
  * own page: every request must name the server's host (no DNS rebinding) and carry
  * the per-run token that only the page has, and writes must also come from its
- * origin. Your credential for the board never leaves this process. `hosts` adds
- * names a proxy in front of it serves the page on: whoever reaches the page there
- * acts as you, unless `visitor` says who a request is: a client that acts as them,
- * or null for one it can't name, which the proxy then refuses. A request a proxy
- * forwarded must name one of them: the server's own name is this machine's alone,
+ * origin. Your credential for the board never leaves this process. With `signIn`,
+ * the starter client is not who the page acts as: each viewer posts their own
+ * token once, it stays in an HttpOnly cookie the page cannot read, and the proxy
+ * forwards as them. `hosts` adds names a proxy in front of it serves the page on:
+ * whoever reaches the page there acts as you, unless `visitor` says who a request
+ * is, or `signIn` makes them sign in as themselves. A request a proxy forwarded
+ * must name one of those hosts: the server's own name is this machine's alone,
  * and a caller behind a proxy can send it too.
  */
 export async function createInspector(options: {
@@ -51,11 +59,13 @@ export async function createInspector(options: {
   page?: string
   hosts?: string[]
   visitor?: (request: IncomingMessage) => BoardClient | null | undefined
+  /** Each viewer signs in with their own token. The starter client is not who the page acts as. */
+  signIn?: InspectorSignIn
 }): Promise<InspectorPage> {
   const { client } = options
-  const me = await client.me()
+  const me = options.signIn ? null : await client.me()
   // Who it starts as (`--as claude`): the page's handle says who each request is, from there on.
-  const started: ProfileOption = me.profile === null ? null : me.avatar ? { name: me.profile, avatar: me.avatar } : me.profile
+  const started: ProfileOption = me === null || me.profile === null ? null : me.avatar ? { name: me.profile, avatar: me.avatar } : me.profile
   // The board it acts on, as that board names itself: a handle on one elsewhere has no URL of its own.
   const board = (await client.discovery().catch(() => null))?.url ?? client.url
   // The page it's given, or the one board is installed with.
@@ -69,7 +79,20 @@ export async function createInspector(options: {
   let origins = new Set<string>()
   const streams = new Set<AbortController>()
 
-  async function proxy(request: IncomingMessage, response: ServerResponse, url: URL) {
+  async function viewer(request: IncomingMessage): Promise<BoardClient | null> {
+    const credential = readCookie(request.headers.cookie)
+    if (credential === undefined || !options.signIn) return null
+    try {
+      const acting = options.signIn.acting(credential)
+      await acting.me()
+      return acting
+    } catch (error) {
+      if (error instanceof BoardError && error.status === 401) return null
+      throw error
+    }
+  }
+
+  async function proxy(request: IncomingMessage, response: ServerResponse, url: URL, actingAs?: BoardClient) {
     const reading = request.method === 'GET' || request.method === 'HEAD'
     if (!sameSecret(String(request.headers['x-inspect-token'] ?? ''), token) || (!reading && !origins.has(String(request.headers.origin))))
       return json(response, 403, { error: { code: 'forbidden', message: "the board is reachable only from the inspector's own page" } })
@@ -79,7 +102,7 @@ export async function createInspector(options: {
     const visiting = options.visitor?.(request)
     if (visiting === null)
       return json(response, 401, { error: { code: 'unauthorized', message: "the proxy in front of this page names no one for this request, so there's no one to act as" } })
-    const acting = visiting ?? client
+    const acting = visiting ?? actingAs ?? client
     const controller = new AbortController()
     streams.add(controller)
     response.on('close', () => controller.abort())
@@ -140,6 +163,9 @@ export async function createInspector(options: {
     const named = String(request.headers.host).toLowerCase()
     const forwarded = FORWARDED.some((header) => request.headers[header] !== undefined)
     if (!(forwarded ? proxied : hosts).has(named)) return send(response, 421, 'text/plain; charset=utf-8', 'wrong host')
+    if (options.signIn) return void serveSignedIn(request, response, url).catch(() =>
+      response.headersSent ? response.end() : send(response, 500, 'text/plain; charset=utf-8', 'error'),
+    )
     if (url.pathname === '/board' || url.pathname.startsWith('/board/'))
       return void proxy(request, response, url).catch(() =>
         response.headersSent ? response.end() : send(response, 500, 'text/plain; charset=utf-8', 'error'),
@@ -151,6 +177,57 @@ export async function createInspector(options: {
         : send(response, 503, 'text/plain; charset=utf-8', "the inspector's UI isn't built: run `pnpm --filter @vercel/board build`")
     // Every other path is a route inside the page.
     send(response, 200, 'text/html; charset=utf-8', shell({ token, profile: started, base: '' }), { 'content-security-policy': CSP })
+  }
+
+  async function serveSignedIn(request: IncomingMessage, response: ServerResponse, url: URL) {
+    const secure = secureCookie(request)
+    if (url.pathname === '/sign-in' && request.method === 'GET') return signIn(response, 200, false)
+    const signing = url.pathname === '/sign-in' || url.pathname === '/sign-out'
+    if (signing) {
+      if (request.method !== 'POST') return send(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
+      if (!origins.has(String(request.headers.origin)))
+        return json(response, 403, { error: { code: 'forbidden', message: "the board is reachable only from the inspector's own page" } })
+      if (url.pathname === '/sign-out') {
+        response.setHeader('set-cookie', clearCookie(secure))
+        response.writeHead(303, { location: '/' })
+        return void response.end()
+      }
+      let body: string
+      try {
+        body = new TextDecoder().decode(await read(request, 8 * 1024))
+      } catch {
+        return send(response, 413, 'text/plain; charset=utf-8', 'request too large')
+      }
+      const presented = new URLSearchParams(body).get('token') ?? ''
+      if (presented.length === 0 || presented.length > 4096) return signIn(response, 401, true)
+      const held = options.signIn!.acting(presented)
+      try {
+        await held.me()
+      } catch (error) {
+        if (error instanceof BoardError && error.status === 401) return signIn(response, 401, true)
+        return json(response, 502, { error: { code: 'unreachable', message: "the board didn't answer" } })
+      }
+      response.setHeader('set-cookie', sessionCookie(presented, secure))
+      response.writeHead(303, { location: '/' })
+      return void response.end()
+    }
+    const acting = await viewer(request)
+    const onBoard = url.pathname === '/board' || url.pathname.startsWith('/board/')
+    if (!acting) {
+      if (readCookie(request.headers.cookie) !== undefined) response.setHeader('set-cookie', clearCookie(secure))
+      if (onBoard || request.method !== 'GET' || url.pathname === '/app.js')
+        return json(response, 401, { error: { code: 'unauthorized', message: 'sign in with your team token' } })
+      return signIn(response, 200, false)
+    }
+    if (onBoard) return proxy(request, response, url, acting)
+    if (request.method !== 'GET') return send(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
+    if (url.pathname === '/app.js')
+      return app
+        ? send(response, 200, 'text/javascript; charset=utf-8', app)
+        : send(response, 503, 'text/plain; charset=utf-8', "the inspector's UI isn't built: run `pnpm --filter @vercel/board build`")
+    send(response, 200, 'text/html; charset=utf-8', shell({ token, profile: started, base: '', signOut: true }), {
+      'content-security-policy': CSP.replace("form-action 'none'", "form-action 'self'"),
+    })
   }
 
   return {
@@ -172,7 +249,7 @@ export async function createInspector(options: {
 }
 
 /** The inspector on a server of its own, on 127.0.0.1: `port`, or 4747, or any free one when that's taken. */
-export async function startInspector(options: { client: BoardClient; port?: number; page?: string; hosts?: string[] }): Promise<Inspector> {
+export async function startInspector(options: { client: BoardClient; port?: number; page?: string; hosts?: string[]; signIn?: InspectorSignIn }): Promise<Inspector> {
   const inspector = await createInspector(options)
   let page: ReturnType<InspectorPage['at']> | null = null
   const server = createServer((request, response) => (page ? page.handle(request, response) : void response.writeHead(503).end()))
@@ -189,6 +266,73 @@ export async function startInspector(options: { client: BoardClient; port?: numb
         server.closeAllConnections()
       }),
   }
+}
+
+const VIEWER_COOKIE = 'board_viewer'
+const SIGN_IN_CSP = [
+  "default-src 'none'",
+  "style-src 'unsafe-inline'",
+  "form-action 'self'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+].join('; ')
+
+function readCookie(header: IncomingMessage['headers']['cookie']): string | undefined {
+  const raw = Array.isArray(header) ? header.join('; ') : header
+  if (!raw) return undefined
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq === -1 || part.slice(0, eq).trim() !== VIEWER_COOKIE) continue
+    let value: string
+    try {
+      value = decodeURIComponent(part.slice(eq + 1).trim())
+    } catch {
+      return undefined
+    }
+    return value.length > 0 && value.length <= 4096 ? value : undefined
+  }
+  return undefined
+}
+
+function sessionCookie(credential: string, secure: boolean): string {
+  return `${VIEWER_COOKIE}=${encodeURIComponent(credential)}; HttpOnly; SameSite=Strict; Path=/${secure ? '; Secure' : ''}`
+}
+
+function clearCookie(secure: boolean): string {
+  return `${VIEWER_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure ? '; Secure' : ''}`
+}
+
+function secureCookie(request: IncomingMessage): boolean {
+  return String(request.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim().toLowerCase() === 'https'
+}
+
+function signIn(response: ServerResponse, status: number, refused: boolean) {
+  send(response, status, 'text/html; charset=utf-8', signInPage(refused), { 'content-security-policy': SIGN_IN_CSP })
+}
+
+function signInPage(refused: boolean): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in</title>
+<style>
+  body { font: 16px/1.4 system-ui, sans-serif; margin: 4rem auto; max-width: 28rem; }
+  label { display: block; }
+  input { width: 100%; box-sizing: border-box; margin: 0.5rem 0 1rem; }
+</style>
+</head>
+<body>
+<h1>Sign in</h1>
+<p>Paste your team token. It stays in a cookie this page cannot read.</p>
+${refused ? '<p>That token was refused.</p>' : ''}
+<form method="post" action="/sign-in">
+<label>Team token <input name="token" type="password" autocomplete="off" required maxlength="4096"></label>
+<button type="submit">Sign in</button>
+</form>
+</body>
+</html>`
 }
 
 function sameSecret(given: string, expected: string): boolean {
