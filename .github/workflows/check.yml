@@ -1,5 +1,8 @@
-# `pnpm check` (build + typecheck + test) on every PR and on main. Its job,
-# `check`, is the status that branch protection requires before a PR can land.
+# `pnpm check` (build + typecheck + test) on every PR and on main. The job
+# named `check` is the status that branch protection requires before a PR can land.
+# Board's vitest suite is most of that time, and nothing in board imports the other
+# packages, so a pull request that only touches those skips it. A push to main, a
+# merge queue, or any other diff still runs it, in four shards.
 name: check
 
 on:
@@ -18,7 +21,44 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      board: ${{ steps.decide.outputs.board }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: decide
+        run: |
+          set -eu
+          # Push, merge queue, and a diff we cannot read all run the board suite.
+          board=true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+            if git cat-file -e "$base^{commit}" >/dev/null 2>&1 && git cat-file -e "$head^{commit}" >/dev/null 2>&1; then
+              if files=$(git diff --name-only "$base" "$head"); then
+                board=false
+                while IFS= read -r f; do
+                  [ -n "$f" ] || continue
+                  case "$f" in
+                    packages/swarm/*|packages/runtime/*|packages/tools/*|tools/*|docs/*|design/*) ;;
+                    *) board=true; break ;;
+                  esac
+                done <<END
+          $files
+          END
+              fi
+            fi
+          fi
+          echo "board=$board" >> "$GITHUB_OUTPUT"
+
+  # Build, typecheck, and every test except board's vitest. Always runs.
+  rest:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -31,4 +71,48 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - run: pnpm check:rest
+
+  # Board vitest, four ways. Each runner builds board, then one shard.
+  board:
+    needs: changes
+    if: needs.changes.outputs.board == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @vercel/board build
+      - run: pnpm --filter @vercel/board exec vitest run --shard=${{ matrix.shard }}/4
+
+  # The only required status. Green when every needed job succeeded or was skipped.
+  check:
+    needs: [changes, rest, board]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: require the needed jobs
+        run: |
+          set -eu
+          for result in \
+            "${{ needs.changes.result }}" \
+            "${{ needs.rest.result }}" \
+            "${{ needs.board.result }}"
+          do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "needed job result: $result" >&2; exit 1 ;;
+            esac
+          done

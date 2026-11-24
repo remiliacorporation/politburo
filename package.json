@@ -9,9 +9,11 @@
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 build",
     "test": "pnpm --filter @vercel/board test && pnpm -r --filter '!@vercel/board' test && node --test tools/bench/test/ tools/host/test/*.test.mjs",
+    "test:rest": "pnpm -r --filter '!@vercel/board' test && node --test tools/bench/test/ tools/host/test/*.test.mjs",
     "test:metrics": "node --test tools/metrics/test/index.js tools/metrics/test/swarm-lines.test.mjs",
     "typecheck": "pnpm -r typecheck",
-    "check": "pnpm build && pnpm typecheck && pnpm test"
+    "check": "pnpm build && pnpm typecheck && pnpm test",
+    "check:rest": "pnpm build && pnpm typecheck && pnpm test:rest"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3"
