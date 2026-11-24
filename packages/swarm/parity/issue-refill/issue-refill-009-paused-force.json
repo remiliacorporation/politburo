@@ -1,0 +1,91 @@
+{
+  "case_id": "issue-refill-009-paused-force",
+  "description": "Force does not authorize writes while paused",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 2}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "",
+    "stdout": "refill: skipped (network is paused; refill writes only while active)\n"
+  },
+  "inputs": {
+    "argv": [
+      "--force"
+    ],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "Even with free slots and a proposal waiting in the fake source, admission refuses research on a paused network.",
+  "setup": {
+    "config": {
+      "slots": 2
+    },
+    "files": {},
+    "network": "paused",
+    "now": "2026-01-01T12:00:00Z",
+    "proposals": {
+      "defects": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        }
+      ]
+    },
+    "source_files": {
+      "docs/queue.md": "Drain the queue after each batch.\n",
+      "src/cache.py": "def get(key):\n    return entries[key]\n",
+      "src/export.py": "def export_rows(rows):\n    return list(rows)\n",
+      "src/queue.py": "def drain(queue):\n    return queue.pop()\n"
+    }
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

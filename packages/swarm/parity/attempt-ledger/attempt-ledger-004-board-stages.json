@@ -1,0 +1,457 @@
+{
+  "case_id": "attempt-ledger-004-board-stages",
+  "description": "Project board attempts and review/QA outcomes separately",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64: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",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 6, \"duplicates\": 0, \"observations_added\": 6, \"quarantined\": 0}\natt-1b52a50c5009606288ee20c2a901b799969ed569 board_attempt interrupted sources=1 observations=1\natt-22688edf3083515c51f32f6d607b69196f64ab1f stage_outcome unknown sources=1 observations=1\natt-567ecf7c765cb4ecfa2f9ae2587beac8245d9a10 stage_outcome exited sources=1 observations=1\natt-c793c1c8c88809be843ced99411ac8daf464314a board_attempt unknown sources=1 observations=1\natt-dce9a3d93457977c60ba4002bfc4034ce05fbdfa board_attempt exited sources=1 observations=1\natt-e14871acfba0131e008ce2c4c7fa97310a1bded2 stage_outcome exited sources=1 observations=1\ntotal=6 shown=6 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 6, \"duplicates\": 0, \"observations_added\": 6, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-1b52a50c5009606288ee20c2a901b799969ed569 board_attempt interrupted sources=1 observations=1\natt-22688edf3083515c51f32f6d607b69196f64ab1f stage_outcome unknown sources=1 observations=1\natt-567ecf7c765cb4ecfa2f9ae2587beac8245d9a10 stage_outcome exited sources=1 observations=1\natt-c793c1c8c88809be843ced99411ac8daf464314a board_attempt unknown sources=1 observations=1\natt-dce9a3d93457977c60ba4002bfc4034ce05fbdfa board_attempt exited sources=1 observations=1\natt-e14871acfba0131e008ce2c4c7fa97310a1bded2 stage_outcome exited sources=1 observations=1\ntotal=6 shown=6 quarantined=0\n"
+      },
+      [
+        {
+          "attempt_id": "att-1b52a50c5009606288ee20c2a901b799969ed569",
+          "counts_as_attempt": true,
+          "execution_state": "interrupted",
+          "identity": {
+            "agent_generation": 5,
+            "agent_id": "worker-01",
+            "assignment_generation": 2,
+            "harness": "example-adapter",
+            "issue_key": "example-issue",
+            "lease_id": "lease-f140bce74d2e0952",
+            "model": "example-model",
+            "provider": "example-provider",
+            "session_ref": "sess-ca1032d1bd538da2"
+          },
+          "missing": [
+            "usage"
+          ],
+          "namespace": "board_attempt",
+          "native_id": "attempt-example-02",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": null,
+          "parent": null,
+          "raw_state": "interrupted",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "interrupted",
+              "key": "execution_attempts:attempt-example-02",
+              "kind": "board_attempt",
+              "native_state": "cancelled",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "board-attempt/1",
+              "sha256": "2c5fcd83209fe4910c30662c5be01bf2ed0dc8b69d27fa738b5c9d9415166f5e"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-22688edf3083515c51f32f6d607b69196f64ab1f",
+          "counts_as_attempt": false,
+          "execution_state": "unknown",
+          "identity": {
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "issue_key": "example-issue",
+            "stage_kind": "review"
+          },
+          "missing": [
+            "terminal_state",
+            "usage"
+          ],
+          "namespace": "stage_outcome",
+          "native_id": "review-example-02",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": null,
+          "parent": {
+            "attempt_id": "att-8242909e3f465329e73efa9d4acce04e6a29eb40",
+            "namespace": "board_attempt",
+            "resolved": false
+          },
+          "raw_state": "unknown",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "unknown",
+              "key": "pipeline_stages:review-example-02",
+              "kind": "pipeline_stage",
+              "native_state": "superseded",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "stage-outcome/2",
+              "sha256": "39aa083af55dbb465c29f502a221573909c0414c5b9ab7195b4c330c28505244"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-567ecf7c765cb4ecfa2f9ae2587beac8245d9a10",
+          "counts_as_attempt": false,
+          "execution_state": "exited",
+          "identity": {
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "issue_key": "example-issue",
+            "stage_kind": "review"
+          },
+          "missing": [
+            "usage"
+          ],
+          "namespace": "stage_outcome",
+          "native_id": "review-example-01",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": "accepted",
+          "parent": {
+            "attempt_id": "att-dce9a3d93457977c60ba4002bfc4034ce05fbdfa",
+            "namespace": "board_attempt",
+            "resolved": true
+          },
+          "raw_state": "exited",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "exited",
+              "key": "pipeline_stages:review-example-01",
+              "kind": "pipeline_stage",
+              "native_state": "passed",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "stage-outcome/2",
+              "sha256": "d4dd6497adb28d4cd783d66d46331a9ed432f6f41e7da63252935affe80e08e2"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-c793c1c8c88809be843ced99411ac8daf464314a",
+          "counts_as_attempt": true,
+          "execution_state": "unknown",
+          "identity": {
+            "agent_generation": 5,
+            "agent_id": "worker-01",
+            "assignment_generation": 2,
+            "harness": "example-adapter",
+            "issue_key": "example-issue",
+            "lease_id": "lease-f140bce74d2e0952",
+            "model": "example-model",
+            "provider": "example-provider",
+            "session_ref": "sess-ca1032d1bd538da2"
+          },
+          "missing": [
+            "finished_at",
+            "terminal_state",
+            "usage"
+          ],
+          "namespace": "board_attempt",
+          "native_id": "attempt-example-03",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": null,
+          "parent": null,
+          "raw_state": "unknown",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "unknown",
+              "key": "execution_attempts:attempt-example-03",
+              "kind": "board_attempt",
+              "native_state": "expired",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "board-attempt/1",
+              "sha256": "a1864dedd533424f5df5dc687f5d7978dc1dd12171de79672123f9c03d30e500"
+            }
+          ],
+          "timestamps": {
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-dce9a3d93457977c60ba4002bfc4034ce05fbdfa",
+          "counts_as_attempt": true,
+          "execution_state": "exited",
+          "identity": {
+            "agent_generation": 5,
+            "agent_id": "worker-01",
+            "assignment_generation": 2,
+            "harness": "example-adapter",
+            "issue_key": "example-issue",
+            "lease_id": "lease-f140bce74d2e0952",
+            "model": "example-model",
+            "provider": "example-provider",
+            "session_ref": "sess-ca1032d1bd538da2"
+          },
+          "missing": [
+            "usage"
+          ],
+          "namespace": "board_attempt",
+          "native_id": "attempt-example-01",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": null,
+          "parent": null,
+          "raw_state": "exited",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "exited",
+              "key": "execution_attempts:attempt-example-01",
+              "kind": "board_attempt",
+              "native_state": "collected",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "board-attempt/1",
+              "sha256": "741a286e3b13f5dc14e87d873ccf708c00c8312742f33e0b083ac9572a53e4fa"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-e14871acfba0131e008ce2c4c7fa97310a1bded2",
+          "counts_as_attempt": false,
+          "execution_state": "exited",
+          "identity": {
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "issue_key": "example-issue",
+            "stage_kind": "qa"
+          },
+          "missing": [
+            "usage"
+          ],
+          "namespace": "stage_outcome",
+          "native_id": "qa-example-01",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": "rejected",
+          "parent": {
+            "attempt_id": "att-dce9a3d93457977c60ba4002bfc4034ce05fbdfa",
+            "namespace": "board_attempt",
+            "resolved": true
+          },
+          "raw_state": "exited",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "exited",
+              "key": "pipeline_stages:qa-example-01",
+              "kind": "pipeline_stage",
+              "native_state": "failed",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "stage-outcome/2",
+              "sha256": "02bffa9cbe1e8ac01ea3c3ce07286204fd699453f00c57490e0a399b94a4d4be"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        }
+      ]
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "project"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Includes successful and failed stages, supersession, a skipped pending stage, and resolved and unresolved origins. Cancelled and expired native attempts are terminal without inventing success. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "board": {
+      "execution_attempts": [
+        {
+          "adapter": "example-adapter",
+          "agent_generation": 5,
+          "agent_id": "worker-01",
+          "assignment_generation": 2,
+          "attempt_id": "attempt-example-01",
+          "finished_at": "2026-01-01T00:02:00+00:00",
+          "issue_key": "example-issue",
+          "launched_at": "2026-01-01T00:00:00+00:00",
+          "lease_token": "example-lease",
+          "model": "example-model",
+          "provider": "example-provider",
+          "session_ref": "example-session",
+          "state": "collected"
+        },
+        {
+          "adapter": "example-adapter",
+          "agent_generation": 5,
+          "agent_id": "worker-01",
+          "assignment_generation": 2,
+          "attempt_id": "attempt-example-02",
+          "finished_at": "2026-01-01T00:02:00+00:00",
+          "issue_key": "example-issue",
+          "launched_at": "2026-01-01T00:00:00+00:00",
+          "lease_token": "example-lease",
+          "model": "example-model",
+          "provider": "example-provider",
+          "session_ref": "example-session",
+          "state": "cancelled"
+        },
+        {
+          "adapter": "example-adapter",
+          "agent_generation": 5,
+          "agent_id": "worker-01",
+          "assignment_generation": 2,
+          "attempt_id": "attempt-example-03",
+          "finished_at": null,
+          "issue_key": "example-issue",
+          "launched_at": "2026-01-01T00:00:00+00:00",
+          "lease_token": "example-lease",
+          "model": "example-model",
+          "provider": "example-provider",
+          "session_ref": "example-session",
+          "state": "expired"
+        }
+      ],
+      "pipeline_stages": [
+        {
+          "candidate_sha": "example-candidate",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "issue_key": "example-issue",
+          "origin_attempt_id": "attempt-example-01",
+          "result": "accepted",
+          "stage": "review",
+          "stage_id": "review-example-01",
+          "state": "passed",
+          "updated_at": "2026-01-01T00:02:00+00:00"
+        },
+        {
+          "candidate_sha": "example-candidate",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "issue_key": "example-issue",
+          "origin_attempt_id": "attempt-example-01",
+          "result": "rejected",
+          "stage": "qa",
+          "stage_id": "qa-example-01",
+          "state": "failed",
+          "updated_at": "2026-01-01T00:02:00+00:00"
+        },
+        {
+          "candidate_sha": "example-candidate",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "issue_key": "example-issue",
+          "origin_attempt_id": "attempt-missing",
+          "result": null,
+          "stage": "review",
+          "stage_id": "review-example-02",
+          "state": "superseded",
+          "updated_at": "2026-01-01T00:02:00+00:00"
+        },
+        {
+          "candidate_sha": "example-candidate",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "issue_key": "example-issue",
+          "origin_attempt_id": "attempt-example-01",
+          "result": null,
+          "stage": "qa",
+          "stage_id": "qa-example-02",
+          "state": "pending",
+          "updated_at": "2026-01-01T00:02:00+00:00"
+        }
+      ]
+    },
+    "files": {},
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

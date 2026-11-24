@@ -1,0 +1,74 @@
+{
+  "case_id": "controllers-pause-resume-013-heartbeat-refusals",
+  "description": "Report a malformed heartbeat and reject invalid scan input",
+  "expected": {
+    "db_rows": {},
+    "details": {},
+    "exit_code": 2,
+    "files": {
+      "notes/alive/.alerts.json": "{\"example.001-FOX\": {\"core\": 1767225600.0, \"example\": 1767225600.0}}\n",
+      "notes/alive/example.001-FOX": "not-json\n",
+      "notes/mail/core/core-0001.yaml": "id: \"core-0001\"\nclass: \"core.escalate\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"core\"\nsummary: \"stale liveness: example.001-FOX age=0s interval=300s (unreadable or invalid heartbeat)\"\nat: \"2026-01-01T00:00:00Z\"\n",
+      "notes/mail/core/id-counter.txt": "1\n",
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"spawner.decide\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"example\"\nsummary: \"stale liveness: example.001-FOX age=0s interval=300s (unreadable or invalid heartbeat)\"\nat: \"2026-01-01T00:00:00Z\"\n",
+      "notes/mail/example/id-counter.txt": "1\n",
+      "notes/mail/log.yaml": "- {\"at\": \"2026-01-01T00:00:00Z\", \"event\": \"created\", \"hash\": \"b66a95a39bd6059daa4adc041ff3e7c713d67743bc8c903df0ffd70a904b1507\", \"header\": {\"at\": \"2026-01-01T00:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0001\", \"summary\": \"stale liveness: example.001-FOX age=0s interval=300s (unreadable or invalid heartbeat)\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0001\", \"to\": \"example\"}\n- {\"at\": \"2026-01-01T00:00:00Z\", \"event\": \"created\", \"hash\": \"6aa6cd5752a30a04d95ae30ccc8b8f857469064918f655c39041ac508226ab20\", \"header\": {\"at\": \"2026-01-01T00:00:00Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0001\", \"summary\": \"stale liveness: example.001-FOX age=0s interval=300s (unreadable or invalid heartbeat)\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0001\", \"to\": \"core\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "liveness_check: --interval must be positive\n",
+    "stdout": "stale liveness: example.001-FOX age=0s interval=300s (unreadable or invalid heartbeat)\n",
+    "steps": [
+      {
+        "exit_code": null,
+        "returned": null,
+        "stderr": "",
+        "stdout": "",
+        "step": "read invalid"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "",
+        "stdout": "stale liveness: example.001-FOX age=0s interval=300s (unreadable or invalid heartbeat)\n",
+        "step": "scan invalid heartbeat"
+      },
+      {
+        "exit_code": 2,
+        "returned": null,
+        "stderr": "liveness_check: --interval must be positive\n",
+        "stdout": "",
+        "step": "refuse zero interval"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "error": "tag and name must be filename components; tag must not contain a dot",
+          "type": "ValueError"
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "refuse dotted tag"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "scenario": "heartbeat_refusals"
+  },
+  "matrix_row": "M83",
+  "notes": "A malformed heartbeat is stale even at age zero; a zero polling interval and a tag containing a dot are refused.",
+  "setup": {
+    "files": {
+      "notes/alive/example.001-FOX": "not-json\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py",
+      "supervisor/liveness_check.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

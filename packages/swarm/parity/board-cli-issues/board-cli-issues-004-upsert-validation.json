@@ -1,0 +1,201 @@
+{
+  "case_id": "board-cli-issues-004-upsert-validation",
+  "description": "Reject invalid imports and unaudited priority edits",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "priority_changed",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"envelope_version\": 1, \"from\": 3, \"from_label\": \"Normal\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": 5, \"to_label\": \"Critical\", \"version\": 2}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 5,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "proposed",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 2,
+          "worktree": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 1,
+        "stderr": "priority must be an integer from 1 (Deferred) to 5 (Critical)\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "changing priority needs a recorded reason; use the priority-set command\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "--actor-type, --reason-code and --reason must be given together\n",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"from\": 3,\n  \"issue_key\": \"example-issue\",\n  \"label\": \"Critical\",\n  \"ok\": true,\n  \"to\": 5,\n  \"version\": 2\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": [
+          {
+            "issue_key": "example-extra",
+            "title": "Example extra"
+          },
+          {
+            "issue_key": "example-prerequisite",
+            "priority": true,
+            "title": "Example prerequisite"
+          }
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "issue_key": "example-issue",
+          "priority": 5,
+          "title": "Example issue"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert",
+          "--actor-type",
+          "user"
+        ],
+        "stdin": {
+          "issue_key": "example-issue",
+          "title": "Example issue"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "priority-set",
+          "example-issue",
+          "--value",
+          "5",
+          "--expected-version",
+          "1",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "A batch with a valid first row and boolean priority in the second rolls back; an existing priority change and incomplete origin envelope are refused. The audited priority command succeeds at the original version.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "issue_key": "example-issue",
+          "title": "Example issue"
+        }
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py",
+      "board/priority.py"
+    ]
+  }
+}

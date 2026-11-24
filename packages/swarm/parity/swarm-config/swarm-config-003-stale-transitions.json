@@ -1,0 +1,157 @@
+{
+  "case_id": "swarm-config-003-stale-transitions",
+  "description": "Try equal, descending, and delayed ascending versions after a newer notice.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/ex/.keep": "",
+      "mail/ex/ex-0001.yaml": "id: \"ex-0001\"\nclass: \"policy\"\nurgency: \"p2\"\nfrom: \"swarm-config\"\nto: \"ex\"\nref: {version: 7}\nsummary: \"swarm-config v7: heartbeat_minutes 30 -> 20\"\nat: \"2026-02-03T04:05:06Z\"\n",
+      "mail/ex/ex-0002.yaml": "id: \"ex-0002\"\nclass: \"policy\"\nurgency: \"p2\"\nfrom: \"swarm-config\"\nto: \"ex\"\nref: {version: 6}\nsummary: \"swarm-config v6: heartbeat_minutes 40 -> 30\"\nat: \"2026-02-03T04:07:06Z\"\n",
+      "mail/ex/id-counter.txt": "2\n",
+      "mail/log.yaml": "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"bfd14599d73edf5613f53dd22dddda775e4cf100a8ef2c2df27375fc4ac3f753\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: heartbeat_minutes 30 -> 20\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex\"}\n- {\"at\": \"2026-02-03T04:07:06Z\", \"event\": \"created\", \"hash\": \"826f37fed7711de28c47b4b60a91c597ed4b2465e12b29b715f8e68547253fca\", \"header\": {\"at\": \"2026-02-03T04:07:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0002\", \"ref\": {\"version\": 6}, \"summary\": \"swarm-config v6: heartbeat_minutes 40 -> 30\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0002\", \"key\": [\"swarm-config\", {\"version\": 6}, \"policy\"], \"to\": \"ex\"}\n",
+      "swarm-config.json": "{\n  \"heartbeat_minutes\": 20,\n  \"mob_limit_rule\": \"Keep example limits\",\n  \"sprite_default_model\": \"example-model\",\n  \"sprite_thinking_default\": \"medium\",\n  \"updated_at\": \"2026-02-03T04:05:06Z\",\n  \"usage_stop_percent\": 95,\n  \"version\": 7\n}\n",
+      "swarm-config.json.lock": ""
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"bfd14599d73edf5613f53dd22dddda775e4cf100a8ef2c2df27375fc4ac3f753\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: heartbeat_minutes 30 -> 20\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-02-03T04:07:06Z\", \"event\": \"created\", \"hash\": \"826f37fed7711de28c47b4b60a91c597ed4b2465e12b29b715f8e68547253fca\", \"header\": {\"at\": \"2026-02-03T04:07:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0002\", \"ref\": {\"version\": 6}, \"summary\": \"swarm-config v6: heartbeat_minutes 40 -> 30\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0002\", \"key\": [\"swarm-config\", {\"version\": 6}, \"policy\"], \"to\": \"ex\"}"
+    ],
+    "stderr": "",
+    "stdout": "swarm-config v7: heartbeat_minutes 30 -> 20\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "log_line_count": 1,
+        "stderr": "",
+        "stdout": "swarm-config v7: heartbeat_minutes 30 -> 20\n"
+      },
+      {
+        "log_line_count": 1,
+        "return": []
+      },
+      {
+        "log_line_count": 1,
+        "return": []
+      },
+      {
+        "log_line_count": 2,
+        "return": [
+          {
+            "action": "created",
+            "id": "ex-0002",
+            "notice": null,
+            "path": "mail/ex/ex-0002.yaml",
+            "reason": null,
+            "to": "ex"
+          }
+        ]
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "heartbeat_minutes=20"
+        ],
+        "kind": "cli"
+      },
+      {
+        "kind": "notify",
+        "mailboxes": [
+          "ex2"
+        ],
+        "new": {
+          "heartbeat_minutes": 20,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:05:06Z",
+          "usage_stop_percent": 95,
+          "version": 7
+        },
+        "now": "2026-02-03T04:06:06Z",
+        "old": {
+          "heartbeat_minutes": 20,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:05:06Z",
+          "usage_stop_percent": 95,
+          "version": 7
+        }
+      },
+      {
+        "kind": "notify",
+        "mailboxes": [
+          "ex2"
+        ],
+        "new": {
+          "heartbeat_minutes": 30,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:00:00Z",
+          "usage_stop_percent": 95,
+          "version": 6
+        },
+        "now": "2026-02-03T04:06:06Z",
+        "old": {
+          "heartbeat_minutes": 20,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:05:06Z",
+          "usage_stop_percent": 95,
+          "version": 7
+        }
+      },
+      {
+        "kind": "notify",
+        "mailboxes": [
+          "ex"
+        ],
+        "new": {
+          "heartbeat_minutes": 30,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:00:00Z",
+          "usage_stop_percent": 95,
+          "version": 6
+        },
+        "now": "2026-02-03T04:07:06Z",
+        "old": {
+          "heartbeat_minutes": 40,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:00:00Z",
+          "usage_stop_percent": 95,
+          "version": 5
+        }
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "The delayed 5-to-6 transition is older than the notice in the inbox but advances its supplied pair.",
+  "setup": {
+    "files": {
+      "mail/ex/.keep": "",
+      "swarm-config.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n"
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}

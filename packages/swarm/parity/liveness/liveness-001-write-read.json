@@ -1,0 +1,65 @@
+{
+  "case_id": "liveness-001-write-read",
+  "description": "Publish and read a heartbeat at a fixed fractional epoch.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "notes/alive/example.wake": "{\"at\": 1767225600.25, \"pid\": 123, \"cycle\": 1, \"interval\": 2.5}\n"
+    },
+    "log_lines": [],
+    "runs": [
+      {
+        "return": "notes/alive/example.wake",
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "return": {
+          "at": 1767225600.25,
+          "cycle": 1,
+          "interval": 2.5,
+          "pid": 123
+        },
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "function",
+    "steps": [
+      {
+        "after": 0.25,
+        "args": {
+          "cycle": 1,
+          "interval": 2.5,
+          "name": "wake",
+          "notes_dir": "notes",
+          "tag": "example"
+        },
+        "function": "touch"
+      },
+      {
+        "args": {
+          "path": "notes/alive/example.wake"
+        },
+        "function": "read"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py"
+    ]
+  }
+}
