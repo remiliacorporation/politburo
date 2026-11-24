@@ -106,6 +106,7 @@ async function main(args: string[]): Promise<number> {
 
 // One line per area: the loader returns run(argv): Promise<number>.
 const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  digest: () => import('./digest/cli.ts'),
   claims: () => import('./claims/cli.ts'),
   check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
