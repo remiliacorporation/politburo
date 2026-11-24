@@ -1,0 +1,93 @@
+{
+  "case_id": "attempt-ledger-009-newer-schema",
+  "description": "Refuse reconciliation against an unsupported future ledger version",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64:eJzt2m9r20YcwHGpSe1YTuOWMsQooRdCiEVTQlraEcZgTqJmpq6dyjY0j4Rq31KvtuxIcmgfJht7X3s9gz0cY48m21EsKU1JHnRj5vvBIjrdH9/97i5YluuvK51Aih/7Xs8JxFPlrqKqyvdCKIqyEB55ZSoTHvOxtKpc053CX8pi7qFSeFP4bemgsL7052JlSc//nX+uebmH2nfXbQcAAOBfcPYgn9VXVtRf1MB525XHQ8dz3KDjxs60XcssNUzRKO1UTDG9Loqa8OWxKFcb5r5piQOr/KpkHYqX5qEoNRu1cjWs+MqsNjaE3x96LWm/77ht0TDfNES1Fh7NSmWaJT+mcrQoy3/nPHn2PF2v1W/L9LX+W196J7Jth5/00o01q+XXTbMY60n8vTeSbzZp3jCeLmb0/RVVCUvLD/5xN/wkaTvDoD9O29NQ2FvT8/xpScs+2F5bONsMvM7RkfQm3XKCTt/1bbdvt2VXBjJ+NYqwVd4fRfLTFcSO+aJmmWLPrJhh4Vo1UU7bMffLVVEPM3cbwiqV62axtFOzwuivO0Ege4NAdGU77E6imnA8KZzBQLrtx323+3Hd+FaY1b3TUu7zYxgO2s6NxjCpEI2hebBX+tJjOFjI6I8eqYfjhX0+eeF6HUq3lU7mEks8lVl0nZ7cCFPGzz9ksvramvprfdxmvA/x82yitURPr71lNHE+YLuT2jLCMl+YllndNetRGb84LWxMN86Ntttnd5smBo4XDsM+kZ4fDuQmG88Nh34SthuMpj9VT36QreEoMp/O9mSr77Xtn/xL73ixn6cDT/yXubSfk/03jG+yGf3l2lU7O7F4t+KphdPVuay+vKyefT1eA9EMRH/nE3MfXR3Ne3o+Y3O/IUZLzB84rUshOI9eehFMA3BRM1bWMDZvZ/Td5auGF3XLfhKdZTbnr1VhKzq7faRm9dVV9fSrcRgmu9LuycCJnd5KBCOWIYoXCzARhhOnO0yFwHh2K6OXV6/qWaxReyuWmFMm9/fKnfBQC78r4QsAAAAAAPz/3VfnjHt+653sOdEXPdvbmjK6//9DCV8AAAAAAGAm3JszcslvAEbP/5W7/3W/AAAAAADAlzR6/s/9PwAAAAAAs437fwAAAAAAZh+//wcAAAAAYPbx/B8AAAAAgNnH838AAAAAAGYf9/8AAAAAAMw+fv8PAAAAAMDs+wcMLmUG",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "error: attempt ledger schema 99 is newer than supported 1\n",
+    "stdout": "{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 0, \"quarantined\": 0}\ntotal=0 shown=0 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 0, \"quarantined\": 0}\n"
+      },
+      "99",
+      "3a339a43a44311b8dd45378aeaf94ed55c449fd6da4c05caa7be10aee1029dc3",
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "total=0 shown=0 quarantined=0\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "error: attempt ledger schema 99 is newer than supported 1\n",
+        "stdout": ""
+      },
+      "3a339a43a44311b8dd45378aeaf94ed55c449fd6da4c05caa7be10aee1029dc3"
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "set_schema_version",
+        "version": "99"
+      },
+      {
+        "op": "digest",
+        "path": "attempt_ledger.sqlite"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "digest",
+        "path": "attempt_ledger.sqlite"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Tamper with the schema marker, then show that reconcile refuses while list uses its own unguarded read-only path. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}
