@@ -88,7 +88,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
   const repoParty = repoPartyOf(records, current.view === 'party' ? current.party : params.get('party'))
   const repoView = labelsOf(records, repoParty, where.name).repoView
   const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => toast(`copied ${text}`))
-  const channelItem = (channel: ChannelView, shown: string) => {
+  const channelItem = (channel: ChannelView, shown: string, nested = false) => {
     const active = current.view === 'channel' && current.channel === channel.path
     // Only where the board keeps a channel's last position: Vercel's API doesn't.
     const unread = !active && (channel.lastIndex ?? 0) > (seen[channel.path] ?? Number.POSITIVE_INFINITY)
@@ -102,7 +102,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           </>
         }
       >
-        <Link to={`/c/${channel.path}`} className={`item${unread ? ' unread' : ''}`} current={active} title={channel.path}>
+        <Link to={`/c/${channel.path}`} className={`item${nested ? ' nested' : ''}${unread ? ' unread' : ''}`} current={active} title={channel.path}>
           <span className="name">#{shown}</span>
           {unread ? <i className="dot" /> : channel.threads !== undefined ? <span className="count">{channel.threads}</span> : null}
         </Link>
@@ -142,7 +142,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
                 {repo.name && <small className="faint">{repo.tag}</small>}
                 <span className="count">{count.needs} · {count.running} · {count.pull}</span>
               </Link>
-              {(byRepo.get(repo.tag) ?? []).map((channel) => channelItem(channel, channel.path.slice(repo.tag.length + 1)))}
+              {(byRepo.get(repo.tag) ?? []).map((channel) => channelItem(channel, channel.path.slice(repo.tag.length + 1), true))}
             </section>
           )
         })}
@@ -174,7 +174,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           {attention > 0 && <span className="count">{attention}</span>}
           {hasUnshownRefusal(state) && <span className="faint">refused</span>}
         </Link>
-        <h2>channels</h2>
+        {other.length > 0 && <h2>channels</h2>}
         {other.map(([group, channels]) => (
           <section key={group}>
             {group !== 'channels' && <h2>{group}</h2>}
