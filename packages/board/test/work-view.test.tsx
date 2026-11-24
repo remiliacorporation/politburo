@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { act } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -16,7 +17,10 @@ const releaseGates: (() => void)[] = []
 afterEach(async () => {
   root?.unmount()
   for (const release of releaseGates.splice(0)) release()
-  await close?.()
+  const closing = close?.()
+  await vi.advanceTimersByTimeAsync(1_000).catch(() => undefined)
+  vi.useRealTimers()
+  await closing
   root = undefined
   close = undefined
   vi.restoreAllMocks()
@@ -27,17 +31,22 @@ afterEach(async () => {
 })
 
 // Substitute only the browser-to-proxy transport; reads, writes and live events use the local board.
-async function workBoard() {
+async function workBoard(expiresIn = '1h') {
   const api = localBoard()
+  const realTimeout = setTimeout
   const page = new AbortController()
   const streamClosed = Promise.withResolvers<void>()
   let streaming = false
   close = async () => {
     page.abort()
-    if (streaming) await streamClosed.promise
-    await api.close()
+    const bound = (promise: Promise<unknown>) => Promise.race([
+      promise,
+      new Promise<void>((resolve) => { realTimeout(resolve, 200) }),
+    ])
+    if (streaming) await bound(streamClosed.promise)
+    await bound(api.close())
   }
-  const token = await personToken('u_reader', BOARD_URL)
+  const token = await personToken('u_reader', BOARD_URL, expiresIn)
   const clientFor = (token: string) => createBoardClient({ url: BOARD_URL, token, profile: null, fetch: (input, init) => api.fetch(new Request(input, init)) })
   const client = clientFor(token)
   const writes: string[] = []
@@ -48,6 +57,7 @@ async function workBoard() {
       return client.tasks.create('work', { text, labels: { 'work.id': typeof workId === 'number' ? `wp-${workId}` : workId, party }, ...task })
     },
     client,
+    fresh: async () => clientFor(await personToken('u_reader', BOARD_URL, expiresIn)),
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
     async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void, respond?: (request: Request) => Promise<Response | undefined> | Response | undefined) {
       browser.setViewport({ width: 1280, height: 900 })
@@ -1172,3 +1182,85 @@ it('does not show a work id as a repo the board does not list', async () => {
     expect(repoEntry('rdn')?.querySelector('a[href="/r/rdn"] .count')?.textContent).toBe('0 · 0 · 1')
   })
 })
+
+const minute = 60_000
+const runningCount = () => document.querySelector('.work-counts')?.textContent ?? ''
+const rdnCount = () => repoEntry('rdn')?.querySelector('.count')?.textContent
+
+it('shows a claim with no progress as repair, and a reply puts it back in running', async () => {
+  const board = await workBoard('6h')
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  const start = Date.now()
+  const { task } = await board.client.tasks.create('rdn/backlog', { text: 'Wait on approval' })
+  let held = await board.client.tasks.claim(task.id, { lease: 3600 })
+  vi.setSystemTime(start + 30 * minute)
+  await board.client.reply(task.id, 'still on the approval')
+  vi.setSystemTime(start + 40 * minute)
+  held = await held.renew(3600)
+  // The root is older than an hour. The reply is not, so the claim is still running.
+  vi.setSystemTime(start + 70 * minute)
+  await board.open('/work')
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(runningCount()).toContain('1 running')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+    expect(row('Wait on approval').textContent).not.toContain('no progress')
+  })
+  // Moving the clock alone does not re-render. The page clock does, without a reload.
+  vi.setSystemTime(start + 30 * minute + 61 * minute)
+  expect(headings()).toContain('Running')
+  expect(row('Wait on approval').textContent).not.toContain('no progress')
+  await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Repair or reconcile')
+    expect(headings()).not.toContain('Running')
+    expect(row('Wait on approval').textContent).toContain('no progress for 1h')
+    expect(runningCount()).toContain('0 running')
+    expect(rdnCount()).toBe('0 · 0 · 0')
+  })
+  await (await board.fresh()).reply(task.id, 'approval landed')
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(runningCount()).toContain('1 running')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+    expect(row('Wait on approval').textContent).not.toContain('no progress')
+  })
+}, 30_000)
+
+it('treats a root edit or a label change as progress on a claim', async () => {
+  const board = await workBoard('6h')
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  const start = Date.now()
+  const edited = (await board.client.tasks.create('rdn/backlog', { text: 'Wait on the edit' })).task
+  const labeled = (await board.client.tasks.create('rdn/backlog', { text: 'Wait on the label' })).task
+  const editClaim = await board.client.tasks.claim(edited.id, { lease: 3600 })
+  const labelClaim = await board.client.tasks.claim(labeled.id, { lease: 3600 })
+  vi.setSystemTime(start + 10 * minute)
+  await editClaim.renew(3600)
+  await labelClaim.renew(3600)
+  vi.setSystemTime(start + 15 * minute)
+  await board.open('/work')
+  await vi.waitFor(() => {
+    expect(headings()).toEqual(['Running'])
+    expect(rdnCount()).toBe('0 · 2 · 0')
+  })
+  vi.setSystemTime(start + 61 * minute)
+  await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
+  await vi.waitFor(() => {
+    expect(row('Wait on the edit').textContent).toContain('no progress for 1h')
+    expect(row('Wait on the label').textContent).toContain('no progress for 1h')
+    expect(rdnCount()).toBe('0 · 0 · 0')
+  })
+  const live = await board.fresh()
+  await live.edit(edited.id, 'Wait on the edit\nstill here')
+  await live.label(labeled.id, { set: { note: 'awake' } })
+  await vi.waitFor(() => {
+    expect(row('Wait on the edit').textContent).not.toContain('no progress')
+    expect(row('Wait on the label').textContent).not.toContain('no progress')
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(rdnCount()).toBe('0 · 2 · 0')
+  })
+}, 30_000)

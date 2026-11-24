@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
-import { isTask, type Filter, type State } from './store.ts'
+import type { Filter, State } from './store.ts'
 import { absoluteTime, ago } from './words.ts'
+import { nextWorkWake } from './work.ts'
 
 export { route, SECTIONS, type Route, type Section } from './routes.ts'
 
@@ -101,20 +102,15 @@ export function Link(props: { to: string; className?: string; current?: boolean;
   )
 }
 
-/** Age the page's labels, waking sooner if the next lease can change the queue. */
-export function useNow(roots: State['openTaskRoots']): number {
+/** Age the page's labels, waking sooner when the next lease or idle claim can change the queue. */
+export function useNow(state: Pick<State, 'openTaskRoots' | 'messages' | 'seenProgress'>): number {
   const [now, setNow] = useState(Date.now)
+  const wake = nextWorkWake(state, now)
   useEffect(() => {
-    let next = Infinity
-    for (const root of Object.values(roots)) {
-      if (!isTask(root) || root.deleted || root.task.state !== 'claimed' || !root.task.claim) continue
-      const expiry = Date.parse(root.task.claim.until)
-      if (expiry > now) next = Math.min(next, expiry)
-    }
-    const delay = Math.max(0, Math.min(30_000, next - Date.now()) + 1_000)
+    const delay = Math.max(0, Math.min(30_000, wake - Date.now()) + 1_000)
     const timer = setTimeout(() => setNow(Date.now()), delay)
     return () => clearTimeout(timer)
-  }, [roots, now])
+  }, [wake, now])
   return now
 }
 

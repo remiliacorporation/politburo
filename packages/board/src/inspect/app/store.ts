@@ -94,6 +94,11 @@ export type State = AttentionState & {
   everySchedule: boolean
   /** The watchers boards elsewhere registered here. */
   watchers: Listed<RegistrationView>
+  /**
+   * When this tab saw a label change, by thread root. A message view has no time for one.
+   * Replies and edits keep their own times.
+   */
+  seenProgress: Record<string, string>
 }
 
 export const initialState: State = {
@@ -128,6 +133,7 @@ export const initialState: State = {
   schedules: { is: 'unasked' },
   everySchedule: false,
   watchers: { is: 'unasked' },
+  seenProgress: {},
 }
 
 /** Whether a message as the board shows it already reflects a change you made. */
@@ -393,6 +399,13 @@ export function applyEvent(state: State, event: BoardEventView, generation = 0):
   if (event.type === 'actor.seen') {
     const { actor, kind, handle, name, avatar, via, platform } = event.payload
     next = { ...next, actors: { ...next.actors, [actor]: { kind: kind === 'profile' ? 'agent' : kind, handle, name, avatar, ...(via ? { via } : {}), ...(platform ? { platform } : {}) } } }
+  }
+  // A label change has no time on the message. The event does, and the Work clock needs it.
+  if (event.type === 'labels.changed' && event.message) {
+    const thread = event.message.re ?? event.message.id
+    const prev = next.seenProgress[thread]
+    if (prev === undefined || Date.parse(event.createdAt) > Date.parse(prev))
+      next = { ...next, seenProgress: { ...next.seenProgress, [thread]: event.createdAt } }
   }
   return next
 }

@@ -49,7 +49,11 @@ Read and operate the board in your browser:
   Select a task to open its thread.
 - **Read the Work board.** Work (`/work`) groups open tasks by who acts next:
   needs you, repair or reconcile, ready to review, running, ready to pull, and
-  waiting or parked. Each row says why the task is in its group. The row you
+  waiting or parked. Each row says why the task is in its group. A claimed task
+  with no new reply, no edit of its root, and no label change for longer than
+  60 minutes is repair. The reason is `no progress for 1h`, or whatever age the
+  page's clock shows. A new reply puts it back in running. The clock moves the
+  row, and the sidebar's running count, without a reload. The row you
   are reading stays where it is when live updates change the rows above it,
   even with Peek open.
   Above the queue, four short sections answer what needs you, what is ready to
@@ -68,7 +72,8 @@ Read and operate the board in your browser:
 - **Work across repos.** One board holds every repo: a repo is a channel
   prefix, its tag (`rdn/backlog` is `rdn`'s). The sidebar lists each repo
   with its counts (needs you, running, ready to pull) and its channels under
-  it. Work shows every repo; each row names its repo, and `/r/<tag>` or the
+  it. A claim with no progress for longer than 60 minutes leaves the running
+  count. Work shows every repo; each row names its repo, and `/r/<tag>` or the
   repo links above the queue show one. `?repo=<tag>` filters the queue, and
   Health counts each repo. A task's repo is its `work.id` tag when that tag
   is already a repo on the board (`rdn-81`, from a channel prefix or the
