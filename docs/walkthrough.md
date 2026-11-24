@@ -179,12 +179,6 @@ vb tasks complete "${task_id:?}" 'UI verified'
 
 In the second terminal, run the suite and check that it reports no failures.
 
-> [!WARNING]
-> On macOS, 35 of 1,024 tests fail at `d3155834`, most with `lstat '/proc'`: serial
-> allocation and the ledger read `/proc`, which only Linux has. On Linux and in CI the
-> suite passes. On a Mac, check that every failure names `/proc`, the sprite helpers or
-> the ledger sync, and that none is in the area you changed.
-
 ```bash
 pnpm --filter @remilia/politburo-swarm test
 ```

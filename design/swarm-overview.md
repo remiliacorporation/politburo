@@ -70,7 +70,7 @@ The notes in this directory are dated 2026-11-22 and carry `status: proposed`. T
 
 ## What is on main
 
-This section describes `main` at `d3155834` (2026-11-24). `swarm --help` is the current
+This section describes `main` at `f6110335` (2026-11-24). `swarm --help` is the current
 list of commands; trust it over this table.
 
 ```bash
@@ -82,7 +82,8 @@ valid
 ```
 
 Build first: `pnpm --filter @remilia/politburo-swarm... build`. Each area has a page in
-[`packages/swarm/docs`](../packages/swarm/docs) where one exists.
+[`packages/swarm/docs`](../packages/swarm/docs) where one exists; the party config keys are in
+[the party config reference](../packages/swarm/docs/party-config-reference.md).
 
 | Directory under `src/` | Holds | Command |
 | --- | --- | --- |
@@ -102,6 +103,7 @@ Build first: `pnpm --filter @remilia/politburo-swarm... build`. Each area has a 
 | `scoring` | Score rules, leaderboard, scorecard, history | `swarm score` |
 | `identity` | Cloudflare Access assertions mapped to board people | `swarm serve` |
 | `lifecycle` | Stages, evidence gate, action journal, launch recovery | none |
+| `gate` | One merge verdict for a PR head, read from the board and GitHub checks | `swarm gate check` |
 | `checks`, `watch`, `watcher` | Check lock and check-and-push; stall, slowdown and PR alerts. Need GitHub | `swarm check`, `swarm watch` |
 
 Outside `src/`: `sprite/` holds the `pi` helper scripts (Linux only), `skills/` the skill
@@ -111,14 +113,13 @@ deleted after the cutover. The work board is in the inspector at `/work`
 
 Known gaps:
 
-- **Tests on macOS.** 35 of the 1,024 swarm tests fail on a Mac at this commit. Most
-  fail with `lstat '/proc'`: serial allocation and the ledger read `/proc`, which only
-  Linux has. CI runs on Linux and passes. Until this is fixed, treat a local failure
-  that names `/proc` as this gap, not as your change.
+- **Tests on macOS.** Cases that need Linux (`/proc`, `setsid`) are skipped on a Mac. CI
+  runs them on Linux.
 - **Shadow means it records what it would do and does nothing.** The secretary, the
   classifier and the watch service are in shadow. No mail tag has moved to a board.
-- **No hosted board.** Each person runs a local board. Parties do not yet share one.
-- **No party config reference.** Read `src/config/schema.json` and `defaults.json`.
+- **One shared board, office network only.** A party board and a repo board run on an
+  office host. Ask the repo owner for the address and your own token. The live feed needs
+  the office network or an SSH port-forward.
 - **The work board reads only.** It has no create, claim or complete controls; use `vb tasks`.
 
 ## Where to begin
