@@ -113,6 +113,13 @@ test('bd cannot spawn when the store redirects to another store', async (t) => {
   assert.equal(fake.log(), '')
 })
 
+test('a redirect written while bd runs cannot be accepted after it is removed', async (t) => {
+  const fake = fakeBd(t, `printf '../other/.beads\\n' > .beads/redirect
+rm -f .beads/redirect
+printf '[]\\n'`)
+  await assert.rejects(fake.runner()(['list']), { message: 'the store directory redirects to another store' })
+})
+
 test('bd failures cannot leak stdout or stderr, and a hung bd times out', async (t) => {
   const failure = fakeBd(t, 'echo token_fake_stdout; echo token_fake_stderr >&2; exit 3')
   await assert.rejects(failure.runner()(['list']), { message: 'bd list failed with exit code 3' })

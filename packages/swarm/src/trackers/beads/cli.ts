@@ -69,7 +69,9 @@ export async function runTrackers(args: string[]): Promise<number> {
   if (!epic) return misuse('missing --epic')
   if (!beadId.test(epic)) return misuse('invalid epic id')
   if (store === undefined) return misuse('missing --store-name')
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(store)) return misuse('invalid store name')
+  if (!/^[A-Za-z][A-Za-z0-9-]{0,31}$/.test(store) || /^(?:sk-|ghp-|github-pat-|xox[a-z]-|AKIA)/i.test(store)) {
+    return misuse('invalid store name')
+  }
   if ((dir === undefined) === (fixture === undefined)) return misuse('specify exactly one of --dir and --fixture')
   if (dir === '' || fixture === '' || bd === '') return misuse('empty path')
 

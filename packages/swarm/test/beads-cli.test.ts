@@ -11,9 +11,10 @@ const fixture = 'test/fixtures/bd-1.3.4.json'
 const usage = 'usage: swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]'
 const command = ['trackers', 'beads', 'queue']
 
-function run(args: readonly string[], env?: NodeJS.ProcessEnv) {
-  const result = spawnSync(process.execPath, ['src/cli.ts', ...args], {
-    cwd: new URL('../', import.meta.url), encoding: 'utf8', env, timeout: 30_000,
+function run(args: readonly string[], env?: NodeJS.ProcessEnv, nodeArgs: readonly string[] = []) {
+  const result = spawnSync(process.execPath, [...nodeArgs, 'src/cli.ts', ...args], {
+    cwd: new URL('../', import.meta.url), encoding: 'utf8',
+    env: { PATH: process.env.PATH ?? '', ...env }, timeout: 30_000,
   })
   if (result.error) throw result.error
   return result
@@ -73,10 +74,12 @@ test('invalid queue invocations cannot succeed or report a runtime failure inste
 })
 
 test('an unrecorded epic cannot look like an empty fixture queue', () => {
-  const result = run([...command, '--epic', 'rw-nope', '--store-name', 'rw', '--fixture', fixture])
-  assert.equal(result.status, 1, result.stderr)
+  const epic = 'sk-livetestkey'
+  const result = run([...command, '--epic', epic, '--store-name', 'rw', '--fixture', fixture])
+  assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
-  assert.match(result.stderr, /^error: unrecorded call: .*--parent rw-nope\n$/)
+  assert.equal(result.stderr, 'error: unrecorded call\n')
+  assert.equal(result.stderr.includes(epic), false)
 })
 
 test('--dir with a symlink followed by .. cannot scan the symlink’s parent store', (t) => {
@@ -106,11 +109,29 @@ test('an unopenable store directory cannot expose its path or report a missing .
 })
 
 test('invalid store names cannot be copied to the queue or diagnostics', () => {
-  for (const name of ['private@example.test', `token_${'abc123'.repeat(10)}`]) {
+  for (const name of ['private@example.test', `token_${'abc123'.repeat(10)}`,
+    'AKIAIOSFODNN7EXAMPLE', 'sk-live-abcdefghijklmnopqrst']) {
     const result = run([...command, '--epic', 'rw-cn1', '--store-name', name, '--fixture', fixture])
     assert.equal(result.status, 2)
     assert.equal(result.stdout, '')
     assert.equal(result.stderr, `error: invalid store name\n${usage}\n`)
+  }
+})
+
+test('a queue subprocess cannot inherit a caller token', (t) => {
+  const dir = tempDir(t)
+  const flag = join(dir, 'flag')
+  const preload = join(dir, 'preload.cjs')
+  writeFileSync(preload, `require('fs').writeFileSync(${JSON.stringify(flag)}, process.env.GITHUB_TOKEN ? 'set' : 'unset')\n`)
+  const previous = process.env.GITHUB_TOKEN
+  process.env.GITHUB_TOKEN = 'synthetic-not-a-secret'
+  try {
+    const result = run([...command, '--help'], undefined, ['--require', preload])
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(readFileSync(flag, 'utf8'), 'unset')
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_TOKEN
+    else process.env.GITHUB_TOKEN = previous
   }
 })
 
