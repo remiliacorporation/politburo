@@ -196,3 +196,6 @@ This walkthrough does not use a hosted board, an identity service, agent
 launches, mail, skills, overlap reconciliation, spend capture, or tracker
 integrations. `swarm watch run`, `swarm check run`, and `swarm check retire`
 need GitHub access beyond cloning the repo and are not part of this loop.
+
+For how the swarm layer fits together, read the
+[swarm overview](../design/swarm-overview.md).
