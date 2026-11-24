@@ -21,9 +21,9 @@
     ".": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts test/trackers/*.test.ts"
+    "build": "node scripts/write-public.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "node scripts/write-public.mjs && tsc --noEmit",
+    "test": "node scripts/write-public.mjs && node --test test/*.test.ts test/trackers/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
