@@ -11,9 +11,10 @@ import { BlockCard } from './blocks.tsx'
 import * as board from './board.ts'
 import { setEditing, toast, useEditing } from './chrome.ts'
 import { Ago } from './nav.tsx'
+import { LabelValue } from './sha.tsx'
 import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type Pending, type ReplySummary, type State, type Viewer } from './store.ts'
 import { TaskLine } from './task.tsx'
-import { authorName, fileSize, shownName, timingWords } from './words.ts'
+import { absoluteTime, authorName, fileSize, shownName, timingWords } from './words.ts'
 import { ContextMenuArea, EmojiPicker, fieldMenu, LabelEditor, Panel, Menu, MenuEmojiRow, MenuItem, MenuSeparator, nativeMenu, type KnownLabels } from './ui.tsx'
 
 const MENU_EMOJI = ['thumbs_up', 'heart', 'laugh', 'party', 'eyes', 'check']
@@ -251,15 +252,16 @@ export function Avatar({ name, size = 28 }: { name: string; size?: number }) {
 const day = (iso: string) => new Date(iso).toDateString()
 
 function dayLabel(iso: string, now: number): string {
-  const date = new Date(iso)
-  const today = new Date(now)
-  if (date.toDateString() === today.toDateString()) return 'today'
-  if (date.toDateString() === new Date(now - 86_400_000).toDateString()) return 'yesterday'
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const calendarDay = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000
+  const days = calendarDay(new Date(now)) - calendarDay(new Date(iso))
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days === -1) return 'tomorrow'
+  return days > 0 ? `${days}d ago` : `in ${-days}d`
 }
 
 export function DayDivider({ iso, now }: { iso: string; now: number }) {
-  return <div className="divider">{dayLabel(iso, now)}</div>
+  return <div className="divider" title={absoluteTime(iso)}>{dayLabel(iso, now)}</div>
 }
 
 /**
@@ -376,9 +378,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
       >
         <div className="gutter">
           {continued ? (
-            <span className="gutter-time" {...nativeMenu}>
-              {new Date(m.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }).replace(/\s?[AP]M$/i, '')}
-            </span>
+            <span {...nativeMenu}><Ago iso={m.createdAt} now={options.now} className="gutter-time" /></span>
           ) : (
             <span className="avatar-wrap">
               <Avatar name={name} />
@@ -419,9 +419,9 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
             <div className="chips">
               {labels.map(([key, value]) => canLabel ? (
                 <button key={key} className="label" title="edit labels" onClick={() => setLabelsOpen(true)}>
-                  {key}={value}
+                  {key}=<LabelValue name={key} value={value} />
                 </button>
-              ) : <span key={key} className="label">{key}={value}</span>)}
+              ) : <span key={key} className="label">{key}=<LabelValue name={key} value={value} /></span>)}
               {Object.entries(m.reactions).map(([emoji, actors]) => {
                 const chip = { className: `chip${reacted(emoji) ? ' mine' : ''}`, title: `:${emoji}: ${actors.join(', ')}` }
                 const count = <>{displayEmoji(emoji)} {actors.length}</>

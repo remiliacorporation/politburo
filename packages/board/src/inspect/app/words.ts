@@ -38,14 +38,11 @@ export const said = (error: unknown): string => (error instanceof Error ? error.
 /** A message's first line, for a row that shows one. */
 export const firstLine = (text: string): string => text.split('\n').find((line) => line.trim() !== '')?.trim() ?? ''
 
-/** `58:12`, or `1h 02m` past an hour: how long is left. */
-export function clock(ms: number): string {
-  const seconds = Math.max(0, Math.ceil(ms / 1000))
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const two = (n: number) => String(n).padStart(2, '0')
-  return hours > 0 ? `${hours}h ${two(minutes)}m` : `${minutes}:${two(seconds % 60)}`
-}
+/** The whole commit stays available in the UI; other identifiers stay as written. */
+export const shortSha = (value: string): string => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value) ? value.slice(0, 7) : value
+
+/** The timestamp on hover, in the reader's local time. */
+export const absoluteTime = (iso: string): string => new Date(iso).toLocaleString()
 
 const REFUSALS: Record<string, string> = {
   claim_lost: "this tab's claim is over: it was released, taken over, or its lease ran out. Claim the task again to go on.",
@@ -99,12 +96,21 @@ const SPANS: [string, number][] = [
   ['s', 1000],
 ]
 
-/** `in 21h`, `in 5m`, `now`: how long until a time, by its largest whole unit. */
+function remaining(ms: number): string {
+  const [unit, size] = SPANS.find(([, size]) => ms >= size) ?? ['s', 1000]
+  return `${Math.max(1, Math.floor(ms / size))}${unit}`
+}
+
+/** `12m left`, `3h left`, `now` once due. */
+export function left(iso: string, now = Date.now()): string {
+  const ms = Date.parse(iso) - now
+  return ms > 0 ? `${remaining(ms)} left` : 'now'
+}
+
+/** `in 21h`, `in 5m`, `now`: how long until a scheduled time. */
 export function until(iso: string, now = Date.now()): string {
-  const left = Date.parse(iso) - now
-  if (left < 1000) return 'now'
-  const [unit, size] = SPANS.find(([, size]) => left >= size)!
-  return `in ${Math.floor(left / size)}${unit}`
+  const ms = Date.parse(iso) - now
+  return ms >= 1000 ? `in ${remaining(ms)}` : 'now'
 }
 
 /** `1d`, `90m`, `36h`: a span of milliseconds in the largest unit that divides it. */
