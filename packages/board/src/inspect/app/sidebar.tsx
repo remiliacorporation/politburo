@@ -2,13 +2,16 @@ import { CircleHelp, ClipboardList, House, ListTodo, LayoutGrid, PanelLeftClose,
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView } from '../../api/routes.ts'
 import { attentionTasks, hasUnshownRefusal } from './attention-store.ts'
+import * as board from './board.ts'
 import { toast } from './chrome.ts'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Avatar } from './message.tsx'
-import { Link, type Route } from './nav.tsx'
+import { Link, useLocation, type Route } from './nav.tsx'
 import { openTasks, type State } from './store.ts'
 import { ContextMenuArea, MenuItem } from './ui.tsx'
 import { boardWords, shownName } from './words.ts'
+import { repoPartyOf, workScopeUrl } from './work-scope.ts'
+import { labelsOf } from './work.ts'
 
 // --- sidebar -------------------------------------------------------------------------
 
@@ -55,6 +58,10 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
   const open = openTasks(state)
   const attention = useMemo(() => attentionTasks(state).length, [state.messages])
   const where = boardWords(state.discovery)
+  const { params } = useLocation()
+  const records = board.swarmRecords()
+  const repoParty = repoPartyOf(records, current.view === 'party' ? current.party : params.get('party'))
+  const repoView = labelsOf(records, repoParty, where.name).repoView
   const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => toast(`copied ${text}`))
   return (
     <>
@@ -73,10 +80,17 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           <ListTodo size={14} aria-hidden="true" />
           <span>Needs action</span>
         </Link>
-        <Link to="/presidium" className="item" current={current.view === 'presidium'}>
+        <Link to={workScopeUrl('/presidium', params, repoParty)} className="item" current={current.view === 'presidium'} title={repoView.subtitle}>
           <LayoutGrid size={14} aria-hidden="true" />
-          <span>Presidium</span>
+          <span>{repoView.label}</span>
         </Link>
+        {Object.entries(records?.parties ?? {}).map(([id, party]) => {
+          const { label, subtitle } = labelsOf(records, id).partyBoard
+          return <Link key={id} to={workScopeUrl(`/party/${encodeURIComponent(id)}`, params)} className="item"
+            current={current.view === 'party' && current.party === id} title={subtitle}>
+            <span>{label}</span><small className="faint name">{party.name}</small>
+          </Link>
+        })}
         <Link to="/handoffs" className="item" current={current.view === 'handoffs'}>
           <House size={14} aria-hidden="true" />
           <span>Handoffs</span>
@@ -86,6 +100,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           <span className="name">tasks</span>
           {open !== null && open > 0 && <span className="count">{open}</span>}
         </Link>
+        <Link to="/work" className="item" current={current.view === 'work'}><ListTodo size={14} aria-hidden="true" /><span className="name">Work</span></Link>
         <Link to="/attention" className="item" current={current.view === 'attention'}>
           <CircleHelp size={14} aria-hidden="true" />
           <span className="name">attention</span>
