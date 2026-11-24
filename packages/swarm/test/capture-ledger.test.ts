@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, open, readFile, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { once } from 'node:events'
+import { appendFile, mkdir, mkdtemp, open, readFile, rm, unlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { TestContext } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { promisify } from 'node:util'
 import { jsonlLedger } from '../src/capture/ledger.ts'
 import type { Envelope, SpendRecord } from '../src/capture/types.ts'
 
@@ -35,6 +39,110 @@ async function fixture(t: TestContext) {
   t.after(() => rm(dir, { recursive: true, force: true }))
   return { dir, spend: join(dir, 'spend.jsonl'), envelopes: join(dir, 'envelopes.jsonl') }
 }
+
+const exec = promisify(execFile)
+
+for (const kind of ['spend', 'envelopes'] as const) {
+  test(`two processes cannot write a duplicate ${kind} row or bypass a live ledger lock`, async t => {
+    const { dir, [kind]: path } = await fixture(t)
+    const lock = join(dir, '.lock')
+    await writeFile(lock, `${process.pid}\n`, { flag: 'wx' })
+    const code = `
+      import { jsonlLedger } from ${JSON.stringify(new URL('../src/capture/ledger.ts', import.meta.url).href)}
+      const ledger = jsonlLedger(process.argv[1])
+      const row = JSON.parse(process.argv[2])
+      console.log('ready')
+      ${kind === 'spend' ? 'console.log((await ledger.append(row)).written)' : 'await ledger.registerEnvelope(row)'}
+    `
+    const row = kind === 'spend' ? record : envelope
+    const children = [0, 1].map(() => exec(process.execPath, ['--input-type=module', '-e', code, dir, JSON.stringify(row)], {
+      timeout: 10_000,
+    }))
+    const done = Promise.all(children)
+    // Always release the fixture lock and wait for the children, even on assertion failure.
+    const before = await (async () => {
+      try {
+        await Promise.race([Promise.all(children.map(({ child }) => once(child.stdout!, 'data'))), done])
+        await sleep(100)
+        return await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+      } finally {
+        await unlink(lock)
+        await done
+      }
+    })()
+    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n')
+    assert.equal(lines.length, 1, 'duplicate row on disk')
+    assert.deepEqual(JSON.parse(lines[0]!), row)
+    assert.equal(before, undefined, 'a writer bypassed a live lock')
+    if (kind === 'spend') assert.deepEqual((await done).map(result => result.stdout.trim().split('\n').at(-1)).sort(), ['false', 'true'])
+    await assert.rejects(readFile(lock), { code: 'ENOENT' })
+  })
+}
+
+test('a live lock older than 60 seconds is not stolen; the waiting writer times out', async t => {
+  const { dir, spend } = await fixture(t)
+  const lock = join(dir, '.lock')
+  const owner = `${process.pid}\n`
+  await writeFile(lock, owner)
+  const old = new Date(Date.now() - 61_000)
+  await utimes(lock, old, old)
+
+  await assert.rejects(jsonlLedger(dir).append(record), /capture ledger lock timed out/)
+  assert.equal(await readFile(lock, 'utf8'), owner)
+  await assert.rejects(readFile(spend), { code: 'ENOENT' })
+  await unlink(lock)
+  assert.deepEqual(await jsonlLedger(dir).append(record), { written: true })
+})
+
+test('two concurrent writers recover a dead PID lock and only one writes the dedupe key', async t => {
+  const { dir, spend } = await fixture(t)
+  const lock = join(dir, '.lock')
+  const dead = exec(process.execPath, ['-e', ''])
+  const pid = dead.child.pid!
+  await dead
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  await writeFile(lock, `${pid}\n`)
+
+  const code = `
+    import { once } from 'node:events'
+    import { jsonlLedger } from ${JSON.stringify(new URL('../src/capture/ledger.ts', import.meta.url).href)}
+    const start = once(process.stdin, 'end')
+    process.stdin.resume()
+    console.log('ready')
+    await start
+    const ledger = jsonlLedger(process.argv[1])
+    console.log((await ledger.append(JSON.parse(process.argv[2]))).written)
+  `
+  const children = [0, 1].map(() => exec(process.execPath, ['--input-type=module', '-e', code, dir, JSON.stringify(record)], {
+    timeout: 10_000,
+  }))
+  const done = Promise.all(children)
+  try {
+    await Promise.race([Promise.all(children.map(({ child }) => once(child.stdout!, 'data'))), done])
+  } finally {
+    for (const { child } of children) child.stdin!.end()
+    await Promise.allSettled(children)
+  }
+  const results = (await done).map(({ stdout }) => stdout.trim().split('\n').at(-1)).sort()
+  assert.deepEqual(results, ['false', 'true'])
+  const lines = (await readFile(spend, 'utf8')).split('\n')
+  assert.equal(lines.pop(), '', 'last row was not newline-terminated')
+  assert.deepEqual(lines.map(line => JSON.parse(line)), [record])
+  await assert.rejects(readFile(lock), { code: 'ENOENT' })
+})
+
+test('a read failure after lock creation removes the lock and allows the next append', async t => {
+  const { dir, spend } = await fixture(t)
+  const lock = join(dir, '.lock')
+  await mkdir(spend) // Reading the ledger fails before any append can occur.
+  const ledger = jsonlLedger(dir)
+  await assert.rejects(ledger.append(record), { code: 'EISDIR' })
+  await assert.rejects(readFile(lock), { code: 'ENOENT' })
+  await rm(spend, { recursive: true })
+  assert.deepEqual(await ledger.append(record), { written: true })
+})
 
 test('a replay after reopening the ledger does not write a second line', async t => {
   const { dir, spend } = await fixture(t)
@@ -122,6 +230,7 @@ for (const kind of ['spend', 'envelopes'] as const) {
     const ledger = jsonlLedger(dir)
     const append = kind === 'spend' ? ledger.append(record) : ledger.registerEnvelope(envelope)
     await assert.rejects(append, error => error === failure)
+    await assert.rejects(readFile(join(dir, '.lock')), { code: 'ENOENT' })
   })
 }
 
