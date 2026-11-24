@@ -2,10 +2,10 @@ import type { Route } from './routes.ts'
 import { isTask, type State } from './store.ts'
 import { labelsOf, partyOf, type SwarmRecords } from './work.ts'
 
-export type WorkRoute = Extract<Route, { view: 'work' | 'presidium' | 'party' | 'cell' }>
+export type WorkRoute = Extract<Route, { view: 'work' | 'repo' | 'presidium' | 'party' | 'cell' }>
 
 export function isWorkRoute(route: Route): route is WorkRoute {
-  return route.view === 'work' || route.view === 'presidium' || route.view === 'party' || route.view === 'cell'
+  return route.view === 'work' || route.view === 'repo' || route.view === 'presidium' || route.view === 'party' || route.view === 'cell'
 }
 
 export function repoPartyOf(records: SwarmRecords | null, requested: string | null): string | null {
@@ -16,12 +16,14 @@ export function repoPartyOf(records: SwarmRecords | null, requested: string | nu
 
 export function workScope(route: WorkRoute, params: URLSearchParams, records: SwarmRecords | null, boardName: string) {
   const partyId = route.view === 'party' ? route.party
-    : route.view === 'work' ? null : repoPartyOf(records, params.get('party'))
+    : route.view === 'work' || route.view === 'repo' ? null : repoPartyOf(records, params.get('party'))
   const party = partyOf(records, partyId)
   const labels = labelsOf(records, partyId, boardName)
   const words = route.view === 'party' ? labels.partyBoard
     : route.view === 'presidium' ? labels.repoView
-    : route.view === 'cell' ? labels.mobView : { label: 'Work', subtitle: undefined }
+    : route.view === 'cell' ? labels.mobView
+    : route.view === 'repo' ? { label: route.repo, subtitle: `work in ${route.repo}` }
+    : { label: 'Work', subtitle: 'every repo' }
   return { party, partyId, title: words.label, subtitle: words.subtitle }
 }
 

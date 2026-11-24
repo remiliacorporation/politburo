@@ -8,8 +8,12 @@ import { createConnection, type Socket } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { macSkip } from './mac-skip.ts'
 import { Book, createReceiver, jsonlLedger, type Claim, type Envelope, type SpendRecord }
   from '../src/capture-cloud/index.ts'
+
+const needsProcFd = macSkip('needs Linux /proc/self/fd to sync the opened ledger directory')
+const needsFifo = macSkip('needs a Linux fifo whose fsync failure leaves a ledger row unsynced')
 
 const envelope: Envelope = {
   party: 'default', repo: 'plb', work_id: 'plb-111', attempt: 'att-1', tier: 'mob',
@@ -219,7 +223,9 @@ test('bursts throttle one capability and unknown probes, then refill', async (t)
 })
 
 // Catches exposing the default listener or bypassing the explicit unsafe bind opt-in.
-test('receiver defaults to IPv4 loopback and requires opt-in to bind all', async (t) => {
+test('receiver defaults to IPv4 loopback and requires opt-in to bind all', {
+  skip: macSkip('needs an IP stack that refuses a non-loopback connect to a loopback listener'),
+}, async (t) => {
   const f = fixture(t)
   const url = await f.listen()
   assert.equal((await post(url, f.capability)).status, 202)
@@ -233,7 +239,9 @@ test('receiver defaults to IPv4 loopback and requires opt-in to bind all', async
   assert.equal((await post(`http://127.0.0.1:${all.port}`, f.capability)).status, 200)
 })
 
-test('receiver drops idle connections beyond 256 and recovers', async (t) => {
+test('receiver drops idle connections beyond 256 and recovers', {
+  skip: macSkip('needs a listen backlog that accepts 256 connections at once'),
+}, async (t) => {
   const f = fixture(t), url = await f.listen(), sockets: Socket[] = []
   const signal = AbortSignal.timeout(1500)
   function open() {
@@ -333,7 +341,7 @@ test('Book does not steal a live lock as stale so a revoke cannot race a slow wr
 })
 
 // Catches a retry after a failed sync acknowledging an unsynced row.
-test('retry after a failed sync acknowledges an unsynced row', async (t) => {
+test('retry after a failed sync acknowledges an unsynced row', { skip: needsFifo }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
   const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
   const ledger = jsonlLedger(ledgerFile)
@@ -361,7 +369,7 @@ test('retry after a failed sync acknowledges an unsynced row', async (t) => {
 })
 
 // Catches a restart acknowledging a row that was never synced.
-test('restart acknowledges a row that was never synced', async (t) => {
+test('restart acknowledges a row that was never synced', { skip: needsFifo }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
   const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -389,7 +397,7 @@ test('restart acknowledges a row that was never synced', async (t) => {
 })
 
 // Catches syncing dirname(path) so a /proc/self/fd path refuses a durable inode.
-test('a ledger opened through /proc/self/fd syncs the file inode’s directory', async (t) => {
+test('a ledger opened through /proc/self/fd syncs the file inode’s directory', { skip: needsProcFd }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
   const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -427,7 +435,7 @@ test('an existing world-readable ledger is refused', (t) => {
   assert.equal(typeof jsonlLedger(ledgerFile).append, 'function')
 })
 
-test('a file symlink as the ledger path refuses to start if the target directory cannot be synced', (t) => {
+test('a file symlink as the ledger path refuses to start if the target directory cannot be synced', { skip: needsProcFd }, (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   const realDir = join(dir, 'real'), aliasDir = join(dir, 'alias')
