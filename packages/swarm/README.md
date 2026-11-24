@@ -20,6 +20,12 @@ node packages/swarm/dist/cli.js config show
 bridge drain is stale and the old loop is confirmed stopped. Add `--allow-stale`
 to accept stale files and finish in files mode instead (exit 1, `rolled_back_stale`).
 
+## Capture ledger
+
+Keep the capture ledger on a local filesystem. Leave `.lock.guard` in place:
+SQLite locks that file while a writer updates the JSONL ledger. Stop all older
+capture writers before upgrading so every writer uses the same guard.
+
 ## sync agent skills
 
 Run `swarm skills sync --dir ./agent-skills --party party.yaml` to install skills.
