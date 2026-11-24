@@ -1,0 +1,81 @@
+{
+  "case_id": "header-schema-007-invalid-digests",
+  "description": "Reject empty and malformed-in-shape digest documents.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "blank.yaml": "",
+      "invalid-fields.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20\", \"extra\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": -1, \"p1\": 0.5, \"p2\": \"0\"}\nact_on: [ex-11111111111111111111111111111111111111, EX-0002, 42]\nitems:\n  - {\"id\": \"ex-11111111111111111111111111111111111111\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-two\"}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14Z\", \"extra\": \"example\"}\nextra: \"example\"\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": false,
+          "errors": [
+            "$.batch: required",
+            "$.repo: required",
+            "$.window: required",
+            "$.counts: required",
+            "$.act_on: required",
+            "$.items: required"
+          ],
+          "path": "blank.yaml",
+          "phase": "schema",
+          "schema": "digest"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.window.to: required",
+            "$.window.from: pattern",
+            "$.window.extra: additionalProperties",
+            "$.counts.p3: required",
+            "$.counts.p0: minimum",
+            "$.counts.p1: type",
+            "$.counts.p2: type",
+            "$.act_on[0]: maxLength",
+            "$.act_on[1]: pattern",
+            "$.act_on[2]: type",
+            "$.items[0].id: maxLength",
+            "$.items[0].extra: additionalProperties",
+            "$.extra: additionalProperties"
+          ],
+          "path": "invalid-fields.yaml",
+          "phase": "schema",
+          "schema": "digest"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "blank.yaml",
+        "schema": "digest"
+      },
+      {
+        "path": "invalid-fields.yaml",
+        "schema": "digest"
+      }
+    ]
+  },
+  "matrix_row": "M04",
+  "notes": "The populated variant parses, then fails nested window, counter, ID, and unknown-field checks.",
+  "setup": {
+    "files": {
+      "blank.yaml": "",
+      "invalid-fields.yaml": "batch: \"ex-2026-11-20T21:14Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"2026-11-20\", \"extra\": \"2026-11-20T21:14Z\"}\ncounts: {\"p0\": -1, \"p1\": 0.5, \"p2\": \"0\"}\nact_on: [ex-11111111111111111111111111111111111111, EX-0002, 42]\nitems:\n  - {\"id\": \"ex-11111111111111111111111111111111111111\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {\"report\": \"example-two\"}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/ex-0002.txt\", \"at\": \"2026-11-20T21:14Z\", \"extra\": \"example\"}\nextra: \"example\"\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-digest.v1.json"
+    ]
+  }
+}
