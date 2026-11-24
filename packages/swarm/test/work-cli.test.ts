@@ -26,6 +26,7 @@ const catalogLines = [
   '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]',
   '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]',
   '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]',
+  '       swarm sprite routes [--party FILE] [--repo FILE]',
   '       swarm capture <run|collect>',
   '       swarm mirror sync --repo owner/name [--json]',
   '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]',

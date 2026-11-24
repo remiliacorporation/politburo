@@ -17,6 +17,65 @@ const event = JSON.stringify({
 })
 const read = (path: string) => readFileSync(path, 'utf8')
 
+test('sprite routes defaults to Cursor Grok first and excludes non-generic providers', () => {
+  const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url))
+  const result = spawnSync(process.execPath, [cli, 'sprite', 'routes'], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout.split('\n').length, 2)
+  const routes = JSON.parse(result.stdout)
+  assert.deepEqual(routes[0], { label: 'Cursor Grok', provider: 'cursor', model: 'cursor-grok-4.6-high' })
+  const genericProviders = new Set(['cursor', 'openai-codex'])
+  for (const { provider } of routes) assert.ok(genericProviders.has(provider), `unexpected provider: ${provider}`)
+})
+
+test('sprite router fails to load without a non-empty array of well-formed routes', () => {
+  const router = new URL('../sprite/codex-cursor-fallback.ts', import.meta.url)
+  const source = `
+    import { registerHooks } from 'node:module';
+    // The Pi install supplies these stream helpers. No stream should run at load time.
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier !== '@earendil-works/pi-ai') return next(specifier, context);
+      return { shortCircuit: true, url: 'data:text/javascript,export let clampThinkingLevel, createAssistantMessageEventStream' };
+    } });
+    await import(${JSON.stringify(router.href)});
+  `
+  const route = { label: 'Example', provider: 'cursor', model: 'example' }
+  for (const input of [undefined, '{', '{}', '[]', '[null]', '[{}]',
+    JSON.stringify([{ ...route, model: 1 }]), JSON.stringify([{ ...route, extra: true }])]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
+      encoding: 'utf8', env: input === undefined ? {} : { PI_FALLBACK_TIERS: input },
+    })
+    assert.equal(result.status, 1, `should reject ${input}`)
+    assert.match(result.stderr, /PI_FALLBACK_TIERS must be a non-empty JSON array of routes/)
+  }
+})
+
+test('sprite router fails when a route has an empty model or provider', () => {
+  const router = new URL('../sprite/codex-cursor-fallback.ts', import.meta.url)
+  const source = `
+    import { registerHooks } from 'node:module';
+    // The Pi install supplies these stream helpers. No stream should run at load time.
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier !== '@earendil-works/pi-ai') return next(specifier, context);
+      return { shortCircuit: true, url: 'data:text/javascript,export let clampThinkingLevel, createAssistantMessageEventStream' };
+    } });
+    await import(${JSON.stringify(router.href)});
+  `
+  const valid = { label: 'Cursor Grok', provider: 'cursor', model: 'cursor-grok-4.6-high' }
+  for (const input of [
+    JSON.stringify([{ ...valid, model: '' }]),
+    JSON.stringify([{ ...valid, provider: '' }]),
+    JSON.stringify([{ ...valid, label: '' }]),
+    JSON.stringify([{ ...valid, model: '' }, valid]),
+  ]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
+      encoding: 'utf8', env: { PI_FALLBACK_TIERS: input },
+    })
+    assert.equal(result.status, 1, `should reject ${input}`)
+    assert.match(result.stderr, /PI_FALLBACK_TIERS must be a non-empty JSON array of routes/)
+  }
+})
+
 async function until(check: () => boolean, message: string, ms = 8000) {
   const deadline = Date.now() + ms
   while (!check()) {
