@@ -34,6 +34,6 @@ export function tagProblems(registry: unknown): string[] {
   return problems
 }
 
-export async function readRegistry(file?: string): Promise<unknown> {
-  return parse(await readFile(file ?? new URL('../registry/tags.json', import.meta.url), 'utf8'))
+export async function readRegistry(file: string): Promise<unknown> {
+  return parse(await readFile(file, 'utf8'))
 }

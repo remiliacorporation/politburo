@@ -16,6 +16,11 @@ pnpm --filter @remilia/politburo-swarm build
 node packages/swarm/dist/cli.js config show
 ```
 
+## Tag registry
+
+A party supplies its own tag list. Check it with `swarm tags check --registry FILE [--json]`.
+`registry/tags.example.json` is one example file, not a default the CLI reads.
+
 ## sync agent skills
 
 Run `swarm skills sync --dir ./agent-skills --party party.yaml` to install skills.

@@ -98,6 +98,7 @@ function main(args: string[]): number {
 // One line per area: the subcommand's module exports run(argv): Promise<number>.
 const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
   check: () => import('./checks/cli.ts'),
+  tags: () => import('./tags/cli.ts'),
   watch: () => import('./watch/cli.ts'),
   trackers: () => import('./trackers/cli.ts'),
 }
