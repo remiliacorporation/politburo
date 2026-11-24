@@ -1,0 +1,212 @@
+{
+  "case_id": "attempt-ledger-002-late-completion",
+  "description": "Append late completion and collection observations",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64: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",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null,
+      "runs/op-late/collection.json": "{}\n",
+      "runs/op-late/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"finished_at\": \"2026-01-01T00:02:00+00:00\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-late\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n"
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 1, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\natt-ded3508d4012e2418151dfa02a8430c98314a078 operation stale sources=1 observations=1\ntotal=1 shown=1 quarantined=0\n{\"attempts_created\": 0, \"duplicates\": 1, \"observations_added\": 0, \"quarantined\": 0}\n{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\natt-ded3508d4012e2418151dfa02a8430c98314a078 operation exited sources=1 observations=2\ntotal=1 shown=1 quarantined=0\n{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\n{\"attempts_created\": 0, \"duplicates\": 1, \"observations_added\": 0, \"quarantined\": 0}\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 1, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-ded3508d4012e2418151dfa02a8430c98314a078 operation stale sources=1 observations=1\ntotal=1 shown=1 quarantined=0\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 1, \"observations_added\": 0, \"quarantined\": 0}\n"
+      },
+      null,
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-ded3508d4012e2418151dfa02a8430c98314a078 operation exited sources=1 observations=2\ntotal=1 shown=1 quarantined=0\n"
+      },
+      null,
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 1, \"observations_added\": 0, \"quarantined\": 0}\n"
+      },
+      [
+        {
+          "attempt_id": "att-ded3508d4012e2418151dfa02a8430c98314a078",
+          "counts_as_attempt": true,
+          "execution_state": "exited",
+          "identity": {
+            "agent_id": "worker-01",
+            "issue_key": "example-issue"
+          },
+          "missing": [
+            "session_ref",
+            "usage"
+          ],
+          "namespace": "operation",
+          "native_id": "op-late",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 3,
+          "outcome": null,
+          "parent": null,
+          "raw_state": "exited",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": false,
+              "execution_state": "running",
+              "key": "runs/op-late/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "running",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "4bb2f01d52ed9a6d599597b045f09a1942be1c3817f13a229464ad9e3d9bdec9"
+            },
+            {
+              "collected": false,
+              "execution_state": "exited",
+              "key": "runs/op-late/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "exited",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "3bfbece832ce71309881a6dda4f8dfbf9d75539f4959101751ec785dcecdcf35"
+            },
+            {
+              "collected": true,
+              "execution_state": "exited",
+              "key": "runs/op-late/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "exited",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "48640bd04ab0cc3b233b82cd181f6f3c2e4c68b14d2172320097259e07e508d4"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        }
+      ]
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm",
+      "runs/op-late/receipt.json",
+      "runs/op-late/collection.json"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list",
+          "--state",
+          "stale"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "write_file",
+        "path": "runs/op-late/receipt.json",
+        "text": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"finished_at\": \"2026-01-01T00:02:00+00:00\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-late\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list",
+          "--state",
+          "exited"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "write_file",
+        "path": "runs/op-late/collection.json",
+        "text": "{}\n"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "project"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "A running receipt projects as stale. Repeats deduplicate; a finish and then a collection marker append history. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {
+      "runs/op-late/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-late\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"running\"}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "case_id": "attempt-ledger-001-empty",
+  "description": "List before and after opening an empty ledger",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64:eJzt2t9r20YAwHGpSe3YTuNuMMQooRdCiEUzglvaMcZgTqJmpq6dyjY0T0K1b6k3W3YkObSPycb+r/0/Y49j7GlnJ4olpSnJQzcw3w8WudP90P2MLcvNV7VeKMWPQ3/ghuKJdl/Tde17ITRNy6qjoM1k1LEYi+vaDd0r/q0t5x5qxdfF31cOipsrfy3XVozCP4VneT/3MP/dTesBAAD4D5w9KGSNtTX9Vz103/Tl8dj1XS/sebFQfte2Ki1LtCo7NUvMzotSXgTyWFTrLWvfssWBXX1ZsQ/FC+tQVNqtRrWuCr606q0tEQzHfkc6P/e8rmhZr1ui3lBHu1abJcn3qZR8lBS8dR8/fZYu1xl2Zfrc8E0g/RPZddQnvXRl7Xr1VdsqxVoSv/ZW8mLn1Zvmk+WMsb+mayq3fBcc99UnSccdh8Np3JkNhVOehQunlXz2wTcbS2fbod87OpL+ebPcsDf0AscbOl3Zl6GMn41G2K7uT0bywwXEjvW8YVtiz6pZKnOjnsiX37H2q3XRVIm7LWFXqk2rVNlp2Gr0N90wlINRKPqyq5qTKCZcXwp3NJJe96uh13+/aX4rrPreaSX38T6MR133Vn04LxD1oX2wV/nUfThYyhiPHumH04V9MXlqvY6l10lHc4klnkosee5AbqmY+csPmayxsaH/1pzWGW9DPJxN1JZo6Y23TF5cdNjppbaMsK3nlm3Vd61mlCcozTKbs41zq+320d2WFyPXV91wTqQfqI7cZuN5qusnqt5wMv2pcvKd7IwnI/PhZF92hn7X+Sm4csXL/TzreOK/zJX9nGy/aX6dzRgvNq7b2YnFW47Hlk7XF7LG6qp+9uV0DUQzEP1dTMx9dHYy7+n5jM39lpgssWDkdq4MwcXopRfBbAAuS8bymub23Yyxu3pd96JmOY+jUGZ78UYFylHo7pGeNdbX9dMvpsNwviudgQzdWPBOYjBiCaJ0uQATw3Di9sepITCf3skY1fXrWhar1CnHIgvqvW1p8gZ3Tx168Q9NvQAAAAAAwBz4XF8wi0HnrRy40Tc95bw2uf//U1MvAAAAAAAwFz5bMHPJLwAmz/+1+/93uwAAAAAAwKc0ef7P/T8AAAAAAPON+38AAAAAAOYfv/8HAAAAAGD+8fwfAAAAAID5x/N/AAAAAADmH/f/AAAAAADMP37/DwAAAADA/PsXUytkww==",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "total=0 shown=0 quarantined=0\n{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 0, \"quarantined\": 0}\ntotal=0 shown=0 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "total=0 shown=0 quarantined=0\n"
+      },
+      null,
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 0, \"observations_added\": 0, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "total=0 shown=0 quarantined=0\n"
+      }
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "digest",
+        "path": "attempt_ledger.sqlite"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "List does not create a ledger; reconcile creates a private empty database. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

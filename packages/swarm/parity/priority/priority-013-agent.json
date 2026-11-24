@@ -1,0 +1,191 @@
+{
+  "case_id": "priority-013-agent",
+  "description": "An agent may lower but not raise priority",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "issue_priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": {
+        "board_events": [
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 1,
+            "event_type": "priority_changed",
+            "issue_key": "example-issue",
+            "payload_json": "{\"actor_type\": \"agent\", \"envelope_version\": 1, \"from\": 3, \"from_label\": \"Normal\", \"reason\": \"Synthetic scheduling decision\", \"reason_code\": \"priority_change\", \"to\": 1, \"to_label\": \"Deferred\", \"version\": 2}"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "issues": [
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-issue",
+            "issue_priority": 1,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-issue",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "version": 2,
+            "worktree": null
+          }
+        ],
+        "sqlite_sequence": [
+          {
+            "name": "board_events",
+            "seq": 1
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "stderr": "agents may not raise issue priority; a user or supervisor must record the change\n",
+    "stdout": "{\n  \"from\": 3,\n  \"issue_key\": \"example-issue\",\n  \"label\": \"Deferred\",\n  \"ok\": true,\n  \"to\": 1,\n  \"version\": 2\n}\n",
+    "steps": [
+      {
+        "db_changed": false,
+        "exit_code": 1
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0
+      }
+    ]
+  },
+  "inputs": {
+    "commands": [
+      [
+        "priority-set",
+        "example-issue",
+        "--value",
+        "5",
+        "--expected-version",
+        "1",
+        "--actor-type",
+        "agent",
+        "--reason-code",
+        "priority_change",
+        "--reason",
+        "Synthetic scheduling decision"
+      ],
+      [
+        "priority-set",
+        "example-issue",
+        "--value",
+        "1",
+        "--expected-version",
+        "1",
+        "--actor-type",
+        "agent",
+        "--reason-code",
+        "priority_change",
+        "--reason",
+        "Synthetic scheduling decision"
+      ]
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M87",
+  "notes": "Both requests use the same version; the refused elevation leaves that version current.",
+  "setup": {
+    "files": {},
+    "issues": [
+      {
+        "key": "example-issue",
+        "updated_at": "2026-01-01T00:00:00+00:00"
+      }
+    ],
+    "now": "2026-01-03T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/priority.py",
+      "board/board.py",
+      "board/schema.sql",
+      "board/history.py"
+    ]
+  }
+}

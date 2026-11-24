@@ -141,7 +141,7 @@ export type BoardBinding = {
    * With `grants`, under those instead of the board's grants as they are: a grant write's own
    * snapshot, so what it checks is what it appends to.
    */
-  accessNow(principal: Known, grants?: readonly StoredGrant[]): Promise<Access | null>
+  accessNow(principal: Known, grants?: readonly StoredGrant[], now?: number): Promise<Access | null>
   /** The inbox roles board() explicitly configured for a verified principal. */
   inboxRolesFor?(principal: string): readonly string[]
   /** Which grants, or which rule, decide `channel` for a principal under board()'s `access`, and what they give: what `explain` answers. */

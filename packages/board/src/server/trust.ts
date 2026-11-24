@@ -391,6 +391,7 @@ async function updated(identity: Identity, state: AccessState, { id, add, remove
  * defaults and the grants.
  */
 export function createTrust(options: {
+  clock: () => number
   store: Parameters<typeof createServer>[0]['store']
   /** What a principal may do now, or under `grants`, the snapshot a grant write appends to. */
   accessNow: (principal: Known, grants?: readonly StoredGrant[]) => Promise<Access | null>
@@ -404,7 +405,7 @@ export function createTrust(options: {
   const logins = () => options.logins?.() ?? false
   const accessIn: AccessIn = (principal, grants) => options.accessNow(principal, grants)
   const session = createServer({ contract: accessContract, store: options.store }).session(ACCESS_SESSION)
-  const read = async () => (await session.state(accessReducer)).state
+  const read = async () => (await latest()).state
   /** The grants as they are now, and the index a conditional write holds them at. */
   const latest = () => session.state(accessReducer, { through: 'latest' })
 
@@ -474,7 +475,7 @@ export function createTrust(options: {
         const before = Object.values(state.grants).map(storedGrant)
         const standing = await inviteAdmin(identity, 'create invites', before)
         judge(identity, standing, { changed: { can } }, before, { what: 'this invite', doing: 'this invite' })
-        const now = Date.now()
+        const now = options.clock()
         const payload = { id, name: input.name, can, digest, expiresAt: now + (input.expiresIn ?? 86400) * 1000, by: identity.actor.id }
         await session.append.ifLastIndex(index, { type: 'invite.created', payload })
         return inviteView({ ...payload, state: 'pending' }, now)
@@ -487,7 +488,7 @@ export function createTrust(options: {
         const { state, index } = await latest()
         await inviteAdmin(identity, 'revoke invites', Object.values(state.grants).map(storedGrant))
         const row = Object.hasOwn(state.invites, id) ? state.invites[id] : undefined
-        if (!row || inviteState(row, Date.now()) !== 'pending') return { revoked: false }
+        if (!row || inviteState(row, options.clock()) !== 'pending') return { revoked: false }
         await session.append.ifLastIndex(index, { type: 'invite.revoked', payload: { id, by: identity.actor.id } })
         return { revoked: true }
       })
@@ -501,7 +502,7 @@ export function createTrust(options: {
         const { state, index } = await latest()
         const id = state.pending[key]
         const row = id === undefined ? undefined : state.invites[id]
-        if (!row || inviteState(row, Date.now()) !== 'pending') throw invalidInvite()
+        if (!row || inviteState(row, options.clock()) !== 'pending') throw invalidInvite()
         // A loser of a concurrent redemption or revocation must look again, not issue a second credential.
         await session.append.ifLastIndex(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
       })
