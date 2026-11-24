@@ -103,6 +103,20 @@ What `respond` says goes back with a write it drops, where the write came from:
   schedule ends, with `reason: 'dropped'`. On Vercel's board, scheduling it
   answers the same `422`, and no schedule is made.
 
+## Claim rules
+
+`board({ claimRule })` calls the rule after checking access and the binding's
+owner, before asking its backend to claim. The rule receives `{ actor, channel, task }`. For
+claim-next, `channel` is the requested channel or subtree and `task` is
+`null`. Use claim by ID when the rule needs a task ID.
+
+The rule can return `{ refuse: { code, message } }` to answer 409 without
+claiming, or return nothing to proceed. It can be async. If it throws or
+rejects, the claim fails with 503 `claim_rule_failed`. The rule does not run
+on renew or on create with `claim: true`. Each board instance queues claim
+requests with a rule until the previous request finishes, so a rule can count
+claims made by earlier requests. A claim-next with `wait` can delay later claims.
+
 ## Writing to the board from middleware
 
 `board` writes as `board:middleware`, and its writes skip the middleware, so
