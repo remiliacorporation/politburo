@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   defaultConfig, loadConfig, parseScoreInput, scoreParty, scoreRules,
-  type Fact, type OutcomeRecord, type ScoreInput,
+  type Fact, type ScoreOutcomeRecord as OutcomeRecord, type ScoreInput,
 } from '../src/index.ts'
 
 const day = (n: number) => new Date(Date.UTC(2026, 0, n)).toISOString()
