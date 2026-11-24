@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { BoardStatus, routes, type Discovery, type EventsPage } from '../api/routes.ts'
+import { BoardStatus, readDiscovery, routes, type Discovery, type EventsPage } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Method, Protocol } from '../api/protocol.ts'
 import { BoardError, createBoardClient, type BoardClient, type ProfileOption } from '../client/client.ts'
@@ -199,7 +199,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     // This handle's own finding about the URL it was given, not the remote's words.
     if (!response.ok)
       throw new HttpError(response.status >= 400 ? response.status : 502, 'no_board', `There's no board at ${remote}: it answered ${response.status}.`, { origin: 'handle' })
-    return (await response.json()) as Discovery
+    return readDiscovery(response)
   }
 
   let discovered: Promise<Discovery> | null = null
@@ -291,6 +291,10 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
           origin: 'handle', hint: 'Upgrade the board before using a bound claim.',
         })
       }
+    }
+    if ((method === 'claimTask' || method === 'claimReadyTask') && input.hold !== undefined &&
+        (await fetchDiscovery({ signal, cache: 'no-store' }))?.task_claim_hold !== true) {
+      throw new HttpError(501, 'no_claim_hold', 'the HTTP board does not advertise a hard end for claims', { origin: 'handle' })
     }
     const agentOps = isAgentOpsMethod(method)
     if (agentOps) {
