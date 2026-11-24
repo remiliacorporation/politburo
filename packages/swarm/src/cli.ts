@@ -1,15 +1,19 @@
 #!/usr/bin/env node
-import { commandNames, loadCommand } from './commands/load.ts'
-import { helpText, misuse, usage } from './cli-usage.ts'
+import { commandNames, loadCommand, loadCommands } from './commands/load.ts'
+import { bindUsage, helpText, misuse, usageText } from './cli-usage.ts'
 
 async function dispatch(args: string[]): Promise<number> {
   const [command, action] = args
   if (args.length === 1 && command === '--help') {
-    console.log(helpText())
+    const commands = await loadCommands()
+    bindUsage(commands)
+    console.log(helpText(commands))
     return 0
   }
   if (args.length === 2 && command === 'config' && action === '--help') {
-    console.log(usage)
+    const commands = await loadCommands()
+    bindUsage(commands)
+    console.log(usageText(commands))
     return 0
   }
   if (command !== undefined && commandNames().has(command)) {
