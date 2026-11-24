@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["party", "labels", "names", "tiers", "mail", "secretary", "claims", "review", "limits", "heartbeat_minutes", "setup", "trackers"],
+  "required": ["party", "labels", "names", "tiers", "mail", "secretary", "claims", "review", "score", "limits", "heartbeat_minutes", "setup", "trackers"],
   "properties": {
     "party": {
       "type": "object",
@@ -200,6 +200,83 @@
           "properties": {
             "review_rounds": {"$ref": "#/definitions/count"},
             "fix_rounds": {"$ref": "#/definitions/count"}
+          }
+        }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "merged_work",
+        "stays_merged_days",
+        "revert",
+        "review_round",
+        "free_review_rounds",
+        "tokens_per_merged_pr",
+        "human_minutes",
+        "missed_claim",
+        "unknown_spend",
+        "levels",
+        "milestones"
+      ],
+      "properties": {
+        "state": {
+          "enum": ["off", "shadow", "on"]
+        },
+        "merged_work": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "stays_merged_days": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "revert": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "review_round": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "free_review_rounds": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "tokens_per_merged_pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "tokens_per_point", "max_penalty"],
+          "properties": {
+            "target": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+            "tokens_per_point": {"type": "integer", "minimum": 1, "maximum": 1000000000000},
+            "max_penalty": {"type": "integer", "minimum": 0, "maximum": 1000000}
+          }
+        },
+        "human_minutes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["per_point", "max_penalty"],
+          "properties": {
+            "per_point": {"type": "integer", "minimum": 1, "maximum": 1000000},
+            "max_penalty": {"type": "integer", "minimum": 0, "maximum": 1000000}
+          }
+        },
+        "missed_claim": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "unknown_spend": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "min"],
+            "properties": {
+              "name": {"type": "string"},
+              "min": {"type": "integer", "minimum": -1000000000, "maximum": 1000000000}
+            }
+          }
+        },
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "metric", "at"],
+            "properties": {
+              "id": {"type": "string"},
+              "metric": {
+                "enum": ["stable_merges", "fully_reported_merges"]
+              },
+              "at": {"type": "integer", "minimum": 1}
+            }
           }
         }
       }
