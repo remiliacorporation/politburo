@@ -130,7 +130,16 @@ export async function applyGrants(handle: Board, registry: Registry, { kind, par
       }
     }
     const audit = await auditGrants(handle, registry, { kind, party }, grants)
-    if (!audit.ok) throw new Error(`cannot apply grants: ${audit.violations.join('; ')}`)
+    if (!audit.ok) {
+      // Writes already landed. Put the previous grants back so a retry judges that baseline.
+      try {
+        await restoreGrants(handle, grants)
+      } catch (restoreError) {
+        const reason = restoreError instanceof Error ? restoreError.message : String(restoreError)
+        throw new Error(`cannot apply grants: ${audit.violations.join('; ')}; grants were not restored: ${reason}`)
+      }
+      throw new Error(`cannot apply grants: ${audit.violations.join('; ')}`)
+    }
     return counts
   } catch (error) {
     if (error instanceof BoardError && error.status === 409 && error.code === 'grant_lockout') {
@@ -140,19 +149,98 @@ export async function applyGrants(handle: Board, registry: Registry, { kind, par
   }
 }
 
+function managesAll(grant: { can: Can }): boolean {
+  const at = grant.can['*']
+  return at === 'all' || (Array.isArray(at) && at.includes('manage'))
+}
+
 // Revoking a channel grant can be the last manage there once a deny stays behind. Say so, and
 // go ahead, unless the grant is what manages every channel: that refusal is the operator's to keep.
 async function revokeGrant(handle: Board, grant: GrantView) {
   try {
     return await handle.revokeGrant(grant.id)
   } catch (error) {
-    const at = grant.can['*']
-    const managesAll = at === 'all' || (Array.isArray(at) && at.includes('manage'))
-    if (!managesAll && error instanceof BoardError && error.status === 409 && error.code === 'grant_lockout') {
+    if (!managesAll(grant) && error instanceof BoardError && error.status === 409 && error.code === 'grant_lockout') {
       return handle.revokeGrant(grant.id, { lockMeOut: true })
     }
     throw error
   }
+}
+
+function inputOf(principal: GrantView['principals'][number]): PrincipalInput {
+  switch (principal.kind) {
+    case 'user':
+      return { kind: 'user', userId: principal.userId }
+    case 'project':
+      return { kind: 'project', project: principal.projectId, environments: [...principal.environments] }
+    case 'all-projects':
+    case 'all-users':
+    case 'all-apps':
+    case 'everyone':
+      return broadInput(principal)
+    case 'app':
+      return { kind: 'app', app: principal.clientId }
+    case 'github':
+      return {
+        kind: 'github', repository: principal.repository,
+        ...(principal.workflow !== undefined ? { workflow: principal.workflow } : {}),
+        ...(principal.branch !== undefined ? { branch: principal.branch } : {}),
+        ...(principal.event !== undefined ? { event: principal.event } : {}),
+      }
+    case 'oidc':
+      return { kind: 'oidc', issuer: principal.issuer, claims: principal.claims }
+    case 'invitee':
+      throw new Error(`cannot restore an invitee grant principal: ${principal.id}`)
+    default: {
+      const unexpected: never = principal
+      return unexpected
+    }
+  }
+}
+
+function grantFingerprint(grant: GrantView): string {
+  const principals = grant.principals.map((principal) => JSON.stringify(principal)).sort()
+  return `${canKey(grant.can)}\n${principals.join('\n')}`
+}
+
+async function allowingLockout(write: (lockMeOut: boolean) => Promise<void>): Promise<void> {
+  try {
+    await write(false)
+  } catch (error) {
+    if (error instanceof BoardError && error.status === 409 && error.code === 'grant_lockout') {
+      await write(true)
+      return
+    }
+    throw error
+  }
+}
+
+// Replay the grants from the snapshot `applyGrants` read, after a refused pass changed them.
+async function restoreGrants(handle: Board, before: readonly GrantView[]): Promise<void> {
+  const current = await handle.grants()
+  const prior = new Map(before.map((grant) => [grant.id, grant]))
+  const live = new Map(current.map((grant) => [grant.id, grant]))
+  const missing = before.filter((grant) => !live.has(grant.id)).sort((a, b) => Number(managesAll(b)) - Number(managesAll(a)))
+  for (const grant of missing) {
+    const body = { principals: grant.principals.map(inputOf), can: grant.can }
+    await allowingLockout((lockMeOut) => handle.createGrant(body, lockMeOut ? { lockMeOut } : {}).then(() => undefined))
+  }
+  for (const grant of before) {
+    const now = live.get(grant.id)
+    if (!now || grantFingerprint(now) === grantFingerprint(grant)) continue
+    const nowKeys = new Set(now.principals.map((principal) => JSON.stringify(principal)))
+    const priorKeys = new Set(grant.principals.map((principal) => JSON.stringify(principal)))
+    const add = grant.principals.filter((principal) => !nowKeys.has(JSON.stringify(principal))).map(inputOf)
+    const remove = now.principals.filter((principal) => !priorKeys.has(JSON.stringify(principal))).map(inputOf)
+    const can = canKey(now.can) === canKey(grant.can) ? undefined : grant.can
+    await allowingLockout((lockMeOut) => handle.updateGrant(grant.id, {
+      ...(add.length ? { add } : {}),
+      ...(remove.length ? { remove } : {}),
+      ...(can ? { can } : {}),
+    }, lockMeOut ? { lockMeOut } : {}).then(() => undefined))
+  }
+  const extras = current.filter((grant) => !prior.has(grant.id)).sort((a, b) => Number(managesAll(a)) - Number(managesAll(b)))
+  for (const grant of extras) await revokeGrant(handle, grant)
 }
 
 function covers(ceiling: string, pattern: string): boolean {
@@ -211,7 +299,8 @@ export async function auditGrants(handle: Board, registry: Registry, { kind, par
     }
   }
   // A dropped deny is wider access even when every remaining user is inside the registry ceiling.
-  if (before && violations.size === 0) for (const entry of widened(before, current, registry)) violations.add(entry)
+  // A gained permission counts only when the desired grants do not give it.
+  if (before && violations.size === 0) for (const entry of widened(before, current, registry, { kind, party })) violations.add(entry)
   return { ok: violations.size === 0, violations: [...violations] }
 }
 
@@ -303,12 +392,21 @@ function held(grants: readonly GrantView[], probe: Probe, channels: readonly str
   return out
 }
 
-function widened(before: readonly GrantView[], after: readonly GrantView[], registry: Registry): string[] {
+function widened(before: readonly GrantView[], after: readonly GrantView[], registry: Registry, options: GrantOptions): string[] {
   const channels = watchChannels([...before, ...after])
+  const requested: GrantView[] = desiredGrants(registry, options.kind, options.party).map((grant) => ({
+    id: '',
+    principals: grant.principals.map((principal) => ({ kind: 'user', userId: principal.userId, email: null })),
+    can: grant.can,
+    capped: false,
+    by: null,
+    at: null,
+  }))
   const violations: string[] = []
   for (const probe of probes(before, after, registry)) {
     const earlier = held(before, probe, channels)
     const later = held(after, probe, channels)
+    const asked = held(requested, probe, channels)
     for (const spot of new Set([...earlier.keys(), ...later.keys()])) {
       const had = earlier.get(spot) ?? new Set<string>()
       const has = later.get(spot) ?? new Set<string>()
@@ -316,6 +414,7 @@ function widened(before: readonly GrantView[], after: readonly GrantView[], regi
       // wider: wider is a permission added while every permission already held is still held.
       if ([...had].some((permission) => !has.has(permission))) continue
       for (const permission of [...has].filter((permission) => !had.has(permission)).sort()) {
+        if (asked.get(spot)?.has(permission)) continue
         violations.push(`${probe.who} gained ${permission} at ${spot}`)
       }
     }
