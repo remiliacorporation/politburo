@@ -6,7 +6,9 @@ export const MAIL_CLASSES = [
   'spawner.decide', 'core.escalate', 'policy',
 ] as const
 export const MAIL_URGENCIES = ['p0', 'p1', 'p2', 'p3'] as const
-export const MAIL_LABELS = { class: 'swarm.class', urgency: 'swarm.urgency', state: 'swarm.state' } as const
+export const MAIL_LABELS = {
+  class: 'swarm.class', urgency: 'swarm.urgency', state: 'swarm.state', origin: 'swarm.origin',
+} as const
 export const MAIL_STATES = {
   open: 'open', handled: 'handled', forwarded: 'forwarded', expired: 'expired', rejected: 'rejected',
 } as const

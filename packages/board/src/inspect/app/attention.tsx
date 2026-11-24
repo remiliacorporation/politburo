@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { keyAction, selectionAfter, type Selection } from './attention-keys.ts'
 import * as board from './board.ts'
-import { Ago, here, Link, useTypeToFocus } from './nav.tsx'
+import { Ago, here, Link, RelativeTime, useTypeToFocus } from './nav.tsx'
 import { attentionFor, attentionRows, NO_ATTENTION } from './attention-store.ts'
 import type { State, TaskRoot, Viewer } from './store.ts'
 import { Header } from './ui.tsx'
-import { firstLine } from './words.ts'
+import { ago, firstLine, left } from './words.ts'
 
-export function Attention({ state, viewer, lead }: { state: State; viewer: Viewer; lead: ReactNode }) {
+export function Attention({ state, viewer, lead, now }: { state: State; viewer: Viewer; lead: ReactNode; now: number }) {
   useTypeToFocus('main')
   useEffect(board.openAttention, [])
   const rows = useMemo(() => attentionRows(state), [state.messages, state.attention])
@@ -50,7 +50,7 @@ export function Attention({ state, viewer, lead }: { state: State; viewer: Viewe
           <p className="empty">{!state.tasksCounted ? 'loading…' : !supported ? NO_ATTENTION : 'no open attention requests'}</p>
         )}
         {rows.map((root) => (
-          <AttentionRow key={root.id} root={root} state={state} viewer={viewer} selected={selected?.taskId === root.id}
+          <AttentionRow key={root.id} root={root} state={state} viewer={viewer} now={now} selected={selected?.taskId === root.id}
             onSelect={() => {
               const item = items.find(({ taskId }) => taskId === root.id)
               if (item) select(item)
@@ -61,9 +61,10 @@ export function Attention({ state, viewer, lead }: { state: State; viewer: Viewe
   )
 }
 
-function AttentionRow({ root, state, viewer, selected, onSelect }: { root: TaskRoot; state: State; viewer: Viewer; selected: boolean; onSelect: () => void }) {
+function AttentionRow({ root, state, viewer, now, selected, onSelect }: { root: TaskRoot; state: State; viewer: Viewer; now: number; selected: boolean; onSelect: () => void }) {
   const { held, attention, readError, missing, error, answering, reason, disabled } = attentionFor(state, root, viewer)
   const title = firstLine(root.text) || root.attachments?.map((file) => file.name).join(', ') || 'message removed'
+  const expired = attention !== null && Date.parse(attention.expiresAt) <= now
   const chosen = attention?.status === 'answered' ? attention.options.find((option) => option.id === attention.receipt.option) : undefined
   return (
     <article id={`attention-${root.id}`} className="attention-row" aria-current={selected ? 'true' : undefined} onClick={onSelect}>
@@ -96,7 +97,10 @@ function AttentionRow({ root, state, viewer, selected, onSelect }: { root: TaskR
               </li>
             ))}
           </ol>
-          <p className="attention-meta">expires <time dateTime={attention.expiresAt} title={attention.expiresAt}>{new Date(attention.expiresAt).toLocaleString()}</time></p>
+          <p className="attention-meta">
+            {expired ? 'expired' : 'expires ·'}{' '}
+            <RelativeTime iso={attention.expiresAt}>{expired ? `${ago(attention.expiresAt, now)} ago` : left(attention.expiresAt, now)}</RelativeTime>
+          </p>
         </>
       )}
       {error !== undefined && error !== readError && <p className="error" role="status">{error}</p>}

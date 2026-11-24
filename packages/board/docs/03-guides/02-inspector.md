@@ -79,6 +79,9 @@ Read and operate the board in your browser:
   queues stay on each repo board. Follow a claimant's name to their Cell for a
   read-only view of their claims, clocks, spend and last handoff. Parties can
   rename these views.
+- **Read times and commits.** Times read relative, like `12m left` or `open 3h`.
+  Hover for the local date and time. Commit hashes show seven characters;
+  hover for the full hash.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for

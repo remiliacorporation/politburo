@@ -1,0 +1,18 @@
+# A party for people who claim and finish work themselves.
+# Overlay on packages/swarm/src/config/defaults.json. Unknown keys fail.
+# Validate from the checkout root:
+#   node packages/swarm/src/cli.ts config validate --party packages/swarm/examples/human-party.yaml
+party:
+  id: humans
+  name: Human contributors
+  colour: "#245c3d"
+labels:
+  core: Chair
+  mob_view: Claim
+claims:
+  hours: 4
+  open_claims_per_repo: 1
+  uncommitted_claims_per_repo: 1
+review:
+  docs_only:
+    model_review: false

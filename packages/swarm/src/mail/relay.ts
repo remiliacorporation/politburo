@@ -16,7 +16,7 @@ export type RelayReport = { delivered: number; pending: number; rejected: number
 
 type Delivery = { root: MailRoot; message: MailMessage; key: string; channel: string }
 
-const { state } = MAIL_LABELS
+const { state, origin } = MAIL_LABELS
 const { open, forwarded, rejected } = MAIL_STATES
 
 function isPending(root: MailRoot) {
@@ -54,9 +54,11 @@ export function createRelay({ source, boards, now, timeoutMs = 10_000 }: RelayOp
       const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error('destination timed out')), timeoutMs)
       })
-      const landed = await Promise.race([
-        postMail(board, channel, message, key, { 'swarm.delivery': `${source.name}:${root.id}` }), deadline,
-      ])
+      const labels = { 'swarm.delivery': `${source.name}:${root.id}`,
+        ...(root.labels[origin] === 'file' && { [origin]: 'file' }),
+      }
+      // postMail reconciles by payload, not by mutable labels.
+      const landed = await Promise.race([postMail(board, channel, message, key, labels), deadline])
       return { landed } as const
     } catch (error) {
       if (error instanceof MailError && error.reason === 'id_collision') return { result: 'id_collision' } as const
