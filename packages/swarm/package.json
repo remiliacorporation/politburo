@@ -2,7 +2,7 @@
   "name": "@remilia/politburo-swarm",
   "version": "0.0.0",
   "private": true,
-  "description": "Party configuration, tag registry and the swarm CLI.",
+  "description": "Party configuration, tag registry, spend ledger and the swarm CLI.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -18,7 +18,8 @@
     "swarm": "./dist/cli.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./ledger": "./dist/ledger/index.js"
   },
   "scripts": {
     "build": "node scripts/write-public.mjs && tsc -p tsconfig.build.json",
