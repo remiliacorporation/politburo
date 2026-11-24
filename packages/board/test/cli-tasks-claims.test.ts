@@ -379,7 +379,7 @@ describe("vb tasks, with the claim it keeps", () => {
     const refused = await vb(['tasks', 'claim', id])
     expect(refused.code).toBe(1)
     expect(refused.stderr).toMatch(
-      new RegExp(`^error: Can't claim task #${id}\\. It's assigned to another profile\\.\\n  [^\\n]+\\n\\n  See whom it's for:\\n    vb read ${id}\\n  Or, as its owner, return it to the pool:\\n    vb tasks assign ${id} --pool\\n$`),
+      new RegExp(`^error: Can't claim task #${id}\\. It's assigned to another profile\\.\\n  [^\\n]+\\n\\n  See whom it's for:\\n    vb read ${id}\\n  Or, if you can reassign it, return it to the pool:\\n    vb tasks assign ${id} --pool\\n$`),
     )
     expect(await ok(['tasks', 'claim', id, '--as', 'fixer'])).toBe(`#${id}  yours for 15m  fix CVE-123\n`)
     // The claim is fixer's: as yourself you hold none of it.

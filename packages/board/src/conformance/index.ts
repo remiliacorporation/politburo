@@ -1,6 +1,6 @@
 import { everyChannel } from '../client/channels.ts'
-import { INBOX_EVENT_ID_MAX, type Discovery, type Explanation, type GrantView, type Me, type MessageView, type RegistrationView } from '../api/routes.ts'
-import { BoardError, type ExplainPrincipal, type NewTaskOptions, type TaskInBatch, type TaskOptions } from '../client/client.ts'
+import { INBOX_EVENT_ID_MAX, type AttentionDraft, type BoardEventView, type CreatedInvite, type Discovery, type Explanation, type GrantView, type InviteView, type Joined, type Me, type MessageView, type RegistrationView } from '../api/routes.ts'
+import { BoardError, type ExplainPrincipal, type Filters, type NewTaskOptions, type TaskInBatch, type TaskOptions } from '../client/client.ts'
 import { block } from '../contract/blocks.ts'
 import { canonical } from '../contract/data-schemas.ts'
 import { canText, compileAccess, type Permission } from '../server/access.ts'
@@ -24,7 +24,7 @@ import { politburo, type Made } from './politburo.ts'
  */
 
 /** What a check is about, for the report's headings. */
-export type CheckGroup = 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
+export type CheckGroup = 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-lifecycle' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
 
 export type CheckResult = {
   group: CheckGroup
@@ -73,10 +73,14 @@ export type ConformanceOptions = {
    * no grant names, a `viewer` (a person's email or ID whose team role is viewer), to check
    * that a role caps what grants give, and an `app` installed on the board's team (its slug or
    * client ID), which a local board has none of. Checks that grant to someone besides the project
-   * name the app when there's one, and the repository otherwise. None may be the run's own: it
-   * throws before it writes.
+   * name the app when there's one, and the repository otherwise: Vercel's board takes no GitHub
+   * principal in a grant, so give it an app. None may be the run's own: it throws before it
+   * writes. To check staged grant revocation, pass `scoper`, a handle on the same board as an
+   * allowlisted deployment of `project` (use its project ID). It must be able to sign in but not
+   * manage the check's channel without a test grant. Discovery's `accessFenceScope: 'process'`
+   * describes one store instance in one process; these checks do not verify cross-instance fencing.
    */
-  principals?: { project?: string; repository?: string; viewer?: string; app?: string }
+  principals?: { project?: string; repository?: string; viewer?: string; app?: string; scoper?: Board }
 }
 
 class Mismatch extends Error {}
@@ -180,13 +184,20 @@ export type Context = {
   principals: Principals
   /** The board's own Vercel team, as its discovery names it. */
   team: string | null
+  workLifecycle: boolean
+  accessFence: boolean
   agentOps: boolean
+  taskClaimHold: boolean
 }
 
 export type Check = {
   group: CheckResult['group']
   name: string
   taskAuthority?: true
+  /** A queue check that also runs on staged tasks, under work-lifecycle. */
+  staged?: true
+  /** A check outside work-lifecycle that scopes a task on a staged board. */
+  needsScope?: true
   /** Omit the check unless advertised. Once advertised, a 501 is a failure. */
   requires?: 'task_attention'
   run: (ctx: Context) => Promise<void | string>
@@ -211,7 +222,7 @@ const needRoot = (ctx: Context) => {
  * Who the grants checks name: `principals`' own, or made-up IDs, which a board that verifies tokens
  * itself takes. A grant naming them lets nobody in.
  */
-type Principals = { project: string; repository: string; viewer: string | null; app: string | null }
+type Principals = { project: string; repository: string; viewer: string | null; app: string | null; scoper?: Board }
 
 /** A check's project, in its environments. */
 const projectFor = (ctx: Context, environments = ['preview']) => ({ kind: 'project' as const, project: ctx.principals.project, environments })
@@ -250,6 +261,8 @@ type GrantInput = Parameters<Board['createGrant']>[0]
 type Grants = {
   /** Makes a grant, as this run or as `by`. The first this run makes tells whether it may change grants here at all: a 403 skips the check. */
   make(input: GrantInput, by?: Board, options?: Parameters<Board['createGrant']>[1]): Promise<GrantView>
+  /** Revokes a grant before cleanup, which won't try to revoke it again. */
+  revoke(id: string): Promise<boolean>
   /** Makes several in one write, as this run, once it has made one alone. An `everyone` grant among them is revoked before the others, which may be keeping this run in. */
   makeAll(inputs: readonly GrantInput[]): Promise<GrantView[]>
   /** The principal a grant names this run by: its user, its project in its environment, or its app. Null for the board's own code, which no grant narrows; a skip for a run no grant could name. */
@@ -282,6 +295,12 @@ async function withGrants(ctx: Context, check: (grants: Grants) => Promise<void 
         if (!by && made.length === 0 && error instanceof BoardError && error.status === 403) throw new Skip("this token can't change the board's grants")
         throw unnamed(error) ?? error
       }
+    },
+    async revoke(id) {
+      const { revoked } = await ctx.board.revokeGrant(id)
+      const at = made.indexOf(id)
+      if (revoked && at !== -1) made.splice(at, 1)
+      return revoked
     },
     async makeAll(inputs) {
       try {
@@ -452,6 +471,24 @@ async function taskBeside(ctx: Context, text: string, options: TaskOptions = {})
 /** A task's state, as its thread reads now. */
 const taskState = async (ctx: Context, id: string) => (await ctx.board.thread(id)).message.task?.state
 
+async function checkClaimHold(ctx: Context, id: string) {
+  const held = await ctx.board.tasks.claim(id, { lease: 30, hold: 60 })
+  const end = held.task.task?.claim?.holdUntil
+  check(end && Date.parse(end) > Date.parse(held.until), 'the hard end should be later than the first lease')
+  same((await held.renew(300)).until, end, 'the renewed lease ends at the hard end')
+  await held.release()
+  const { cursor } = await ctx.board.poll({ wait: 0 })
+  const short = await ctx.board.tasks.claim(id, { hold: 1 })
+  same(short.until, short.task.task?.claim?.holdUntil, 'the initial lease ends at the short hold')
+  await new Promise((resolve) => setTimeout(resolve, 1_000))
+  const next = await ctx.board.tasks.claim(id)
+  same(next.epoch, short.epoch + 1, 'a new claim after the hard end')
+  const { events } = await ctx.board.poll({ channel: ctx.channel, label: ctx.labels, after: cursor, wait: 0 })
+  const expired = events.find((event) => event.type === 'task.expired' && event.payload.id === id && event.payload.epoch === short.epoch)
+  same(expired?.type === 'task.expired' ? expired.payload.reason : undefined, 'hold', 'the hard expiry reason')
+  await next.release()
+}
+
 /** Waits up to a few seconds for what a board may derive a moment late, a task becoming ready, say. */
 async function soon(found: () => Promise<boolean>, what: string) {
   for (const deadline = Date.now() + 10_000; ; ) {
@@ -470,10 +507,285 @@ function lostRace(racing: PromiseSettledResult<unknown>[]) {
   }
 }
 
+const NEEDS_ACCESS_FENCE = 'needs the access fence'
+
+/** Discovery advertises support, not the credential's authority to scope work. */
+async function scopeWork(ctx: Context, id: string, reason: string) {
+  try {
+    return await ctx.board.tasks.scope(id, reason)
+  } catch (error) {
+    if (error instanceof BoardError && error.status === 403 && error.code === 'forbidden') throw new Skip("this credential can't scope work in the check's channel")
+    throw error
+  }
+}
+
+/** Only the first extension call can declare that this board has no task authority. */
+async function taskAuthority<T>(attempt: Promise<T>): Promise<T> {
+  try {
+    return await attempt
+  } catch (error) {
+    if (error instanceof BoardError && error.status === 501 && error.code === 'no_task_authority') throw new Skip('not kept here: no task authority')
+    throw error
+  }
+}
+
+const taskFeed = (ctx: Context, after?: string) => ctx.board.poll({ channel: ctx.channel, label: [`conformance=${ctx.labels.conformance}`], ...(after === undefined ? {} : { after }) })
+const handoffPacket = { commit: 'a'.repeat(40), packetPath: 'handoffs/conformance.md', sha256: 'b'.repeat(64) }
+
+async function replayFeed(board: Board, feed: Filters, after: string) {
+  const events: BoardEventView[] = []
+  for (let pages = 0; pages < 50; pages++) {
+    const page = await board.poll({ ...feed, after, wait: 0 })
+    // A scan can return no matches and still advance over unrelated traffic.
+    if (page.cursor === after) {
+      check(page.events.length === 0, 'the feed returned events without advancing its cursor')
+      return events
+    }
+    events.push(...page.events)
+    after = page.cursor
+  }
+  throw new Mismatch('the feed did not catch up within 50 pages')
+}
+
+const NO_ACCESS_FENCE: Check = {
+  group: 'work-lifecycle',
+  name: 'refuses staged writes when the access fence is not advertised',
+  async run(ctx) {
+    if (ctx.me.principal.startsWith('board:')) throw new Skip('needs a scoper whose access comes from grants')
+    const { task: root } = await task(ctx, 'conformance: work on a board without an access fence')
+    const version = { ifVersion: root.version }
+    await rejects(ctx.board.tasks.scope(root.id, 'scope agreed', version), 501, 'no_access_fence', 'scoping without the access fence')
+    await rejects(ctx.board.tasks.stage(root.id, 'rejected', 'change deferred', version), 501, 'no_access_fence', 'rejecting without the access fence')
+    await unchangedWork(ctx, root)
+  },
+}
+
+async function unchangedWork(ctx: Context, root: MessageView) {
+  const { message } = await ctx.board.thread(root.id)
+  same(message.version, root.version, 'the version of the task after a refused move')
+  alike(message.task?.work, root.task?.work, 'the stage and scope after a refused move')
+}
+
+/** Only a separate credential can lose its authority while this run keeps manage to clean up. */
+async function withRevocableScoper(ctx: Context, run: (scoper: Board, revoke: () => Promise<void>) => Promise<void>) {
+  const { project, scoper } = ctx.principals
+  if (!scoper) throw new Skip('pass an allowlisted deployment in principals.scoper to check grant revocation')
+  const me = await scoper.me()
+  const [, id, environment] = /^vercel:project:([^:]+):([^:]+)$/.exec(me.principal) ?? []
+  check(me.principal !== ctx.me.principal && id === project && environment, 'principals.scoper must use a separate deployment credential for principals.project')
+  if (compileAccess(me.can).can('manage', ctx.channel)) throw new Skip('the test scoper already has manage in the test channel')
+  return withGrants(ctx, async ({ make, revoke }) => {
+    const grant = await make({ principals: [projectFor(ctx, [environment])], can: { [ctx.channel]: ['read', 'manage'] } })
+    await run(scoper, async () => {
+      same(await revoke(grant.id), true, "revoking the test scoper's grant")
+    })
+  })
+}
+
+function revokedScoper(error: unknown, what: string) {
+  const refused = error instanceof BoardError && (error.status === 403 || error.status === 404 || (error.status === 409 && error.code === 'access_changed'))
+  check(refused, `${what}: expected 403, 404, or 409 access_changed, got ${error instanceof BoardError ? `${error.status} ${error.code}` : messageOf(error)}`)
+}
+
+async function refusesRevokedScoper(attempt: Promise<unknown>, what: string) {
+  try {
+    await attempt
+  } catch (error) {
+    revokedScoper(error, what)
+    return
+  }
+  throw new Mismatch(`${what}: expected 403 or 404, and it succeeded`)
+}
+
+const ACCESS_FENCE_CHECKS: Check[] = [
+  {
+    group: 'work-lifecycle',
+    name: "refuses scope and stage after revoking the scoper's grant",
+    run: (ctx) => withRevocableScoper(ctx, async (scoper, revoke) => {
+      const { task: proposed } = await task(ctx, 'conformance: work to scope after revocation')
+      const { task: before } = await task(ctx, 'conformance: work to move after revocation')
+      const scoped = await scoper.tasks.scope(before.id, 'scope agreed', { ifVersion: before.version })
+      same(scoped.task?.work?.stage, 'scoped', 'scope with the test grant in place')
+      await revoke()
+      await refusesRevokedScoper(scoper.tasks.scope(proposed.id, 'scope agreed', { ifVersion: proposed.version }), 'scoping after revocation')
+      await refusesRevokedScoper(scoper.tasks.stage(scoped.id, 'rejected', 'change deferred', { ifVersion: scoped.version }), 'rejecting after revocation')
+      await unchangedWork(ctx, proposed)
+      await unchangedWork(ctx, scoped)
+    }),
+  },
+  {
+    group: 'work-lifecycle',
+    name: 'does not land scope after a concurrent grant revocation answers',
+    async run(ctx) {
+      for (let round = 0; round < 3; round++) {
+        const skipped = await withRevocableScoper(ctx, async (scoper, revoke) => {
+          const { task: root } = await task(ctx, 'conformance: scope racing revocation')
+          const feed = { re: root.id }
+          const { cursor } = await ctx.board.poll(feed)
+          // Observe the task as soon as revoke answers. A paged replay has no
+          // fixed end cursor and cannot tell us what was visible at that point.
+          const [scope, revoked] = await Promise.allSettled([
+            scoper.tasks.scope(root.id, 'scope agreed', { ifVersion: root.version }),
+            revoke().then(() => ctx.board.thread(root.id, { limit: 1 })),
+          ])
+          if (revoked.status === 'rejected') throw revoked.reason
+          const events = await replayFeed(ctx.board, feed, cursor)
+          const scoped = events.filter(({ type, payload }) => type === 'task.stage_changed' && payload.id === root.id && payload.to === 'scoped')
+          check(scoped.length === 0 || revoked.value.message.task?.work?.stage === 'scoped', 'scope landed after its grant was revoked')
+          same(scoped.length, scope.status === 'fulfilled' ? 1 : 0, 'scope recorded in the feed replay')
+          if (scope.status === 'rejected') {
+            revokedScoper(scope.reason, 'scoping while its grant is revoked')
+            await unchangedWork(ctx, root)
+          } else {
+            same((await ctx.board.thread(root.id)).message.task?.work?.stage, 'scoped', 'the task after scope won the race')
+          }
+        })
+        if (skipped) return skipped
+      }
+    },
+  },
+]
+
+const LIFECYCLE_CHECKS: Check[] = [
+  {
+    group: 'work-lifecycle',
+    name: 'makes proposed work and neither claims it nor lets labels authorize it',
+    run: async (ctx) => {
+      const labels = { ...ctx.labels, queue: 'work-proposal' }
+      const { task: root } = await task(ctx, 'conformance: proposed work', { labels })
+      same(root.task?.work?.stage, 'proposed', "a new task's stage")
+      same(root.task?.work?.scopedRevision, null, "a new task's scoped revision")
+      await ctx.board.label(root.id, { set: { stage: 'scoped' } })
+      await rejects(ctx.board.tasks.claim(root.id), 409, 'invalid_task_stage', 'claiming a proposed task by ID')
+      same((await ctx.board.tasks.claim({ channel: ctx.channel, label: labels }))?.task.id ?? null, null, 'the next claim while work is proposed')
+      same((await ctx.board.thread(root.id)).message.task?.work?.stage, 'proposed', 'the work stage after a label write and refused claims')
+    },
+  },
+  {
+    group: 'work-lifecycle',
+    name: 'pins the scoped revision, hands off a live claim, and audits authorized moves',
+    run: async (ctx) => {
+      const { cursor } = await ctx.board.poll({ channel: ctx.channel, label: ctx.labels })
+      const { task: root } = await task(ctx, 'conformance: work to review')
+      const scoped = await scopeWork(ctx, root.id, 'scope agreed')
+      same(scoped.task?.work?.stage, 'scoped', 'the stage after scope')
+      same(scoped.task?.work?.scopedRevision, root.revision, 'scope pinned to the root revision')
+      const claim = await ctx.board.tasks.claim(root.id)
+      const handedOff = await claim.complete('implementation submitted')
+      same(handedOff.task?.work?.stage, 'handoff', 'the stage after a claim completes')
+      same(handedOff.task?.claim, null, 'the lease after handoff')
+      await rejects(ctx.board.tasks.stage(root.id, 'done', 'skip review'), 409, 'invalid_task_stage', 'marking a handoff done')
+      const review = await ctx.board.tasks.stage(root.id, 'review', 'review started')
+      same(review.task?.work?.stage, 'review', 'the stage after review starts')
+      const events = await replayFeed(ctx.board, { channel: ctx.channel, label: ctx.labels }, cursor)
+      const moves = events.filter((event) => event.type === 'task.stage_changed').filter((event) => event.payload.id === root.id)
+      alike(moves.map((event) => [event.payload.id, event.payload.thread, event.payload.from, event.payload.to, event.payload.reason, event.actor?.id]), [
+        [root.id, root.thread, 'proposed', 'scoped', 'scope agreed', ctx.me.actor],
+        [root.id, root.thread, 'scoped', 'handoff', 'implementation submitted', ctx.me.actor],
+        [root.id, root.thread, 'handoff', 'review', 'review started', ctx.me.actor],
+      ], 'stage changes visible with their reasons and actors')
+    },
+  },
+  {
+    group: 'work-lifecycle',
+    name: 'releases dependent work only at done, and checks that again after reopen',
+    run: async (ctx) => {
+      const labels = { ...ctx.labels, queue: 'work-dependencies' }
+      const feed = { channel: ctx.channel, label: labels }
+      const { cursor } = await ctx.board.poll(feed)
+      const { task: first } = await task(ctx, 'conformance: a prerequisite to approve', { labels })
+      await scopeWork(ctx, first.id, 'scope prerequisite')
+      const { task: second } = await task(ctx, 'conformance: dependent work', { labels, needs: [first.id] })
+      const stored = async (state: 'ready' | 'waiting', when: string) => {
+        const { message } = await ctx.board.thread(second.id)
+        same(message.task?.state, state, `the dependent stored ${when}`)
+        same(message.labels['board.task'], state, `the dependent's board.task label ${when}`)
+      }
+      await ctx.board.tasks.scope(second.id, 'scope dependent')
+      await stored('waiting', 'after scope')
+      await (await ctx.board.tasks.claim(first.id)).complete()
+      await stored('waiting', 'after handoff')
+      await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite handed off')
+      await ctx.board.tasks.stage(first.id, 'review', 'review started')
+      await ctx.board.tasks.stage(first.id, 'approved', 'review passed')
+      await stored('waiting', 'after approval')
+      await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite is only approved')
+      const done = await ctx.board.tasks.stage(first.id, 'done', 'finished')
+      same(done.task?.state, 'completed', 'how done work reads to legacy readers')
+      await stored('ready', 'after done')
+      await (await ctx.board.tasks.claim(second.id)).release()
+      const reopened = await ctx.board.tasks.reopen(first.id, 'new requirements')
+      same(reopened.task?.work?.stage, 'proposed', 'the stage after reopen')
+      same(reopened.task?.work?.scopedRevision, null, 'the cleared scope after reopen')
+      await stored('waiting', 'after reopen')
+      await refused(ctx.board.tasks.claim(second.id), 409, 'claiming a dependent when its prerequisite reopened')
+      same((await ctx.board.tasks.claim({ channel: ctx.channel, label: labels }))?.task.id ?? null, null, 'the next claim after reopen')
+
+      const events = await replayFeed(ctx.board, feed, cursor)
+      const doneAt = events.findIndex((event) => event.type === 'task.stage_changed' && event.payload.id === first.id && event.payload.to === 'done')
+      const reopenedAt = events.findIndex((event) => event.type === 'task.stage_changed' && event.payload.id === first.id && event.payload.to === 'proposed')
+      check(doneAt >= 0 && reopenedAt > doneAt, 'the feed must record the prerequisite reaching done and then reopening')
+      const becameReady = events.filter((event) => event.type === 'task.ready' && event.payload.id === second.id)
+      same(becameReady.length, 1, 'ready events for the dependent in the feed')
+      const readyAt = events.indexOf(becameReady[0]!)
+      check(readyAt > doneAt && readyAt < reopenedAt, 'the dependent in the feed must become ready only while its prerequisite is done')
+      same(becameReady[0]!.message?.task?.state, 'ready', 'the dependent in the feed on task.ready')
+      const waiting = events.slice(reopenedAt + 1).find((event) => event.type === 'task.needs_changed' && event.payload.id === second.id)
+      same(waiting?.message?.task?.state, 'waiting', 'the dependent in the feed after reopen')
+      check(!events.some((event, i) => (i < doneAt || i > reopenedAt) && event.message?.id === second.id && event.message.task?.state === 'ready'),
+        'the dependent in the feed was ready with an open prerequisite')
+    },
+  },
+]
+
+const NETWORK_PAUSE: Check = {
+  group: 'network-pause',
+  name: 'pauses claims without stopping collaboration, and resumes without reviving old claims',
+  needsScope: true,
+  async run(ctx) {
+    const board = ctx.board
+    const start = await board.status().catch((error: unknown) => {
+      if (error instanceof BoardError && error.status === 501 && error.code === 'no_network_pause') return null
+      throw error
+    })
+    if (start === null) return 'not kept here: this board does not support network pause'
+    check(start.paused === false && Number.isSafeInteger(start.pauseEpoch) && start.pauseEpoch >= 0, 'network pause checks need a running board with a valid pause epoch')
+    const { task: held } = await task(ctx, 'conformance: claimed before the pause')
+    if (ctx.workLifecycle) await scopeWork(ctx, held.id, 'conformance: ready for a claim before pause')
+    const old = await board.tasks.claim(held.id)
+    const labels = { ...ctx.labels, queue: 'network-pause' }
+    try {
+      const paused = await board.pause('conformance: check the network pause')
+      same(paused.paused, true, 'status returned by pause')
+      same(paused.pauseEpoch, start.pauseEpoch + 1, 'pause epoch after pause')
+      const read = await board.status()
+      same(read.paused, true, 'status read while paused')
+      same(read.pauseEpoch, paused.pauseEpoch, 'pause epoch read while paused')
+      const { task: queued } = await task(ctx, 'conformance: queued during the pause', { labels })
+      const note = await reply(ctx, queued.id, 'conformance: human replies still land')
+      const thread = await board.thread(queued.id)
+      same(thread.message.id, queued.id, 'task read while paused')
+      check(thread.replies.some((message) => message.id === note.id), 'a human reply should be visible while paused')
+      await rejects(board.tasks.claim(queued.id), 409, 'board_paused', 'claiming by ID while paused')
+      await rejects(board.tasks.claim({ channel: ctx.channel, label: labels }), 409, 'board_paused', 'claiming the next task while paused')
+      await rejects(task(ctx, 'conformance: cannot create and claim during the pause', { claim: true }), 409, 'board_paused', 'creating and claiming while paused')
+      const resumed = await board.resume('conformance: check resuming')
+      same(resumed.paused, false, 'status returned by resume')
+      same(resumed.pauseEpoch, paused.pauseEpoch, 'pause epoch after resume')
+      await rejects(old.complete(), 409, 'claim_lost', 'settling with the pre-pause claim after resume')
+      if (ctx.workLifecycle) await scopeWork(ctx, queued.id, 'conformance: ready for a claim after resume')
+      const fresh = await board.tasks.claim({ channel: ctx.channel, label: labels })
+      same(fresh?.task.id, queued.id, 'a fresh claim after resume')
+      await fresh?.release()
+    } finally {
+      if ((await board.status()).paused) await board.resume('conformance: restore the running board')
+    }
+  },
+}
 const helpers = { Mismatch, Skip, alike, check, isRef, needRoot, refused, rejects, reply, same, show, task, taskBatch }
 export type PolitburoHelpers = typeof helpers
 
-const { finishCleanup, inviteError, keep, onMade, remove, requestFailure, NETWORK_PAUSE, taskAuthorityChecks, taskPriorityChecks, inviteChecks, agentAndInboxChecks } =
+const { finishCleanup, inviteError, keep, onMade, remove, requestFailure, inviteChecks } =
   politburo(helpers)
 
 const CHECKS: Check[] = [
@@ -1109,6 +1421,15 @@ const CHECKS: Check[] = [
       check(Date.parse(unasked.until) - fallback >= 295_000, `a claim that asks for no lease should get at least 5 minutes, got ${unasked.until}`)
       await unasked.release()
       await rejects(ctx.board.tasks.claim(root.id, { lease: 5 }), 400, 'invalid_request', 'a lease under 30 seconds')
+      // Only probe advertised holds after confirming ordinary tasks work. A 501 here is a failure.
+      if (ctx.taskClaimHold) {
+        try {
+          await checkClaimHold(ctx, root.id)
+        } catch (error) {
+          if (error instanceof BoardError && error.status === 501) throw new Mismatch(`advertised claim hold: ${error.message}`)
+          throw error
+        }
+      }
     },
   },
   {
@@ -1479,7 +1800,164 @@ const CHECKS: Check[] = [
       await rejects(ctx.board.tasks.cancel(root.id, 'conformance: again'), 409, 'task_finished', 'canceling a canceled task')
     },
   },
-  ...taskAuthorityChecks,
+  {
+    group: 'tasks',
+    taskAuthority: true,
+    name: 'parks a task only as a verified person with manage, and unpark restores work without the claim',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: operator park')
+      const reason = 'conformance: hold for an operator'
+      const lifted = 'conformance: approved by an operator'
+      if (ctx.me.kind !== 'person' || ctx.me.profile !== null || !compileAccess(ctx.me.can).can('manage', ctx.channel)) {
+        try {
+          await taskAuthority(ctx.board.tasks.park(root.id, reason))
+        } catch (error) {
+          if (!(error instanceof BoardError) || error.status !== 403 || error.code !== 'forbidden') throw error
+          await rejects(ctx.board.tasks.unpark(root.id, lifted), 403, 'forbidden', 'unparking without a verified person with manage')
+          return
+        }
+        throw new Mismatch('parking without a verified person with manage: expected 403 forbidden, and it succeeded')
+      }
+      if (ctx.workLifecycle) await scopeWork(ctx, root.id, 'conformance: ready to park a claimed task')
+      const { cursor } = await taskFeed(ctx)
+      const held = await ctx.board.tasks.claim(root.id)
+      const parked = await taskAuthority(ctx.board.tasks.park(root.id, reason))
+      same(parked.task?.state, 'blocked', 'the parked task')
+      same(parked.labels['board.task'], 'blocked', "the parked root's board.task")
+      same(parked.task?.claim, null, 'the claim of a parked task')
+      same(parked.task?.parked?.reason, reason, 'why the task was parked')
+      same(parked.task?.parked?.previous, 'claimed', 'where the task was before it was parked')
+      same(parked.task?.parked?.by.actor, ctx.me.actor, 'who parked the task')
+      await rejects(ctx.board.tasks.claim(root.id), 409, 'task_blocked', 'claiming a parked task')
+      await rejects(ctx.board.tasks.unblock(root.id), 409, 'task_blocked', 'lifting a park with the legacy unblock')
+      if (ctx.withHeaders) {
+        const agent = ctx.withHeaders({ 'x-board-profile': 'conformance' })
+        await rejects(agent.tasks.unpark(root.id, lifted), 403, 'forbidden', 'unparking as a profile')
+      }
+      if (ctx.withCan) {
+        const narrowed = ctx.withCan(`${ctx.channel}=read,label`)
+        await rejects(narrowed.tasks.unpark(root.id, lifted), 403, 'forbidden', 'unparking without manage in the channel')
+      }
+      const resumed = await ctx.board.tasks.unpark(root.id, lifted)
+      same(resumed.task?.state, 'ready', 'the unparked task')
+      same(resumed.task?.claim, null, 'the claim of a task after unpark')
+      await rejects(held.complete(), 409, 'claim_lost', 'settling the claim that was parked and unparked')
+      const { events } = await taskFeed(ctx, cursor)
+      const operatorEvents = events.filter((event) => event.message?.id === root.id && (event.type === 'task.parked' || event.type === 'task.unparked'))
+      alike(operatorEvents.map((event) => {
+        const payload = event.payload as { reason?: string; by?: { actor: string; principal: string } }
+        return [event.type, payload.reason, payload.by?.actor, payload.by?.principal]
+      }), [
+        ['task.parked', reason, ctx.me.actor, ctx.me.principal],
+        ['task.unparked', lifted, ctx.me.actor, ctx.me.principal],
+      ], 'the park and unpark events, with their verified operators and reasons')
+    },
+  },
+  {
+    group: 'tasks',
+    taskAuthority: true,
+    name: 'binds a claim to its verified owner and fences an older generation even with the same token',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: bound claim')
+      const owner = { principal: ctx.me.principal, actor: ctx.me.actor }
+      const binding = { owner, controller: owner, provider: 'conformance', model: 'example', session: 'first', branch: 'topic/conformance', worktree: '/workspace/conformance', baseCommit: 'a'.repeat(40) }
+      // 32 random bytes encoded as base64url, without Node dependencies. Never put the proof in a diagnostic.
+      const token = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replaceAll('+', '-').replaceAll('/', '_').replace(/=$/, '')
+      if (/^board:client(?::|$)/.test(ctx.me.principal)) {
+        await rejects(ctx.board.tasks.claim(root.id, { binding, token }), 403, 'forbidden', 'binding a claim without a verified caller')
+        return
+      }
+      if (ctx.workLifecycle) await scopeWork(ctx, root.id, 'conformance: ready for a bound claim')
+      const first = await taskAuthority(ctx.board.tasks.claim(root.id, { binding, token }))
+      const assertBinding = (got: unknown, expected: typeof binding, what: string) => check(canonical(got) === canonical(expected), `${what} should show the complete binding that was supplied`)
+      assertBinding(first.binding, binding, 'the claim')
+      assertBinding((await ctx.board.thread(root.id)).message.task?.claim?.binding, binding, 'the read of the task')
+      const sameClaim = await ctx.board.tasks.claim(root.id, { token })
+      same(sameClaim.epoch, first.epoch, 'the generation on retry with the live token')
+      assertBinding(sameClaim.binding, binding, 'a retry with no binding supplied')
+      const next = { ...binding, session: 'second' }
+      await rejects(ctx.board.tasks.claim(root.id, { token, binding: next }), 409, 'binding_mismatch', 'changing the binding of a live claim on retry')
+      await first.release()
+      await rejects(ctx.board.tasks.claim(root.id, { binding: { ...binding, owner: { principal: 'vercel:user:u_not_claimant', actor: 'vercel:user:u_not_claimant' } } }), 403, 'forbidden', 'naming an unverified owner in the binding')
+      const second = await ctx.board.tasks.claim(root.id, { token, binding: next })
+      same(second.epoch, first.epoch + 1, 'the next generation')
+      check(second.token === first.token && first.token === token, 'both generations should use the supplied token')
+      await rejects(first.complete(), 409, 'claim_lost', 'settling a previous generation with the current token')
+      const settled = await second.complete()
+      if (ctx.workLifecycle) same(settled.task?.work?.stage, 'handoff', 'the stage after settling the current generation')
+      else same(settled.task?.state, 'completed', 'the result of settling the current generation')
+    },
+  },
+  {
+    group: 'tasks',
+    taskAuthority: true,
+    name: 'records an immutable handoff and accepts only one of two replacements naming the same predecessor',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: immutable handoff')
+      if (ctx.workLifecycle) await scopeWork(ctx, root.id, 'conformance: ready to record a packet')
+      const { cursor } = await taskFeed(ctx)
+      const claim = await ctx.board.tasks.claim(root.id)
+      const first = (await taskAuthority(claim.handoff(handoffPacket))).task?.handoff
+      check(first, 'the handoff write should answer a handoff record')
+      isRef(first.id, 'the handoff id')
+      same(first.commit, handoffPacket.commit, 'the handoff commit')
+      same(first.packetPath, handoffPacket.packetPath, 'the handoff packet path')
+      same(first.sha256, handoffPacket.sha256, 'the handoff packet hash')
+      same(first.by?.actor, ctx.me.actor, 'the handoff author')
+      same(first.generation, claim.epoch, 'the handoff generation')
+      await rejects(claim.handoff(handoffPacket), 409, 'handoff_conflict', 'replacing a handoff without naming it')
+      const racing = await Promise.allSettled(['c', 'd'].map((digit) => claim.handoff({ ...handoffPacket, commit: digit.repeat(40), supersedes: first.id })))
+      const won = racing.filter((result) => result.status === 'fulfilled')
+      same(won.length, 1, 'the number of supersessions that won the race')
+      const lost = racing.find((result) => result.status === 'rejected')
+      check(lost?.reason instanceof BoardError && lost.reason.status === 409 && lost.reason.code === 'handoff_conflict', 'the other supersession should lose with 409 handoff_conflict')
+      const latest = (await ctx.board.thread(root.id)).message.task?.handoff
+      check(latest && latest.id !== first.id, 'the task should show a new, distinct handoff')
+      same(latest.supersedes, first.id, 'the predecessor of the latest handoff')
+      same(latest.commit, won[0]!.value.task?.handoff?.commit, 'the commit of the replacement that won')
+      const { events } = await taskFeed(ctx, cursor)
+      const history = events.filter((event) => event.type === 'task.handoff' && event.message?.id === root.id).map((event) => (event.payload as { handoff: unknown }).handoff)
+      check(canonical(history) === canonical([first, latest]), 'the feed should retain the original handoff and the one replacement, unchanged')
+      check(!show(history).includes(claim.token), 'the handoff feed must not reveal the claim token')
+      await claim.release()
+      await rejects(claim.handoff({ ...handoffPacket, supersedes: latest.id }), 409, 'claim_lost', 'publishing a handoff with a released claim')
+    },
+  },
+  {
+    group: 'tasks',
+    name: 'opens structured attention through a claim, and the hold cannot be unblocked or settled through the old claim',
+    needsScope: true,
+    requires: 'task_attention',
+    async run(ctx) {
+      const { task: root } = await task(ctx, 'conformance: a task to hold for structured attention')
+      const supporting = await reply(ctx, root.id, 'conformance: the evidence for the request')
+      same((await ctx.board.tasks.attention(root.id)).attention, null, 'attention on a new task')
+      if (ctx.workLifecycle) await scopeWork(ctx, root.id, 'conformance: ready to request attention through a claim')
+      const claim = await ctx.board.tasks.claim(root.id, { lease: 60 })
+      const draft: AttentionDraft = {
+        kind: 'needs_input', question: 'conformance: proceed?', context: 'conformance: request review',
+        options: [
+          { id: 'go', label: 'Proceed', consequence: 'Resume work', next: 'resume' },
+          ctx.workLifecycle
+            ? { id: 'proceed-with-notes', label: 'Proceed with notes', consequence: 'Resume with the attached notes', next: 'resume' }
+            : { id: 'stop', label: 'Stop', consequence: 'Do not continue', next: 'fail' },
+        ],
+        evidence: [{ message: supporting.id, revision: supporting.revision }],
+        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), revision: root.revision, commit: 'a'.repeat(40),
+      }
+      const opened = await ctx.board.tasks.ask(root.id, { ...draft, claim: { epoch: claim.epoch, token: claim.token } })
+      isRef(opened.attention.id, 'the request ID')
+      same(opened.attention.status, 'pending', 'the new request')
+      same(opened.attention.by.actor, ctx.me.actor, 'the requester')
+      same(opened.task.task?.state, 'blocked', 'the task with an attention request')
+      same(opened.task.task?.attentionId, opened.attention.id, "the task's current request ID")
+      same(opened.task.task?.claim, null, 'the claim after it requested attention')
+      check(!show(opened).includes(claim.token), 'opening attention should not show the claim token')
+      alike((await ctx.board.tasks.attention(root.id)).attention, opened.attention, 'the current request, read back')
+      await rejects(claim.complete(), 409, 'claim_lost', 'completing through the claim that requested attention')
+      await rejects(ctx.board.tasks.unblock(root.id), 409, 'attention_required', 'unblocking a structured hold')
+    },
+  },
   {
     group: 'tasks',
     name: 'keeps a task assigned to a profile for that actor alone',
@@ -1607,7 +2085,58 @@ const CHECKS: Check[] = [
       await second!.release()
     },
   },
-  ...taskPriorityChecks,
+  {
+    group: 'tasks',
+    staged: true,
+    name: 'keeps task priority and claims highest priority first, then oldest',
+    run: async (ctx) => {
+      const labels = { ...ctx.labels, queue: 'priority' }
+      const { task: normal } = await task(ctx, 'conformance: default priority', { labels })
+      await taskBatch(ctx, [
+        { text: 'conformance: low priority', priority: 'low', labels },
+        { text: 'conformance: high priority', priority: 'high', labels },
+        { text: 'conformance: lowest priority', priority: 'lowest', labels },
+        { text: 'conformance: urgent priority', priority: 'urgent', labels },
+        { text: 'conformance: urgent priority again', priority: 'urgent', labels },
+      ])
+      same((await ctx.board.thread(normal.id)).message.task?.priority, 'normal', 'the default priority on a task read')
+      const listed = await ctx.board.tasks.list({ channel: ctx.channel, label: Object.entries(labels).map(([key, value]) => `${key}=${value}`) })
+      alike(listed.tasks.map(({ message }) => message.task?.priority), ['normal', 'low', 'high', 'lowest', 'urgent', 'urgent'], 'priorities in creation order on the list')
+      if (ctx.workLifecycle) {
+        for (const { message } of listed.tasks) await scopeWork(ctx, message.id, 'conformance: ready to rank by priority')
+      }
+      // Take the IDs from the list, not from the order the batch answered in.
+      const [first, low, high, lowest, urgent, laterUrgent] = listed.tasks
+      for (const { message } of [urgent!, laterUrgent!, high!, first!, low!, lowest!]) {
+        const claim = await ctx.board.tasks.claim({ channel: ctx.channel, label: labels })
+        same(claim?.task.id, message.id, 'the next task by priority and age')
+        await claim!.complete()
+      }
+    },
+  },
+  {
+    group: 'tasks',
+    staged: true,
+    name: 'lets task writers set priority and live claims only lower it',
+    run: async (ctx) => {
+      const { task: root } = await task(ctx, 'conformance: change priority', { priority: 'low' })
+      same(root.task?.priority, 'low', 'the priority set on create')
+      same((await ctx.board.tasks.priority(root.id, 'high')).task?.priority, 'high', 'the priority raised by the owner')
+      if (ctx.workLifecycle) await scopeWork(ctx, root.id, 'conformance: ready for a holder to lower priority')
+      const { cursor } = await ctx.board.poll({ channel: ctx.channel })
+      const claim = await ctx.board.tasks.claim(root.id)
+      await rejects(claim.priority('urgent'), 403, 'priority_raise_forbidden', 'a claim raising priority')
+      await rejects(ctx.board.tasks.priority(root.id, 'urgent'), 409, 'task_claimed', 'a claim holder raising priority without proof')
+      const lowered = await claim.priority('low')
+      same(lowered.task?.priority, 'low', 'the priority lowered by the claim')
+      same(lowered.task?.state, 'claimed', 'the task state after lowering priority')
+      await claim.release()
+      await rejects(claim.priority('lowest'), 409, 'claim_lost', 'a released claim lowering priority')
+      same((await ctx.board.thread(root.id)).message.task?.priority, 'low', 'the stored priority after rejected writes')
+      const { events } = await ctx.board.poll({ channel: ctx.channel, after: cursor })
+      alike(events.flatMap((event) => event.type === 'task.priority_changed' && event.message?.id === root.id ? [[event.payload.priority, event.message.task?.priority]] : []), [['low', 'low']], 'priority changes in the feed')
+    },
+  },
   {
     group: 'tasks',
     name: 'shows a feed that filters on board.task=ready a task becoming ready and being claimed, and never a token',
@@ -2133,7 +2662,7 @@ const CHECKS: Check[] = [
       const attachment = await ctx.board.upload({ data: bytes, name: 'conformance-task.txt', type: 'text/plain' })
       const { task: root } = await task(ctx, 'conformance: a task with a file', { attachments: [attachment.id] })
       check(root.attachments.some((a) => a.id === attachment.id), "the task's root should carry the file")
-      same(root.task?.state, 'ready', "the task's state")
+      same(root.task?.state, ctx.workLifecycle ? 'waiting' : 'ready', "the task's state")
       check((await ctx.board.thread(root.id)).message.attachments.some((a) => a.id === attachment.id), 'the task, read as its thread, should carry the file')
     },
   },
@@ -2446,7 +2975,196 @@ const CHECKS: Check[] = [
       }
     },
   },
-  ...agentAndInboxChecks,
+  {
+    group: 'agents',
+    name: 'registers, lists, heartbeats, and retires an agent under its verified binding',
+    run: async ({ board, channel, labels, agentOps }) => {
+      if (!agentOps) {
+        await rejects(board.agents.list(channel), 501, 'no_agent_ops', 'listing agents without advertised support')
+        return 'not kept here: agent operations are not advertised'
+      }
+      const writer = board.as(`conformance-${labels.conformance}`)
+      const { principal, profile } = await writer.me()
+      const input = { channel, role: 'reviewer', harness: 'conformance' } as const
+      const enrolled = await writer.agents.register(input)
+      let current = enrolled
+      try {
+        isRef(enrolled.id, 'agent ID')
+        same(enrolled.channel, channel, 'registered channel')
+        same(enrolled.role, input.role, 'registered role')
+        same(enrolled.harness, input.harness, 'registered harness')
+        same(enrolled.parent, null, 'new agent parent')
+        same(enrolled.binding?.principal, principal, 'agent principal')
+        same(enrolled.binding?.profile, profile, 'agent profile')
+        same(enrolled.status, 'enabled', 'new agent status')
+        same(enrolled.generation, 1, 'new agent generation')
+        same(enrolled.heartbeatAt, null, 'new agent heartbeat')
+        current = await writer.agents.register(input)
+        same(current.id, enrolled.id, 'repeated registration ID')
+        same(current.generation, enrolled.generation, 'repeated registration generation')
+        current = await writer.agents.heartbeat(enrolled.id, enrolled.generation)
+        check(current.heartbeatAt !== null && Number.isFinite(Date.parse(current.heartbeatAt)), 'heartbeat should record a timestamp')
+        same(current.generation, enrolled.generation, 'generation after heartbeat')
+        current = await writer.agents.retire(enrolled.id, enrolled.generation)
+        same(current.id, enrolled.id, 'retired agent ID')
+        same(current.status, 'disabled', 'retired agent status')
+        same(current.generation, enrolled.generation + 1, 'retired agent generation')
+        same(current.heartbeatAt, null, 'retired agent heartbeat')
+        await refused(writer.agents.heartbeat(enrolled.id, current.generation), 409, 'heartbeat to a retired agent')
+        const { agents } = await board.agents.list(channel)
+        const listed = agents.find(({ id }) => id === enrolled.id)
+        same(listed?.status, 'disabled', 'retired agent status when listed')
+        same(listed?.generation, current.generation, 'retired agent generation when listed')
+      } finally {
+        if (current.status !== 'disabled') await writer.agents.retire(enrolled.id, current.generation).catch(() => {})
+      }
+    },
+  },
+  {
+    group: 'agents',
+    name: 'confirms a claimed run only through a taken and reported status probe',
+    needsScope: true,
+    run: async (ctx) => {
+      const { board, channel, labels, me } = ctx
+      const isNoAgentOps = (error: unknown) => error instanceof BoardError && error.status === 501 && error.code === 'no_agent_ops'
+      const isNoTasks = (error: unknown): error is BoardError => error instanceof BoardError && error.status === 501 && error.code === 'no_tasks'
+      const notKeptHere = async (error: unknown) => {
+        if (isNoTasks(error)) return `not kept here: ${error.message}`
+        if (!isNoAgentOps(error)) throw error
+        try {
+          await board.agents.list(channel)
+        } catch (error) {
+          if (isNoAgentOps(error)) return 'not kept here: agent operations are not advertised'
+          throw error
+        }
+        return 'not kept here: agent intents are not advertised'
+      }
+      const ignoreNoAgentOps = (error: unknown) => {
+        if (!isNoAgentOps(error)) throw error
+      }
+      // Read before writing: agent calls recheck the mount even if discovery() is cached.
+      try {
+        await board.agents.health('conformance-missing')
+      } catch (error) {
+        const answered = error instanceof BoardError && error.status === 404 && error.code !== 'not_found'
+        if (error instanceof BoardError && (error.status === 502 && error.code === 'remote_error' || error.status === 404 && error.code === 'not_found')) return 'not kept here: this board serves no run health'
+        if (!answered) return notKeptHere(error)
+      }
+      if (me.principal === 'board:client' || me.principal.startsWith('board:client:')) return 'this run has no verified agent credential'
+
+      const made = await task(ctx, 'conformance: run health').catch((error: unknown) => {
+        if (error instanceof BoardError && error.status === 501 && error.code === 'no_tasks') return `not kept here: ${error.message}`
+        throw error
+      })
+      if (typeof made === 'string') return made
+      const { task: root } = made
+      const worker = board.as(`probe-${labels.conformance}`)
+      const { principal, profile } = await worker.me()
+      try {
+        const agent = await worker.agents.register({ channel, role: 'reviewer', harness: 'conformance' })
+        try {
+          if (ctx.workLifecycle) await scopeWork(ctx, root.id, 'conformance: ready for a run health probe')
+          const claim = await worker.tasks.claim(root.id)
+          try {
+            same((await board.agents.health(root.id)).state, 'not_confirmed', 'health of a bare claim')
+            const input = { verb: 'status', generation: agent.generation, ttlSeconds: 30, requestId: `probe-${labels.conformance}`, run: { task: root.id, epoch: claim.epoch } } as const
+            const { intents } = await board.agents.issueIntent(agent.id, input)
+            same(intents.length, 1, 'a probe resolves to one intent')
+            const intent = intents[0]!
+            isRef(intent.id, 'intent ID')
+            same(intent.by?.principal, me.principal, 'intent issuer')
+            same(intent.by?.profile, me.profile, 'intent issuer profile')
+            same(intent.agent, agent.id, 'intent recipient')
+            same(intent.state, 'pending', 'issued intent state')
+            same((await board.agents.issueIntent(agent.id, input)).intents[0]?.id, intent.id, 'replayed intent ID')
+            await refused(board.agents.issueIntent(agent.id, { ...input, ttlSeconds: 29 }), 409, 'issuing changed input under the same request ID', isNoAgentOps)
+            same((await worker.agents.intents(agent.id)).intents.map(({ id }) => id).join(), intent.id, 'pending intents')
+            const taken = await worker.agents.takeIntent(intent.id, agent.generation)
+            same(taken.state, 'taken', 'taken intent state')
+            same(taken.taken?.by?.principal, principal, 'taker principal')
+            same(taken.taken?.by?.profile, profile, 'taker profile')
+            same((await worker.agents.intents(agent.id)).intents.length, 0, 'pending intents after take')
+            same((await board.agents.health(root.id)).state, 'not_confirmed', 'health of a taken but unreported probe')
+            const reported = await worker.agents.reportIntent(intent.id, agent.generation, 'running')
+            same(reported.state, 'reported', 'reported intent state')
+            same(reported.report?.by?.principal, principal, 'reporter principal')
+            same(reported.report?.by?.profile, profile, 'reporter profile')
+            same(reported.report?.outcome, 'running', 'report outcome')
+            const health = await board.agents.health(root.id)
+            check(health.state === 'working', `a positive probe on a live claim should confirm health, got ${show(health)}`)
+            const until = Date.parse(health.validUntil)
+            check(until > Date.parse(reported.report!.at) && until <= Math.min(Date.parse(intent.expiresAt), Date.parse(claim.until)), 'health should have a finite window no later than the intent or lease deadline')
+          } finally {
+            await claim.release().catch(ignoreNoAgentOps)
+          }
+          same((await board.agents.health(root.id)).state, 'not_confirmed', 'health after the claim is released')
+        } finally {
+          await worker.agents.retire(agent.id, agent.generation).catch((error: unknown) => {
+            if (error instanceof BoardError && error.status === 501 && error.code === 'no_agent_ops')
+              throw new Mismatch(`the probe agent ${agent.id} stays enabled: retiring it was answered with ${error.code}`)
+            throw error
+          })
+        }
+      } catch (error) {
+        return notKeptHere(error)
+      }
+    },
+  },
+  {
+    group: 'operational-inbox',
+    name: 'keeps operational messages private, supersedes by topic, and keeps receipts once',
+    run: async (ctx) => {
+      const inbox = ctx.board.operationalInbox
+      try {
+        await inbox.read()
+      } catch (error) {
+        if (error instanceof BoardError && error.status === 501 && error.code === 'no_operational_inbox') return `not kept here: ${error.message}`
+        throw error
+      }
+      const { cursor } = await ctx.board.poll({ all: true })
+      const topic = `conformance inbox ${ctx.labels.conformance}`
+      const input = { to: { agent: ctx.me.principal }, topic, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+      const forTopic = async () => (await inbox.read()).messages.filter((message) => message.topic === topic)
+      const { message: older } = await inbox.send({ ...input, text: 'older' })
+      let latest = older
+      try {
+        ;({ message: latest } = await inbox.send({ ...input, text: 'latest' }))
+        const read = await forTopic()
+        same(show(read.map((m) => m.id)), show([latest.id]), 'which message with the same recipient and topic remains')
+        same(read[0]!.text, 'latest', 'the new message, read back')
+        same(read[0]!.by.principal, ctx.me.principal, 'who authored it')
+        same(read[0]!.seenAt, null, 'reading does not acknowledge it')
+        same(read[0]!.actedAt, null, 'an unread receipt has no acted time')
+        same(read[0]!.archivedAt, null, 'the message has not been archived')
+        await refused(inbox.ack(older.id, 'seen'), 404, 'acknowledging the superseded message')
+
+        const narrow = ctx.withCan?.(`${ctx.channel}=all`) ?? ctx.board.as(ctx.me.profile, { can: { [ctx.channel]: 'all' } })
+        await refused(narrow.operationalInbox.read(), 403, 'reading with only channel access')
+        await refused(narrow.operationalInbox.ack(latest.id, 'seen'), 403, 'acknowledging with only channel access')
+        await refused(narrow.operationalInbox.archive(latest.id), 403, 'archiving with only channel access')
+        await refused(narrow.operationalInbox.send({ ...input, text: 'narrowed' }).then(({ message }) => { latest = message }), 403, 'sending with only channel access')
+
+        const { message: seen } = await inbox.ack(latest.id, 'seen')
+        check(seen.seenAt && Number.isFinite(Date.parse(seen.seenAt)), 'seen should record a timestamp')
+        const { message: acted } = await inbox.ack(latest.id, 'acted')
+        check(acted.actedAt && Date.parse(acted.actedAt) >= Date.parse(seen.seenAt), 'acted should record a timestamp at or after seen')
+        same(acted.seenAt, seen.seenAt, 'acted preserves seen')
+        const { message: repeated } = await inbox.ack(latest.id, 'seen')
+        same(repeated.seenAt, seen.seenAt, 'repeating seen preserves its timestamp')
+        same(repeated.actedAt, acted.actedAt, 'repeating seen cannot undo acted')
+
+        const { message: archived } = await inbox.archive(latest.id)
+        check(archived.archivedAt && Date.parse(archived.archivedAt) >= Date.parse(acted.actedAt), 'archive should record a timestamp at or after acted')
+        same((await inbox.archive(latest.id)).message.archivedAt, archived.archivedAt, 'repeating archive preserves its timestamp')
+        same((await forTopic()).length, 0, 'archiving hides the message without reviving its predecessor')
+        await refused(inbox.ack(latest.id, 'acted'), 404, 'acknowledging the archived message')
+        const { events } = await ctx.board.poll({ all: true, after: cursor })
+        check(!show(events).includes(topic), 'the generic event feed should not expose the operational topic')
+      } finally {
+        await inbox.archive(latest.id).catch(() => {})
+      }
+    },
+  },
 ]
 
 /**
@@ -2536,20 +3254,33 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
       repository: options.principals?.repository ?? `acme/conformance-${label}`,
       viewer: options.principals?.viewer ?? null,
       app: options.principals?.app ?? null,
+      scoper: options.principals?.scoper,
     },
     team: info.team_id ?? null,
     agentOps: info.agent_ops === true,
+    workLifecycle: info.workLifecycle === 1,
+    accessFence: info.accessFence === 1,
+    taskClaimHold: info.task_claim_hold === true,
   }
   try {
-    const selected = options.networkPause ? [NETWORK_PAUSE, ...CHECKS] : CHECKS
-    for (const { group, name, requires, taskAuthority, run } of selected) {
+    const compatible = ctx.workLifecycle ? [
+      ...CHECKS.filter(({ group, requires, taskAuthority, staged }) => group !== 'tasks' || requires === 'task_attention' || taskAuthority || staged),
+      ...LIFECYCLE_CHECKS,
+      ...(ctx.accessFence ? ACCESS_FENCE_CHECKS : [NO_ACCESS_FENCE]),
+    ] : CHECKS
+    const selected = options.networkPause ? [NETWORK_PAUSE, ...compatible] : compatible
+    for (const probe of selected) {
+      const { group: original, name, requires, taskAuthority, staged, needsScope, run } = probe
+      const group = ctx.workLifecycle && (taskAuthority || staged) ? 'work-lifecycle' : original
       if (requires && info[requires] !== true) continue
       ctx.running = `${group}/${name}`
       try {
+        if (ctx.workLifecycle && !ctx.accessFence && (needsScope || (group === 'work-lifecycle' && probe !== NO_ACCESS_FENCE))) throw new Skip(NEEDS_ACCESS_FENCE)
         const skipped = await run(ctx)
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {
-        if (taskAuthority && error instanceof Skip) checks.push({ group, name, status: 'skipped', detail: error.message })
+        if (error instanceof Skip) checks.push({ group, name, status: 'skipped', detail: error.message })
+        // A staged probe belongs to work-lifecycle even if its legacy counterpart is optional.
         else if (!requires && OPTIONAL.has(group) && error instanceof BoardError && error.status === 501 && (!taskAuthority || error.code === 'no_tasks')) checks.push({ group, name, status: 'skipped', detail: `not kept here: ${error.message}` })
         // Vercel's API takes watchers only from a deployment: a run as anyone else can't check them.
         else if (group === 'watchers' && error instanceof BoardError && error.code === 'watchers_need_project') checks.push({ group, name, status: 'skipped', detail: 'only a deployment registers watchers here' })

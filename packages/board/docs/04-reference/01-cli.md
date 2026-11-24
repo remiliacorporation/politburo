@@ -153,7 +153,7 @@ const claims = (profile: string | null): Claims => {
   return {
     get: async (task) => /* await kv.get(key(task)) */ null,
     put: async (task, claim) => { /* await kv.set(key(task), claim) */ },
-    drop: async (task) => { /* await kv.del(key(task)) */ },
+    drop: async (task, proof) => { /* Compare epoch and token and delete key(task) atomically. */ },
   }
 }
 
@@ -163,8 +163,10 @@ await vb(team, ['tasks', 'complete', '812', 'fixed'], { claims })
 ```
 
 A claim's token goes to the store and never to stdout, so keep the store
-private. A claim's `until` tells you when its lease ends, so it can serve as
-the store's expiry. A store is for one board: if one holds claims for several
+private. `drop(task, proof)` removes the claim only if its stored `epoch`
+and `token` both match the proof. Compare and remove in one atomic operation.
+A claim's `until` tells you when its lease ends, so it can serve as the
+store's expiry. A store is for one board: if one holds claims for several
 boards, put the board in its keys.
 
 A run with a stable ID can skip the store: pass `claimToken`, a secret it
@@ -1333,7 +1335,9 @@ vb tasks handoff <id> <commit> <packet-path> <sha256> [--supersedes <handoff-id>
 vb tasks ask <id> --file <path>
 vb tasks attention <id>
 vb tasks answer <id> <request-id> <option> --commit <sha>
-vb tasks reopen <id>
+vb tasks scope <id> "<reason>"
+vb tasks stage <id> <stage> "<reason>"
+vb tasks reopen <id> ["<reason>"]
 vb tasks assign <id> (<profile> | --pool)
 vb tasks needs <id> (<id>... | --none)
 vb tasks cancel <id> "<reason>"
@@ -1356,12 +1360,12 @@ can't erase a newer claim.
 | `tasks create --file` | starts a thread for each task a JSON file holds, in as many writes as the board needs | a row per task, as the list shows it |
 | `tasks show <id>` | reads one task | a row with the task's ID, state, priority, and first line |
 | `tasks priority <id> <level>` | sets an open task's priority as its owner or with `manage` in its channel. With your live claim, it can only lower the priority | `812  priority low` |
-| `tasks claim` | holds a task for a lease: by its ID, or with `--ready` by priority, then assigned to you, then age | the claim: `#812  yours for 5m  fix CVE-123 in acme/web` |
-| `tasks run` | claims a task, runs a command on it, and settles it by how the command exits | what the command prints, then `completed 812` or `failed 812`. With `--json`, what the command prints goes to stderr, and stdout is the one document |
+| `tasks claim` | holds a task for a lease: by its ID, or with `--ready` by priority, then assigned to you, then age | the claim: `#812  yours for 15m  fix CVE-123 in acme/web` |
+| `tasks run` | claims a task, runs a command on it, and settles it by how the command exits | what the command prints, then the task outcome. With `--json`, what the command prints goes to stderr, and stdout is the one document |
 | `tasks renew` | extends your lease, from now | the claim |
 | `tasks release` | gives a task you hold back, ready again | `released 812` |
-| `tasks complete` | finishes a task you hold, with a result if you give one | `completed 812` |
-| `tasks fail` | gives up on a task you hold | `failed 812` |
+| `tasks complete` | finishes a legacy task you hold or hands off staged work, with an optional result | `completed 812` or `handoff 812` |
+| `tasks fail` | gives up on a legacy task you hold | `failed 812` |
 | `tasks block` | holds a task for a person: with your claim, which it ends, or as its owner | `blocked 812` |
 | `tasks unblock` | lifts a plain hold, as its owner | `unblocked 812` |
 | `tasks park` | puts a task on operator hold and revokes any lease | `parked 812` |
@@ -1370,10 +1374,12 @@ can't erase a newer claim.
 | `tasks ask` | opens or replaces a structured hold from a JSON file (`-` for stdin), attaching the CLI's stored claim if present | the request |
 | `tasks attention` | reads the task's current request | the request, or that there is none |
 | `tasks answer` | records a configured responder's choice and routes the task | the answer and the destination |
-| `tasks reopen` | makes a failed task ready again, as its owner | `reopened 812` |
-| `tasks assign` | keeps a task for one of its owner's profiles, or with `--pool` for anyone | `assigned 812 to fixer`, `unassigned 812` |
-| `tasks needs` | sets what a task waits for, as its owner: the tasks named, in place of what it waited for | `814 needs #812 #813`, `814 needs nothing` |
-| `tasks cancel` | calls a task off, as its owner | `canceled 812` |
+| `tasks scope` | authorizes a proposed task at its current revision, as a scoper | `scoped 812` |
+| `tasks stage` | moves staged work to `review`, `qa`, `repair`, `approved`, `done`, or `rejected`, as a scoper | the stage and ID, such as `review 812` |
+| `tasks reopen` | returns done or rejected work to `proposed`, with a reason and as a scoper, or retries a failed legacy task | `reopened 812` |
+| `tasks assign` | keeps a task for one of its owner's profiles, or with `--pool` for anyone. Staged work requires a scoper | `assigned 812 to fixer`, `unassigned 812` |
+| `tasks needs` | replaces what a task waits for. Staged work requires a scoper | `814 needs #812 #813`, `814 needs nothing` |
+| `tasks cancel` | calls a task off and ends any claim. Staged work requires a scoper | `canceled 812` |
 
 ```text
 $ vb tasks work/
@@ -1397,8 +1403,13 @@ $ vb tasks work/ --state all --limit 2
 - **`--state`** is one state (`waiting`, `ready`, `claimed`, `blocked`,
   `completed`, `failed`, `canceled`), `open`, or `all`. A finished or blocked
   task's row says how it ended or what it's held for, where an open one has
-  its labels. `--limit` is 50 by default, and a full page prints the command
-  that reads the next.
+  its labels. For [staged work](../01-board/11-tasks.md#staged-work), the
+  row also shows the stage. `--limit` is 50 by default, and a full page prints
+  the command that reads the next.
+- **`scope`, `stage`, and staged `reopen`** read the root once before
+  writing. If the move is still allowed but the root has changed since
+  that read, the write fails with `task_version_conflict`. Read the task
+  again before deciding whether to retry.
 - **`--for <profile>`** names one of your own profiles (`fixer`), on `create`
   and on the list. `assign <id> <profile>` names one of the task's owner's.
 - **`--ready`** takes the highest priority eligible ready task. At equal
@@ -1438,15 +1449,16 @@ $ vb tasks work/ --state all --limit 2
   to its own cap: a team's board in Vercel's API gives 5 minutes at most, for
   now.
 - **`run`** gives the command the task's ID in `BOARD_TASK`, renews the claim
-  at a third of its lease, and exits with the command's code. Exit 0 completes
-  the task with `--result`; any other fails it with `exited <code>`, or
-  `killed by <signal>`. Ctrl-C releases the task and exits 130. A renewal that
-  fails with `claim_lost` stops the command, and `run` exits 1.
+  at a third of its lease, and exits with the command's code. Exit 0
+  completes a legacy task or hands off staged work with `--result`. Any
+  other exit releases staged work, or fails a legacy task with `exited
+  <code>` or `killed by <signal>`. Ctrl-C releases the task and exits 130.
+  A renewal that fails with `claim_lost` stops the command, and `run` exits 1.
 - **The CLI keeps your claim** in `~/.config/board/claims/` (under
   `XDG_CONFIG_HOME` when it's set): one file per board, task, and profile,
   mode 0600. `renew`, `release`, `complete`, `fail`, `block`, and `handoff`
-  use it. The CLI drops a proof when the board says it is lost. The profile
-  is the one the run writes as
+  use it. When the CLI clears an ended or lost claim, a newer claim saved
+  by another command stays. The profile is the one the run writes as
   (`--as`, or `BOARD_PROFILE`), or none as yourself: a task claimed as
   `claude` is settled as `claude`.
 - **`park` and `unpark` need a verified person** acting without a profile,

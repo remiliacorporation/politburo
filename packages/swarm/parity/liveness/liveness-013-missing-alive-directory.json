@@ -1,0 +1,57 @@
+{
+  "case_id": "liveness-013-missing-alive-directory",
+  "description": "A missing alive directory is an empty scan, not a stall.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "notes/alive/.alerts.json": null,
+      "notes/alive/example.wake": null,
+      "notes/mail/log.yaml": null
+    },
+    "log_lines": [],
+    "runs": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "collect": [
+      "notes/alive/example.wake",
+      "notes/alive/.alerts.json",
+      "notes/mail/log.yaml"
+    ],
+    "kind": "cli",
+    "steps": [
+      {
+        "after": 0,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "function": "check"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {
+      "notes/example.txt": "Example notes\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py",
+      "supervisor/liveness_check.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

@@ -46,6 +46,9 @@ import type {
   ParkTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
+  ReopenTaskBody,
+  ScopeTaskBody,
+  StageTaskBody,
   TaskClaim,
   TasksPage,
   TasksQuery,
@@ -198,8 +201,12 @@ export type Protocol = {
   parkTask: { input: Id & Input<typeof ParkTaskBody>; output: { task: MessageView } }
   unparkTask: { input: Id & Input<typeof ParkTaskBody>; output: { task: MessageView } }
   handoffTask: { input: Id & Input<typeof HandoffTaskBody>; output: { task: MessageView } }
-  /** A failed task is ready again; one that's open is left as it is. */
-  reopenTask: { input: Id; output: { task: MessageView } }
+  /** Retry a legacy failed task, or return staged done/rejected work to proposed with a reason. */
+  reopenTask: { input: Id & Input<typeof ReopenTaskBody>; output: { task: MessageView } }
+  /** Authorize the current root revision of proposed work. */
+  scopeTask: { input: Id & Input<typeof ScopeTaskBody>; output: { task: MessageView } }
+  /** Move staged work along an allowed edge. */
+  stageTask: { input: Id & Input<typeof StageTaskBody>; output: { task: MessageView } }
   assignTask: { input: Id & Input<typeof AssignTaskBody>; output: { task: MessageView } }
   /** 400 `invalid_needs` for a prerequisite that isn't one, or that would make the task wait for itself. The same set is left as it is. */
   setTaskNeeds: { input: Id & Input<typeof TaskNeedsBody>; output: { task: MessageView } }

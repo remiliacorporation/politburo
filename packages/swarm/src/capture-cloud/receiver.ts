@@ -50,13 +50,13 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
       return [429, 'rate_limited']
     }
     if (!cap && !otlp) return send(404, 'not_found')
-    const globalRetry = globalLimit('global')
+    const globalRetry = globalLimit('global').retry
     if (globalRetry) return respond(req, res, limited(globalRetry))
     if (cap) {
       // Charge probes before lookup, without sharing a valid capability's allowance.
-      const addressRetry = addressLimit(address)
+      const addressRetry = addressLimit(address).retry
       const live = book.byCapability(cap, now())
-      const retry = live ? capabilityLimit(cap) : addressRetry
+      const retry = live ? capabilityLimit(cap).retry : addressRetry
       if (retry) return respond(req, res, limited(retry))
       if (!live) return send(404, 'unknown_envelope')
     }
@@ -80,12 +80,15 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     const received = now()
     const entry = cap ? book.byCapability(cap, received) : undefined
     if (cap && !entry) return send(404, 'unknown_envelope')
-    let body: unknown
-    try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return send(400, 'invalid') }
-    if (entry) return respond(req, res, await accept(body, entry, received))
-    const addressRetry = addressLimit(address)
+    const text = Buffer.concat(chunks).toString('utf8')
+    if (entry) {
+      let body: unknown
+      try { body = JSON.parse(text) } catch { return send(400, 'invalid') }
+      return respond(req, res, await accept(body, entry, received))
+    }
+    const addressRetry = addressLimit(address).retry
     if (addressRetry) return respond(req, res, limited(addressRetry), true)
-    const result = await acceptOtlp(body, async (sessionId, claim) => {
+    const result = await acceptOtlp(text, async (sessionId, claim) => {
       const match = book.bySession(sessionId, now())
       return match ? accept(claim, match, received, `session:${sessionId}`, limited) : [404, 'unknown_envelope']
     })
@@ -116,9 +119,11 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     const budget = entry.envelope.trace.execution_id
     const count = counts.get(budget) ?? 0
     if (count >= recordCap) return [422, 'record_cap']
+    let debit: number | undefined
     if (sessionKey && limited) {
-      const retry = capabilityLimit(sessionKey)
-      if (retry) return limited(retry)
+      const charged = capabilityLimit(sessionKey)
+      if (charged.retry) return limited(charged.retry)
+      debit = charged.debit
     }
     counts.set(budget, count + 1)
     let appended = false
@@ -128,7 +133,7 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
       appended = await write === 'appended'
       // After restart or eviction the ledger can dedupe, but cannot tell us which hash won.
       if (!appended) {
-        if (sessionKey) capabilityLimit.refund(sessionKey)
+        if (sessionKey) capabilityLimit.refund(sessionKey, debit)
         return [200, 'duplicate', 'duplicate']
       }
       hashes.set(key, hash)

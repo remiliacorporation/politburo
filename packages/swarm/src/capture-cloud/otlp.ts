@@ -15,10 +15,15 @@ const text = (value: unknown) => {
 }
 function numeric(value: unknown, max: number) {
   const anyValue = object(value)
+  if (anyValue && ['stringValue', 'boolValue', 'intValue', 'doubleValue', 'arrayValue', 'kvlistValue', 'bytesValue']
+    .filter(key => key in anyValue).length > 1) return NaN
   const raw = anyValue && ('intValue' in anyValue ? anyValue.intValue : anyValue.doubleValue)
-  const n = typeof raw === 'string' && raw.length && raw.length <= String(max).length && !/\D/.test(raw)
-    ? Number(raw) : raw
-  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max ? n : NaN
+  if (typeof raw === 'string') {
+    if (!/^(?:0|[1-9]\d*)$/.test(raw)) return NaN
+    const n = Number(raw)
+    return Number.isSafeInteger(n) && n <= max ? n : NaN
+  }
+  return typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 && raw <= max ? raw : NaN
 }
 function attributes(value: unknown) {
   const values = new Map<string, unknown>()
@@ -34,7 +39,7 @@ function attributes(value: unknown) {
 }
 function time(value: unknown) {
   if (typeof value === 'string' && /^\d{1,20}$/.test(value)) return Number(BigInt(value) / 1_000_000n)
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return Math.floor(value / 1_000_000)
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return Math.floor(value / 1_000_000)
   return NaN
 }
 function iso(ms: number) {
@@ -56,7 +61,8 @@ function* apiRequests(resourceLogs: unknown[]) {
         const occurred = record?.timeUnixNano === undefined ? null : iso(millis)
         const tokens = { input_total: null, input_uncached: number('input_tokens'), output: number('output_tokens'),
           cache_read: number('cache_read_tokens'), cache_write: number('cache_creation_tokens'), reasoning: null }
-        const invalid = attrs.duplicate || resource.duplicate || [duration, ...Object.values(tokens)].some(Number.isNaN)
+        const invalid = attrs.duplicate || resource.duplicate || occurred === undefined
+          || [duration, ...Object.values(tokens)].some(Number.isNaN)
         yield { sessionId: text(get('ccr.session.id')) ?? '', claim: invalid ? undefined : {
           source_event_key: text(get('request_id')), model: text(get('model')), tokens,
           occurred, ended: occurred, started: occurred && duration !== null ? iso(millis - duration) : occurred === undefined ? undefined : null,
@@ -67,8 +73,31 @@ function* apiRequests(resourceLogs: unknown[]) {
   }
 }
 
+function exactInteger(value: number, source: string) {
+  if (!Number.isSafeInteger(value) || value < 0) return false
+  // The source is a JSON number. Check the digits to the right of the shifted decimal point.
+  const [, whole, fraction = '', exponent = '0'] = /^-?(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(source)!
+  const digits = whole + fraction
+  if (value === 0) return !/[1-9]/.test(digits) // Also catches underflow to zero.
+  const places = fraction.length - Number(exponent)
+  return places <= 0 || !/[1-9]/.test(digits.slice(-places))
+}
+
+function read(body: unknown) {
+  if (typeof body !== 'string') return body
+  try {
+    return JSON.parse(body, (key: string, value: unknown, context?: { source: string }) => {
+      if (typeof value === 'number' && (key === 'intValue' || key === 'doubleValue' || key === 'timeUnixNano')) {
+        // Preserve the record so an inexact number rejects only that record, not the batch.
+        return context?.source && exactInteger(value, context.source) ? value : NaN
+      }
+      return value
+    })
+  } catch { return undefined }
+}
+
 export async function acceptOtlp(body: unknown, accept: (sessionId: string, claim: unknown) => Promise<Outcome>): Promise<Outcome> {
-  const logs = object(body)?.resourceLogs
+  const logs = object(read(body))?.resourceLogs
   if (!Array.isArray(logs)) return [400, 'invalid']
   // Preflight the record count before the first write.
   const records = []

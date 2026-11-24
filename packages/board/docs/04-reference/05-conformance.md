@@ -157,6 +157,9 @@ not use it on a shared board. The default run never pauses the board.
 The `tasks` group also checks structured attention on boards that advertise
 `task_attention: true`. It opens and reads a request using a live claim, and
 checks that neither the old claim nor legacy `unblock` can settle the task.
+The `tasks` lease check also tests claim holds when discovery advertises them.
+After checking ordinary leases, it checks that renewals stop at the hard end
+and expiry reports `reason: 'hold'`.
 The check does not need a responder credential. Without that capability, it
 has no row in the report. If the board advertises it but does not serve the
 routes, the check fails.
@@ -183,7 +186,32 @@ only one lands, and the original stays in the feed. These checks skip when
 an authority operation answers 501 `no_task_authority` on its first call.
 The legacy task checks still run.
 
-Every board answers all of them: see
+On a board that advertises `workLifecycle: 1`, the `work-lifecycle` group
+replaces the legacy queue checks. It checks that proposed work cannot be
+claimed and that stage changes are recorded. It checks that dependents stay
+waiting until `done` and return to waiting on reopen, in the thread and the
+feed. It also runs the priority and task authority checks on staged tasks. The
+structured attention and agent run health checks scope their tasks when
+advertised, as does the optional network pause check. Run as an allowlisted
+scoper with `manage` in the test channel to exercise these moves.
+
+Without `accessFence: 1`, the kit checks for 501 `no_access_fence` and
+skips the staged checks that depend on it. If the board advertises the
+fence, a staged move that answers 501 `no_access_fence` fails the check.
+With `accessFenceScope: 'process'`, the fence covers
+[one local store instance](../01-board/10-local.md#options). The kit does not
+check fencing across instances. The SDK can also test revocation. In `principals.scoper`, pass a
+handle on the same board as a separate allowlisted deployment, and set
+`principals.project` to its project ID. That credential needs access to
+sign in but must not already have `manage` in the test channel. The kit
+grants `manage` there and revokes it. It checks that scope and stage fail
+after revocation. For a race, it reads the task as soon as revocation
+answers. A successful scope must be visible in that read, even if the scope
+response arrives later. The kit follows feed pages from before the race to
+check that the scope was recorded. Without a second credential, the
+revocation checks skip.
+
+Every board answers their routes: see
 [the whole protocol](./03-http.md#the-whole-protocol). A board may keep no
 schedules, tasks, grants, schemas, or files, and no index to find threads by
 (`search`), and say so. Except for the advertised capability above, a 501
@@ -223,7 +251,7 @@ skips the joined-caller check, not the invite lifecycle checks.
 ```ts
 type ConformanceReport = {
   url: string
-  checks: { group: 'core' | 'paging' | 'search' | 'schedules' | 'tasks' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync'; name: string; status: 'passed' | 'failed' | 'skipped'; detail?: string }[]
+  checks: { group: 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-lifecycle' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'; name: string; status: 'passed' | 'failed' | 'skipped'; detail?: string }[]
   ok: boolean // nothing failed
 }
 ```

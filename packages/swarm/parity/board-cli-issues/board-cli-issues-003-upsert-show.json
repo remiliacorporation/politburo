@@ -1,0 +1,179 @@
+{
+  "case_id": "board-cli-issues-003-upsert-show",
+  "description": "Insert and replace an issue, then show it",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"envelope_version\": 1, \"priority\": 4, \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:01:00+00:00",
+          "event_id": 2,
+          "event_type": "issue_updated",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 4, \"version\": 2}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 4,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:01:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "ready",
+          "title": "Example issue revised",
+          "updated_at": "2026-01-01T00:01:00+00:00",
+          "version": 2,
+          "worktree": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-issue\",\n      \"version\": 1\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-issue\",\n      \"version\": 2\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "unknown issue: example-missing\n",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"approved_scope\": null,\n  \"assignment_generation\": 1,\n  \"base_sha\": null,\n  \"blocker\": null,\n  \"branch\": null,\n  \"controller\": null,\n  \"created_at\": \"2026-01-01T00:00:00+00:00\",\n  \"dependencies\": [],\n  \"execution_attempts\": [],\n  \"head_sha\": null,\n  \"issue_key\": \"example-issue\",\n  \"issue_priority\": 4,\n  \"lane\": \"unassigned\",\n  \"last_activity_at\": \"2026-01-01T00:01:00+00:00\",\n  \"lease_expires_at\": null,\n  \"lease_token\": null,\n  \"messages\": [],\n  \"model\": null,\n  \"owner\": null,\n  \"packet_path\": null,\n  \"packet_sha256\": null,\n  \"pipeline_stages\": [],\n  \"priority\": 100,\n  \"priority_label\": \"4 High\",\n  \"provider\": null,\n  \"qa_runs\": [],\n  \"review_marks\": [],\n  \"session_id\": null,\n  \"state\": \"ready\",\n  \"title\": \"Example issue revised\",\n  \"updated_at\": \"2026-01-01T00:01:00+00:00\",\n  \"version\": 2,\n  \"worktree\": null\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ],
+        "stdin": {
+          "issue_key": "example-issue",
+          "lane": "example-lane",
+          "owner": "worker-01",
+          "priority": 4,
+          "state": "scoped",
+          "title": "Example issue"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "now": "2026-01-01T00:01:00Z",
+        "stdin": {
+          "issue_key": "example-issue",
+          "state": "ready",
+          "title": "Example issue revised"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "show",
+          "example-missing"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "show",
+          "example-issue"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "The update increments the version, keeps the original creation timestamp and existing priority, and replaces fields with upsert defaults. Show also refuses an unknown issue.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py"
+    ]
+  }
+}

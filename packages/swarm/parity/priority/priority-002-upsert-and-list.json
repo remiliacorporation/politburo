@@ -1,0 +1,251 @@
+{
+  "case_id": "priority-002-upsert-and-list",
+  "description": "Upsert a default and explicit levels, then list",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "issue_priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": {
+        "board_events": [
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 1,
+            "event_type": "issue_imported",
+            "issue_key": "example-normal",
+            "payload_json": "{\"priority\": 3, \"version\": 1}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 2,
+            "event_type": "issue_imported",
+            "issue_key": "example-high",
+            "payload_json": "{\"priority\": 5, \"version\": 1}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 3,
+            "event_type": "issue_imported",
+            "issue_key": "example-low",
+            "payload_json": "{\"priority\": 1, \"version\": 1}"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "issues": [
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-high",
+            "issue_priority": 5,
+            "lane": "unassigned",
+            "last_activity_at": "2026-01-03T00:00:00+00:00",
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-high",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-low",
+            "issue_priority": 1,
+            "lane": "unassigned",
+            "last_activity_at": "2026-01-03T00:00:00+00:00",
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-low",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-normal",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": "2026-01-03T00:00:00+00:00",
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-normal",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          }
+        ],
+        "sqlite_sequence": [
+          {
+            "name": "board_events",
+            "seq": 3
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "issues.json": "[{\"issue_key\": \"example-normal\", \"title\": \"example-normal\"}, {\"issue_key\": \"example-high\", \"title\": \"example-high\", \"priority\": 5}, {\"issue_key\": \"example-low\", \"title\": \"example-low\", \"priority\": 1}]"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-normal\",\n      \"version\": 1\n    },\n    {\n      \"issue_key\": \"example-high\",\n      \"version\": 1\n    },\n    {\n      \"issue_key\": \"example-low\",\n      \"version\": 1\n    }\n  ],\n  \"ok\": true\n}\n[\n  {\n    \"approved_scope\": null,\n    \"assignment_generation\": 1,\n    \"base_sha\": null,\n    \"blocker\": null,\n    \"branch\": null,\n    \"controller\": null,\n    \"created_at\": \"2026-01-03T00:00:00+00:00\",\n    \"head_sha\": null,\n    \"issue_key\": \"example-high\",\n    \"issue_priority\": 5,\n    \"lane\": \"unassigned\",\n    \"last_activity_at\": \"2026-01-03T00:00:00+00:00\",\n    \"lease_expires_at\": null,\n    \"lease_token\": null,\n    \"model\": null,\n    \"owner\": null,\n    \"packet_path\": null,\n    \"packet_sha256\": null,\n    \"priority\": 100,\n    \"priority_label\": \"5 Critical\",\n    \"provider\": null,\n    \"session_id\": null,\n    \"state\": \"proposed\",\n    \"title\": \"example-high\",\n    \"updated_at\": \"2026-01-03T00:00:00+00:00\",\n    \"version\": 1,\n    \"worktree\": null\n  },\n  {\n    \"approved_scope\": null,\n    \"assignment_generation\": 1,\n    \"base_sha\": null,\n    \"blocker\": null,\n    \"branch\": null,\n    \"controller\": null,\n    \"created_at\": \"2026-01-03T00:00:00+00:00\",\n    \"head_sha\": null,\n    \"issue_key\": \"example-normal\",\n    \"issue_priority\": 3,\n    \"lane\": \"unassigned\",\n    \"last_activity_at\": \"2026-01-03T00:00:00+00:00\",\n    \"lease_expires_at\": null,\n    \"lease_token\": null,\n    \"model\": null,\n    \"owner\": null,\n    \"packet_path\": null,\n    \"packet_sha256\": null,\n    \"priority\": 100,\n    \"priority_label\": \"3 Normal\",\n    \"provider\": null,\n    \"session_id\": null,\n    \"state\": \"proposed\",\n    \"title\": \"example-normal\",\n    \"updated_at\": \"2026-01-03T00:00:00+00:00\",\n    \"version\": 1,\n    \"worktree\": null\n  },\n  {\n    \"approved_scope\": null,\n    \"assignment_generation\": 1,\n    \"base_sha\": null,\n    \"blocker\": null,\n    \"branch\": null,\n    \"controller\": null,\n    \"created_at\": \"2026-01-03T00:00:00+00:00\",\n    \"head_sha\": null,\n    \"issue_key\": \"example-low\",\n    \"issue_priority\": 1,\n    \"lane\": \"unassigned\",\n    \"last_activity_at\": \"2026-01-03T00:00:00+00:00\",\n    \"lease_expires_at\": null,\n    \"lease_token\": null,\n    \"model\": null,\n    \"owner\": null,\n    \"packet_path\": null,\n    \"packet_sha256\": null,\n    \"priority\": 100,\n    \"priority_label\": \"1 Deferred\",\n    \"provider\": null,\n    \"session_id\": null,\n    \"state\": \"proposed\",\n    \"title\": \"example-low\",\n    \"updated_at\": \"2026-01-03T00:00:00+00:00\",\n    \"version\": 1,\n    \"worktree\": null\n  }\n]\n[\n  {\n    \"approved_scope\": null,\n    \"assignment_generation\": 1,\n    \"base_sha\": null,\n    \"blocker\": null,\n    \"branch\": null,\n    \"controller\": null,\n    \"created_at\": \"2026-01-03T00:00:00+00:00\",\n    \"head_sha\": null,\n    \"issue_key\": \"example-low\",\n    \"issue_priority\": 1,\n    \"lane\": \"unassigned\",\n    \"last_activity_at\": \"2026-01-03T00:00:00+00:00\",\n    \"lease_expires_at\": null,\n    \"lease_token\": null,\n    \"model\": null,\n    \"owner\": null,\n    \"packet_path\": null,\n    \"packet_sha256\": null,\n    \"priority\": 100,\n    \"priority_label\": \"1 Deferred\",\n    \"provider\": null,\n    \"session_id\": null,\n    \"state\": \"proposed\",\n    \"title\": \"example-low\",\n    \"updated_at\": \"2026-01-03T00:00:00+00:00\",\n    \"version\": 1,\n    \"worktree\": null\n  }\n]\n",
+    "steps": [
+      {
+        "db_changed": true,
+        "exit_code": 0
+      },
+      {
+        "db_changed": false,
+        "exit_code": 0
+      },
+      {
+        "db_changed": false,
+        "exit_code": 0
+      }
+    ]
+  },
+  "inputs": {
+    "commands": [
+      [
+        "upsert",
+        "--file",
+        "issues.json"
+      ],
+      [
+        "list"
+      ],
+      [
+        "list",
+        "--priority",
+        "1"
+      ]
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M87",
+  "notes": "The default level is Normal. List pairs numbers with labels, orders highest first and filters by value.",
+  "setup": {
+    "files": {
+      "issues.json": "[{\"issue_key\": \"example-normal\", \"title\": \"example-normal\"}, {\"issue_key\": \"example-high\", \"title\": \"example-high\", \"priority\": 5}, {\"issue_key\": \"example-low\", \"title\": \"example-low\", \"priority\": 1}]"
+    },
+    "now": "2026-01-03T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/priority.py",
+      "board/board.py",
+      "board/schema.sql"
+    ]
+  }
+}

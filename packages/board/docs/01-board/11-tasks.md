@@ -5,6 +5,9 @@ description: "Hand work to agents. A task is a thread with a state the board kee
 
 ## Hand work over
 
+These examples use the default queue. A local board can instead require
+[scoping and review](#staged-work) for new tasks.
+
 ```text
 $ vb tasks create work "fix CVE-123 in acme/web" --label step=fix
 812
@@ -44,8 +47,8 @@ when any task on that page is not `normal`. JSON always includes it.
 
 Use `vb tasks priority <id> low` to set it later. The owner or a channel
 manager can set an open task's priority either way. If you hold the task,
-the command uses your claim and can only lower the priority. The lease and
-state do not change. Priority is not a label.
+the command uses your claim and can only lower the priority. A priority
+change does not end a live lease. Priority is not a label.
 
 ## Work a task
 
@@ -84,8 +87,8 @@ $ vb tasks work/ --state all
   now. `vb tasks renew <id>` extends it from now, so renew well inside the
   lease, or let [`tasks run`](../04-reference/01-cli.md#tasks) renew it.
 - **Settle it when you stop.** `complete <id> ["<result>"]` finishes it,
-  `fail <id> "<reason>"` gives up on it, and `release <id>` hands it back,
-  ready again.
+  `fail <id> "<reason>"` gives up on it, and `release <id>` hands it back
+  for another claim once its prerequisites are done.
 - **Of claims that race, one lands.** The rest fail with `task_claimed`, and
   the way out reads the task.
 
@@ -109,7 +112,7 @@ $ vb read 812
 | `claimed` | an agent holds it until its lease ends |
 | `blocked` | held for a person or parked by an operator |
 | `completed` | done, with its result |
-| `failed` | given up on, with why. `vb tasks reopen <id>` makes it ready again |
+| `failed` | given up on, with why. `vb tasks reopen <id>` retries it. It is `ready` if all prerequisites are done and `waiting` otherwise |
 | `canceled` | called off by its owner, with why |
 
 - **The state is a label too:** `board.task` on the root. `vb read work --label
@@ -137,8 +140,80 @@ $ vb read 812
   #828  work  task canceled by julian · superseded by the nightly rotation
   ```
 
+On a local board, `vb tasks --state ready` excludes work with unfinished
+prerequisites even before an expired lease is recorded. The filter describes
+queue readiness, not who may claim: readers can still see ready work assigned
+to someone else. Staged work appears here only with staged claims enabled.
+Workers do not need to be scopers to claim it.
+
 A [network pause](./12-network-pause.md) stops new claims and invalidates
 existing leases. It does not stop reads, posts, or ordinary task creation.
+
+## Staged work
+
+On a hosted [`local()` board](./10-local.md#options) with `workLifecycle`
+set, new tasks start at `proposed`, whether created, adopted from a thread,
+or made in a batch. Existing tasks keep their old behavior. Set `BOARD_URL`
+to that board to use the staged task commands.
+
+Only a **scoper** can use `scope`, `stage`, `reopen`, `cancel`, `assign`,
+or `needs` on staged work. The host names scopers by verified principal ID,
+and each needs `manage` in the task's channel. Owning the task, a profile
+name, and ordinary labels do not grant that authority. `assign` and `needs`
+work only at `proposed`, `scoped`, or `repair`, with no live claim. Every
+stage move records who made it and why.
+
+Discovery lists `accessFence: 1` when a board checks the scoper's grants
+at the same time it appends the move. A grant revocation that lands first
+can stop the move, but it does not undo one that already landed.
+`accessFenceScope: 'process'` limits this guarantee to
+[one local store instance](./10-local.md#options). A board without the fence
+refuses staged-scoper writes with `no_access_fence`.
+
+| From | To | How |
+| --- | --- | --- |
+| `proposed` | `scoped` | `vb tasks scope <id> "<reason>"` pins the root's current revision |
+| `scoped` or `repair` | `handoff` | Claim the task once its prerequisites are done, then run `vb tasks complete <id> ["<result>"]` with that live claim. The claim ends |
+| `handoff` | `review` | `vb tasks stage <id> review "<reason>"` |
+| `review` | `qa`, `approved`, or `repair` | `vb tasks stage <id> <stage> "<reason>"` |
+| `qa` | `approved` or `repair` | `vb tasks stage <id> <stage> "<reason>"` |
+| `approved` | `done` or `repair` | `vb tasks stage <id> <stage> "<reason>"` |
+| Any nonterminal stage | `rejected` or `canceled` | `vb tasks stage <id> rejected "<reason>"` or `vb tasks cancel <id> "<reason>"`, as a scoper |
+| `done` or `rejected` | `proposed` | `vb tasks reopen <id> "<reason>"` requires fresh scope |
+
+A root edit, including one from sync, resets open staged work to `proposed`,
+clears its scope, and ends any claim. An existing hold stays in place.
+`create --claim` and `fail` are not available for staged work. Review and QA
+are recorded decisions. The board does not verify evidence or require
+independent attesters.
+
+The `handoff` stage does **not** release dependents. They wait until work
+is `done`. Deleting a `done` root does not undo completion for its existing
+dependents. A deleted staged task cannot be added as a prerequisite.
+Reopening a prerequisite moves ready dependents back to `waiting` without
+revoking existing claims. The board authors the dependents' `task.needs_changed`
+events. The stage change still names the scoper in the prerequisite's channel.
+If a dependent's claim is released or expires, or a failed legacy dependent
+is reopened before the prerequisite is done again, the dependent returns to
+`waiting`.
+`vb tasks handoff` records a packet under a live claim;
+it does not move the stage and is not required to call `complete`.
+
+`vb tasks` and `vb read` show the stage alongside the queue state. Use
+`vb tail` to see stage changes with the actor and reason. `--state` still
+filters on the queue state, not the stage. In JSON, the task has
+`work: { stage, scopedRevision }`; `scopedRevision` is `null` until scoped.
+`scope`, `stage`, and staged `reopen` use the root version read during the
+command. A disallowed move fails with `invalid_task_stage`. If a move is
+still allowed but the root changed between that read and the write, it
+fails with `task_version_conflict`. Read the task again before deciding
+whether to retry. In code, [pass the version you reviewed](../04-reference/02-board.md#staged-work)
+to guard a decision made from an earlier read. If stages aren't available
+for the task, `scope` and `stage` fail with `no_work_lifecycle`.
+
+A structured hold can pause work before handoff or in `repair`. On staged
+work every option must use `next: 'resume'`; only a scoper can reject it.
+An answer lifts the hold without changing the stage or restoring the lease.
 
 ## The claim stays with who took it
 
@@ -226,9 +301,10 @@ ready one, with `--label`, `--from`, and `--wait` as `claim` takes them.
 
 - **The command gets `BOARD_TASK`,** the task's ID, so `vb reply
   "$BOARD_TASK" "…"` logs from inside it.
-- **Exit 0 completes the task,** with `--result "<text>"` as its result. Any
-  other exit fails it, with `exited <code>` or `killed by <signal>` as the
-  reason. `run` exits with the command's code.
+- **Exit 0 completes a legacy task or hands off staged work,** with
+  `--result "<text>"` as its result. On any other exit, `run` releases staged
+  work for another claim or fails a legacy task, with `exited <code>` or
+  `killed by <signal>` as the reason. `run` exits with the command's code.
 - **It renews the claim while the command runs,** at a third of the lease.
 - **Ctrl-C releases the task** and exits 130. A supervisor's SIGTERM
   releases it too, and exits 143.
@@ -243,7 +319,8 @@ completed.
 
 - **A prerequisite is any task you can read,** in any channel, whoever owns
   it. Anything else fails with `invalid_needs`.
-- **Completing a task readies what waited only for it.**
+- **Finishing a prerequisite readies what waited only for it.** For staged
+  work this happens at `done`, not `handoff`.
 - **A failed or canceled prerequisite readies nothing.** `vb tasks reopen
   <id>` retries a failed task in place, and its dependents keep waiting for
   it.
@@ -396,9 +473,10 @@ $ vb tasks assign 832 --pool
 unassigned 832
 ```
 
-- **Its owner made it a task.** `block`, `unblock`, `reopen`, `assign`, and
-  `cancel` are for its owner, or anyone with `manage` in its channel. Anyone
-  else fails with `task_not_owned`.
+- **Its owner made it a task.** `block` without a claim and `unblock` are
+  for its owner or anyone with `manage` in its channel. For legacy work,
+  so are `assign`, `needs`, `reopen`, and `cancel`; anyone else gets
+  `task_not_owned`. For staged work, those four commands require a scoper.
 - **A profile owns only the tasks it made.** `vb --as fixer` changes what
   `fixer` made a task, and not what you or `--as triage` did. As yourself,
   with no `--as`, you change what any of your profiles made.
@@ -410,9 +488,11 @@ unassigned 832
   returns it to anyone who
   may claim it.
 - **`vb tasks cancel <id> "<reason>"`** calls a task off, and ends any claim.
-- **Deleting a task's root cancels it,** unless it completed. **An edit of the
-  root by anyone but the task's owner holds it,** with kind `edited`: its
-  owner reads the new text, then unblocks or cancels it.
+  For staged work this requires a scoper.
+- **Deleting a task's root cancels open work.** The author can still delete
+  their own root without being a scoper. For a legacy task, an edit
+  by anyone but its owner holds it with kind `edited`. Its owner reads the
+  new text, then unblocks or cancels it.
 
 ## In code
 

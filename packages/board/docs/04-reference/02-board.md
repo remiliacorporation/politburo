@@ -132,6 +132,9 @@ The board's HTTP handler, on any backend: what a route exports as `GET` and
 
 ## Work admission
 
+`board({ claimRule })` checks ID and next claims after access and before the
+backend. See [Claim rules](../01-board/08-middleware.md#claim-rules).
+
 ### status, pause, resume
 
 `status()` reads [network pause](../01-board/12-network-pause.md).
@@ -371,8 +374,8 @@ tasks.create(channel: string, input: string | NewTaskOptions): Promise<{ task: M
 tasks.create(thread: { re: string }, input?: TaskOptions): Promise<{ task: MessageView; claim?: ClaimedTask }>
 tasks.createMany(channel: string, tasks: TaskInBatch[], opts?: { id?: string }): Promise<MessageView[]>
 tasks.list(query?: { channel?: string; state?: string; label?: Record<string, string> | string[]; by?: string; owner?: string; for?: string; needs?: string; after?: string; limit?: number; latest?: boolean }): Promise<{ tasks: ThreadSummaryView[]; cursor: string }>
-tasks.claim(id: string, opts?: { lease?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
-tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
+tasks.claim(id: string, opts?: { lease?: number; hold?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
+tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; hold?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
 tasks.held(id: string, claim: { epoch: number; token: string }): HeldTask
 tasks.block(id: string, reason: string, opts?: { kind?: string }): Promise<MessageView>
 tasks.unblock(id: string): Promise<MessageView>
@@ -382,7 +385,9 @@ tasks.handoff(id: string, input: { epoch: number; token: string; commit: string;
 tasks.ask(id: string, request: RequestAttentionBody): Promise<{ task: MessageView; attention: AttentionView }>
 tasks.attention(id: string): Promise<{ attention: AttentionView | null }>
 tasks.answer(id: string, requestId: string, answer: AttentionAnswerBody): Promise<{ task: MessageView; attention: AttentionView }>
-tasks.reopen(id: string): Promise<MessageView>
+tasks.scope(id: string, reason: string, opts?: { ifVersion?: number }): Promise<MessageView>
+tasks.stage(id: string, stage: WorkStageTarget, reason: string, opts?: { ifVersion?: number }): Promise<MessageView>
+tasks.reopen(id: string, reason?: string, opts?: { ifVersion?: number }): Promise<MessageView>
 tasks.assign(id: string, actor: string | null): Promise<MessageView>
 tasks.needs(id: string, needs: string[]): Promise<MessageView>
 tasks.priority(id: string, priority: TaskPriority): Promise<MessageView>
@@ -437,6 +442,10 @@ if (claim) {
   Claiming a task by ID that you hold with its token answers the claim as it
   is. A retry may omit the binding or repeat it unchanged. A different one
   is 409 `binding_mismatch`.
+- **`hold`** is a hard end, 1 to 86400 whole seconds from the claim. It
+  caps the initial lease and renewals. The claim and the task's claim view
+  show `holdUntil` as an ISO timestamp. Unsupported backends answer 501
+  `no_claim_hold`.
 - **`binding`** is optional [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work).
   The board checks `owner` against the exact verified claimant. A local
   board's in-process handle cannot make a bound claim. The board does not verify
@@ -458,9 +467,9 @@ if (claim) {
   `claim_lost` and changes nothing. See [Network pause](../01-board/12-network-pause.md).
 - **`held`** gives the same writes from an `epoch` and a `token`, for a
   process that kept them.
-- **`block`, `unblock`, `reopen`, `assign`, `needs`, and `cancel`** are for the
-  task's owner, or `manage` in its channel: anyone else gets 403
-  `task_not_owned`.
+- **`block` without a claim and `unblock`** are for the task's owner or
+  `manage` in its channel. For legacy work, so are `assign`, `needs`,
+  `reopen`, and `cancel`. Anyone else gets 403 `task_not_owned`.
   A handle that writes as a profile (`team.as('fixer')`) owns only the tasks
   it made. The principal itself owns what any of its profiles made. A task's
   `by` is the actor that made it, so a UI knows whose these are to offer.
@@ -498,6 +507,42 @@ if (claim) {
   page. `latest: true` answers the `limit` last active instead, by each
   thread's latest message, the latest active last: the board reads every task
   that matches to find them, and builds only those. It takes no `after`.
+
+#### Staged work
+
+On a `local()` board with `workLifecycle` enabled, new tasks have
+`task.work: { stage, scopedRevision }`. Existing tasks have no `task.work`.
+The host lists scopers by verified principal ID. With `manage` in the root's
+channel, a scoper can `scope` a proposed task, pinning its current revision,
+`stage` it through the allowed moves, `reopen` it with a reason, or
+`cancel` it while open. Only a scoper can `assign` or change `needs` on
+staged work, and only at `proposed`, `scoped`, or `repair` with no live
+claim. `WorkStageTarget` is
+`review | qa | repair | approved | done | rejected`.
+
+A worker's live claim calls `complete(result?)` to hand off staged work,
+not mark it done. `claim: true` on create and `claim.fail(reason)` on staged
+work fail with 409 `work_lifecycle_required`. Only `done` releases
+staged prerequisites. `reopen(id, reason)` returns a staged `done` or
+`rejected` task to `proposed`. Legacy `reopen(id)` still needs no reason.
+
+Pass `ifVersion: root.version` to `scope`, `stage`, or `reopen` with a
+reason to guard the root version you based the decision on. Use the root
+`MessageView.version`, not `revision` or `task.work.scopedRevision`. With
+no `ifVersion`, each of those calls makes one extra root read before the
+write. `reopen(id)` skips that read and sends neither field. A stale version
+on an otherwise allowed move throws a `BoardError` with `status: 409` and
+`code: 'task_version_conflict'`, without writing. Read the root again and
+reconsider the decision before retrying.
+
+Discovery advertises `workLifecycle: 1` on an opted-in board and
+`accessFence: 1` when staged writes are atomic with grant changes.
+`accessFenceScope: 'process'` means [one local store instance](../01-board/10-local.md#options)
+in one process. Without the fence, staged-scoper writes fail with 501
+`no_access_fence`. `scope` and `stage` fail with 501 `no_work_lifecycle`
+if there are no stages.
+Disallowed moves fail with 409 `invalid_task_stage`. See the
+[allowed moves and CLI commands](../01-board/11-tasks.md#staged-work).
 
 #### Several tasks at once
 
@@ -729,8 +774,10 @@ revokeGrant(id: string, options?: { lockMeOut?: boolean }): Promise<{ revoked: b
 to `'all'`, `'none'`, or a list of permissions, which the handle sends as the
 protocol has it (`'none'` as `[]`). A `project` or `all-projects` without
 `environments` is its production deployments. The same principals again are
-another grant. `updateGrant` adds principals (a project it names already
-gets the new environments), removes them by who they are, and replaces `can`.
+another grant. An `invitee` is `{ kind: 'invitee', id }`, the id `join`
+returned, and only when that member has already joined. `updateGrant` adds
+principals (a project it names already gets the new environments), removes
+them by who they are, and replaces `can`.
 Making or widening one needs what you'd grant: `manage` at its patterns and
 under them wherever your own limits narrow you, and what `everyone` gives, for
 anyone it lets in. Revoking one, or removing from it, needs the same but what

@@ -1,0 +1,370 @@
+{
+  "case_id": "board-cli-messages-006-network-pause",
+  "description": "Pause withdraws assignments but keeps unrelated notices",
+  "expected": {
+    "db": {
+      "agent_commands": [
+        {
+          "args_json": "{}",
+          "command": "inspect",
+          "command_id": 1,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-key-01",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "cancelled",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"inspect\", \"command_id\": 1, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Example cutover\", \"state\": \"active\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"assignment\", \"message_id\": 1, \"to_agent\": \"worker-01\", \"to_role\": null, \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"decision\", \"message_id\": 2, \"to_agent\": \"worker-01\", \"to_role\": null, \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "message_authority_withdrawn",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"operator\", \"actor_type\": \"user\", \"envelope_version\": 1, \"message_ids\": [1], \"reason\": \"network_paused\", \"reason_code\": \"authority_withdrawn\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 3, \"reason\": \"Example checkpoint\", \"state\": \"paused\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 9,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 4, \"reason\": \"Example recovery\", \"state\": \"active\"}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Keep the current label",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "49a52f9310ba276c67989b5ab0636bfdde0de5135ed032d66a7e1e66d2d06014",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "decision",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": "worker-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Start example work",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "fbc638d208ef0d32c65e86d70976bc240d72657e6e6c60495936c2ab75f83e73",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "assignment",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "superseded",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": "worker-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "4"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"worker-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"paused\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 2,\n  \"ok\": true,\n  \"state\": \"active\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"fbc638d208ef0d32c65e86d70976bc240d72657e6e6c60495936c2ab75f83e73\",\n  \"message_id\": 1,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"49a52f9310ba276c67989b5ab0636bfdde0de5135ed032d66a7e1e66d2d06014\",\n  \"message_id\": 2,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 3,\n  \"ok\": true,\n  \"state\": \"paused\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 4,\n  \"ok\": true,\n  \"state\": \"active\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"inspect\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-01\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"cancelled\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Keep the current label\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"49a52f9310ba276c67989b5ab0636bfdde0de5135ed032d66a7e1e66d2d06014\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"decision\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": \"worker-01\",\n    \"to_role\": null,\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"profile_key\": \"sprite\", \"status\": \"idle\"}"
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "inspect"
+        ]
+      },
+      {
+        "argv": [
+          "network",
+          "active",
+          "--reason",
+          "Example cutover"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "assignment",
+          "--body",
+          "Start example work",
+          "--to-agent",
+          "worker-01",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "decision",
+          "--body",
+          "Keep the current label",
+          "--to-agent",
+          "worker-01",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "network",
+          "paused",
+          "--reason",
+          "Example checkpoint"
+        ]
+      },
+      {
+        "argv": [
+          "network",
+          "active",
+          "--reason",
+          "Example recovery"
+        ]
+      },
+      {
+        "argv": [
+          "commands",
+          "--state",
+          "cancelled"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--agent",
+          "worker-01"
+        ]
+      }
+    ],
+    "tables": [
+      "agent_commands",
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "The initial board is paused. Active/paused/active increments generations; pending commands are cancelled and assignments superseded, not replayed on reactivation.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

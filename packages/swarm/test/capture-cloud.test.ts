@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync,
-  utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync,
+  readSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { Book, createReceiver, jsonlLedger, type Claim, type Envelope, type SpendRecord }
   from '../src/capture-cloud/index.ts'
@@ -271,6 +273,22 @@ test('Book persists private, exclusive session bindings only until expiry', (t) 
   assert.equal(reopened.bySession(session, f.now()), undefined)
 })
 
+// Catches a live reader skipping a bind when inode and ctime look unchanged.
+test('an already-open Book picks up a bind from another instance', (t) => {
+  const { bookFile } = paths(t)
+  const now = () => Date.parse('2026-11-22T12:01:00Z')
+  const writer = new Book({ file: bookFile, now })
+  const { capability } = writer.issue(envelope, { ttlMs: 3_600_000 })
+  writer.bind(capability, session)
+  const reader = new Book({ file: bookFile, now })
+  assert.equal(reader.bySession(session, now())?.session, session)
+  const extra = writer.issue({ ...envelope, trace: { ...envelope.trace, execution_id: 'exec-other' } },
+    { ttlMs: 3_600_000 }).capability
+  writer.bind(extra, 'other-session')
+  assert.equal(reader.bySession('other-session', now())?.session, 'other-session',
+    'reader missed a bind written after it opened')
+})
+
 test('Book only loads private regular files, not symlinks', (t) => {
   const f = fixture(t), alias = `${f.bookFile}.alias`
   chmodSync(f.bookFile, 0o644)
@@ -283,17 +301,190 @@ test('Book only loads private regular files, not symlinks', (t) => {
 
 test('Book takes the lock and preserves both bind and revoke in either order', (t) => {
   const { bookFile } = paths(t), lock = `${bookFile}.lock`, issuer = new Book({ file: bookFile })
+  const deadPid = spawnSync(process.execPath, ['-e', '']).pid
+  assert.ok(deadPid)
   for (const [i, bindFirst] of [true, false].entries()) {
     const bound = issuer.issue(envelope, { ttlMs: 60_000 }).capability
     const revoked = issuer.issue(envelope, { ttlMs: 60_000 }).capability
     const binder = new Book({ file: bookFile }), revoker = new Book({ file: bookFile })
     const bind = () => binder.bind(bound, `${session}-${i}`), revoke = () => revoker.revoke(revoked)
-    writeFileSync(lock, '')
+    writeFileSync(lock, `${deadPid}\n`)
     utimesSync(lock, 0, 0)
     for (const write of bindFirst ? [bind, revoke] : [revoke, bind]) write()
     const final = new Book({ file: bookFile })
     assert.equal(final.byCapability(bound, Date.now())?.session, `${session}-${i}`, 'binding was lost')
     assert.equal(final.byCapability(revoked, Date.now()), undefined, 'revocation was lost')
-    assert.equal(existsSync(lock), false, 'stale lock was not replaced and released')
+    assert.equal(existsSync(lock), false, 'dead holder lock was not replaced and released')
   }
+})
+
+// Catches stealing a live lock by age so a slow writer can restore a revoked capability.
+test('Book does not steal a live lock as stale so a revoke cannot race a slow writer', (t) => {
+  const { bookFile } = paths(t), lock = `${bookFile}.lock`, issuer = new Book({ file: bookFile })
+  const { capability } = issuer.issue(envelope, { ttlMs: 60_000 })
+  writeFileSync(lock, `${process.pid}\n`)
+  utimesSync(lock, 0, 0)
+  const other = new Book({ file: bookFile })
+  assert.throws(() => other.revoke(capability), /book is locked/)
+  assert.ok(other.byCapability(capability, Date.now()), 'revoked by stealing a live lock')
+  unlinkSync(lock)
+  other.revoke(capability)
+  assert.equal(other.byCapability(capability, Date.now()), undefined)
+})
+
+// Catches a retry after a failed sync acknowledging an unsynced row.
+test('retry after a failed sync acknowledges an unsynced row', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
+  const ledger = jsonlLedger(ledgerFile)
+  assert.equal(spawnSync('mkfifo', [ledgerFile]).status, 0)
+  const fifo = openSync(ledgerFile, constants.O_RDWR | constants.O_NONBLOCK)
+  t.after(() => {
+    try { closeSync(fifo) } catch { /* already closed */ }
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const server = await createReceiver({ book, ledger }).listen(0)
+  t.after(() => server.close())
+  const url = `http://127.0.0.1:${server.port}`
+  const first = await post(url, capability)
+  assert.notEqual(first.status, 200, 'failed sync acknowledged as settled')
+  const retry = await post(url, capability)
+  assert.notEqual(retry.status, 200, 'retry acknowledged an unsynced row')
+  const buf = Buffer.alloc(8192)
+  let text = ''
+  try { text = buf.subarray(0, readSync(fifo, buf)).toString('utf8') }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') throw error }
+  assert.equal(text.trim().split('\n').filter(Boolean).length, 1, 'expected exactly one record')
+})
+
+// Catches a restart acknowledging a row that was never synced.
+test('restart acknowledges a row that was never synced', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const dedupe_key = `claude_cloud:${createHash('sha256')
+    .update(JSON.stringify([envelope.trace.execution_id, claim.source_event_key])).digest('hex').slice(0, 40)}`
+  assert.equal(spawnSync('mkfifo', [ledgerFile]).status, 0)
+  const writer = spawn(process.execPath, ['-e',
+    'require("fs").writeFileSync(process.argv[1], process.argv[2])',
+    ledgerFile, `${JSON.stringify({ dedupe_key })}\n`], { stdio: 'ignore' })
+  t.after(() => { try { writer.kill() } catch { /* exited */ } })
+  let ledger: ReturnType<typeof jsonlLedger>
+  try {
+    ledger = jsonlLedger(ledgerFile)
+  } catch (error) {
+    assert.match((error as Error).message, /failed to sync existing ledger/)
+    return
+  }
+  const server = await createReceiver({ book, ledger }).listen(0)
+  t.after(() => server.close())
+  const response = await post(`http://127.0.0.1:${server.port}`, capability)
+  assert.notEqual(response.status, 200, 'restart acknowledged a row that was never synced')
+})
+
+// Catches syncing dirname(path) so a /proc/self/fd path refuses a durable inode.
+test('a ledger opened through /proc/self/fd syncs the file inode’s directory', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const dedupe_key = `claude_cloud:${createHash('sha256')
+    .update(JSON.stringify([envelope.trace.execution_id, claim.source_event_key])).digest('hex').slice(0, 40)}`
+  writeFileSync(ledgerFile, `${JSON.stringify({ dedupe_key })}\n`, { mode: 0o600 })
+  const keep = openSync(ledgerFile, 'r')
+  t.after(() => { try { closeSync(keep) } catch { /* already closed */ } })
+  const ledger = jsonlLedger(`/proc/self/fd/${keep}`)
+  const server = await createReceiver({ book, ledger }).listen(0)
+  t.after(() => server.close())
+  const response = await post(`http://127.0.0.1:${server.port}`, capability)
+  assert.equal(response.status, 200, 'durable row on the opened inode must be a duplicate')
+})
+
+test('a capability can write a claim and cannot read the ledger back', async (t) => {
+  const f = fixture(t)
+  const url = await f.listen()
+  const unread = await fetch(`${url}/v1/claims/${f.capability}`, { signal: AbortSignal.timeout(5_000) })
+  assert.equal(unread.status, 404)
+  assert.equal((await post(url, f.capability)).status, 202)
+  assert.equal(f.records().length, 1)
+  const after = await fetch(`${url}/v1/claims/${f.capability}`, { signal: AbortSignal.timeout(5_000) })
+  assert.equal(after.status, 404)
+})
+
+test('an existing world-readable ledger is refused', (t) => {
+  const { ledgerFile } = paths(t)
+  writeFileSync(ledgerFile, '', { mode: 0o644 })
+  assert.throws(() => jsonlLedger(ledgerFile), /unsafe ledger file/)
+  chmodSync(ledgerFile, 0o600)
+  assert.equal(typeof jsonlLedger(ledgerFile).append, 'function')
+})
+
+test('a file symlink as the ledger path refuses to start if the target directory cannot be synced', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const realDir = join(dir, 'real'), aliasDir = join(dir, 'alias')
+  mkdirSync(realDir)
+  mkdirSync(aliasDir)
+  const target = join(realDir, 'spend.jsonl'), alias = join(aliasDir, 'spend.jsonl')
+  writeFileSync(target, `${JSON.stringify({ dedupe_key: 'x' })}\n`, { mode: 0o600 })
+  symlinkSync(target, alias)
+  const { dev, ino } = statSync(realDir, { bigint: true })
+  const preload = join(dir, 'fail-target-dir.cjs')
+  writeFileSync(preload, `
+    const fs = require('node:fs')
+    const sync = fs.fsyncSync
+    fs.fsyncSync = fd => {
+      const stat = fs.fstatSync(fd, { bigint: true })
+      if (stat.dev === ${dev}n && stat.ino === ${ino}n) {
+        throw Object.assign(new Error('injected target directory fsync failure'), { code: 'EIO' })
+      }
+      return sync(fd)
+    }
+    require('node:module').syncBuiltinESMExports()
+  `)
+  const result = spawnSync(process.execPath, [
+    '--require', preload, '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
+    `import { jsonlLedger } from ${JSON.stringify(new URL('../src/capture-cloud/record.ts', import.meta.url).href)}
+     jsonlLedger(${JSON.stringify(alias)})
+     console.log('opened')`,
+  ], { encoding: 'utf8', timeout: 5_000 })
+  if (result.error) throw result.error
+  assert.notEqual(result.status, 0, 'symlink ledger opened after failing to sync the target directory')
+  assert.equal(result.stdout.includes('opened'), false)
+  assert.match(result.stderr, /failed to sync existing ledger/)
+})
+
+test('issue does not report a capability before the book file is synced', (t) => {
+  const { bookFile } = paths(t)
+  const preload = join(dirname(bookFile), 'fail-book-sync.cjs')
+  writeFileSync(preload, `
+    const fs = require('node:fs')
+    const sync = fs.fsyncSync
+    fs.fsyncSync = fd => {
+      const stat = fs.fstatSync(fd)
+      if (stat.isFile() && stat.size > 2) {
+        throw Object.assign(new Error('injected book fsync failure'), { code: 'EIO' })
+      }
+      return sync(fd)
+    }
+    require('node:module').syncBuiltinESMExports()
+  `)
+  const result = spawnSync(process.execPath, [
+    '--require', preload, '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
+    `import { Book } from ${JSON.stringify(new URL('../src/capture-cloud/book.ts', import.meta.url).href)}
+     const issued = new Book({ file: ${JSON.stringify(bookFile)} }).issue(${JSON.stringify(envelope)}, { ttlMs: 60_000 })
+     console.log(issued.capability)`,
+  ], { encoding: 'utf8', timeout: 5_000 })
+  if (result.error) throw result.error
+  assert.notEqual(result.status, 0, 'issue succeeded without a synced book')
+  assert.equal(result.stdout.includes('cap_'), false, 'capability printed before sync')
+  assert.match(result.stderr, /failed to sync book file/)
 })

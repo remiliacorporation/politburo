@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { isTask, type Filter, type State } from './store.ts'
-import { ago } from './words.ts'
+import { absoluteTime, ago } from './words.ts'
 
 export { route, SECTIONS, type Route, type Section } from './routes.ts'
 
@@ -118,6 +118,12 @@ export function useNow(roots: State['openTaskRoots']): number {
   return now
 }
 
+export function isTypingTarget(target: Element | null): boolean {
+  return !!(target?.closest('input, textarea, select') ||
+    target?.closest('[contenteditable=""], [contenteditable="true" i], [contenteditable="plaintext-only" i], [contenteditable="false" i]')
+      ?.matches(':not([contenteditable="false" i])'))
+}
+
 /**
  * Typing anywhere that isn't a field focuses a composer, and the keystroke lands in it: the open
  * thread's when there is one, since that's what you're looking at, or else `composer`.
@@ -126,9 +132,10 @@ export function useTypeToFocus(composer: string) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
-      const target = event.target as HTMLElement
-      if (target !== document.body && target.closest('input, textarea, select, [contenteditable], [role="menu"], [role="dialog"], [role="listbox"]'))
-        return
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return
+      // Space activates a focused control on keyup; stealing focus here would cancel that.
+      if (event.key === ' ' && target?.closest('button, [role="button"], summary, input[type="checkbox"], input[type="radio"]')) return
       const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]:not([inert] *)`)
       const area = find('thread') ?? find(composer)
       area?.focus()
@@ -138,12 +145,17 @@ export function useTypeToFocus(composer: string) {
   }, [composer])
 }
 
+/** Relative words on the page, and the local timestamp on hover. */
+export function RelativeTime({ iso, children, className }: { iso: string; children: ReactNode; className?: string }) {
+  return <time dateTime={iso} className={className} title={absoluteTime(iso)}>{children}</time>
+}
+
 /**
  * "now", "12s", "4m": a relative time that changes exactly when its label
  * would. Each one schedules its own next update: every second in the first
  * minute, then on the minute, the hour, the day, unless given the view's clock.
  */
-export function Ago({ iso, prefix = '', now }: { iso: string; prefix?: string; now?: number }) {
+export function Ago({ iso, prefix = '', className = 'time', now }: { iso: string; prefix?: string; className?: string; now?: number }) {
   const [, tick] = useReducer((n: number) => n + 1, 0)
   const ticking = now === undefined
   useEffect(() => {
@@ -162,9 +174,9 @@ export function Ago({ iso, prefix = '', now }: { iso: string; prefix?: string; n
   }, [iso, ticking])
   const time = now ?? Date.now()
   return (
-    <span className="time" title={new Date(iso).toLocaleString()}>
+    <RelativeTime iso={iso} className={className}>
       {prefix}
       {ticking && time - Date.parse(iso) < 5_000 ? 'now' : ago(iso, time)}
-    </span>
+    </RelativeTime>
   )
 }

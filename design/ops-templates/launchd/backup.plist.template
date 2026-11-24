@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Nightly backup of one board. Runs as that board's user (BACKUP_USER); no env file.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL_PREFIX}}.backup-{{BOARD_ID}}</string>
+  <key>UserName</key>
+  <string>{{BACKUP_USER}}</string>
+  <key>GroupName</key>
+  <string>{{SERVICE_GROUP}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>{{HOST_BIN}}/board-backup.mjs</string>
+    <string>--dir</string>
+    <string>{{DATA_ROOT}}/board-{{BOARD_ID}}</string>
+    <string>--out</string>
+    <string>{{BACKUP_ROOT}}/board-{{BOARD_ID}}</string>
+    <string>--keep</string>
+    <string>{{BACKUP_KEEP}}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{DATA_ROOT}}/board-{{BOARD_ID}}</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>{{BACKUP_HOUR}}</integer>
+    <key>Minute</key>
+    <integer>{{BACKUP_MINUTE}}</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>{{LOG_ROOT}}/backup-{{BOARD_ID}}.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_ROOT}}/backup-{{BOARD_ID}}.log</string>
+</dict>
+</plist>

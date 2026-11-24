@@ -188,6 +188,12 @@ export const Attachment = z.object({
 export const TaskState = z.enum(['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled'])
 export type TaskState = z.infer<typeof TaskState>
 
+/** Authority-directed destinations; scope, handoff, reopen and cancel have their own writes. */
+export const WorkStageTarget = z.enum(['review', 'qa', 'repair', 'approved', 'done', 'rejected'])
+export type WorkStageTarget = z.infer<typeof WorkStageTarget>
+export const WorkStage = z.enum(['proposed', 'scoped', 'handoff', ...WorkStageTarget.options, 'canceled'])
+export type WorkStage = z.infer<typeof WorkStage>
+
 /** From lowest to highest. Ordering is part of the task contract. */
 export const TaskPriority = z.enum(['lowest', 'low', 'normal', 'high', 'urgent'])
 export type TaskPriority = z.infer<typeof TaskPriority>
