@@ -32,6 +32,7 @@ const catalogLines = [
   '       swarm capture-cloud <serve|issue|bind>',
   '       swarm mirror sync --repo owner/name [--json]',
   '       swarm mirror prs --board URL --repo owner/name [--json]',
+  '       swarm gate check <pr-number> --board URL',
   '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]',
   '       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]',
   '       swarm alloc serial [--dir DIR] [--json]',

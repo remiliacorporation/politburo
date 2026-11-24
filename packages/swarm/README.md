@@ -40,4 +40,5 @@ pnpm --filter @remilia/politburo-swarm build
 node packages/swarm/dist/cli.js config show
 ```
 
-Command notes are one file per command in [docs](docs/).
+Command notes are one file per command in [docs](docs/index.md).
+The [party config reference](docs/party-config-reference.md) lists every config key.

@@ -8,8 +8,10 @@ import { test, type TestContext } from 'node:test'
 import {
   allocateMobSpecies, allocateSecretaryName, allocateSerial, allocateSpawnerName, allocateSpriteItem, loadConfig,
 } from '../src/index.ts'
+import { macSkip } from './mac-skip.ts'
 
 const cwd = new URL('../', import.meta.url)
+const needsProcFd = macSkip('needs Linux /proc/self/fd to claim a serial in the opened directory')
 
 function tempDir(t: TestContext) {
   const dir = mkdtempSync(join(realpathSync(tmpdir()), 'swarm-alloc-'))
@@ -125,7 +127,7 @@ async function collect(child: ChildProcess) {
   return { status, signal, stdout, stderr }
 }
 
-test('concurrent CLI allocations duplicate or skip serials or leave the live counter behind', async (t) => {
+test('concurrent CLI allocations duplicate or skip serials or leave the live counter behind', { skip: needsProcFd }, async (t) => {
   const dir = tempDir(t)
   const counter = join(dir, 'mob-serial.txt')
   writeFileSync(counter, '4200\n')
@@ -144,7 +146,7 @@ test('concurrent CLI allocations duplicate or skip serials or leave the live cou
   t.diagnostic(`${results.length} children, ${distinct} distinct serials ${serials[0]}..${serials.at(-1)}, counter ${finalCounter.trim()}`)
 })
 
-test('SIGKILL after a claim does not block the next writer or let it reuse the claim', (t) => {
+test('SIGKILL after a claim does not block the next writer or let it reuse the claim', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const counter = join(dir, 'mob-serial.txt')
@@ -157,7 +159,7 @@ test('SIGKILL after a claim does not block the next writer or let it reuse the c
   assert.equal(readFileSync(counter, 'utf8'), '3\n')
 })
 
-test('a SIGKILLed allocator leaves a lock file in the dir', (t) => {
+test('a SIGKILLed allocator leaves a lock file in the dir', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const child = patchedSerial(dir, 'kill-mirror')
@@ -165,7 +167,7 @@ test('a SIGKILLed allocator leaves a lock file in the dir', (t) => {
   assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith('.counter.lock')), [])
 })
 
-test('a full disk during the mirror write fails the allocation or burns the serial', (t) => {
+test('a full disk during the mirror write fails the allocation or burns the serial', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const result = patchedSerial(dir, 'enospc')
@@ -177,7 +179,7 @@ test('a full disk during the mirror write fails the allocation or burns the seri
   assert.equal(next.stdout, '3\n')
 })
 
-test('a full disk writing claim metadata still returns the claimed serial', (t) => {
+test('a full disk writing claim metadata still returns the claimed serial', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const result = patchedSerial(dir, 'claim-enospc')
@@ -187,7 +189,7 @@ test('a full disk writing claim metadata still returns the claimed serial', (t) 
   assert.equal(allocateSerial(dir), 3)
 })
 
-test('a --dir ancestor retarget splits the mirror from serials/ or causes an alias to reuse a serial', (t) => {
+test('a --dir ancestor retarget splits the mirror from serials/ or causes an alias to reuse a serial', { skip: needsProcFd }, (t) => {
   const root = tempDir(t)
   const real = join(root, 'real')
   const nested = join(real, 'nested')
@@ -212,7 +214,7 @@ test('a --dir ancestor retarget splits the mirror from serials/ or causes an ali
   assert.equal(readFileSync(counter, 'utf8'), '3\n')
 })
 
-test('two writers that choose the same serial cannot both return it', (t) => {
+test('two writers that choose the same serial cannot both return it', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const result = patchedSerial(dir, 'race')
@@ -220,7 +222,7 @@ test('two writers that choose the same serial cannot both return it', (t) => {
   assert.equal(result.stdout, '2\n3\n')
 })
 
-test('a counter reader opened before allocation sees a whole, unchanged version', (t) => {
+test('a counter reader opened before allocation sees a whole, unchanged version', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   const counter = join(dir, 'mob-serial.txt')
   writeFileSync(counter, '999\n')
@@ -234,7 +236,7 @@ test('a counter reader opened before allocation sees a whole, unchanged version'
   }
 })
 
-test('a malformed live counter is overwritten or issues a claim', (t) => {
+test('a malformed live counter is overwritten or issues a claim', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   const counter = join(dir, 'mob-serial.txt')
   writeFileSync(counter, 'abc')
@@ -251,7 +253,7 @@ test('a malformed live counter is overwritten or issues a claim', (t) => {
   assert.equal(repaired.stdout, '1\n')
 })
 
-test('an out-of-order publish leaves the mirror behind the highest claim', (t) => {
+test('an out-of-order publish leaves the mirror behind the highest claim', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const result = patchedSerial(dir, 'publish')
@@ -260,7 +262,7 @@ test('an out-of-order publish leaves the mirror behind the highest claim', (t) =
   assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '3\n')
 })
 
-test('a contended mirror stops after five publish rounds', (t) => {
+test('a contended mirror stops after five publish rounds', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const result = patchedSerial(dir, 'publish-contended')
@@ -273,7 +275,7 @@ test('a contended mirror stops after five publish rounds', (t) => {
 })
 
 for (const [fault, expected] of [['malformed', 'broken'], ['late-malformed', 'broken'], ['rename-fails', '1\n']] as const) {
-  test(`a ${fault} mirror fault loses the claimed serial or alters the counter`, (t) => {
+  test(`a ${fault} mirror fault loses the claimed serial or alters the counter`, { skip: needsProcFd }, (t) => {
     const dir = tempDir(t)
     assert.equal(allocateSerial(dir), 1)
     const result = patchedSerial(dir, fault)
@@ -295,7 +297,7 @@ for (const name of ['serials', 'mob-serial.txt']) {
   })
 }
 
-test('serials/ swapped after the directory is opened does not write outside --dir', (t) => {
+test('serials/ swapped after the directory is opened does not write outside --dir', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   const target = tempDir(t)
   const claims = join(dir, 'serials')
@@ -318,7 +320,7 @@ test('serials/ swapped for a symlink after lstat is refused without writing outs
   assert.deepEqual(readdirSync(dir), ['serials'])
 })
 
-test('stray claim names inflate the next serial or wedge allocation', (t) => {
+test('stray claim names inflate the next serial or wedge allocation', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   const claims = join(dir, 'serials')
   mkdirSync(claims)
@@ -326,7 +328,7 @@ test('stray claim names inflate the next serial or wedge allocation', (t) => {
   assert.equal(allocateSerial(dir), 4)
 })
 
-test('an out-of-band counter advance is ignored by the next allocation', (t) => {
+test('an out-of-band counter advance is ignored by the next allocation', { skip: needsProcFd }, (t) => {
   const dir = join(tempDir(t), 'new-dir')
   assert.equal(allocateSerial(dir), 1)
   writeFileSync(join(dir, 'mob-serial.txt'), '9000\n')
@@ -334,7 +336,7 @@ test('an out-of-band counter advance is ignored by the next allocation', (t) => 
   assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '9001\n')
 })
 
-test('a claim ahead of the counter is reissued or skipped over incorrectly', (t) => {
+test('a claim ahead of the counter is reissued or skipped over incorrectly', { skip: needsProcFd }, (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   // A killed writer can leave a claim without updating the live counter.
@@ -343,7 +345,7 @@ test('a claim ahead of the counter is reissued or skipped over incorrectly', (t)
   assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '11\n')
 })
 
-test('serial CLI ignores SWARM_SERIAL_DIR or accepts a missing directory', (t) => {
+test('serial CLI ignores SWARM_SERIAL_DIR or accepts a missing directory', { skip: needsProcFd }, (t) => {
   const missing = run(['serial'], {})
   assert.equal(missing.status, 2)
   assert.match(missing.stderr, /^error: .*--dir/)

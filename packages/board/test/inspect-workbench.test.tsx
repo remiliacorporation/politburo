@@ -106,8 +106,15 @@ async function workbench(options: Parameters<typeof localBoard>[0] = {}) {
   }
 }
 
+/** A link by its words, leaving out a count badge beside them. */
+const linkText = (a: Element) => {
+  const words = a.cloneNode(true) as Element
+  for (const count of words.querySelectorAll('.count')) count.remove()
+  return words.textContent?.trim()
+}
+
 function link(text: string, inElement: ParentNode = document) {
-  const el = [...inElement.querySelectorAll('a')].find((a) => a.textContent?.trim() === text)
+  const el = [...inElement.querySelectorAll('a')].find((a) => linkText(a) === text)
   expect(el, `link: ${text}`).toBeDefined()
   return el!
 }
