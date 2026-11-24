@@ -1,0 +1,50 @@
+{
+  "case_id": "liveness-014-slow-below-stall",
+  "description": "A delayed heartbeat remains healthy below three intervals.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "notes/alive/example.wake": "{\"at\": 1767225600.0, \"pid\": 123, \"cycle\": 1, \"interval\": 10}\n"
+    },
+    "log_lines": [],
+    "runs": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "cli",
+    "steps": [
+      {
+        "after": 29,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "function": "check"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {
+      "notes/alive/example.wake": "{\"at\": 1767225600.0, \"pid\": 123, \"cycle\": 1, \"interval\": 10}\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py",
+      "supervisor/liveness_check.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

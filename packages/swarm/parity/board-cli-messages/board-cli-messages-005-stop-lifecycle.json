@@ -1,0 +1,439 @@
+{
+  "case_id": "board-cli-messages-005-stop-lifecycle",
+  "description": "Dispatch and complete an operation-scoped stop request",
+  "expected": {
+    "db": {
+      "agent_commands": [
+        {
+          "args_json": "{\"operation_id\": \"example-operation\"}",
+          "command": "interrupt",
+          "command_id": 2,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-key-02",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "completed",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:01+00:00"
+        },
+        {
+          "args_json": "{\"operation_id\": \"example-operation\"}",
+          "command": "pause",
+          "command_id": 1,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-key-01",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "cancelled",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:01+00:00"
+        },
+        {
+          "args_json": "{}",
+          "command": "collect",
+          "command_id": 3,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-key-03",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "pending",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "args_json": "{}",
+          "command": "resume",
+          "command_id": 4,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-key-04",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "pending",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "agent_observations": [
+        {
+          "active_issue": null,
+          "agent_generation": null,
+          "agent_id": "worker-01",
+          "assignment_generation": null,
+          "current_action": "Run stopped after interrupt request",
+          "dedup_key": null,
+          "evidence_ref": null,
+          "health": "unknown",
+          "last_call": null,
+          "lease_token": null,
+          "network_generation": null,
+          "observation_id": 1,
+          "observed_at": "2026-01-01T00:00:01+00:00",
+          "operation_id": null,
+          "process_state": "stopped",
+          "session_ref": null,
+          "source": "adapter"
+        }
+      ],
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": "2026-01-01T00:00:01+00:00",
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "stopped",
+          "updated_at": "2026-01-01T00:00:01+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "adapter",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "event_id": 8,
+          "event_type": "agent_control_completed",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"control_adapter\", \"actor_type\": \"adapter\", \"command_id\": 2, \"envelope_version\": 1, \"exit_code\": 0, \"operation_id\": \"example-operation\", \"reason\": \"Adapter completed a requested control command\", \"reason_code\": \"control_completed\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Example cutover\", \"state\": \"active\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"pause\", \"command_id\": 1, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"interrupt\", \"command_id\": 2, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"collect\", \"command_id\": 3, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"resume\", \"command_id\": 4, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "2"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "operation.json": "{\"operation_id\": \"example-operation\"}"
+    },
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"worker-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 2,\n  \"ok\": true,\n  \"state\": \"active\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 2,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 3,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 4,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "taken_command_id": null
+      },
+      {
+        "taken_command_id": 2
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"resume\",\n    \"command_id\": 4,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-04\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"pending\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  },\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"collect\",\n    \"command_id\": 3,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-03\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"pending\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  },\n  {\n    \"args_json\": \"{\\\"operation_id\\\": \\\"example-operation\\\"}\",\n    \"command\": \"pause\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-01\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"pending\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{\\\"operation_id\\\": \\\"example-operation\\\"}\",\n    \"command\": \"interrupt\",\n    \"command_id\": 2,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-02\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"dispatched\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      },
+      {
+        "finished_command_id": 2
+      },
+      {
+        "closed_operation": "example-operation"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{\\\"operation_id\\\": \\\"example-operation\\\"}\",\n    \"command\": \"pause\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-01\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"cancelled\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:01+00:00\"\n  }\n]\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"args_json\": \"{\\\"operation_id\\\": \\\"example-operation\\\"}\",\n    \"command\": \"interrupt\",\n    \"command_id\": 2,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-02\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"completed\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:01+00:00\"\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"profile_key\": \"sprite\", \"status\": \"idle\"}"
+      },
+      {
+        "argv": [
+          "network",
+          "active",
+          "--reason",
+          "Example cutover"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "pause",
+          "--args-file",
+          "operation.json"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "interrupt",
+          "--args-file",
+          "operation.json"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "collect"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "resume"
+        ]
+      },
+      {
+        "agent": "worker-01",
+        "generation": 1,
+        "operation": "other-operation",
+        "runtime": "take"
+      },
+      {
+        "agent": "worker-01",
+        "generation": 1,
+        "operation": "example-operation",
+        "runtime": "take"
+      },
+      {
+        "argv": [
+          "commands",
+          "--agent",
+          "worker-01",
+          "--state",
+          "pending"
+        ]
+      },
+      {
+        "argv": [
+          "commands",
+          "--state",
+          "dispatched"
+        ]
+      },
+      {
+        "at": "2026-01-01T00:00:01+00:00",
+        "exit_code": 0,
+        "operation": "example-operation",
+        "runtime": "finish"
+      },
+      {
+        "agent": "worker-01",
+        "operation": "example-operation",
+        "runtime": "close"
+      },
+      {
+        "argv": [
+          "commands",
+          "--state",
+          "cancelled"
+        ]
+      },
+      {
+        "argv": [
+          "commands",
+          "--state",
+          "completed"
+        ]
+      }
+    ],
+    "tables": [
+      "agent_commands",
+      "agent_observations",
+      "agents",
+      "board_events",
+      "board_meta",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "Production runtime helpers claim interrupt ahead of pause and finish it without launching or signaling a process. The CLI observes pending, dispatched, completed and cancelled states.",
+  "setup": {
+    "files": {
+      "operation.json": "{\"operation_id\": \"example-operation\"}"
+    },
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

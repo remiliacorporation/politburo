@@ -1,6 +1,7 @@
 import { memory as a2Memory } from 'experimental-a2/store-memory'
 import type { Clock } from 'experimental-a2/server'
-import { appendGuard } from './append-guard.ts'
+import { createAccessFence } from './fence.ts'
+import { guardedLog } from './single-writer.ts'
 import { sqliteDb } from './sqlite-db.ts'
 import { sqlTables } from './sql.ts'
 import type { BoardStore } from './types.ts'
@@ -10,8 +11,7 @@ import type { BoardStore } from './types.ts'
  * tables in an in-memory SQLite. `clock` sets every stored timestamp.
  */
 export function memory(options: { clock?: Clock } = {}): BoardStore {
-  const { clock, guardAppend } = appendGuard(options.clock)
-  const log = a2Memory({ clock })
+  const log = guardedLog((clock) => a2Memory({ clock }), options.clock)
   const tables = sqlTables(sqliteDb(':memory:'))
-  return { log, guardAppend, tables, close: () => tables.close() }
+  return { log, tables, fence: createAccessFence(), close: () => tables.close() }
 }

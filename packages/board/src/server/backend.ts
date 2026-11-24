@@ -141,7 +141,7 @@ export type BoardBinding = {
    * With `grants`, under those instead of the board's grants as they are: a grant write's own
    * snapshot, so what it checks is what it appends to.
    */
-  accessNow(principal: Known, grants?: readonly StoredGrant[]): Promise<Access | null>
+  accessNow(principal: Known, grants?: readonly StoredGrant[], now?: number): Promise<Access | null>
   /** The inbox roles board() explicitly configured for a verified principal. */
   inboxRolesFor?(principal: string): readonly string[]
   /** Which grants, or which rule, decide `channel` for a principal under board()'s `access`, and what they give: what `explain` answers. */
@@ -205,6 +205,11 @@ export interface Backend extends Omit<ProtocolMethods, InviteMethod | AgentOpsMe
    * before middleware. Leave it out when the destination decides, as on http().
    */
   readonly supportsTaskAuthority?: boolean
+  /**
+   * True when a commit on complete is checked against the current submission. A board that keeps
+   * its own log refuses a commit when this is absent or false. A function may open the board first.
+   */
+  readonly enforcesCommitEvidence?: boolean | (() => boolean | Promise<boolean>)
   /**
    * Whether a board behind this backend settles a write's `@handle`s itself, as one at `BOARD_URL`
    * does: board() then leaves a text as typed and passes on what that board answers of its mentions.

@@ -1,0 +1,140 @@
+{
+  "case_id": "liveness-018-slow-then-healthy",
+  "description": "A late loop clears its stale state when it publishes again.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "notes/alive/.alerts.json": "{}\n",
+      "notes/alive/example.wake": "{\"at\": 1767225662.0, \"pid\": 123, \"cycle\": 2, \"interval\": 20}\n",
+      "notes/mail/core/core-0001.yaml": "id: \"core-0001\"\nclass: \"core.escalate\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"core\"\nsummary: \"stale liveness: example.wake age=61s interval=20s\"\nat: \"2026-01-01T00:01:01Z\"\n",
+      "notes/mail/core/id-counter.txt": "1\n",
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"spawner.decide\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"example\"\nsummary: \"stale liveness: example.wake age=61s interval=20s\"\nat: \"2026-01-01T00:01:01Z\"\n",
+      "notes/mail/example/id-counter.txt": "1\n",
+      "notes/mail/log.yaml": "- {\"at\": \"2026-01-01T00:01:01Z\", \"event\": \"created\", \"hash\": \"c41edf3913f8c9d725f779404f95e17ffe4018a4bd3e84a70386ea04ecb321ab\", \"header\": {\"at\": \"2026-01-01T00:01:01Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0001\", \"summary\": \"stale liveness: example.wake age=61s interval=20s\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0001\", \"to\": \"example\"}\n- {\"at\": \"2026-01-01T00:01:01Z\", \"event\": \"created\", \"hash\": \"0bab664af151ff22e076fb9ab82cecfbd7746b787adeb835614ef501fbc436ea\", \"header\": {\"at\": \"2026-01-01T00:01:01Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0001\", \"summary\": \"stale liveness: example.wake age=61s interval=20s\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0001\", \"to\": \"core\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-01-01T00:01:01Z\", \"event\": \"created\", \"hash\": \"c41edf3913f8c9d725f779404f95e17ffe4018a4bd3e84a70386ea04ecb321ab\", \"header\": {\"at\": \"2026-01-01T00:01:01Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0001\", \"summary\": \"stale liveness: example.wake age=61s interval=20s\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0001\", \"to\": \"example\"}",
+      "- {\"at\": \"2026-01-01T00:01:01Z\", \"event\": \"created\", \"hash\": \"0bab664af151ff22e076fb9ab82cecfbd7746b787adeb835614ef501fbc436ea\", \"header\": {\"at\": \"2026-01-01T00:01:01Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0001\", \"summary\": \"stale liveness: example.wake age=61s interval=20s\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0001\", \"to\": \"core\"}"
+    ],
+    "runs": [
+      {
+        "return": "notes/alive/example.wake",
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "files": {
+          "notes/alive/.alerts.json": "{\"example.wake\": {\"core\": 1767225661.0, \"example\": 1767225661.0}}\n"
+        },
+        "stderr": "",
+        "stdout": "stale liveness: example.wake age=61s interval=20s\n"
+      },
+      {
+        "return": "notes/alive/example.wake",
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "files": {
+          "notes/alive/.alerts.json": "{}\n"
+        },
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": "stale liveness: example.wake age=61s interval=20s\n"
+  },
+  "inputs": {
+    "kind": "cli",
+    "steps": [
+      {
+        "after": 0,
+        "args": {
+          "cycle": 1,
+          "interval": 20,
+          "name": "wake",
+          "notes_dir": "notes",
+          "tag": "example"
+        },
+        "function": "touch"
+      },
+      {
+        "after": 55,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "function": "check"
+      },
+      {
+        "after": 61,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "collect": [
+          "notes/alive/.alerts.json"
+        ],
+        "function": "check"
+      },
+      {
+        "after": 62,
+        "args": {
+          "cycle": 2,
+          "interval": 20,
+          "name": "wake",
+          "notes_dir": "notes",
+          "tag": "example"
+        },
+        "function": "touch"
+      },
+      {
+        "after": 62,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "collect": [
+          "notes/alive/.alerts.json"
+        ],
+        "function": "check"
+      },
+      {
+        "after": 82,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "function": "check"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py",
+      "supervisor/liveness_check.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

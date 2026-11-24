@@ -57,7 +57,7 @@ export const METHODS: readonly Method[] = [
   'status', 'pause', 'resume',
   'schedule', 'schedules', 'cancelSchedule',
   ...AGENT_OPS_METHODS,
-  'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'assignTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
+  'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
   'requestTaskAttention', 'taskAttention', 'answerTaskAttention',
   ...WORK_EVIDENCE_METHODS,
   'grants', 'createGrant', 'createGrants', 'updateGrant', 'explain', 'revokeGrant', 'schemas', 'schema', 'createSchema', 'upload', 'attachment', 'uploadStart', 'uploadFinish', 'watchers', 'register', 'matches', 'ack', 'events',
@@ -193,12 +193,20 @@ export function openapi() {
   for (const { name, definition, bound } of definitions) {
     const path = definition.path.replace(/:(\w+)/g, '{$1}')
     const operation: Record<string, unknown> = { operationId: bound ? `${name}Bound` : name }
-    if (name === 'claimReadyTask') operation.description = 'Picks the highest priority ready candidate, oldest first at equal priority. If its required evidence releases are stale, no claim is granted.'
+    if (name === 'claimReadyTask') operation.description = 'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. A staged task must be scoped, and a stale evidence release grants no claim.'
     if ('query' in definition) operation['x-query-schema'] = z.toJSONSchema(definition.query, { io: 'input' })
     if ('body' in definition) {
       const schema = z.toJSONSchema(definition.body, { io: 'input' })
       if (bound) schema.required = [...(schema.required ?? []), 'binding', ...(name === 'createTask' ? ['claim'] : [])]
-      operation.requestBody = { ...((bound || name === 'completeTaskWithEvidence') && { required: true }), content: { 'application/json': { schema } } }
+      operation.requestBody = {
+        ...(bound || ('bodyRequired' in definition && definition.bodyRequired) || name === 'completeTaskWithEvidence' ? { required: true } : {}),
+        ...('bodyDescription' in definition ? { description: definition.bodyDescription } : {}),
+        content: { 'application/json': { schema } },
+      }
+    }
+    if ('response' in definition) {
+      const schema = z.toJSONSchema(definition.response)
+      operation.responses = { '200': { description: 'OK', content: { 'application/json': { schema } } } }
     }
     ;(paths[path] ??= {})[definition.method.toLowerCase()] = operation
   }

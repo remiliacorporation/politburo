@@ -105,6 +105,37 @@ retries. Cooldowns and access incidents are in memory. An auth incident gets
 one access probe after cooldown, if configured; only a successful probe clears
 it. A failed probe leaves the provider unavailable in that router instance.
 
+## Benchmarks
+
+`bench-run@1` blocks hold counts, identifiers, ratings, and times in the
+unsynced `bench` channel. The first write for a run ID wins. Use the same
+trusted board actor for ingest and report; the report ignores other writers
+and counts sprites, not roll-ups. The first ingest needs permission to
+register the schema. A replay succeeds only if the stored message is a live
+benchmark root in the same channel by the same actor.
+
+Run IDs are limited to 150 characters and serialized blocks to 9,000. Outcome
+reasons are short codes (up to 80 characters, no slashes); check commands are
+names of one or two words without options (up to 60 characters). Wall time
+must agree with the timestamps within one millisecond; known active time
+cannot exceed wall time. `none` token coverage means all four counts are null;
+`complete` means all four are known. `partial` allows either.
+
+With `BOARD_URL` set, run from the repository root:
+
+```sh
+node packages/runtime/src/bench/cli.ts ingest runs.jsonl
+node packages/runtime/src/bench/cli.ts report
+node packages/runtime/src/bench/cli.ts report --json
+```
+
+Text columns are model, thinking, rating, runs/checked, pass rate, median
+wall seconds, median tokens, p90 tokens, and tokens per changed line. A dash
+means unknown. Tokens per changed line uses only runs with known input and
+output token counts and at least one changed line. Text lists run IDs below
+each row; `--ids` is still accepted but does not change the report. JSON
+includes full names, run IDs, and token coverage counts.
+
 ## Remote work
 
 `localGit({ repoDir, identity })` exchanges UTF-8 text files (up to 64 KiB)
@@ -177,9 +208,120 @@ and send are separate board calls, not an atomic operation. Wake and escalation
 deduplication are local to the invocation. The loop does not persist checkpoints
 or coordinate multiple instances.
 
+## Stall watcher and heartbeat
+
+`nextBeat()` returns the next slot strictly after the given epoch time in
+milliseconds. `heartbeat()` uses that grid until abort. Give agents different
+offsets to spread their beats. Offsets wrap at the period. A failed beat
+rejects and stops the loop, including a 409 for a stale or disabled agent.
+
+```ts
+import { board } from '@vercel/board'
+import { local } from '@vercel/board/backend-local'
+import { heartbeat, stallWatcher } from '@remilia/politburo-runtime'
+
+const backend = local({ memory: true, agentOps: true })
+const team = board({ backend })
+const channel = 'work'
+const agent = await team.agents.register({ channel, role: 'implementation-worker', harness: 'pi' })
+const to = { agent: (await team.me()).principal }
+const watcher = stallWatcher(team, { channel, to, now: Date.now })
+const stop = new AbortController()
+
+try {
+  const [result] = await Promise.all([
+    watcher.check().finally(() => stop.abort()), // Stop after one check in this example.
+    heartbeat(team, agent, { everyMinutes: 30, offsetMinutes: 5, now: Date.now, signal: stop.signal }),
+  ])
+  const missedCount = result.kind === 'quiet' ? result.missed?.length ?? 0
+    : result.kind === 'missed' ? result.agents.length : 0
+  const errors = 'errors' in result ? result.errors ?? [] : []
+  console.log({ kind: result.kind, missedCount, failedCount: errors.length, failedTopics: errors.map(({ topic }) => topic) })
+} finally {
+  stop.abort()
+  await backend.close()
+}
+```
+
+Await each `check()` in your loop. It reads the last 25 board feed events on
+its first check, follows the feed cursor after that, and reads the agent
+registry for `channel`. Use a `now()` that follows the board's wall clock
+in epoch milliseconds. After `quietMinutes` with no activity (30 by default),
+it returns `quiet`. `sinceMs` starts at watcher creation and tracks the
+latest board-authored event or enabled agent heartbeat seen. Unparseable
+event timestamps are ignored, and future events count only up to `now()`.
+Clearing a heartbeat does not erase its activity.
+
+An enabled agent is `missed` when its heartbeat is older than twice
+`periodMinutes` (30 by default). Without a heartbeat, age starts at watcher
+creation for agents seen on the first check, or at the check that first
+sees the agent otherwise. A generation change restarts that grace. Pass a
+function for per-agent periods. Return `undefined` to skip that agent's
+missed check. An active feed does not suppress missed alerts. A `quiet`
+result includes `missed` if there are also late agents.
+
+The watcher sends one inbox message per topic (`stall:quiet:<channel>` or
+`stall:missed:<channel>:<agentId>`) until a check sees that issue recover.
+It escapes control and format characters in channel names, agent IDs, and roles,
+and shortens long values with a stable hash suffix.
+
+A check can send several topics. It reads pause status at the start and just
+before each send. If paused, it returns `paused` and sends no further messages.
+The extra read narrows the race but is not atomic with the send. The result
+reports failed sends in `errors` as `{ topic, error }` entries, even if a pause
+stops the check. Error messages omit control and format characters and are at
+most 256 UTF-16 code units. Unless paused, other sends in the same check still
+go out. The next check retries failed topics that are still active.
+
+The feed cursor and topic dedupe live only in memory for this watcher
+instance. If a send succeeds but its response is lost, the next check can
+retry it. The board's latest-send-replaces rule then supersedes the first
+message and its receipt is lost. The watcher does not wake or stop agents
+or change task state.
+
 ## ops
 
 `refill` drafts up to 15 proposed tasks when the ready queue runs low. `scanDiff` and `preflight` refuse added lines with tokens, keys, or emails. `createInstance` writes a self-hosted instance directory with no credentials. `writeResumePacket` and `appendAttempt` keep resume packets and an attempt ledger as plain files.
+
+See [Names](#names) for the shared name pool.
+
+## Names
+
+Every name Politburo needs comes from one pool, `namePool`, defined in one
+module: spawners, agents, workers, boards, lanes, demo data, and codenames.
+A name is a Soviet industry noun in Russian transliteration, 8 letters or
+fewer.
+
+`pickName(inUse)` returns the first pool name that is not in `inUse`. Pass the
+names of everything alive that holds one. A freed name is taken again before
+any later unused name. Duplicate names count once. It ignores strings that
+aren't pool names and throws when all 33 names are in use. Each entry must be
+a string without control or format characters. Don't write pool names as
+literals elsewhere; import them.
+
+A spawner is one use. Its title is `<TAG> <NAME>`, for example `RW ZAVOD`. It
+takes the first unused name and keeps it. `pickName` only reads the names you
+pass: two callers that read the same snapshot of live names get the same name,
+so pick and reserve together, under one lock or in one atomic write.
+`spawnerTitle` throws a `TypeError` for a non-string tag and a `RangeError`
+for an empty tag, a tag containing whitespace, control or format characters,
+or a name outside the pool.
+
+```ts
+import { pickName, spawnerTitle } from '@remilia/politburo-runtime'
+
+const liveNames = ['FABRIKA']
+const name = pickName(liveNames) // 'ZAVOD'
+const title = spawnerTitle('RW', name) // 'RW ZAVOD'
+```
+
+| Group | Names and meanings in allocation order |
+| --- | --- |
+| Workplaces | `ZAVOD` (factory); `FABRIKA` (mill); `KOMBINAT` (industrial combine); `KOLKHOZ` (collective farm); `SOVKHOZ` (state farm); `ARTEL` (workers' cooperative); `SHAKHTA` (mine); `TSEKH` (workshop); `DOMNA` (blast furnace); `KOTLOVAN` (foundation pit) |
+| Bosses and roles | `PRORAB` (site foreman); `BRIGADIR` (brigade leader); `MASTER` (shop foreman); `NARKOM` (people's commissar); `UDARNIK` (shock worker); `TREST` (industrial trust); `GLAVK` (chief directorate) |
+| Planning | `GOSPLAN` (state planning committee); `NORMA` (production quota); `SMENA` (work shift); `OTDEL` (department) |
+| Tools and machines | `MOLOT` (hammer); `SERP` (sickle); `TRAKTOR` (tractor); `TURBINA` (turbine); `KRAN` (crane); `STAL` (steel); `GUDOK` (factory whistle) |
+| Famous plants | `MAGNITKA` (the Magnitogorsk steelworks); `URALMASH` (the Ural machine works); `ZIL` (Likhachov automobile plant); `GAZ` (Gorky automobile plant); `KAMAZ` (Kama automobile plant) |
 
 ## Dispatch policies
 

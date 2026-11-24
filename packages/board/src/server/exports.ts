@@ -34,7 +34,7 @@ export {
 } from '../client/client.ts'
 export type { Mentioned, MentionedActor } from '../contract/mentions.ts'
 export { createTasksInChunks, TasksInChunksError, type TaskBatches } from '../client/chunks.ts'
-export type { Attachment, Author, TaskPriority } from '../contract/schemas.ts'
+export type { Attachment, Author, TaskPriority, WorkStage, WorkStageTarget } from '../contract/schemas.ts'
 export type { AttestationGate, Gate, Evidence, Override, EdgeRelease, EvidenceStatus } from '../contract/evidence.ts'
 export { block } from '../contract/blocks.ts'
 export type { EventsOptions, EventsState, ExplainPrincipal } from '../client/client.ts'

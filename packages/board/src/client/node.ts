@@ -84,7 +84,8 @@ function localToken(url: string): { token: string } | null {
   }
 }
 
-const expiry = (token: string): number => {
+/** When `token` expires, in milliseconds: its `exp`, or five minutes from now for one that says none. */
+export const expiry = (token: string): number => {
   try {
     const { exp } = decodeJwt(token)
     return exp ? exp * 1000 : Date.now() + 5 * 60_000
@@ -311,7 +312,11 @@ async function tokenFromVercelCli(project: { id: string; team: string | null }):
   }
 }
 
-async function githubActionsToken(audience: string): Promise<string> {
+/** Whether this is a GitHub Actions job that may ask GitHub for an OIDC token (`permissions: id-token: write`). */
+export const inGithubActions = () => !!process.env.ACTIONS_ID_TOKEN_REQUEST_URL && !!process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
+/** The job's GitHub Actions OIDC token, made out to `audience`. */
+export async function githubActionsToken(audience: string): Promise<string> {
   const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL!)
   url.searchParams.set('audience', audience)
   const response = await fetch(url, {
@@ -368,7 +373,7 @@ export function connect(
   url = url.replace(/\/+$/, '')
   const rawFetch: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
   const doFetch = guarded(url, rawFetch, options.token)
-  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: 'error' })
+  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   // Every token is for `url`, the board it's sent to. A board whose discovery claims another
   // audience gets none, so its answer can't get us to mint one it could replay.
   let discovery: Promise<Discovery> | undefined
@@ -430,7 +435,7 @@ export function connect(
       return { token: joined, expiresAt: Infinity }
     }
     const discovered = await discover()
-    if (process.env.ACTIONS_ID_TOKEN_REQUEST_URL && process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    if (inGithubActions()) {
       const token = await githubActionsToken(url)
       source = 'GitHub Actions OIDC'
       return { token, expiresAt: expiry(token) }
@@ -660,6 +665,15 @@ function guarded(url: string, doFetch: typeof fetch, suppliedToken?: Resolvable<
   }
 }
 
+/** `location` against `base`, or null when it isn't a URL. */
+function urlOf(location: string, base: string): URL | null {
+  try {
+    return new URL(location, base)
+  } catch {
+    return null
+  }
+}
+
 /**
  * One request that recognizes the wall: a redirect to `/sso-api`, an HTML
  * page where the board answers JSON (on SAML teams, the redirects end at the
@@ -680,9 +694,14 @@ async function through(doFetch: typeof fetch, input: RequestInfo | URL, init: Re
   const wall = (status: number) => (moved ? new Moved(moved, status) : new Wall(status))
   for (let hops = 0; ; hops++) {
     const response = await doFetch(hops === 0 ? input : target, { ...init, headers, redirect: 'manual' })
-    const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null
-    if (location) {
-      const next = new URL(location, target)
+    const redirected = response.status >= 300 && response.status < 400
+    // A caller that asked for the redirect itself (a claim's request, which goes nowhere else) gets it back before anything reads it.
+    if (redirected && init.redirect === 'manual') return response
+    const location = redirected ? response.headers.get('location') : null
+    // A `Location` that isn't a URL goes nowhere: the 3xx comes back as it is.
+    const next = location ? urlOf(location, target) : null
+    if (location && !next) return response
+    if (location && next) {
       if (next.pathname.startsWith('/sso-api')) throw wall(response.status)
       if (method === 'GET' || method === 'HEAD') {
         if (hops >= 20) throw new BoardError('too_many_redirects', `${target} redirected more than 20 times.`, response.status)

@@ -1,3 +1,29 @@
+<p align="center">
+  <img src="./.github/assets/politburo-emblem.png" alt="Politburo emblem" width="120">
+</p>
+<p align="center">
+  <img src="./.github/assets/politburo-wordmark.svg" alt="POLITBURO" width="460">
+</p>
+
+# Politburo
+
+Politburo is a fork of board that adds `@remilia/politburo-runtime` to run one board task in a harness, plus [swarm design notes](./design/) and a [Tigeryard parity audit](./TIGERYARD-PARITY.md).
+
+## Politburo quickstart
+
+Start a local swarm board with agent ops and task attention. You are the
+only responder by default.
+
+```bash
+vb serve --swarm
+```
+
+Use `vb` from a Politburo build. From a checkout, follow the
+[local build guide](./LOCAL-DEVELOPMENT.md#start-a-disposable-board) and run
+`node packages/board/dist/cli.mjs serve --swarm` from the root.
+See the [Politburo quickstart](./packages/board/docs/01-board/10-local.md#politburo-quickstart)
+to invite a teammate and answer a decision.
+
 # board
 
 Your Vercel team's message board, for people and agents. It lives in Vercel's API, so there's
@@ -20,6 +46,8 @@ nothing to deploy and no database to keep: `vercel link`, and you're on it.
 ## Quickstart
 
 ```bash
+npm i -g vercel     # the Vercel CLI, once
+vercel login
 npm i @vercel/board
 vercel link         # the CLI uses your team's board
 ```
@@ -28,15 +56,16 @@ Start a thread, answer it, read the channel, and wait for a reply:
 
 ```bash
 id=$(npx vb post errors-www "deploy failed on a1b2c3")   # prints the new message's ID
-npx vb reply "$id" "rolled back to d4e5f6"
+last=$(npx vb reply "$id" "rolled back to d4e5f6")
 npx vb read errors-www
-npx vb wait --re "$id" --timeout 30m                     # blocks until someone answers
+npx vb wait "$last" --timeout 30m                        # blocks until someone answers
 ```
 
 There's no login command: the CLI is you, with your `vercel login`, on the board of the team
 `vercel link` names. Channels need no setup, and the team's default board is made the first
-time someone on the team uses it. The [quickstart](./packages/board/docs/01-quickstart.md) takes each
-step in turn.
+time someone on the team uses it. `wait` with a message's ID waits for what comes after it in
+its thread, so an answer that lands before the wait starts still counts. The
+[quickstart](./packages/board/docs/01-quickstart.md) takes each step in turn.
 
 `npx vb` runs the bin your project installed. Outside such a project, use `npx @vercel/board`:
 `vb` on npm is an unrelated package. The Vercel CLI carries these commands too, as
@@ -122,7 +151,7 @@ $ vb tasks create work "fix CVE-123 in acme/web" --label step=fix
 812
 $ export BOARD_PROFILE=claude
 $ vb tasks claim --ready work/ --label step=fix --wait 10m
-#812  yours for 15m  fix CVE-123 in acme/web
+#812  yours for 5m  fix CVE-123 in acme/web
 $ vb tasks complete 812 "fixed in a1b2c3, tests pass"
 completed 812
 ```
@@ -211,6 +240,8 @@ in the package, so they ship on npm and your agents can read them at
 | [`templates/`](./templates) | Apps to start from |
 | [`skills/`](./skills) | The skills agents install with `npx skills add` |
 | [`SPEC.md`](./SPEC.md) | The design |
+| [`design/`](./design) | Design docs for this fork's additions |
+| Swarm docs | [Start here](./design/swarm-overview.md): what the swarm layer is, what is on main, and where to begin. Then [architecture](./design/swarm-architecture.md) · [naming](./design/swarm-naming.md) · [secretaries](./design/swarm-secretaries.md) · [mob retirement](./design/mob-retirement.md) |
 | [`TIGERYARD-PARITY.md`](./TIGERYARD-PARITY.md) | What this fork adds, as intent. It records what to build, not what exists |
 | [`LOCAL-DEVELOPMENT.md`](./LOCAL-DEVELOPMENT.md) | A task handed to a worker on a local board |
 | [`AGENTS.md`](./AGENTS.md) | How to work in this repo |

@@ -1,0 +1,131 @@
+{
+  "case_id": "attempt-ledger-013-cli-errors",
+  "description": "Reject invalid CLI syntax and fail when the instance directory is absent",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "attempt_ledger.sqlite": null,
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null,
+      "example-missing/attempt_ledger.sqlite": null
+    },
+    "ledger_mode": null,
+    "log_lines": [],
+    "stderr": "usage: python3 -m supervisor.attempt_ledger [-h] {reconcile,list} ...\npython3 -m supervisor.attempt_ledger: error: the following arguments are required: command\nusage: python3 -m supervisor.attempt_ledger [-h] {reconcile,list} ...\npython3 -m supervisor.attempt_ledger: error: argument command: invalid choice: 'purge' (choose from 'reconcile', 'list')\nusage: python3 -m supervisor.attempt_ledger list [-h]\n                                                 [--state {active,exited,failed,interrupted,reconciliation_required,stale,starting,unknown}]\n                                                 [--limit LIMIT]\n                                                 instance\npython3 -m supervisor.attempt_ledger list: error: the following arguments are required: instance\nusage: python3 -m supervisor.attempt_ledger reconcile [-h] instance\npython3 -m supervisor.attempt_ledger reconcile: error: the following arguments are required: instance\nusage: python3 -m supervisor.attempt_ledger list [-h]\n                                                 [--state {active,exited,failed,interrupted,reconciliation_required,stale,starting,unknown}]\n                                                 [--limit LIMIT]\n                                                 instance\npython3 -m supervisor.attempt_ledger list: error: argument --state: invalid choice: 'running' (choose from 'active', 'exited', 'failed', 'interrupted', 'reconciliation_required', 'stale', 'starting', 'unknown')\nusage: python3 -m supervisor.attempt_ledger list [-h]\n                                                 [--state {active,exited,failed,interrupted,reconciliation_required,stale,starting,unknown}]\n                                                 [--limit LIMIT]\n                                                 instance\npython3 -m supervisor.attempt_ledger list: error: argument --limit: invalid int value: 'many'\nerror: FileNotFoundError\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 2,
+        "stderr": "usage: python3 -m supervisor.attempt_ledger [-h] {reconcile,list} ...\npython3 -m supervisor.attempt_ledger: error: the following arguments are required: command\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "stderr": "usage: python3 -m supervisor.attempt_ledger [-h] {reconcile,list} ...\npython3 -m supervisor.attempt_ledger: error: argument command: invalid choice: 'purge' (choose from 'reconcile', 'list')\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "stderr": "usage: python3 -m supervisor.attempt_ledger list [-h]\n                                                 [--state {active,exited,failed,interrupted,reconciliation_required,stale,starting,unknown}]\n                                                 [--limit LIMIT]\n                                                 instance\npython3 -m supervisor.attempt_ledger list: error: the following arguments are required: instance\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "stderr": "usage: python3 -m supervisor.attempt_ledger reconcile [-h] instance\npython3 -m supervisor.attempt_ledger reconcile: error: the following arguments are required: instance\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "stderr": "usage: python3 -m supervisor.attempt_ledger list [-h]\n                                                 [--state {active,exited,failed,interrupted,reconciliation_required,stale,starting,unknown}]\n                                                 [--limit LIMIT]\n                                                 instance\npython3 -m supervisor.attempt_ledger list: error: argument --state: invalid choice: 'running' (choose from 'active', 'exited', 'failed', 'interrupted', 'reconciliation_required', 'stale', 'starting', 'unknown')\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "stderr": "usage: python3 -m supervisor.attempt_ledger list [-h]\n                                                 [--state {active,exited,failed,interrupted,reconciliation_required,stale,starting,unknown}]\n                                                 [--limit LIMIT]\n                                                 instance\npython3 -m supervisor.attempt_ledger list: error: argument --limit: invalid int value: 'many'\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "error: FileNotFoundError\n",
+        "stdout": ""
+      }
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm",
+      "example-missing/attempt_ledger.sqlite"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [],
+        "omit_instance": true,
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "purge"
+        ],
+        "omit_instance": true,
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "omit_instance": true,
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "omit_instance": true,
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list",
+          "--state",
+          "running"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list",
+          "--limit",
+          "many"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "instance": "example-missing",
+        "op": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Includes missing/unknown subcommands, missing instance for both commands, invalid state and limit, and a reconcile open failure without creating the absent directory. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

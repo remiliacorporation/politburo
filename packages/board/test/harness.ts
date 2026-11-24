@@ -119,9 +119,9 @@ export function testBoard(options: MountOptions = {}) {
  * A board as `local({ memory: true })` keeps one, with its scheduler in this process, whose tokens
  * come from a local test issuer: what a test that needs only a board, end to end, runs against.
  */
-export function localBoard(options: Omit<BoardOptions, 'backend' | 'fetch'> & { auth?: OidcTokensOptions; agentOps?: boolean; workEvidence?: A2Options['workEvidence'] } = {}) {
-  const { auth, url, agentOps, workEvidence, ...rest } = options
-  const backend = local({ memory: true, ...(agentOps === undefined ? {} : { agentOps }), ...(workEvidence ? { workEvidence } : {}) })
+export function localBoard(options: Omit<BoardOptions, 'backend' | 'fetch'> & { auth?: OidcTokensOptions; agentOps?: boolean; attentionResponders?: A2Options['attentionResponders']; workEvidence?: A2Options['workEvidence'] } = {}) {
+  const { auth, url, agentOps, attentionResponders, workEvidence, ...rest } = options
+  const backend = local({ memory: true, ...(agentOps === undefined ? {} : { agentOps }), ...(attentionResponders === undefined ? {} : { attentionResponders }), ...(workEvidence ? { workEvidence } : {}) })
   const created = board({
     ...rest,
     backend,

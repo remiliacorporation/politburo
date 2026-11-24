@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BoardEventView, MessageView } from '../src/api/routes.ts'
 import type { Can } from '../src/access/index.ts'
 import type { Middleware, Watcher } from '../src/server/index.ts'
-import type { BoardEvent } from '../src/contract/events.ts'
+import { boardEvents, type BoardEvent } from '../src/contract/events.ts'
 import { block } from '../src/contract/blocks.ts'
 import { foldMessages, type MessagesState } from '../src/contract/folds.ts'
 import { memory } from '../src/store/memory.ts'
@@ -96,6 +96,15 @@ describe('task priority', () => {
     expect(schema('/tasks').properties.priority.enum).toEqual(levels)
     expect(schema('/tasks/batch').properties.tasks.items.properties.priority.enum).toEqual(levels)
     expect(schema('/tasks/{id}/priority').properties.priority.enum).toEqual(levels)
+  })
+
+  it('documents the ready task claim order in OpenAPI', async () => {
+    const { ada } = setup()
+    const api = await ada('GET', '/openapi.json')
+    expect(api.status).toBe(200)
+    expect(api.body.paths['/tasks/claim'].post.description).toBe(
+      'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. A staged task must be scoped, and a stale evidence release grants no claim.',
+    )
   })
 
   it('lets a manager raise priority without disturbing a different holder', async () => {
@@ -1839,6 +1848,17 @@ describe("the fold, for whoever folds the board's events themselves", () => {
     // Only a failed task reopens, and a thread is made a task once, by whoever did first.
     expect(folded(created, ['task.canceled', { ...about, reason: 'no', by }], ['task.reopened', { ...about, by }]).byId[1]!.task?.state).toBe('canceled')
     expect(folded(created, ['task.created', { ...about, needs: [], for: null, by: other }]).byId[1]!.task?.owner).toBe(ADA)
+  })
+
+  it.each(['task.released', 'task.expired'] as const)('folds %s to waiting only when flagged for unmet needs', (type) => {
+    const needs = [7]
+    const payload = { ...about, epoch: 1, ...(type === 'task.released' ? { by } : {}) }
+    for (const waiting of [true, false, undefined]) {
+      const ended = boardEvents[type].parse(waiting === undefined ? payload : { ...payload, waiting })
+      const state = waiting ? 'waiting' : 'ready'
+      const root = folded(['task.created', { ...about, needs, for: null, by }], ['task.ready', about], claimed(1), [type, ended]).byId[1]
+      expect(root).toMatchObject({ task: { state, needs, claim: null }, labels: { 'board.task': state } })
+    }
   })
 
   it("changes what a task needs only while no one holds it and it isn't finished, and leaves a held one held", () => {

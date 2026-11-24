@@ -76,6 +76,8 @@ export function inspector(options: { board: BoardClient; basePath: string }): In
         headers: forwarded,
         ...(body ? { body } : {}),
         signal: request.signal,
+        // A write may carry a claim's proof, and the proxy can't tell: none follows a redirect.
+        claim: !reading,
       })
       return new Response(upstream.body, {
         status: upstream.status,

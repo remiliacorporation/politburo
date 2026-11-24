@@ -1,5 +1,8 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
-import { ago } from './words.ts'
+import { isTask, type Filter, type State } from './store.ts'
+import { absoluteTime, ago } from './words.ts'
+
+export { route, SECTIONS, type Route, type Section } from './routes.ts'
 
 // Navigation with the History API: no reloads. Links act on mouse down, like
 // native lists, and keep the browser's own behavior for new tabs. Every path
@@ -9,18 +12,16 @@ import { ago } from './words.ts'
 export const base = document.querySelector<HTMLMetaElement>('meta[name="inspect-base"]')?.content ?? ''
 
 /** The page's own path for where the address bar is: `/` at `base` itself. */
-const current = () => (location.pathname === base || location.pathname.startsWith(`${base}/`) ? location.pathname.slice(base.length) : location.pathname) || '/'
+export const currentPath = () => (location.pathname === base || location.pathname.startsWith(`${base}/`) ? location.pathname.slice(base.length) : location.pathname) || '/'
 
 /** Where one of the page's paths is in the address bar. */
 const address = (to: string) => `${base}${to}`
 
 export function navigate(to: string, replace = false) {
-  if (to === current() + location.search) return
+  if (to === currentPath() + location.search) return
   history[replace ? 'replaceState' : 'pushState'](null, '', address(to))
   dispatchEvent(new PopStateEvent('popstate'))
 }
-
-import type { Filter } from './store.ts'
 
 /** Where you are: the view's path, an open thread, and the view's filters, all in the URL. */
 export type Where = { path: string; thread: string | null; filter: Filter; params: URLSearchParams }
@@ -30,7 +31,7 @@ export function useLocation(): Where {
     const params = new URLSearchParams(location.search)
     const thread = params.get('thread')
     return {
-      path: current(),
+      path: currentPath(),
       params,
       thread: thread || null,
       filter: {
@@ -67,10 +68,10 @@ export function here(changes: { thread?: string | null; filter?: Filter; params?
     if (changes.filter.text) params.set('text', changes.filter.text)
   }
   const query = params.toString()
-  return `${current()}${query ? `?${query}` : ''}`
+  return `${currentPath()}${query ? `?${query}` : ''}`
 }
 
-export function Link(props: { to: string; className?: string; current?: boolean; title?: string; children: ReactNode }) {
+export function Link(props: { to: string; className?: string; current?: boolean; title?: string; onNavigate?: () => void; children: ReactNode }) {
   const navigatedAt = useRef(0)
   const plain = (event: React.MouseEvent | React.PointerEvent) =>
     event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
@@ -83,12 +84,16 @@ export function Link(props: { to: string; className?: string; current?: boolean;
       onPointerDown={(event) => {
         if (event.pointerType !== 'mouse' || !plain(event)) return
         navigatedAt.current = Date.now()
+        props.onNavigate?.()
         navigate(props.to)
       }}
       onClick={(event) => {
         if (!plain(event)) return
         event.preventDefault()
-        if (Date.now() - navigatedAt.current > 500) navigate(props.to)
+        if (event.detail === 0 || Date.now() - navigatedAt.current > 500) {
+          props.onNavigate?.()
+          navigate(props.to)
+        }
       }}
     >
       {props.children}
@@ -96,14 +101,27 @@ export function Link(props: { to: string; className?: string; current?: boolean;
   )
 }
 
-/** The current time, ticking, so "2m" ages without a reload. */
-export function useNow(every = 30_000): number {
+/** Age the page's labels, waking sooner if the next lease can change the queue. */
+export function useNow(roots: State['openTaskRoots']): number {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), every)
-    return () => clearInterval(timer)
-  }, [every])
+    let next = Infinity
+    for (const root of Object.values(roots)) {
+      if (!isTask(root) || root.deleted || root.task.state !== 'claimed' || !root.task.claim) continue
+      const expiry = Date.parse(root.task.claim.until)
+      if (expiry > now) next = Math.min(next, expiry)
+    }
+    const delay = Math.max(0, Math.min(30_000, next - Date.now()) + 1_000)
+    const timer = setTimeout(() => setNow(Date.now()), delay)
+    return () => clearTimeout(timer)
+  }, [roots, now])
   return now
+}
+
+export function isTypingTarget(target: Element | null): boolean {
+  return !!(target?.closest('input, textarea, select') ||
+    target?.closest('[contenteditable=""], [contenteditable="true" i], [contenteditable="plaintext-only" i], [contenteditable="false" i]')
+      ?.matches(':not([contenteditable="false" i])'))
 }
 
 /**
@@ -113,11 +131,12 @@ export function useNow(every = 30_000): number {
 export function useTypeToFocus(composer: string) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
-      const target = event.target as HTMLElement
-      if (target !== document.body && target.closest('input, textarea, select, [contenteditable], [role="menu"], [role="dialog"], [role="listbox"]'))
-        return
-      const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]`)
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) return
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"], [role="listbox"]')) return
+      // Space activates a focused control on keyup; stealing focus here would cancel that.
+      if (event.key === ' ' && target?.closest('button, [role="button"], summary, input[type="checkbox"], input[type="radio"]')) return
+      const find = (role: string) => document.querySelector<HTMLTextAreaElement>(`textarea[data-composer="${CSS.escape(role)}"]:not([inert] *)`)
       const area = find('thread') ?? find(composer)
       area?.focus()
     }
@@ -126,14 +145,21 @@ export function useTypeToFocus(composer: string) {
   }, [composer])
 }
 
+/** Relative words on the page, and the local timestamp on hover. */
+export function RelativeTime({ iso, children, className }: { iso: string; children: ReactNode; className?: string }) {
+  return <time dateTime={iso} className={className} title={absoluteTime(iso)}>{children}</time>
+}
+
 /**
  * "now", "12s", "4m": a relative time that changes exactly when its label
  * would. Each one schedules its own next update: every second in the first
- * minute, then on the minute, the hour, the day.
+ * minute, then on the minute, the hour, the day, unless given the view's clock.
  */
-export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
+export function Ago({ iso, prefix = '', className = 'time', now }: { iso: string; prefix?: string; className?: string; now?: number }) {
   const [, tick] = useReducer((n: number) => n + 1, 0)
+  const ticking = now === undefined
   useEffect(() => {
+    if (!ticking) return
     let timer: ReturnType<typeof setTimeout>
     const schedule = () => {
       const age = Math.max(0, Date.now() - Date.parse(iso))
@@ -145,40 +171,12 @@ export function Ago({ iso, prefix = '' }: { iso: string; prefix?: string }) {
     }
     schedule()
     return () => clearTimeout(timer)
-  }, [iso])
-  const age = Date.now() - Date.parse(iso)
+  }, [iso, ticking])
+  const time = now ?? Date.now()
   return (
-    <span className="time" title={new Date(iso).toLocaleString()}>
+    <RelativeTime iso={iso} className={className}>
       {prefix}
-      {age < 5_000 ? 'now' : ago(iso)}
-    </span>
+      {ticking && time - Date.parse(iso) < 5_000 ? 'now' : ago(iso, time)}
+    </RelativeTime>
   )
-}
-
-/** The sections of the board's settings, each a tab at `/settings/<section>`. */
-export const SECTIONS = ['access', 'schemas', 'schedules', 'watchers', 'sync'] as const
-export type Section = (typeof SECTIONS)[number]
-
-/** The view a path names. Settings is one view: its section, and what's open in it (a schema, a sync entry). */
-export type Route =
-  | { view: 'activity' }
-  | { view: 'tasks' }
-  | { view: 'channel'; channel: string }
-  | { view: 'settings'; section: Section; open: string | null }
-  | { view: 'missing' }
-
-export function route(path: string): Route {
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(path)
-  } catch {
-    return { view: 'missing' }
-  }
-  if (decoded === '/') return { view: 'activity' }
-  if (decoded === '/tasks') return { view: 'tasks' }
-  if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
-  const [, settings, section, ...rest] = decoded.split('/')
-  if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))
-    return { view: 'settings', section: (section ?? 'access') as Section, open: rest.join('/') || null }
-  return { view: 'missing' }
 }

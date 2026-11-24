@@ -53,6 +53,12 @@ describe('the inspector in a route handler', () => {
     expect((await ask('/boardroom')).status).toBe(404)
   })
 
+  it('serves the page with an image policy that keeps third-party hosts out', async () => {
+    const response = await ask('/board')
+    const images = response.headers.get('content-security-policy')?.split('; ').find((rule) => rule.startsWith('img-src '))
+    expect(images).toBe("img-src 'self' data: blob:")
+  })
+
   it('reads and writes the board as its handle, under the profile the page names', async () => {
     expect(await page().me()).toMatchObject({ actor: 'vercel:user:u_julian' })
     const root = await page('ada').post('ops', 'standup in 5')

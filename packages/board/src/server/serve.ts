@@ -27,6 +27,9 @@ import {
   RecordEvidenceBody,
   OverrideEvidenceBody,
   ResolveWorkEdgeBody,
+  ReopenTaskBody,
+  ScopeTaskBody,
+  StageTaskBody,
   TasksQuery,
   DeleteBody,
   EditBody,
@@ -46,6 +49,7 @@ import {
   ReactBody,
   ChannelMessagesQuery,
   ChannelsQuery,
+  ActorsQuery,
   CreateChannelBody,
   Ref,
   RegisterBody,
@@ -54,7 +58,6 @@ import {
   ScheduleBody,
   CreateGrantsBody,
   CreateInviteBody,
-  RedeemInviteBody,
   GrantBody,
   RevokeGrantBody,
   UpdateGrantBody,
@@ -70,6 +73,7 @@ import {
   SyncImportBody,
   UploadStartBody,
   SyncReceiptBody,
+  TASK_CLAIM_HOLD_HEADER,
   ThreadQuery,
   ThreadsQuery,
   TypingBody,
@@ -96,17 +100,15 @@ import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, noWo
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
 import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, isOperationalInboxMethod, isWorkEvidenceMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
-import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
+import { authorize, compileAccess, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
 import type { WatcherContext } from './watcher.ts'
 import { VERSION } from '../version.ts'
+import { atAudience, CONTROL, noInvites, redeem, SECRET_RESPONSE } from './politburo-serve.ts'
 
 /** The methods whose answer is something new. */
 const CREATED = new Set<Method>(['post', 'schedule', 'createTask', 'createTasks', 'requestTaskAttention', 'upload', 'uploadFinish', 'createInvite', 'sendOperationalMessage'])
-const CONTROL = new Set<Method>(['status', 'pause', 'resume'])
-const noInvites = () => new HttpError(501, 'no_invites', 'this board keeps no invites')
-const SECRET_RESPONSE = { 'cache-control': 'no-store' }
 
 /**
  * Refuses a label write under `board.`: those keys are the board's own, which only its task writes
@@ -151,6 +153,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'channels':
       return ChannelsQuery.parse(queryObject(url))
     case 'actors':
+      return ActorsQuery.parse(queryObject(url))
     case 'watchers':
     case 'grants':
     case 'invites':
@@ -175,7 +178,6 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'cancelSchedule':
     case 'unblockTask':
     case 'taskAttention':
-    case 'reopenTask':
     case 'schema':
     case 'attachment':
     case 'uploadFinish':
@@ -258,6 +260,12 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, ...ParkTaskBody.parse(await body()) }
     case 'handoffTask':
       return { id, ...HandoffTaskBody.parse(await body()) }
+    case 'reopenTask':
+      return { id, ...ReopenTaskBody.parse(await body()) }
+    case 'scopeTask':
+      return { id, ...ScopeTaskBody.parse(await body()) }
+    case 'stageTask':
+      return { id, ...StageTaskBody.parse(await body()) }
     case 'requestTaskAttention':
       return { id, ...RequestAttentionBody.parse(await body()) }
     case 'answerTaskAttention':
@@ -447,9 +455,6 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     warned = true
     return at
   }
-
-  /** Joined credentials only work at the public mount itself, not at aliases or deeper mounts. */
-  const atAudience = (at: string, audience: string) => URL.parse(audience)?.href.replace(/\/+$/, '') === at
 
   /**
    * What a board that serves no requests answers them: one that uses another board's. One on
@@ -1028,6 +1033,49 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     return { message: await read(message!) }
   }
 
+  let claims = Promise.resolve()
+  function admittingClaim<T>(caller: Caller, target: Protocol['claimTask']['input'] | Protocol['claimReadyTask']['input'], signal: AbortSignal, claim: () => Promise<T>): Promise<T> {
+    const rule = options.claimRule
+    if (!rule || (target.binding && backend.supportsTaskAuthority === false)) return claim()
+    const next = claims.then(async () => {
+      signal.throwIfAborted()
+      await checkClaim(rule, caller, target, signal)
+      signal.throwIfAborted()
+      return claim()
+    })
+    claims = next.then(() => undefined, () => undefined)
+    return next
+  }
+
+  async function checkClaim(rule: NonNullable<typeof options.claimRule>, caller: Caller, target: Protocol['claimTask']['input'] | Protocol['claimReadyTask']['input'], signal: AbortSignal) {
+    const remote = backend.keeps ? null : await backend.me(caller, {}, signal)
+    const access = remote ? compileAccess(remote.can).narrow(accessOf(caller) ?? FULL_ACCESS) : accessOf(caller)
+    const task = 'id' in target ? target.id : null
+    const message = task === null ? null : await lookup(caller, task, signal)
+    if (task !== null && !message) throw notFound(`message not found: #${task}`, 'message_not_found')
+    if (task !== null && !message?.task) throw notFound(`#${task} isn't a task`, 'not_a_task')
+    const channel = 'channel' in target ? target.channel : message!.channel
+    if (access && 'channel' in target && channel.endsWith('/')) {
+      // A subtree may contain narrower grants even if its root grants no label.
+      if (!access.at('label', channel) && !Object.entries(access.summary()).some(([path, permissions]) =>
+        (path === channel.slice(0, -1) || path.startsWith(channel)) && permissions.includes('label')))
+        throw forbidden(`this token can't label in ${channel}`)
+    } else if (access) authorize(access, 'label', channel)
+    if (target.binding && !remote && !('identity' in caller)) throw forbidden('a bound claim needs a verified claimant')
+    const who = remote ?? await whoIs(caller, signal)
+    const actor = typeof who.actor === 'string' ? who.actor : who.actor.id
+    if (target.binding && (target.binding.owner.principal !== who.principal || target.binding.owner.actor !== actor))
+      throw forbidden('the binding owner must be the verified claimant')
+    signal.throwIfAborted()
+    let result
+    try {
+      result = await rule({ actor, channel, task })
+    } catch {
+      throw new HttpError(503, 'claim_rule_failed', 'the claim rule could not decide')
+    }
+    if (result) throw new HttpError(409, result.refuse.code, result.refuse.message)
+  }
+
   /** The protocol method `name`, as board() serves it: what it posts, edits, and imports goes through the middleware. */
   async function invoke(name: Method, caller: Caller, input: unknown, signal: AbortSignal): Promise<unknown> {
     if (isOperationalInboxMethod(name)) {
@@ -1047,6 +1095,14 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         const { set, unset } = input as Protocol['label']['input']
         ownLabels(set, unset)
         return backend.label(caller, input as Protocol['label']['input'], signal)
+      }
+      case 'claimTask': {
+        const body = input as Protocol['claimTask']['input']
+        return admittingClaim(caller, body, signal, () => backend.claimTask(caller, body, signal))
+      }
+      case 'claimReadyTask': {
+        const body = input as Protocol['claimReadyTask']['input']
+        return admittingClaim(caller, body, signal, () => backend.claimReadyTask(caller, body, signal))
       }
       case 'createTask': {
         const body = input as Protocol['createTask']['input']
@@ -1157,8 +1213,14 @@ export async function createServe(context: BoardContext): Promise<Serve> {
       }
       case 'completeTask': {
         const body = input as Protocol['completeTask']['input']
-        // Discovery advertises policy, not implementation: local boards without a policy still refuse commits themselves.
-        if (body.commit !== undefined && typeof backend.workEvidence !== 'function') throw noWorkEvidence()
+        // A read method is not proof the complete path checks the commit. A board that keeps its
+        // own log accepts a commit only when its backend says it enforces the evidence. A board
+        // on another one forwards the write, and that backend checks the remote's discovery.
+        if (body.commit !== undefined && backend.keeps === true) {
+          const enforces = (backend as { enforcesCommitEvidence?: boolean | (() => boolean | Promise<boolean>) }).enforcesCommitEvidence
+          const enforced = typeof enforces === 'function' ? await enforces() : enforces === true
+          if (!enforced) throw noWorkEvidence()
+        }
         return backend.completeTask(caller, body, signal)
       }
       default: {
@@ -1171,34 +1233,6 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         }
         return (method as (caller: Caller, input: unknown, signal: AbortSignal) => Promise<unknown>).call(backend, caller, input, signal)
       }
-    }
-  }
-
-  /** Redeeming the invite proves admission; neither headers nor an existing login can name the new principal. */
-  async function redeem(request: Request, at: string, injected: boolean): Promise<Response> {
-    if (!backend.redeemInvite) throw noInvites()
-    // http() forwards only the secret; its remote board binds the bearer to its own mount.
-    const audience = injected ? (backend.keeps ? ownUrl() : at) : audienceOf(at)
-    if (audience === null)
-      throw new HttpError(500, 'no_board_url', 'this board needs a public URL to redeem an invite in-process', {
-        hint: 'Pass board({ url }) with the URL people reach it at.',
-      })
-    if (!injected && !atAudience(at, audience)) throw notFound('this is not the public board mount')
-    const invalid = () => badRequest('send an invite secret in the request body', 'invalid_invite')
-    let body: unknown
-    try {
-      body = JSON.parse(new TextDecoder().decode(await readCapped(request, 1024)))
-    } catch {
-      throw invalid()
-    }
-    const parsed = RedeemInviteBody.safeParse(body)
-    if (!parsed.success) throw invalid()
-    try {
-      return json(await backend.redeemInvite(OWN, { ...parsed.data, audience }, request.signal), 201, SECRET_RESPONSE)
-    } catch (error) {
-      if (error instanceof HttpError) throw error
-      // A failure on a secret-bearing request must not log the input or serialize a raw exception.
-      throw new HttpError(500, 'internal', 'could not redeem the invite')
     }
   }
 
@@ -1298,18 +1332,24 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    * for, and the project people mint them with), which is board()'s to say, and the sync entries
    * accounts link on. Those are the backend's, where it keeps the board; a board on `http()` lists its own.
    */
-  async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Protocol['discovery']['output']> {
+  async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Response> {
     const { projectId, teamId } = await policy.discoveryIdentity(request.headers)
     const capabilities = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
     const sync = capabilities?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
-    return {
+    return json({
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
+      ...(capabilities?.workLifecycle === 1 ? { workLifecycle: 1 } : {}),
+      ...(capabilities?.accessFence === 1 ? {
+        accessFence: 1,
+        ...(capabilities.accessFenceScope === 'process' ? { accessFenceScope: 'process' } : {}),
+      } : {}),
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
       ...(capabilities?.workEvidence ? { workEvidence: capabilities.workEvidence } : {}),
       ...(capabilities?.agent_intents === true ? { agent_intents: true } : {}),
-    }
+      ...(capabilities?.politburo === 1 ? { politburo: 1 } : {}),
+    }, 200, capabilities?.task_claim_hold === true ? { [TASK_CLAIM_HOLD_HEADER]: '1' } : undefined)
   }
 
   async function dispatch(request: Request, injected: Caller | PlatformCaller | null): Promise<Response> {
@@ -1345,8 +1385,8 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         ? (isAgentIntentMethod(target.name) ? 'intents' : 'registry')
         : null
       if (!injected && !policy.open) throw ops ? noAgentOps(ops) : servesOnly()
-      if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
-      if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null)
+      if (!injected && target.kind === 'protocol' && target.name === 'discovery') return await discovery(request, audienceOf(at), request.signal)
+      if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null, backend, OWN, ownUrl, audienceOf)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
         && !isOperationalInboxMethod(target.name) && !isWorkEvidenceMethod(target.name) && typeof backend[target.name] !== 'function') {
         if (INVITE_METHODS.has(target.name)) throw noInvites()

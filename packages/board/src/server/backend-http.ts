@@ -1,12 +1,14 @@
-import { BoardStatus, completeWithEvidencePath, routes, type Discovery, type EventsPage } from '../api/routes.ts'
+import { z } from 'zod'
+import { BoardStatus, completeWithEvidencePath, readDiscovery, routes, type Discovery, type EventsPage } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Method, Protocol } from '../api/protocol.ts'
 import { BoardError, createBoardClient, type BoardClient, type ProfileOption } from '../client/client.ts'
 import { DERIVED_ID, keyId } from '../client/ids.ts'
-import { ATTACHMENT_BYTES_MAX, type Attachment } from '../contract/schemas.ts'
+import { boardEvents } from '../contract/events.ts'
+import { AgentIntent, AgentRun, ATTACHMENT_BYTES_MAX, type Attachment } from '../contract/schemas.ts'
 import { type Backend, type BoardBinding, type Caller, type ProtocolMethods, type SelfCaller } from './backend.ts'
 import { HttpError, noAgentOps } from './errors.ts'
-import { isAgentIntentMethod, isAgentOpsMethod, METHODS } from './routing.ts'
+import { isAgentIntentMethod, isAgentOpsMethod, METHODS, type AgentOpsMethod } from './routing.ts'
 import { compileWatcher } from './watch-spec.ts'
 import { deployedOnVercel } from './registrant.ts'
 import { tailWatchers } from './tails.ts'
@@ -41,6 +43,32 @@ export type Environment = {
 /** A watcher's or client's name is the profile its writes are by. */
 const PROFILE = /^[A-Za-z][A-Za-z0-9-]{0,31}$/
 const PROFILE_RULE = 'ids start with a letter and use up to 32 letters, numbers, and hyphens'
+
+const Agent = boardEvents['ops.agent_changed'].shape.agent
+// Strip extra fields from HTTP replies without loosening the schemas for requests or the log.
+const AgentIntentResponse = AgentIntent.strip().extend({
+  run: AgentRun.strip().optional(),
+  taken: AgentIntent.shape.taken.unwrap().strip().nullable(),
+  report: AgentIntent.shape.report.unwrap().strip().nullable(),
+})
+const IssuedIntents = z.object({ intents: z.array(AgentIntentResponse) })
+const AgentHealthResponse = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('working'), validUntil: z.iso.datetime() }),
+  // Only a working run has a deadline. Don't silently strip a deadline from this branch.
+  z.object({ state: z.literal('not_confirmed'), validUntil: z.never().optional() }),
+])
+const agentResponses = {
+  listOpsAgents: z.object({ agents: z.array(Agent) }),
+  registerOpsAgent: Agent,
+  heartbeatOpsAgent: Agent,
+  retireOpsAgent: Agent,
+  issueOpsIntent: IssuedIntents,
+  issueOpsRoleIntent: IssuedIntents,
+  listOpsIntents: IssuedIntents.extend({ next: z.string().nullable() }),
+  takeOpsIntent: AgentIntentResponse,
+  reportOpsIntent: AgentIntentResponse,
+  getOpsHealth: AgentHealthResponse,
+} satisfies { [M in AgentOpsMethod]: z.ZodType<Protocol[M]['output']> }
 
 const describe = (error: unknown) => ((error instanceof Error ? error.message : String(error)) || 'unknown error').slice(0, 500)
 
@@ -92,6 +120,17 @@ function attachmentOf(id: string, response: Response): Protocol['attachment']['o
   }
   return { attachment, data: response.body ?? new Uint8Array() }
 }
+
+/** The protocol methods that are a claim's own writes: each carries its proof. */
+const CLAIM_WRITES = new Set<Method>(['renewTask', 'releaseTask', 'completeTask', 'failTask', 'handoffTask'])
+/** The ones that carry a claim's token only when the caller brings one. */
+const CLAIM_WITH_TOKEN = new Set<Method>(['createTask', 'claimTask', 'claimReadyTask', 'blockTask', 'setTaskPriority'])
+
+/** Whether a call's request carries a claim's token, by the method and its input: the flag the client's transport refuses redirects for. */
+const carriesClaim = (method: Method, input: Record<string, unknown>): boolean =>
+  CLAIM_WRITES.has(method) ||
+  (CLAIM_WITH_TOKEN.has(method) && input.token !== undefined) ||
+  (method === 'requestTaskAttention' && input.claim !== undefined)
 
 /**
  * Another board that speaks the protocol, at `url` (in Node, the one the environment points at
@@ -164,7 +203,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     // This handle's own finding about the URL it was given, not the remote's words.
     if (!response.ok)
       throw new HttpError(response.status >= 400 ? response.status : 502, 'no_board', `There's no board at ${remote}: it answered ${response.status}.`, { origin: 'handle' })
-    return (await response.json()) as Discovery
+    return readDiscovery(response)
   }
 
   let discovered: Promise<Discovery> | null = null
@@ -205,6 +244,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
       return encodeURIComponent(String(value))
     })
     let response: Response
+    const refuseRedirect = pathOverride === completeWithEvidencePath || method === 'submitWork' || method === 'recordEvidence' || method === 'overrideEvidence' || method === 'resolveWorkEdge'
     if (method === 'upload') {
       const { data, name, type } = input as Protocol['upload']['input']
       // Too big for one request (a platform file sync imports): straight to the board's blob store,
@@ -219,6 +259,8 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
           body: data as Uint8Array<ArrayBuffer>,
           headers: { ...(type ? { 'content-type': type } : {}), ...(name !== null ? { 'x-board-filename': encodeURIComponent(name) } : {}) },
           signal,
+          // The inspector flags the writes it forwards, and the handle in between drops the flag: a file goes nowhere but here.
+          claim: true,
         })
         .catch(rethrow)
     } else if (route.method === 'GET') response = await client.request(`${path}${queryString(fields)}`, { signal }).catch(rethrow)
@@ -227,11 +269,15 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
       response = await client
         .request(path, {
           method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal,
-          ...(withEvidence ? { redirect: 'manual' } : {}),
+          claim: carriesClaim(method, input),
+          ...(refuseRedirect ? { redirect: 'manual' as const } : {}),
         })
         .catch(rethrow)
-    if (withEvidence && (response.type === 'opaqueredirect' || response.status === 0 || (response.status >= 300 && response.status < 400))) {
-      throw new HttpError(502, 'remote_error', 'The board redirected a completion with work evidence. This handle never follows those redirects.', {
+    if (refuseRedirect && (response.type === 'opaqueredirect' || response.status === 0 || (response.status >= 300 && response.status < 400))) {
+      const completion = pathOverride === completeWithEvidencePath
+      throw new HttpError(502, 'remote_error', completion
+        ? 'The board redirected a completion with work evidence. This handle never follows those redirects.'
+        : 'The board redirected a work-evidence request. This handle never follows those redirects.', {
         origin: 'handle', hint: "Point `url` at the board's final URL.",
       })
     }
@@ -272,7 +318,12 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
       signal.throwIfAborted()
       if (found?.workEvidence?.version !== 1) throw noEvidenceCompletion()
     }
-    if (isAgentOpsMethod(method)) {
+    if ((method === 'claimTask' || method === 'claimReadyTask') && input.hold !== undefined &&
+        (await fetchDiscovery({ signal, cache: 'no-store' }))?.task_claim_hold !== true) {
+      throw new HttpError(501, 'no_claim_hold', 'the HTTP board does not advertise a hard end for claims', { origin: 'handle' })
+    }
+    const agentOps = isAgentOpsMethod(method)
+    if (agentOps) {
       // The mount can change. A registry-only mount can return discovery with 200 on an unknown intent or health GET.
       const intents = isAgentIntentMethod(method)
       const capability = intents ? 'agent_intents' : 'agent_ops'
@@ -312,6 +363,12 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
           origin: 'handle', hint: 'Use a board that supports work evidence.',
         })
       return work
+    }
+    if (agentOps) {
+      const body: unknown = await response.json().catch(() => null)
+      const parsed = agentResponses[method].safeParse(body)
+      if (!parsed.success) throw new HttpError(502, 'remote_error', `the remote board did not answer ${routes[method].path} with the expected response`)
+      return parsed.data
     }
     return response.json()
   }

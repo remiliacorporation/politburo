@@ -120,9 +120,10 @@ export function taskView(task: Task): TaskView {
   return {
     ...shown,
     priority: task.priority ?? DEFAULT_TASK_PRIORITY,
-    ...(attention ? { attentionId: attention.id } : {}),
+    ...(task.work ? { work: { ...task.work } } : {}),
+    ...(attention ? { attentionId: attention.id, attentionStatus: attention.status } : {}),
     needs: needs.map(ref),
-    claim: claim && { actor: claim.actor, until: claim.until, ...(claim.binding ? { binding: structuredClone(claim.binding) } : {}) },
+    claim: claim && { actor: claim.actor, until: claim.until, ...(claim.holdUntil ? { holdUntil: claim.holdUntil } : {}), ...(claim.binding ? { binding: structuredClone(claim.binding) } : {}) },
     blocked: task.blocked && { ...task.blocked },
     ...(parked !== undefined ? { parked: parked && { ...parked, by: authorView(parked.by) } } : {}),
     ...(handoff ? { handoff: { ...handoff, by: authorView(handoff.by) } } : {}),
@@ -448,6 +449,17 @@ export class FeedProjection {
     const { id, before, after } = foldEvent(this.messages, this.actors, event)
     const message = after ?? before
     const readable = id === null ? this.access.readsAll : message !== undefined && this.access.readable(message.channel)
+    if (event.type === 'task.work_resolved' && readable && !this.access.readsAll) {
+      const needId = event.payload.needId
+      let need = this.messages.byId[needId]
+      if (!need && !this.loaded.has(needId)) {
+        const found = await this.reads.messagesAt([needId], event.index, signal)
+        need = found.get(needId)
+        this.loaded.add(needId)
+        if (need) this.messages.byId[needId] = need
+      }
+      if (!need || !this.access.readable(need.channel)) return { index: event.index, view: null }
+    }
     const hidden = HIDDEN.has(event.type) && !this.all
     const visible = readable && !hidden && (this.criteria ? this.match(before) || this.match(after) : id !== null || this.all)
     if (!visible) return { index: event.index, view: null }

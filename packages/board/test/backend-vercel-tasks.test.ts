@@ -1001,7 +1001,7 @@ describe("vercel()'s tasks", () => {
 
   it("lists by the state the API lists by, where a claim whose lease ran out is ready and never claimed", async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
-    const api = fakeMessageboard()
+    const api = fakeMessageboard({ inlineTaskMessages: true })
     const julian = handleOn(api)
     const { task: held } = await julian.tasks.create('work', { text: 'held' })
     // More lapsed claims than one list writes the expiry of: the rest still read claimed, with a lease that's over.
@@ -1026,7 +1026,7 @@ describe("vercel()'s tasks", () => {
   })
 
   it("fills a list's limit across the API's pages, which come back short, and reads on from its cursor", async () => {
-    const api = fakeMessageboard()
+    const api = fakeMessageboard({ inlineTaskMessages: true })
     const julian = handleOn(api)
     const ada = handleOn(api, 'user:u_ada')
     // Seven tasks under queue/ among 60 on the board: the API's list of a tree reads the board's tasks, 25 a page, and keeps the tree's.
@@ -1772,6 +1772,7 @@ describe("vercel()'s tasks", () => {
   })
 
   it('lists the last active with latest from every page of the list, and reads the latest replies of only those it answers', async () => {
+    // An API that doesn't send a task's latest reply with the list, so each is read apart: after it refuses `include`, once.
     const api = fakeMessageboard()
     const julian = handleOn(api)
     // 60 tasks, more than two of the API's pages, each with a reply: the first made is the last active.
@@ -1783,15 +1784,55 @@ describe("vercel()'s tasks", () => {
     expect(tasks.map((task) => task.message.id)).toEqual([made[58], made[59], made[0]])
     expect(tasks.map((task) => task.last?.text)).toEqual(['progress', 'progress', 'progress'])
     // Every page of the list, and a reply read for each of the three alone.
-    expect(julian.sent.filter((request) => request.method === 'GET' && request.path === '/tasks').map((request) => request.query.cursor?.[0] ?? null)).toEqual([null, '25', '50'])
+    expect(julian.sent.filter((request) => request.method === 'GET' && request.path === '/tasks' && !request.query.include).map((request) => request.query.cursor?.[0] ?? null)).toEqual([null, '25', '50'])
     expect(julian.sent.filter((request) => request.method === 'GET' && request.path.startsWith('/messages/'))).toHaveLength(3)
     // Without it, the first made.
     expect((await julian.tasks.list({ channel: 'queue', state: 'all', limit: 3 })).tasks.map((task) => task.message.id)).toEqual(made.slice(0, 3))
     await expect(julian.tasks.list({ channel: 'queue', latest: true, after: made[0]! })).rejects.toMatchObject({ status: 400, code: 'invalid_request' })
+
+    // On an API that sends each task's reply with the list, a latest list still doesn't ask: it would be every page's.
+    const inlined = handleOn(fakeMessageboard({ inlineTaskMessages: true }))
+    for (let n = 0; n < 30; n++) await inlined.reply((await inlined.tasks.create('queue', { text: `task ${n}` })).task.id, 'progress')
+    inlined.sent.length = 0
+    expect((await inlined.tasks.list({ channel: 'queue', state: 'all', latest: true, limit: 2 })).tasks.map((task) => task.last?.text)).toEqual(['progress', 'progress'])
+    expect(inlined.sent.filter((request) => request.path === '/tasks').map((request) => request.query.include ?? null)).toEqual([null, null])
+    expect(inlined.sent.filter((request) => request.path.startsWith('/messages/'))).toHaveLength(2)
+  })
+
+  it("reads each task's latest reply with the list on an API that sends it, and apart, by ID, on one that doesn't", async () => {
+    for (const inlineTaskMessages of [true, false]) {
+      const julian = handleOn(fakeMessageboard({ inlineTaskMessages }))
+      const quiet = (await julian.tasks.create('work', { text: 'no replies' })).task.id
+      const ids: string[] = []
+      for (const text of ['one', 'two']) {
+        const { task } = await julian.tasks.create('work', { text })
+        await julian.reply(task.id, `re: ${text}`)
+        ids.push(task.id)
+      }
+      for (let n = 0; n < 2; n++) {
+        julian.sent.length = 0
+        const { tasks } = await julian.tasks.list({ channel: 'work' })
+        expect(tasks.map((task) => [task.message.id, task.last?.text ?? null])).toEqual([
+          [quiet, null],
+          [ids[0], 're: one'],
+          [ids[1], 're: two'],
+        ])
+        const lists = julian.sent.filter((request) => request.method === 'GET' && request.path === '/tasks').map((request) => request.query.include?.[0] ?? null)
+        const byId = julian.sent.filter((request) => request.path.startsWith('/messages/')).length
+        // One that refuses `include` is asked it once, by the first list, and never again.
+        const asked = inlineTaskMessages ? ['messages'] : n === 0 ? ['messages', null] : [null]
+        expect([inlineTaskMessages, n, lists, byId]).toEqual([inlineTaskMessages, n, asked, inlineTaskMessages ? 0 : 2])
+      }
+      // Lists that start together, before any knows what the API takes, each answer the same.
+      const fresh = handleOn(fakeMessageboard({ inlineTaskMessages }), 'user:u_jb')
+      await fresh.tasks.create('work', { text: 'one' })
+      const together = await Promise.all([1, 2, 3].map(() => fresh.tasks.list({ channel: 'work' })))
+      expect(together.map(({ tasks }) => tasks.length)).toEqual([1, 1, 1])
+    }
   })
 
   it("lists a caller that doesn't read the whole board only the channels it reads, with no page spent on the rest, 50 channels at most", async () => {
-    const api = fakeMessageboard()
+    const api = fakeMessageboard({ inlineTaskMessages: true })
     const pong = handleOn(api, 'project:prj_pong:production')
     // More tasks than a page in a channel it can't read, older than the three it can.
     for (let n = 0; n < 30; n++) await pong.tasks.create('secret', { text: `hidden ${n}` })

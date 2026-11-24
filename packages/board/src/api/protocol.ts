@@ -6,9 +6,10 @@ import type { Attachment } from '../contract/schemas.ts'
 import type {
   AckBody,
   AckOperationalMessageBody,
+  ActorsQuery,
+  ActorView,
   OperationalMessage,
   SendOperationalMessageBody,
-  ActorView,
   AgentHealth,
   AgentIntent,
   AgentView,
@@ -46,6 +47,9 @@ import type {
   ParkTaskBody,
   ReleaseTaskBody,
   RenewTaskBody,
+  ReopenTaskBody,
+  ScopeTaskBody,
+  StageTaskBody,
   TaskClaim,
   SubmitWorkBody,
   RecordEvidenceBody,
@@ -136,7 +140,8 @@ export type Protocol = {
   channels: { input: Input<typeof ChannelsQuery>; output: ChannelsPage }
   /** `created` is false for a channel that was there already, made by a post or another create. */
   createChannel: { input: Input<typeof CreateChannelBody>; output: { channel: ChannelView; created: boolean } }
-  actors: { input: Nothing; output: { actors: (Actor & Pick<ActorView, 'verified'>)[]; cursor: string } }
+  /** Everyone, or with `id`, only those: a board that doesn't narrow by ID may answer everyone. */
+  actors: { input: Input<typeof ActorsQuery>; output: { actors: (Actor & Pick<ActorView, 'verified'>)[]; cursor: string } }
   /** One channel's messages across its threads, oldest first: the newest `limit`, or those after one of the channel's cursors. */
   channelMessages: { input: Input<typeof ChannelMessagesQuery>; output: MessagesPage }
   threads: { input: Input<typeof ThreadsQuery>; output: ThreadsPage }
@@ -180,7 +185,7 @@ export type Protocol = {
    * there's none. With `request`, 409 `duplicate_id` when the batch was made for another one.
    */
   createdTasks: { input: Id & Input<typeof CreatedTasksQuery>; output: { tasks: MessageView[] } }
-  /** The highest priority eligible ready task (oldest first on ties), claimed, or `{ task: null }` when there's none, after waiting up to `wait` seconds. */
+  /** The highest priority eligible ready task (preferring tasks assigned to the caller at equal priority, then the oldest), claimed, or `{ task: null }` when there's none, after waiting up to `wait` seconds. */
   claimReadyTask: { input: Input<typeof ClaimReadyTaskBody>; output: { task: MessageView; claim: TaskClaim } | { task: null } }
   /** 409 `task_claimed` while someone holds it, and of claims that race, for all but one. */
   claimTask: { input: Id & Input<typeof ClaimTaskBody>; output: { task: MessageView; claim: TaskClaim } }
@@ -201,8 +206,12 @@ export type Protocol = {
   parkTask: { input: Id & Input<typeof ParkTaskBody>; output: { task: MessageView } }
   unparkTask: { input: Id & Input<typeof ParkTaskBody>; output: { task: MessageView } }
   handoffTask: { input: Id & Input<typeof HandoffTaskBody>; output: { task: MessageView } }
-  /** A failed task is ready again; one that's open is left as it is. */
-  reopenTask: { input: Id; output: { task: MessageView } }
+  /** Retry a legacy failed task, or return staged done/rejected work to proposed with a reason. */
+  reopenTask: { input: Id & Input<typeof ReopenTaskBody>; output: { task: MessageView } }
+  /** Authorize the current root revision of proposed work. */
+  scopeTask: { input: Id & Input<typeof ScopeTaskBody>; output: { task: MessageView } }
+  /** Move staged work along an allowed edge. */
+  stageTask: { input: Id & Input<typeof StageTaskBody>; output: { task: MessageView } }
   assignTask: { input: Id & Input<typeof AssignTaskBody>; output: { task: MessageView } }
   /** 400 `invalid_needs` for a prerequisite that isn't one, or that would make the task wait for itself. The same set is left as it is. */
   setTaskNeeds: { input: Id & Input<typeof TaskNeedsBody>; output: { task: MessageView } }

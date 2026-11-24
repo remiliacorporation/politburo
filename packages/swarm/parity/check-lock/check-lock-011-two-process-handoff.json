@@ -1,0 +1,50 @@
+{
+  "case_id": "check-lock-011-two-process-handoff",
+  "description": "A real contender waits for the holder to release and then acquires.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "example-notes/mac-check.lock/owner.json": null
+    },
+    "invariants": {
+      "contender_logged_nothing": true,
+      "contender_owns_after_release": true,
+      "holder_owns_while_contender_waits": true,
+      "lock_absent_after_both": true,
+      "lock_absent_at_handoff": true
+    },
+    "lock_path": "example-notes/mac-check.lock",
+    "log_lines": [],
+    "stale_directories": 0,
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "collect": [
+      "example-notes/mac-check.lock/owner.json"
+    ],
+    "contender_args": {
+      "poll": 0.25,
+      "tag": "example-contender",
+      "timeout": 2
+    },
+    "holder_args": {
+      "tag": "example-holder",
+      "timeout": 0
+    },
+    "kind": "two-process",
+    "notes_root": "example-notes"
+  },
+  "matrix_row": "M11",
+  "notes": "A pipe rendezvous gates the contender's poll; record only invariants.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py"
+    ]
+  }
+}

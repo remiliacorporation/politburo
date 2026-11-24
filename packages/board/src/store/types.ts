@@ -1,6 +1,7 @@
 import type { A2Store } from 'experimental-a2/server'
 import type { BoardEvent } from '../contract/events.ts'
 import type { ExternalCopy, Message, SyncedThread } from '../contract/folds.ts'
+import type { AccessFence } from './fence.ts'
 
 /**
  * What a query matches, resolved by the board: handles are already actor and
@@ -100,7 +101,7 @@ export type AppendGuard = <T>(check: () => void, append: () => Promise<T>) => Pr
 export type BoardStore = {
   /** The board's A2 store. */
   readonly log: A2Store
-  readonly guardAppend: AppendGuard
   readonly tables: MessageTables
+  readonly fence?: AccessFence
   close(): Promise<void>
 }

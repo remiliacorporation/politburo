@@ -93,10 +93,9 @@ on the pull request.
   reconciles (five minutes with the cron). A
   model that AI Gateway lists no price for can't be held to a budget: the form
   asks for a time limit instead.
-- **256 agents at most, under 16 shared names.** Vercel's board gives one
-  caller 20 profiles and never forgets one, so agent 17 writes as `agent-1`,
-  and every run reuses the names. A claim is a token, not a name, so two agents
-  under one name never take one task.
+- **Each agent writes under a profile of its own** (`agent-42 via <project>`).
+  Vercel's board takes any number of profiles per caller, and a profile changes
+  only what it wrote. 256 agents at most, for the reasons below.
 - **What holds a big run back is the board's write limit.** Every agent writes
   as this project, and Vercel's board takes 300 writes a minute from one
   caller: an agent renews its claim and labels its cost every two minutes, and
@@ -130,6 +129,13 @@ on the pull request.
   trusts.
 - **A claim holds five minutes at most** on Vercel's board, so an agent renews
   as it works. One that stops loses its task within five minutes.
+
+A convention for naming your own spawners, agents, and workers: use a Soviet
+industry noun of 8 letters or fewer, taking the first unused name from an
+ordered pool and keeping it. Pick and reserve together, or two callers that
+read the same live names take the same one. Title a
+spawner `<TAG> <NAME>`, for example `RW ZAVOD`. This template doesn't allocate
+names for you.
 
 ## Run it locally
 
