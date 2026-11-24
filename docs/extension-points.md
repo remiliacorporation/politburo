@@ -310,6 +310,23 @@ The tag registry [`packages/swarm/registry/tags.json`](../packages/swarm/registr
 
 Test it: `pnpm --filter @remilia/politburo-swarm exec node --test test/trackers/merge.test.ts test/trackers/cli.test.ts`. The CLI test fakes GitHub and Linear.
 
+## Add a command
+
+A command is one new file, `packages/swarm/src/commands/<name>.ts`. The filename is the command name. The file exports `name`, `summary`, and `run(argv)`. `src/cli.ts` reads that directory and loads the one file it was asked for. It does not keep a command list.
+
+```ts
+export const name = 'ping'
+export const summary = 'ping'
+export function run(argv: string[]): number {
+  console.log(argv.length === 0 ? 'pong' : 'usage: swarm ping')
+  return argv.length === 0 ? 0 : 2
+}
+```
+
+`node packages/swarm/src/cli.ts ping` runs it from source. The same file is in `dist/commands/` after `tsc`.
+
+A public export is a new file `packages/swarm/src/public/<area>.ts` that star-exports the feature. The package scripts write `src/index.generated.ts` from that directory before `tsc`. `src/index.ts` star-exports only that generated file. A command note is a new file in `packages/swarm/docs/`. None of these edits `cli.ts`, `index.ts`, or `README.md`.
+
 ## What is not a plug yet
 
 | Design | On `main` |
