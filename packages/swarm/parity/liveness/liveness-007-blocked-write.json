@@ -1,0 +1,51 @@
+{
+  "case_id": "liveness-007-blocked-write",
+  "description": "An ordinary file in place of the alive directory makes the write a no-op.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "notes/alive": "Not a directory\n"
+    },
+    "log_lines": [],
+    "runs": [
+      {
+        "return": null,
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "function",
+    "steps": [
+      {
+        "after": 0,
+        "args": {
+          "cycle": 1,
+          "interval": 10,
+          "name": "wake",
+          "notes_dir": "notes",
+          "tag": "example"
+        },
+        "function": "touch"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {
+      "notes/alive": "Not a directory\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py"
+    ]
+  }
+}

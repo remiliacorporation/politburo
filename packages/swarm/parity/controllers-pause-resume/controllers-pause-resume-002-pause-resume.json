@@ -1,0 +1,526 @@
+{
+  "case_id": "controllers-pause-resume-002-pause-resume",
+  "description": "Pause wakes, then resume the exact prior controller session",
+  "expected": {
+    "db_rows": {
+      "agent_commands": [
+        {
+          "args_json": "{}",
+          "command": "inspect",
+          "command_id": 1,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "inspect-before-pause",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "cancelled",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "agent_observations": [
+        {
+          "active_issue": null,
+          "agent_generation": 1,
+          "agent_id": "controller-01",
+          "assignment_generation": null,
+          "current_action": "Decision recorded; asleep until relevant event",
+          "dedup_key": null,
+          "evidence_ref": null,
+          "health": "healthy",
+          "last_call": null,
+          "lease_token": null,
+          "network_generation": null,
+          "observation_id": 2,
+          "observed_at": "2026-01-01T00:00:00+00:00",
+          "operation_id": "00000000000000000000000000000001",
+          "process_state": "exited",
+          "session_ref": "example-session",
+          "source": "controller-runtime"
+        },
+        {
+          "active_issue": null,
+          "agent_generation": 1,
+          "agent_id": "controller-01",
+          "assignment_generation": null,
+          "current_action": "Decision recorded; asleep until relevant event",
+          "dedup_key": null,
+          "evidence_ref": null,
+          "health": "healthy",
+          "last_call": null,
+          "lease_token": null,
+          "network_generation": null,
+          "observation_id": 4,
+          "observed_at": "2026-01-01T00:00:00+00:00",
+          "operation_id": "00000000000000000000000000000003",
+          "process_state": "exited",
+          "session_ref": "example-session",
+          "source": "controller-runtime"
+        },
+        {
+          "active_issue": null,
+          "agent_generation": 1,
+          "agent_id": "controller-01",
+          "assignment_generation": null,
+          "current_action": "Handling a bounded inbox",
+          "dedup_key": null,
+          "evidence_ref": "<WORK>/instance/controllers/00000000000000000000000000000001/receipt.json",
+          "health": "unknown",
+          "last_call": null,
+          "lease_token": null,
+          "network_generation": null,
+          "observation_id": 1,
+          "observed_at": "2026-01-01T00:00:00+00:00",
+          "operation_id": "00000000000000000000000000000001",
+          "process_state": "starting",
+          "session_ref": null,
+          "source": "controller-runtime"
+        },
+        {
+          "active_issue": null,
+          "agent_generation": 1,
+          "agent_id": "controller-01",
+          "assignment_generation": null,
+          "current_action": "Handling a bounded inbox",
+          "dedup_key": null,
+          "evidence_ref": "<WORK>/instance/controllers/00000000000000000000000000000003/receipt.json",
+          "health": "unknown",
+          "last_call": null,
+          "lease_token": null,
+          "network_generation": null,
+          "observation_id": 3,
+          "observed_at": "2026-01-01T00:00:00+00:00",
+          "operation_id": "00000000000000000000000000000003",
+          "process_state": "starting",
+          "session_ref": "example-session",
+          "source": "controller-runtime"
+        }
+      ],
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "Controller",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": "2026-01-01T00:00:00+00:00",
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": "example-session",
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "Worker",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "controller-01",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "controller-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "controller_disposition",
+          "issue_key": null,
+          "payload_json": "{\"acknowledged_message_ids\": [1], \"actor_role\": \"controller\", \"actor_type\": \"agent\", \"disposition\": \"handoff\", \"envelope_version\": 1, \"operation\": \"00000000000000000000000000000001\", \"reason\": \"Controller disposition recorded\", \"reason_code\": \"controller_disposition\", \"summary\": \"Synthetic decision\"}"
+        },
+        {
+          "actor": "controller-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "controller_disposition",
+          "issue_key": null,
+          "payload_json": "{\"acknowledged_message_ids\": [2], \"actor_role\": \"controller\", \"actor_type\": \"agent\", \"disposition\": \"handoff\", \"envelope_version\": 1, \"operation\": \"00000000000000000000000000000003\", \"reason\": \"Controller disposition recorded\", \"reason_code\": \"controller_disposition\", \"summary\": \"Synthetic decision\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"inspect\", \"command_id\": 1, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Synthetic authority change\", \"state\": \"paused\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 3, \"reason\": \"Synthetic authority change\", \"state\": \"active\"}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Decision waiting during pause",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": null,
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": "Decision waiting during pause",
+          "supersedes_message_id": null,
+          "to_agent": "controller-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "First decision",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": null,
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": "First decision",
+          "supersedes_message_id": null,
+          "to_agent": "controller-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "3"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "controller_decisions": [
+        {
+          "agent_id": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "handoff",
+          "operation": "00000000000000000000000000000001",
+          "result_json": "{\"disposition\": \"handoff\", \"summary\": \"Synthetic decision\", \"acknowledged_message_ids\": [1]}"
+        },
+        {
+          "agent_id": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "handoff",
+          "operation": "00000000000000000000000000000003",
+          "result_json": "{\"disposition\": \"handoff\", \"summary\": \"Synthetic decision\", \"acknowledged_message_ids\": [2]}"
+        }
+      ],
+      "controller_deliveries": [
+        {
+          "acknowledged_at": "2026-01-01T00:00:00+00:00",
+          "agent_id": "controller-01",
+          "attempted_at": "2026-01-01T00:00:00+00:00",
+          "message_id": 1,
+          "operation": "00000000000000000000000000000001"
+        },
+        {
+          "acknowledged_at": "2026-01-01T00:00:00+00:00",
+          "agent_id": "controller-01",
+          "attempted_at": "2026-01-01T00:00:00+00:00",
+          "message_id": 2,
+          "operation": "00000000000000000000000000000003"
+        }
+      ],
+      "controller_sessions": [
+        {
+          "agent_id": "controller-01",
+          "config_hash": "4a5abcb80a4afeca5dac318cc4be58a7685831995976bfe66c3ee7300cbc34e5",
+          "generation": 1,
+          "operation": "00000000000000000000000000000003",
+          "session_ref": "example-session",
+          "state": "idle"
+        }
+      ],
+      "message_receipts": [
+        {
+          "actor": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "acted",
+          "message_id": 1,
+          "note": "Recorded decision 00000000000000000000000000000001"
+        },
+        {
+          "actor": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "acted",
+          "message_id": 2,
+          "note": "Recorded decision 00000000000000000000000000000003"
+        }
+      ],
+      "runtime_resources": []
+    },
+    "details": {
+      "launches": [
+        {
+          "argv": [
+            "example-codex",
+            "exec",
+            "--json",
+            "--color",
+            "never",
+            "--sandbox",
+            "read-only",
+            "-m",
+            "example-model",
+            "--output-schema",
+            "<WORK>/instance/controllers/00000000000000000000000000000001/schema.json",
+            "--output-last-message",
+            "<WORK>/instance/controllers/00000000000000000000000000000001/result.json",
+            "-"
+          ],
+          "cwd": "<WORK>/example-project",
+          "packet": {
+            "agent_id": "controller-01",
+            "authorization_ref": "example-authorization",
+            "generation": 1,
+            "inbox": [
+              {
+                "actionable": 1,
+                "from_actor": "operator",
+                "issue_key": null,
+                "kind": "note",
+                "message_id": 1,
+                "payload_ref": null,
+                "summary": "First decision"
+              }
+            ],
+            "issues": [],
+            "limits": {
+              "builds": 1,
+              "controllers": 1,
+              "human_attention": 1,
+              "qa": 1,
+              "reviews": 1,
+              "workers": 2,
+              "workers_per_controller": 2
+            },
+            "network_generation": 1
+          }
+        },
+        {
+          "argv": [
+            "example-codex",
+            "exec",
+            "--json",
+            "--color",
+            "never",
+            "--sandbox",
+            "read-only",
+            "-m",
+            "example-model",
+            "resume",
+            "example-session",
+            "--output-schema",
+            "<WORK>/instance/controllers/00000000000000000000000000000003/schema.json",
+            "--output-last-message",
+            "<WORK>/instance/controllers/00000000000000000000000000000003/result.json",
+            "-"
+          ],
+          "cwd": "<WORK>/example-project",
+          "packet": {
+            "agent_id": "controller-01",
+            "authorization_ref": "example-authorization",
+            "generation": 1,
+            "inbox": [
+              {
+                "actionable": 1,
+                "from_actor": "operator",
+                "issue_key": null,
+                "kind": "note",
+                "message_id": 2,
+                "payload_ref": null,
+                "summary": "Decision waiting during pause"
+              }
+            ],
+            "issues": [],
+            "limits": {
+              "builds": 1,
+              "controllers": 1,
+              "human_attention": 1,
+              "qa": 1,
+              "reviews": 1,
+              "workers": 2,
+              "workers_per_controller": 2
+            },
+            "network_generation": 3
+          }
+        }
+      ],
+      "while_paused": {
+        "agent_commands": [
+          {
+            "args_json": "{}",
+            "command": "inspect",
+            "command_id": 1,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "dedup_key": "inspect-before-pause",
+            "expected_generation": 1,
+            "expires_at": "2026-01-01T00:15:00+00:00",
+            "priority": 100,
+            "reason": null,
+            "requested_by": "operator",
+            "state": "cancelled",
+            "supersedes_command_id": null,
+            "target_agent_id": "worker-01",
+            "updated_at": "2026-01-01T00:00:00+00:00"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "2"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "controller_deliveries": [
+          {
+            "acknowledged_at": "2026-01-01T00:00:00+00:00",
+            "agent_id": "controller-01",
+            "attempted_at": "2026-01-01T00:00:00+00:00",
+            "message_id": 1,
+            "operation": "00000000000000000000000000000001"
+          }
+        ],
+        "controller_sessions": [
+          {
+            "agent_id": "controller-01",
+            "config_hash": "4a5abcb80a4afeca5dac318cc4be58a7685831995976bfe66c3ee7300cbc34e5",
+            "generation": 1,
+            "operation": "00000000000000000000000000000001",
+            "session_ref": "example-session",
+            "state": "idle"
+          }
+        ]
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "instance/controllers/00000000000000000000000000000001/events.jsonl": "{\"type\": \"thread.started\", \"thread_id\": \"example-session\"}\n{\"type\": \"turn.completed\"}\n",
+      "instance/controllers/00000000000000000000000000000001/receipt.json": "{\n  \"agent_id\": \"controller-01\",\n  \"disposition\": {\n    \"acknowledged_message_ids\": [\n      1\n    ],\n    \"disposition\": \"handoff\",\n    \"summary\": \"Synthetic decision\"\n  },\n  \"finished_at\": \"2026-01-01T00:00:00+00:00\",\n  \"kind\": \"tigeryard.runtime.controller_receipt\",\n  \"message_ids\": [\n    1\n  ],\n  \"operation\": \"00000000000000000000000000000001\",\n  \"schema_version\": 1,\n  \"session_ref\": \"example-session\",\n  \"started_at\": \"2026-01-01T00:00:00+00:00\",\n  \"state\": \"exited\"\n}\n",
+      "instance/controllers/00000000000000000000000000000001/result.json": "{\"disposition\": \"handoff\", \"summary\": \"Synthetic decision\", \"acknowledged_message_ids\": [1]}\n",
+      "instance/controllers/00000000000000000000000000000001/schema.json": "{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"acknowledged_message_ids\": {\n      \"items\": {\n        \"type\": \"integer\"\n      },\n      \"type\": \"array\"\n    },\n    \"disposition\": {\n      \"enum\": [\n        \"handoff\",\n        \"resume_owner\",\n        \"blocked\",\n        \"escalate\",\n        \"refill\"\n      ],\n      \"type\": \"string\"\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"disposition\",\n    \"acknowledged_message_ids\",\n    \"summary\"\n  ],\n  \"type\": \"object\"\n}\n",
+      "instance/controllers/00000000000000000000000000000001/stderr.log": "",
+      "instance/controllers/00000000000000000000000000000003/events.jsonl": "{\"type\": \"thread.started\", \"thread_id\": \"example-session\"}\n{\"type\": \"turn.completed\"}\n",
+      "instance/controllers/00000000000000000000000000000003/receipt.json": "{\n  \"agent_id\": \"controller-01\",\n  \"disposition\": {\n    \"acknowledged_message_ids\": [\n      2\n    ],\n    \"disposition\": \"handoff\",\n    \"summary\": \"Synthetic decision\"\n  },\n  \"finished_at\": \"2026-01-01T00:00:00+00:00\",\n  \"kind\": \"tigeryard.runtime.controller_receipt\",\n  \"message_ids\": [\n    2\n  ],\n  \"operation\": \"00000000000000000000000000000003\",\n  \"schema_version\": 1,\n  \"session_ref\": \"example-session\",\n  \"started_at\": \"2026-01-01T00:00:00+00:00\",\n  \"state\": \"exited\"\n}\n",
+      "instance/controllers/00000000000000000000000000000003/result.json": "{\"disposition\": \"handoff\", \"summary\": \"Synthetic decision\", \"acknowledged_message_ids\": [2]}\n",
+      "instance/controllers/00000000000000000000000000000003/schema.json": "{\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"acknowledged_message_ids\": {\n      \"items\": {\n        \"type\": \"integer\"\n      },\n      \"type\": \"array\"\n    },\n    \"disposition\": {\n      \"enum\": [\n        \"handoff\",\n        \"resume_owner\",\n        \"blocked\",\n        \"escalate\",\n        \"refill\"\n      ],\n      \"type\": \"string\"\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"disposition\",\n    \"acknowledged_message_ids\",\n    \"summary\"\n  ],\n  \"type\": \"object\"\n}\n",
+      "instance/controllers/00000000000000000000000000000003/stderr.log": ""
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"controller-01\": \"exited\"}\n{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n{\n  \"generation\": 2,\n  \"ok\": true,\n  \"state\": \"paused\"\n}\n{\"controller-01\": \"paused\"}\n{\n  \"generation\": 3,\n  \"ok\": true,\n  \"state\": \"active\"\n}\n{\"controller-01\": \"exited\"}\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"controller-01\": \"exited\"}\n",
+        "step": "initial turn"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n",
+        "step": "inspect-before-pause"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 2,\n  \"ok\": true,\n  \"state\": \"paused\"\n}\n",
+        "step": "paused"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"controller-01\": \"paused\"}\n",
+        "step": "paused tick"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 3,\n  \"ok\": true,\n  \"state\": \"active\"\n}\n",
+        "step": "active"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"controller-01\": \"exited\"}\n",
+        "step": "resume exact session"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "scenario": "pause_resume"
+  },
+  "matrix_row": "M83",
+  "notes": "A real board pause cancels a pending inspect intent. Mail received during pause is only delivered after explicit reactivation; the old session is reused, not replaced.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/controllers.py",
+      "board/projection.py",
+      "board/board.py",
+      "adapters/codex_cli.py"
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "case_id": "issue-refill-002-ready-equals",
+  "description": "Ready work exactly fills free slots",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "controllers.json": "{\"limits\":{\"workers\":2}}\n",
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\"}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "",
+    "stdout": "{\n  \"outcome\": \"skipped\",\n  \"reason\": \"enough ready work: 1 ready for 1 free slots\",\n  \"base_sha\": null,\n  \"issues\": [],\n  \"dropped\": [],\n  \"errors\": []\n}\n"
+  },
+  "inputs": {
+    "argv": [
+      "--json"
+    ],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "Read limits.workers from controllers.json. The working row occupies one slot and the authorized row with an unresolved dependency does not count as ready.",
+  "setup": {
+    "config": {},
+    "dependencies": [
+      [
+        "example-waiting",
+        "example-working"
+      ]
+    ],
+    "files": {
+      "controllers.json": "{\"limits\":{\"workers\":2}}\n"
+    },
+    "issues": [
+      {
+        "issue_key": "example-ready",
+        "state": "ready",
+        "title": "Refresh the example index"
+      },
+      {
+        "issue_key": "example-working",
+        "state": "working",
+        "title": "Generate the example catalog"
+      },
+      {
+        "issue_key": "example-waiting",
+        "state": "authorized",
+        "title": "Check the example bundle"
+      }
+    ],
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

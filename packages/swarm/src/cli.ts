@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { skillsMain } from './skills/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]'
 
 class ReadError extends Error {}
 
@@ -41,6 +42,7 @@ function main(args: string[]): number {
     console.log(usage)
     return 0
   }
+  if (command === 'skills') return skillsMain(args.slice(1))
   if (command === undefined) return misuse('missing command')
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
@@ -93,9 +95,21 @@ function main(args: string[]): number {
   }
 }
 
-// One line per area: the subcommand's module exports run(argv): Promise<number>.
+// One line per area: the loader returns run(argv): Promise<number>.
 const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
+  trackers: () => import('./trackers/cli.ts'),
+  cutover: () => import('./cutover/cli.ts'),
+  mail: async () => {
+    const { run } = await import('./cutover/cli.ts')
+    return { run: (argv) => run(argv, 'mail') }
+  },
+  capture: async () => ({ run: (await import('./capture/cli.ts')).captureMain }),
+  secretary: async () => ({ run: (await import('./secretary/cli.ts')).secretaryMain }),
+  mirror: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['mirror', ...argv]) }),
+  overlap: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['overlap', ...argv]) }),
+  outcome: async () => ({ run: (argv) => import('./outcomes/cli.ts').then((mod) => mod.outcomeCommand(argv, console)) }),
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined

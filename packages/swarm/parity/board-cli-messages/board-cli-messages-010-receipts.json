@@ -1,0 +1,491 @@
+{
+  "case_id": "board-cli-messages-010-receipts",
+  "description": "Distinguish unseen, delivered, seen and terminal messages",
+  "expected": {
+    "db": {
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 1, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 2, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 3, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "worker-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "message_consumed",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"recipient\", \"actor_type\": \"agent\", \"disposition\": \"acted\", \"envelope_version\": 1, \"message_id\": 1, \"reason\": \"Recipient consumed a routed message\", \"reason_code\": \"message_consumed\"}"
+        },
+        {
+          "actor": "worker-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "message_consumed",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"recipient\", \"actor_type\": \"agent\", \"disposition\": \"superseded\", \"envelope_version\": 1, \"message_id\": 2, \"reason\": \"Recipient consumed a routed message\", \"reason_code\": \"message_consumed\"}"
+        },
+        {
+          "actor": "worker-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "message_consumed",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"recipient\", \"actor_type\": \"agent\", \"disposition\": \"not_applicable\", \"envelope_version\": 1, \"message_id\": 3, \"reason\": \"Recipient consumed a routed message\", \"reason_code\": \"message_consumed\"}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "First",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "cc5de96271f6f4d45c5a8e1125763bf08300e350b3a6760f716ccbcf1a91d80e",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "resolved",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Second",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "77208ec59ffa661077073d2ca84bc6039ef5c8f9ea66293a9f79d5d0b5815dea",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "superseded",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Third",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "45488dca9e7dbd7ea3d91681826f0b5014b6e19bb716bfd18f95da90c8817bbd",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 3,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "resolved",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "message_receipts": [
+        {
+          "actor": "worker-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "acted",
+          "message_id": 1,
+          "note": null
+        },
+        {
+          "actor": "worker-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "not_applicable",
+          "message_id": 3,
+          "note": null
+        },
+        {
+          "actor": "worker-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "superseded",
+          "message_id": 2,
+          "note": null
+        }
+      ],
+      "notification_attempts": [
+        {
+          "actor": "worker-01",
+          "attempt_count": 1,
+          "last_attempt_at": "2026-01-01T00:00:00+00:00",
+          "last_result": "sent",
+          "message_id": 2
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"worker-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"cc5de96271f6f4d45c5a8e1125763bf08300e350b3a6760f716ccbcf1a91d80e\",\n  \"message_id\": 1,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"77208ec59ffa661077073d2ca84bc6039ef5c8f9ea66293a9f79d5d0b5815dea\",\n  \"message_id\": 2,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"45488dca9e7dbd7ea3d91681826f0b5014b6e19bb716bfd18f95da90c8817bbd\",\n  \"message_id\": 3,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "fixture": "notification-attempt",
+        "rows_changed": 1
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": false,\n  \"disposition\": \"seen\",\n  \"duplicate\": false,\n  \"message_id\": 1,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": false,\n  \"disposition\": \"seen\",\n  \"duplicate\": true,\n  \"message_id\": 1,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"attempt_count\": 0,\n    \"body\": \"First\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"cc5de96271f6f4d45c5a8e1125763bf08300e350b3a6760f716ccbcf1a91d80e\",\n    \"delivery_state\": \"acknowledged\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"last_attempt_at\": null,\n    \"message_id\": 1,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"attempt_count\": 1,\n    \"body\": \"Second\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"77208ec59ffa661077073d2ca84bc6039ef5c8f9ea66293a9f79d5d0b5815dea\",\n    \"delivery_state\": \"delivered\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"last_attempt_at\": \"2026-01-01T00:00:00+00:00\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"attempt_count\": 0,\n    \"body\": \"Third\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"45488dca9e7dbd7ea3d91681826f0b5014b6e19bb716bfd18f95da90c8817bbd\",\n    \"delivery_state\": \"undelivered\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"last_attempt_at\": null,\n    \"message_id\": 3,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Third\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"45488dca9e7dbd7ea3d91681826f0b5014b6e19bb716bfd18f95da90c8817bbd\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 3,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Second\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"77208ec59ffa661077073d2ca84bc6039ef5c8f9ea66293a9f79d5d0b5815dea\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": true,\n  \"disposition\": \"acted\",\n  \"duplicate\": false,\n  \"message_id\": 1,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": true,\n  \"disposition\": \"acted\",\n  \"duplicate\": true,\n  \"message_id\": 1,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": true,\n  \"disposition\": \"superseded\",\n  \"duplicate\": false,\n  \"message_id\": 2,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": true,\n  \"disposition\": \"not_applicable\",\n  \"duplicate\": false,\n  \"message_id\": 3,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "unknown message: 99\n",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": "[]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"profile_key\": \"sprite\", \"status\": \"idle\"}"
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "First",
+          "--to-role",
+          "sprite",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Second",
+          "--to-role",
+          "sprite",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Third",
+          "--to-role",
+          "sprite",
+          "--actionable"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "fixture": "notification-attempt",
+        "id": 2
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "1",
+          "--disposition",
+          "seen",
+          "--note",
+          "Read for triage"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "1",
+          "--disposition",
+          "seen",
+          "--note",
+          "Duplicate cannot replace the note"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--agent",
+          "worker-01",
+          "--pending-for",
+          "worker-01",
+          "--after",
+          "999"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "sprite",
+          "--unseen-by",
+          "worker-01"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "1",
+          "--disposition",
+          "acted"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "1",
+          "--disposition",
+          "seen"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "2",
+          "--disposition",
+          "superseded"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "3",
+          "--disposition",
+          "not_applicable"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "99",
+          "--disposition",
+          "seen"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--agent",
+          "worker-01",
+          "--pending-for",
+          "worker-01"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "message_receipts",
+      "notification_attempts",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "Pending reads ignore the cursor and include acknowledged (seen) rows. One legacy delivery attempt is seeded. Terminal receipts update status and cannot be downgraded; repeat seen is idempotent.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

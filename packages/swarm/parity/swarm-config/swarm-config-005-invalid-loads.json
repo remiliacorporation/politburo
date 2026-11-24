@@ -1,0 +1,114 @@
+{
+  "case_id": "swarm-config-005-invalid-loads",
+  "description": "Reject malformed, duplicate, incomplete, unknown-field, and invalid-timestamp configs.",
+  "expected": {
+    "exit_code": 2,
+    "files": {
+      "invalid/duplicate.json": "{\"version\": 6, \"version\": 7}\n",
+      "invalid/incomplete.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"updated_at\": \"2026-02-03T04:00:00Z\"}\n",
+      "invalid/syntax.json": "{\n",
+      "invalid/timestamp.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-30T04:05:06Z\"}\n",
+      "invalid/unknown.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\", \"extra\": \"example\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "swarm-config: swarm-config.json: invalid JSON\nswarm-config: duplicate field: 'version'\nswarm-config: mob_limit_rule: missing required field\nswarm-config: unknown field: 'extra'\nswarm-config: updated_at: must be a valid UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: swarm-config.json: invalid JSON\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: duplicate field: 'version'\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: mob_limit_rule: missing required field\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: unknown field: 'extra'\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: updated_at: must be a valid UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)\n",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "show",
+          "--config",
+          "invalid/syntax.json"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "show",
+          "--config",
+          "invalid/duplicate.json"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "show",
+          "--config",
+          "invalid/incomplete.json"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "show",
+          "--config",
+          "invalid/unknown.json"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "show",
+          "--config",
+          "invalid/timestamp.json"
+        ],
+        "kind": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "",
+  "setup": {
+    "files": {
+      "invalid/duplicate.json": "{\"version\": 6, \"version\": 7}\n",
+      "invalid/incomplete.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"updated_at\": \"2026-02-03T04:00:00Z\"}\n",
+      "invalid/syntax.json": "{\n",
+      "invalid/timestamp.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-30T04:05:06Z\"}\n",
+      "invalid/unknown.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\", \"extra\": \"example\"}\n"
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
