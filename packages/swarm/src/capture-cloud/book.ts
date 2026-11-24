@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync,
-  writeFileSync, type BigIntStats } from 'node:fs'
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync,
+  unlinkSync, writeFileSync, type BigIntStats } from 'node:fs'
+import { dirname } from 'node:path'
 import { validateEnvelope } from './claim.ts'
 import type { Envelope } from './record.ts'
 
@@ -136,8 +137,23 @@ export class Book {
     if (this.#file) {
       const entries = new Map(this.#entries).set(cap, entry)
       const temp = `${this.#file}.${randomBytes(12).toString('hex')}.tmp`
-      writeFileSync(temp, JSON.stringify(Object.fromEntries(entries)), { mode: 0o600, flag: 'wx' })
+      const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+      try {
+        writeFileSync(fd, JSON.stringify(Object.fromEntries(entries)))
+        fsyncSync(fd)
+      } catch {
+        closeSync(fd)
+        try { unlinkSync(temp) } catch { /* incomplete temp must not stay */ }
+        throw new BookError('failed to sync book file')
+      }
+      closeSync(fd)
       try { renameSync(temp, this.#file) } catch (error) { unlinkSync(temp); throw error }
+      try {
+        const dirfd = openSync(dirname(this.#file), 'r')
+        try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
+      } catch {
+        throw new BookError('failed to sync book file')
+      }
     }
     this.#entries.set(cap, entry)
     if (entry.session) this.#sessions.set(entry.session, cap)
