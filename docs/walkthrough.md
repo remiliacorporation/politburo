@@ -164,11 +164,10 @@ vb tasks claim "${task_id:?}" --lease 15m
 
 Complete the task before the lease expires. Check that the row leaves
 **Work**. Then click **tasks** in the sidebar and select **completed**.
-Confirm that the same task appears. Open the row to read the full result,
-`Confirmed in the inspector`.
+Confirm that the same task appears with the result `UI verified`.
 
 ```bash
-vb tasks complete "${task_id:?}" 'Confirmed in the inspector'
+vb tasks complete "${task_id:?}" 'UI verified'
 ```
 
 ## 5. Run the swarm tests
