@@ -34,7 +34,7 @@ export type Task = {
   /** How many times it's been claimed: a claim's writes carry the epoch it was made at. */
   epoch: number
   /** Who holds it, until when. `token` is the SHA-256 of the claim's secret, hex. */
-  claim: { actor: string; principal?: string; until: string; token: string; binding?: TaskBinding; pauseEpoch?: number } | null
+  claim: { actor: string; principal?: string; until: string; holdUntil?: string; token: string; binding?: TaskBinding; pauseEpoch?: number } | null
   blocked: { kind: string | null; reason: string } | null
   /** An operator's hold, separate from legacy blocks. */
   parked?: TaskPark | null
@@ -302,11 +302,11 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' }
       task.state = 'ready'
       return true
     case 'task.claimed': {
-      const { epoch, until, token, by, binding, pauseEpoch } = event.payload
+      const { epoch, until, holdUntil, token, by, binding, pauseEpoch } = event.payload
       if (task.state !== 'ready' || epoch !== task.epoch + 1) return false
       task.state = 'claimed'
       task.epoch = epoch
-      task.claim = { actor: by.actor, principal: by.principal, until, token, ...(binding ? { binding } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }) }
+      task.claim = { actor: by.actor, principal: by.principal, until, token, ...(holdUntil ? { holdUntil } : {}), ...(binding ? { binding } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }) }
       return true
     }
     case 'task.renewed':

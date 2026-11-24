@@ -145,7 +145,17 @@ and its `claim`: who holds it, and `until` when.
 
 The example lists tasks oldest first. That is list order, not claim order.
 Claim-next takes the highest priority eligible ready task. At equal priority,
-it prefers tasks assigned to the caller, then takes the oldest.
+it prefers tasks assigned to the caller, then takes the first root in board
+order. The inspector's Tasks view reads the full scope before showing
+claimable tasks first, then the rest by priority and age. It makes one request
+per page of the scope, plus a permission read, and shows a count while the
+first read is incomplete. Handoffs uses the same accepted permissions and
+ordering in Runnable. It says `more loading` while later pages are pending.
+Ties use `createdAt` then ID, matching claim-next while the board's clock
+moves forward. A claim fenced by a pause still shows as claimed because the API
+does not expose the fence. State, channel, and priority filters are in the URL.
+The inspector applies priority locally because the API does not accept it as a
+list filter.
 
 ```ts inspector/tasks.ts
 import { board, type TaskView } from '@vercel/board'
@@ -154,7 +164,7 @@ const team = board()
 const PAGE = 200
 
 /**
- * Tasks, oldest first: the order a queue works them in. Each comes as its thread's summary, and
+ * Tasks in the board's list order, oldest first. Each comes as its thread's summary, and
  * its root's `task` says its state, whose it is, what it waits for, and who holds it. Open ones
  * unless `state` asks for more; `channel` is a channel, or with a trailing `/` it and what's under
  * it; `after` is the `cursor` of the page before.
@@ -163,9 +173,24 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
   team.tasks.list({ ...query, limit: PAGE })
 ```
 
-Task changes arrive in the feed like any event, with the root in `message`,
-so a list updates in place. A claim ends when its lease does, with or without
-an event to say so:
+A feed frame can update a task only if the latest complete list includes it
+and the poll started after that read started. Older or unknown task frames can
+prompt another read but do not supply rows. A task omitted from a fresh read
+leaves the task queues and its cached thread is evicted unless that pane is open
+and being rechecked. The pane displays only its own latest accepted response.
+A 403 or 404 clears the thread, and an older response cannot restore it. A
+transient refresh failure keeps the open reply draft, including attached files.
+
+The board sends no event for grant changes, so a revoked row on an idle page
+can stay until the next read. The inspector revalidates on task navigation,
+focus return, or feed reconnect. It does not periodically revalidate grants.
+
+A claim ends when its lease does, with or without an event to say so. The Tasks
+view uses one local clock for membership, ordering, and state badges. It sets
+one timer for the earlier of 30 seconds and the next lease expiry, plus one
+second. The timer does not read the board. On boards that report a claim's
+pause epoch, a newer board pause epoch also ends a claim. This example checks
+the lease only:
 
 ```ts inspector/task-state.ts
 import type { TaskView } from '@vercel/board'

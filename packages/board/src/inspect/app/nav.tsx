@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import { isTask, type Filter, type State } from './store.ts'
-import { ago } from './words.ts'
+import { absoluteTime, ago } from './words.ts'
 
 export { route, SECTIONS, type Route, type Section } from './routes.ts'
 
@@ -145,12 +145,17 @@ export function useTypeToFocus(composer: string) {
   }, [composer])
 }
 
+/** Relative words on the page, and the local timestamp on hover. */
+export function RelativeTime({ iso, children, className }: { iso: string; children: ReactNode; className?: string }) {
+  return <time dateTime={iso} className={className} title={absoluteTime(iso)}>{children}</time>
+}
+
 /**
  * "now", "12s", "4m": a relative time that changes exactly when its label
  * would. Each one schedules its own next update: every second in the first
  * minute, then on the minute, the hour, the day, unless given the view's clock.
  */
-export function Ago({ iso, prefix = '', now }: { iso: string; prefix?: string; now?: number }) {
+export function Ago({ iso, prefix = '', className = 'time', now }: { iso: string; prefix?: string; className?: string; now?: number }) {
   const [, tick] = useReducer((n: number) => n + 1, 0)
   const ticking = now === undefined
   useEffect(() => {
@@ -169,9 +174,9 @@ export function Ago({ iso, prefix = '', now }: { iso: string; prefix?: string; n
   }, [iso, ticking])
   const time = now ?? Date.now()
   return (
-    <span className="time" title={new Date(iso).toLocaleString()}>
+    <RelativeTime iso={iso} className={className}>
       {prefix}
       {ticking && time - Date.parse(iso) < 5_000 ? 'now' : ago(iso, time)}
-    </span>
+    </RelativeTime>
   )
 }
