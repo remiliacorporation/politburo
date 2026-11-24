@@ -8,7 +8,7 @@ import { board as boardOverHttp } from '../../board/src/server/index.default.ts'
 import { bearer, BOARD_URL, localUserToken, testLocal } from '../../board/test/tokens.ts'
 import {
   claimable, createWorkItem, markManualOnly, publishContract, readOutcomes, recordOutcome,
-  registerWorkSchemas, type NewWorkItem, type OutcomeRecord,
+  registerWorkSchemas, type NewWorkItem, type WorkOutcomeRecord,
 } from '../src/work/index.ts'
 
 const contract = `## Acceptable outcomes
@@ -206,7 +206,7 @@ test('concurrent same-tag creators cannot both report the same work ID', async (
   }
 })
 
-const sample: OutcomeRecord = {
+const sample: WorkOutcomeRecord = {
   work_id: 'web-1', party: 'party-a', attempt: 2, contract_revision: '42',
   outcome: { kind: 'pull_request', index: 0 }, result: 'valid',
   evidence: { ref: 'https://github.com/acme/web/pull/42', revision: 'abc123' },
