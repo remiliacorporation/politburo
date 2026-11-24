@@ -1,0 +1,143 @@
+{
+  "case_id": "controllers-pause-resume-003-attention-block",
+  "description": "Block a new wake at the root attention limit",
+  "expected": {
+    "db_rows": {
+      "agent_commands": [],
+      "agent_observations": [],
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "Controller",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "Worker",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "controller-01",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [],
+      "board_messages": [
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Needs operator attention",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": null,
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": "Needs operator attention",
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Would otherwise wake",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": null,
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": "Would otherwise wake",
+          "supersedes_message_id": null,
+          "to_agent": "controller-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "controller_decisions": [],
+      "controller_deliveries": [],
+      "controller_sessions": [],
+      "message_receipts": [],
+      "runtime_resources": []
+    },
+    "details": {
+      "launches": []
+    },
+    "exit_code": 1,
+    "files": {},
+    "log_lines": [],
+    "stderr": "configuration changed; reconcile and restart the service\n",
+    "stdout": "{\"controller-01\": \"human_attention_capacity\"}\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"controller-01\": \"human_attention_capacity\"}\n",
+        "step": "at attention capacity"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "configuration changed; reconcile and restart the service\n",
+        "stdout": "",
+        "step": "watch detects config change"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "scenario": "attention"
+  },
+  "matrix_row": "M83",
+  "notes": "A root attention request consumes the sole slot. Watch then refuses a changed configuration before another iteration.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/controllers.py",
+      "board/projection.py"
+    ]
+  }
+}

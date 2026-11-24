@@ -1,0 +1,471 @@
+{
+  "case_id": "board-cli-messages-001-hierarchy",
+  "description": "Register a four-tier agent hierarchy and filter it",
+  "expected": {
+    "db": {
+      "agents": [
+        {
+          "agent_id": "001-FOX",
+          "display_name": "001-FOX",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": 2,
+          "metadata_json": "{}",
+          "parent_agent_id": "spawner-01",
+          "profile_key": "worker",
+          "session_ref": null,
+          "status": "running",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "core-01",
+          "display_name": "core-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "coordinator",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "spawner-01",
+          "display_name": "spawner-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "core-01",
+          "profile_key": "coordinator",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": "example-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "001-FOX",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-02",
+          "display_name": "worker-02",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "001-FOX",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "retired",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"coordinator\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 10,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": \"001-FOX\", \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 11,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-02\", \"generation\": 1, \"parent_agent_id\": \"001-FOX\", \"status\": \"retired\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 12,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 1, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 13,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 2, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"coordinator\", \"version\": 2}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "harness_upserted",
+          "issue_key": null,
+          "payload_json": "{\"harness_key\": \"example-cli\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "harness_upserted",
+          "issue_key": null,
+          "payload_json": "{\"harness_key\": \"example-cli\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"core-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"spawner-01\", \"generation\": 1, \"parent_agent_id\": \"core-01\", \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 9,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"001-FOX\", \"generation\": 1, \"parent_agent_id\": \"spawner-01\", \"status\": \"running\"}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "Expired notice",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "98e2d27ad591a2a1ba9e9ed507ea9ad86dd05f29b5e18c6ae77baafedbd2cb24",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": null,
+          "valid_until": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "Role notice",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "e803b11130dc2262e849d55badb2ddb2cc8cc1d21b6a4ba532b1140d8d4a5cf2",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "harnesses": [
+        {
+          "active": 1,
+          "adapter": "example-adapter",
+          "capabilities_json": "{\"inspect\": true}",
+          "config_json": "{}",
+          "harness_key": "example-cli",
+          "title": "Example CLI",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/mob.md",
+          "personality": null,
+          "profile_key": "worker",
+          "title": "Worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        },
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/spawner.md",
+          "personality": null,
+          "profile_key": "coordinator",
+          "title": "Example coordinator",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 2
+        },
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"coordinator\",\n      \"version\": 1\n    },\n    {\n      \"profile_key\": \"worker\",\n      \"version\": 1\n    },\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"coordinator\",\n      \"version\": 2\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"harnesses\": [\n    \"example-cli\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"harnesses\": [\n    \"example-cli\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"core-01\",\n    \"spawner-01\",\n    \"001-FOX\",\n    \"worker-01\",\n    \"worker-02\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"e803b11130dc2262e849d55badb2ddb2cc8cc1d21b6a4ba532b1140d8d4a5cf2\",\n  \"message_id\": 1,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"98e2d27ad591a2a1ba9e9ed507ea9ad86dd05f29b5e18c6ae77baafedbd2cb24\",\n  \"message_id\": 2,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"agent_id\": \"core-01\",\n    \"child_count\": 1,\n    \"display_name\": \"core-01\",\n    \"generation\": 1,\n    \"harness_key\": null,\n    \"harness_title\": null,\n    \"last_seen_at\": null,\n    \"max_children\": null,\n    \"metadata_json\": \"{}\",\n    \"parent_agent_id\": null,\n    \"profile_key\": \"coordinator\",\n    \"profile_title\": \"Example coordinator\",\n    \"queue_count\": 0,\n    \"session_ref\": null,\n    \"status\": \"idle\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"agent_id\": \"worker-01\",\n    \"child_count\": 0,\n    \"display_name\": \"worker-01\",\n    \"generation\": 1,\n    \"harness_key\": \"example-cli\",\n    \"harness_title\": \"Example CLI\",\n    \"last_seen_at\": null,\n    \"max_children\": null,\n    \"metadata_json\": \"{}\",\n    \"parent_agent_id\": \"001-FOX\",\n    \"profile_key\": \"implementation-worker\",\n    \"profile_title\": \"Implementation worker\",\n    \"queue_count\": 0,\n    \"session_ref\": null,\n    \"status\": \"idle\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"agent_id\": \"001-FOX\",\n    \"child_count\": 1,\n    \"display_name\": \"001-FOX\",\n    \"generation\": 1,\n    \"harness_key\": null,\n    \"harness_title\": null,\n    \"last_seen_at\": null,\n    \"max_children\": 2,\n    \"metadata_json\": \"{}\",\n    \"parent_agent_id\": \"spawner-01\",\n    \"profile_key\": \"worker\",\n    \"profile_title\": \"Worker\",\n    \"queue_count\": 1,\n    \"session_ref\": null,\n    \"status\": \"running\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "[{\"instructions_path\": \"roles/coordinator.md\", \"profile_key\": \"coordinator\", \"title\": \"Coordinator\"}, {\"instructions_path\": \"roles/mob.md\", \"profile_key\": \"mob\", \"title\": \"Worker\"}, {\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}]"
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/spawner.md\", \"profile_key\": \"spawner\", \"title\": \"Example coordinator\"}"
+      },
+      {
+        "argv": [
+          "harness-upsert"
+        ],
+        "stdin": "{\"adapter\": \"example-adapter\", \"harness_key\": \"example-cli\", \"title\": \"Example CLI\"}"
+      },
+      {
+        "argv": [
+          "harness-upsert"
+        ],
+        "stdin": "{\"adapter\": \"example-adapter\", \"capabilities\": {\"inspect\": true}, \"harness_key\": \"example-cli\", \"title\": \"Example CLI\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "[{\"agent_id\": \"core-01\", \"display_name\": \"core-01\", \"profile_key\": \"coordinator\", \"status\": \"idle\"}, {\"agent_id\": \"spawner-01\", \"display_name\": \"spawner-01\", \"parent_agent_id\": \"core-01\", \"profile_key\": \"spawner\", \"status\": \"idle\"}, {\"agent_id\": \"001-FOX\", \"display_name\": \"001-FOX\", \"max_children\": 2, \"parent_agent_id\": \"spawner-01\", \"profile_key\": \"mob\", \"status\": \"running\"}, {\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"harness_key\": \"example-cli\", \"parent_agent_id\": \"001-FOX\", \"profile_key\": \"sprite\", \"status\": \"idle\"}, {\"agent_id\": \"worker-02\", \"display_name\": \"worker-02\", \"parent_agent_id\": \"001-FOX\", \"profile_key\": \"sprite\", \"status\": \"retired\"}]"
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Role notice",
+          "--to-role",
+          "mob"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Expired notice",
+          "--to-role",
+          "mob",
+          "--valid-until",
+          "2026-01-01T00:00:00+00:00"
+        ]
+      },
+      {
+        "argv": [
+          "agents",
+          "--parent",
+          "root"
+        ]
+      },
+      {
+        "argv": [
+          "agents",
+          "--parent",
+          "001-FOX",
+          "--status",
+          "idle"
+        ]
+      },
+      {
+        "argv": [
+          "agents",
+          "--parent",
+          "spawner-01",
+          "--status",
+          "running"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "harnesses",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "Core and spawner share a functional role; aliases store canonical profile keys. Updating the same profile bumps its version; updating a harness refreshes its fields. Child and queue counts exclude the retired child and expired message respectively.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

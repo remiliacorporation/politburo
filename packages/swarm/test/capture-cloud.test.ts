@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { chmodSync, closeSync, constants, existsSync, mkdtempSync, openSync, readFileSync,
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync,
   readSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { Book, createReceiver, jsonlLedger, type Claim, type Envelope, type SpendRecord }
   from '../src/capture-cloud/index.ts'
@@ -372,8 +372,8 @@ test('restart acknowledges a row that was never synced', async (t) => {
   assert.notEqual(response.status, 200, 'restart acknowledged a row that was never synced')
 })
 
-// Catches a restart acknowledging a row whose directory entry was never synced.
-test('restart acknowledges a row whose directory entry was never synced', async (t) => {
+// Catches syncing dirname(path) so a /proc/self/fd path refuses a durable inode.
+test('a ledger opened through /proc/self/fd syncs the file inode’s directory', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
   const ledgerFile = join(dir, 'spend.jsonl'), bookFile = join(dir, 'book.json')
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -382,18 +382,93 @@ test('restart acknowledges a row whose directory entry was never synced', async 
   book.bind(capability, session)
   const dedupe_key = `claude_cloud:${createHash('sha256')
     .update(JSON.stringify([envelope.trace.execution_id, claim.source_event_key])).digest('hex').slice(0, 40)}`
-  writeFileSync(ledgerFile, `${JSON.stringify({ dedupe_key })}\n`)
+  writeFileSync(ledgerFile, `${JSON.stringify({ dedupe_key })}\n`, { mode: 0o600 })
   const keep = openSync(ledgerFile, 'r')
   t.after(() => { try { closeSync(keep) } catch { /* already closed */ } })
-  let ledger: ReturnType<typeof jsonlLedger>
-  try {
-    ledger = jsonlLedger(`/proc/self/fd/${keep}`)
-  } catch (error) {
-    assert.match((error as Error).message, /failed to sync existing ledger/)
-    return
-  }
+  const ledger = jsonlLedger(`/proc/self/fd/${keep}`)
   const server = await createReceiver({ book, ledger }).listen(0)
   t.after(() => server.close())
   const response = await post(`http://127.0.0.1:${server.port}`, capability)
-  assert.notEqual(response.status, 200, 'restart acknowledged a row whose directory was never synced')
+  assert.equal(response.status, 200, 'durable row on the opened inode must be a duplicate')
+})
+
+test('a capability can write a claim and cannot read the ledger back', async (t) => {
+  const f = fixture(t)
+  const url = await f.listen()
+  const unread = await fetch(`${url}/v1/claims/${f.capability}`, { signal: AbortSignal.timeout(5_000) })
+  assert.equal(unread.status, 404)
+  assert.equal((await post(url, f.capability)).status, 202)
+  assert.equal(f.records().length, 1)
+  const after = await fetch(`${url}/v1/claims/${f.capability}`, { signal: AbortSignal.timeout(5_000) })
+  assert.equal(after.status, 404)
+})
+
+test('an existing world-readable ledger is refused', (t) => {
+  const { ledgerFile } = paths(t)
+  writeFileSync(ledgerFile, '', { mode: 0o644 })
+  assert.throws(() => jsonlLedger(ledgerFile), /unsafe ledger file/)
+  chmodSync(ledgerFile, 0o600)
+  assert.equal(typeof jsonlLedger(ledgerFile).append, 'function')
+})
+
+test('a file symlink as the ledger path refuses to start if the target directory cannot be synced', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-capture-cloud-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const realDir = join(dir, 'real'), aliasDir = join(dir, 'alias')
+  mkdirSync(realDir)
+  mkdirSync(aliasDir)
+  const target = join(realDir, 'spend.jsonl'), alias = join(aliasDir, 'spend.jsonl')
+  writeFileSync(target, `${JSON.stringify({ dedupe_key: 'x' })}\n`, { mode: 0o600 })
+  symlinkSync(target, alias)
+  const { dev, ino } = statSync(realDir, { bigint: true })
+  const preload = join(dir, 'fail-target-dir.cjs')
+  writeFileSync(preload, `
+    const fs = require('node:fs')
+    const sync = fs.fsyncSync
+    fs.fsyncSync = fd => {
+      const stat = fs.fstatSync(fd, { bigint: true })
+      if (stat.dev === ${dev}n && stat.ino === ${ino}n) {
+        throw Object.assign(new Error('injected target directory fsync failure'), { code: 'EIO' })
+      }
+      return sync(fd)
+    }
+    require('node:module').syncBuiltinESMExports()
+  `)
+  const result = spawnSync(process.execPath, [
+    '--require', preload, '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
+    `import { jsonlLedger } from ${JSON.stringify(new URL('../src/capture-cloud/record.ts', import.meta.url).href)}
+     jsonlLedger(${JSON.stringify(alias)})
+     console.log('opened')`,
+  ], { encoding: 'utf8', timeout: 5_000 })
+  if (result.error) throw result.error
+  assert.notEqual(result.status, 0, 'symlink ledger opened after failing to sync the target directory')
+  assert.equal(result.stdout.includes('opened'), false)
+  assert.match(result.stderr, /failed to sync existing ledger/)
+})
+
+test('issue does not report a capability before the book file is synced', (t) => {
+  const { bookFile } = paths(t)
+  const preload = join(dirname(bookFile), 'fail-book-sync.cjs')
+  writeFileSync(preload, `
+    const fs = require('node:fs')
+    const sync = fs.fsyncSync
+    fs.fsyncSync = fd => {
+      const stat = fs.fstatSync(fd)
+      if (stat.isFile() && stat.size > 2) {
+        throw Object.assign(new Error('injected book fsync failure'), { code: 'EIO' })
+      }
+      return sync(fd)
+    }
+    require('node:module').syncBuiltinESMExports()
+  `)
+  const result = spawnSync(process.execPath, [
+    '--require', preload, '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
+    `import { Book } from ${JSON.stringify(new URL('../src/capture-cloud/book.ts', import.meta.url).href)}
+     const issued = new Book({ file: ${JSON.stringify(bookFile)} }).issue(${JSON.stringify(envelope)}, { ttlMs: 60_000 })
+     console.log(issued.capability)`,
+  ], { encoding: 'utf8', timeout: 5_000 })
+  if (result.error) throw result.error
+  assert.notEqual(result.status, 0, 'issue succeeded without a synced book')
+  assert.equal(result.stdout.includes('cap_'), false, 'capability printed before sync')
+  assert.match(result.stderr, /failed to sync book file/)
 })

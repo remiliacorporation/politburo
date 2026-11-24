@@ -1,0 +1,424 @@
+{
+  "case_id": "board-cli-issues-010-dependency",
+  "description": "Add, resolve and remove an issue dependency",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Enable claims on the isolated board\", \"state\": \"active\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "issue_imported",
+          "issue_key": "example-prerequisite",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "dependency_added",
+          "issue_key": "example-issue",
+          "payload_json": "{\"contract\": \"Example prerequisite result\", \"depends_on\": \"example-prerequisite\", \"kind\": \"outcome\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "issue_updated",
+          "issue_key": "example-prerequisite",
+          "payload_json": "{\"priority\": 3, \"version\": 2}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "dependency_resolved",
+          "issue_key": "example-issue",
+          "payload_json": "{\"depends_on\": \"example-prerequisite\", \"evidence_ref\": \"example-artifact:prerequisite\", \"kind\": \"outcome\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "dependency_removed",
+          "issue_key": "example-issue",
+          "payload_json": "{\"depends_on\": \"example-prerequisite\", \"kind\": \"outcome\", \"reason\": \"Retire the satisfied edge\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "claimed",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"controller\": \"controller-01\", \"envelope_version\": 1, \"expires_at\": \"2026-01-01T00:15:00+00:00\", \"owner\": \"worker-01\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\"}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "2"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 2,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": "2026-01-01T00:15:00+00:00",
+          "lease_token": "000000000000000000000000000000000002",
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "claimed",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 5,
+          "worktree": null
+        },
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-prerequisite",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "done",
+          "title": "Example prerequisite",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 2,
+          "worktree": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"action\": \"add\",\n  \"depends_on\": \"example-prerequisite\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"version\": 2\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "dependency already exists\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "dependency would create a cycle\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-prerequisite\",\n      \"version\": 2\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "issue has unresolved dependencies: example-prerequisite (kind: outcome, contract: Example prerequisite result)\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "resolving a dependency requires --evidence-ref\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"action\": \"resolve\",\n  \"depends_on\": \"example-prerequisite\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"version\": 3\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"approved_scope\": null,\n  \"assignment_generation\": 1,\n  \"base_sha\": null,\n  \"blocker\": null,\n  \"branch\": null,\n  \"controller\": null,\n  \"created_at\": \"2026-01-01T00:00:00+00:00\",\n  \"dependencies\": [\n    {\n      \"contract\": \"Example prerequisite result\",\n      \"depends_on\": \"example-prerequisite\",\n      \"issue_key\": \"example-issue\",\n      \"kind\": \"outcome\",\n      \"resolved_at\": \"2026-01-01T00:00:00+00:00\"\n    }\n  ],\n  \"execution_attempts\": [],\n  \"head_sha\": null,\n  \"issue_key\": \"example-issue\",\n  \"issue_priority\": 3,\n  \"lane\": \"unassigned\",\n  \"last_activity_at\": \"2026-01-01T00:00:00+00:00\",\n  \"lease_expires_at\": null,\n  \"lease_token\": null,\n  \"messages\": [],\n  \"model\": null,\n  \"owner\": null,\n  \"packet_path\": null,\n  \"packet_sha256\": null,\n  \"pipeline_stages\": [],\n  \"priority\": 100,\n  \"priority_label\": \"3 Normal\",\n  \"provider\": null,\n  \"qa_runs\": [],\n  \"review_marks\": [],\n  \"session_id\": null,\n  \"state\": \"ready\",\n  \"title\": \"Example issue\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"version\": 3,\n  \"worktree\": null\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "removing a dependency requires --reason\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"action\": \"remove\",\n  \"depends_on\": \"example-prerequisite\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"version\": 4\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"assignment_generation\": 2,\n  \"issue_key\": \"example-issue\",\n  \"lease_expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"lease_token\": \"000000000000000000000000000000000002\",\n  \"ok\": true,\n  \"version\": 5\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "add",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "1",
+          "--contract",
+          "Example prerequisite result"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "add",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "2"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "add",
+          "example-prerequisite",
+          "example-issue",
+          "--expected-version",
+          "1"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "issue_key": "example-prerequisite",
+          "state": "done",
+          "title": "Example prerequisite"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "claim",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--controller",
+          "controller-01",
+          "--owner",
+          "worker-01",
+          "--provider",
+          "example-provider",
+          "--model",
+          "example-model",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "resolve",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "2"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "resolve",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "2",
+          "--evidence-ref",
+          "example-artifact:prerequisite"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "show",
+          "example-issue"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "remove",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "3"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "remove",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "3",
+          "--reason",
+          "Retire the satisfied edge"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "claim",
+          "example-issue",
+          "--expected-version",
+          "4",
+          "--controller",
+          "controller-01",
+          "--owner",
+          "worker-01",
+          "--provider",
+          "example-provider",
+          "--model",
+          "example-model",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "A prerequisite marked done still blocks claim until the edge is resolved. Duplicate and cyclic edges, missing evidence, and a missing removal reason are refused. Removing a resolved edge allows claim.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "network",
+          "active",
+          "--reason",
+          "Enable claims on the isolated board"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": [
+          {
+            "issue_key": "example-issue",
+            "state": "ready",
+            "title": "Example issue"
+          },
+          {
+            "issue_key": "example-prerequisite",
+            "state": "ready",
+            "title": "Example prerequisite"
+          }
+        ]
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py"
+    ]
+  }
+}

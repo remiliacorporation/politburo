@@ -1,0 +1,47 @@
+{
+  "case_id": "liveness-004-missing-read",
+  "description": "Reading a nonexistent heartbeat returns no record.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "notes/alive/example.wake": null
+    },
+    "log_lines": [],
+    "runs": [
+      {
+        "return": null,
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "collect": [
+      "notes/alive/example.wake"
+    ],
+    "kind": "function",
+    "steps": [
+      {
+        "args": {
+          "path": "notes/alive/example.wake"
+        },
+        "function": "read"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py"
+    ]
+  }
+}
