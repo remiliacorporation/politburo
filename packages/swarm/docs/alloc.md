@@ -1,6 +1,6 @@
 # Allocate serials and names
 
-`swarm alloc serial` takes the next mob serial from `mob-serial.txt` in `--dir`, or in `SWARM_SERIAL_DIR`. Pass `--json` for `{ "serial": N }`. A serial is never reused.
+`swarm alloc serial` claims the next mob serial as an exclusive file under `serials/` in `--dir`, or in `SWARM_SERIAL_DIR`. `mob-serial.txt` is a best-effort mirror of the highest claim and can lag. Pass `--json` for `{ "serial": N }`. A serial is never reused.
 
 `swarm alloc name` takes the next free name from the party config pools:
 

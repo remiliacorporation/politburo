@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -12,7 +12,7 @@ import {
 const cwd = new URL('../', import.meta.url)
 
 function tempDir(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), 'swarm-alloc-'))
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), 'swarm-alloc-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   return dir
 }
@@ -27,17 +27,24 @@ function run(args: string[], env?: NodeJS.ProcessEnv) {
   return node(['src/cli.ts', 'alloc', ...args], env)
 }
 
-function patchedSerial(dir: string, fault: string) {
+function patchedSerial(dir: string, fault: string, ...paths: string[]) {
   return node(['--input-type=module', '-e', `
     import { spawnSync } from 'node:child_process'
     import fs from 'node:fs'
     import { syncBuiltinESMExports } from 'node:module'
     import { join } from 'node:path'
-    const [dir, fault] = process.argv.slice(1)
+    const [dir, fault, link, target] = process.argv.slice(1)
     const claim = join(dir, 'serials', '2')
+    const realClaim = join(fs.realpathSync(dir), 'serials', '2')
     const counter = join(dir, 'mob-serial.txt')
+    const claimCreate = (path, flags) => flags === 'wx' && (
+      path === claim || path === realClaim || /^\\/proc\\/self\\/fd\\/\\d+\\/2$/.test(String(path))
+    )
     const write = fs.writeFileSync
     const rename = fs.renameSync
+    const open = fs.openSync
+    const mkdir = fs.mkdirSync
+    let claimFd
     let failure
     function compete(expected) {
       const other = spawnSync(process.execPath, ['src/cli.ts', 'alloc', 'serial', '--dir', dir], {
@@ -49,32 +56,56 @@ function patchedSerial(dir: string, fault: string) {
       }
       return other.stdout
     }
-    // Keep the real filesystem; inject faults at the write and publish boundaries.
+    // Keep the real filesystem; inject faults at the claim, write, and publish boundaries.
+    fs.mkdirSync = (path, ...args) => {
+      const result = mkdir(path, ...args)
+      if (path === link && fault === 'symlink-claims') {
+        fs.rmdirSync(link)
+        fs.symlinkSync(target, link)
+      }
+      return result
+    }
+    fs.openSync = (path, ...args) => {
+      const creating = claimCreate(path, args[0])
+      if (creating && fault === 'race') process.stdout.write(compete('2\\n'))
+      // Swap serials/ for a symlink after the directory fd is held, before the claim create.
+      if (args[0] === 'wx' && fault === 'swap-held' && /^\\/proc\\/self\\/fd\\/\\d+\\/\\d+$/.test(String(path))) {
+        fs.renameSync(link, link + '.held')
+        fs.symlinkSync(target, link)
+      }
+      const fd = open(path, ...args)
+      if (creating) claimFd = fd
+      return fd
+    }
     fs.writeFileSync = (path, ...args) => {
-      if (path === claim && fault === 'race') process.stdout.write(compete('2\\n'))
+      const isClaim = path === claimFd
+      const isMirror = String(path).includes('.mob-serial-')
+      if ((isClaim && fault === 'claim-enospc') || (isMirror && fault === 'enospc')) {
+        if (isMirror) write(path, '2', args[1]) // ENOSPC can leave a partially written temp file.
+        const error = new Error('ENOSPC: no space left on device')
+        error.code = 'ENOSPC'
+        throw error
+      }
       write(path, ...args)
-      if (path === claim && fault === 'kill') process.kill(process.pid, 'SIGKILL')
-      if ((path === claim && fault === 'malformed') ||
-          (path.includes('.mob-serial-') && fault === 'late-malformed')) write(counter, 'broken')
+      if (isClaim && fault === 'kill') process.kill(process.pid, 'SIGKILL')
+      if (isMirror && fault === 'kill-mirror') process.kill(process.pid, 'SIGKILL')
+      if (isClaim && fault === 'retarget') {
+        fs.unlinkSync(link)
+        fs.symlinkSync(target, link)
+      }
+      if ((isClaim && fault === 'malformed') || (isMirror && fault === 'late-malformed')) write(counter, 'broken')
     }
     fs.renameSync = (from, to) => {
-      if (to === counter && fault === 'rename-fails') throw new Error('injected rename failure')
-      if (to === counter && fault === 'kill-holder') process.kill(process.pid, 'SIGKILL')
-      if (to === counter && fault === 'publish' && fs.readFileSync(from, 'utf8') === '2\\n') {
-        compete('3\\n')
-        const before = Number(fs.readFileSync(counter, 'utf8'))
-        rename(from, to)
-        // Check the published version before the first writer can repair it.
-        if (Number(fs.readFileSync(counter, 'utf8')) < before) failure = new Error('mirror went backwards')
-        return
+      if (to === counter) {
+        if (fault === 'rename-fails') throw new Error('injected rename failure')
+        if (fault === 'publish' || fault === 'publish-contended') {
+          const staged = Number(fs.readFileSync(from, 'utf8'))
+          // Publish a peer's higher serial just before the stale rename. Stop after six
+          // peers so an uncapped writer also finishes, but leaves a different counter.
+          if (staged === 2 || (fault === 'publish-contended' && staged < 8)) compete((staged + 1) + '\\n')
+        }
       }
       rename(from, to)
-    }
-    if (fault === 'recover') {
-      let spins = 0
-      Atomics.wait = () => {
-        if (++spins > 1) throw new Error('dead owner delayed the mirror beyond one spin')
-      }
     }
     syncBuiltinESMExports()
     const { allocateSerial } = await import('./src/index.ts')
@@ -82,7 +113,7 @@ function patchedSerial(dir: string, fault: string) {
     // Don't let the best-effort mirror catch hide a test failure.
     if (failure) throw failure
     console.log(serial)
-  `, dir, fault])
+  `, dir, fault, ...paths])
 }
 
 async function collect(child: ChildProcess) {
@@ -105,9 +136,12 @@ test('concurrent CLI allocations duplicate or skip serials or leave the live cou
     assert.equal(status, 0, stderr || `child exited on ${signal}`)
     return JSON.parse(stdout).serial
   })
-  assert.equal(new Set(serials).size, 100)
+  const distinct = new Set(serials).size
+  const finalCounter = readFileSync(counter, 'utf8')
+  assert.equal(distinct, 100)
   assert.deepEqual(serials.sort((a, b) => a - b), Array.from({ length: 100 }, (_, i) => 4201 + i))
-  assert.equal(readFileSync(counter, 'utf8'), '4300\n')
+  assert.equal(finalCounter, '4300\n')
+  t.diagnostic(`${results.length} children, ${distinct} distinct serials ${serials[0]}..${serials.at(-1)}, counter ${finalCounter.trim()}`)
 })
 
 test('SIGKILL after a claim does not block the next writer or let it reuse the claim', (t) => {
@@ -120,6 +154,61 @@ test('SIGKILL after a claim does not block the next writer or let it reuse the c
   const survivor = run(['serial', '--dir', dir])
   assert.equal(survivor.status, 0, survivor.stderr)
   assert.equal(survivor.stdout, '3\n')
+  assert.equal(readFileSync(counter, 'utf8'), '3\n')
+})
+
+test('a SIGKILLed allocator leaves a lock file in the dir', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const child = patchedSerial(dir, 'kill-mirror')
+  assert.equal(child.signal, 'SIGKILL', child.stderr || 'did not reach the mirror write')
+  assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith('.counter.lock')), [])
+})
+
+test('a full disk during the mirror write fails the allocation or burns the serial', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const result = patchedSerial(dir, 'enospc')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '2\n')
+  assert.deepEqual(readdirSync(dir).sort(), ['mob-serial.txt', 'serials'])
+  const next = run(['serial', '--dir', dir])
+  assert.equal(next.status, 0, next.stderr)
+  assert.equal(next.stdout, '3\n')
+})
+
+test('a full disk writing claim metadata still returns the claimed serial', (t) => {
+  const dir = tempDir(t)
+  assert.equal(allocateSerial(dir), 1)
+  const result = patchedSerial(dir, 'claim-enospc')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '2\n')
+  assert.equal(readFileSync(join(dir, 'serials', '2'), 'utf8'), '')
+  assert.equal(allocateSerial(dir), 3)
+})
+
+test('a --dir ancestor retarget splits the mirror from serials/ or causes an alias to reuse a serial', (t) => {
+  const root = tempDir(t)
+  const real = join(root, 'real')
+  const nested = join(real, 'nested')
+  const other = join(root, 'other')
+  mkdirSync(nested, { recursive: true })
+  mkdirSync(join(other, 'nested'), { recursive: true })
+  const counter = join(nested, 'mob-serial.txt')
+  writeFileSync(counter, '1\n')
+  const ancestor = join(root, 'via')
+  const alias = join(root, 'alias')
+  symlinkSync(real, ancestor)
+  symlinkSync(nested, alias)
+  const first = patchedSerial(join(ancestor, 'nested'), 'retarget', ancestor, other)
+  assert.equal(first.status, 0, first.stderr)
+  assert.equal(first.stdout, '2\n')
+  assert.ok(readdirSync(join(nested, 'serials')).includes('2'))
+  assert.equal(readFileSync(counter, 'utf8'), '2\n')
+  assert.deepEqual(readdirSync(join(other, 'nested')), [])
+  const second = run(['serial', '--dir', alias])
+  assert.equal(second.status, 0, second.stderr)
+  assert.equal(second.stdout, '3\n')
   assert.equal(readFileSync(counter, 'utf8'), '3\n')
 })
 
@@ -162,7 +251,7 @@ test('a malformed live counter is overwritten or issues a claim', (t) => {
   assert.equal(repaired.stdout, '1\n')
 })
 
-test('out-of-order publish lowers the mirror before repair', (t) => {
+test('an out-of-order publish leaves the mirror behind the highest claim', (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
   const result = patchedSerial(dir, 'publish')
@@ -171,14 +260,16 @@ test('out-of-order publish lowers the mirror before repair', (t) => {
   assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '3\n')
 })
 
-test('a dead mirror lock owner delays allocation beyond one spin', (t) => {
+test('a contended mirror stops after five publish rounds', (t) => {
   const dir = tempDir(t)
   assert.equal(allocateSerial(dir), 1)
-  assert.equal(patchedSerial(dir, 'kill-holder').signal, 'SIGKILL')
-  const result = patchedSerial(dir, 'recover')
+  const result = patchedSerial(dir, 'publish-contended')
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(result.stdout, '3\n')
-  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '3\n')
+  assert.equal(result.stdout, '2\n')
+  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '6\n')
+  assert.deepEqual(readdirSync(join(dir, 'serials')).sort(), ['1', '2', '3', '4', '5', '6', '7'])
+  assert.equal(allocateSerial(dir), 8)
+  assert.equal(readFileSync(join(dir, 'mob-serial.txt'), 'utf8'), '8\n')
 })
 
 for (const [fault, expected] of [['malformed', 'broken'], ['late-malformed', 'broken'], ['rename-fails', '1\n']] as const) {
@@ -203,6 +294,29 @@ for (const name of ['serials', 'mob-serial.txt']) {
     assert.deepEqual(readdirSync(target), [])
   })
 }
+
+test('serials/ swapped after the directory is opened does not write outside --dir', (t) => {
+  const dir = tempDir(t)
+  const target = tempDir(t)
+  const claims = join(dir, 'serials')
+  const result = patchedSerial(dir, 'swap-held', claims, target)
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '1\n')
+  assert.deepEqual(readdirSync(target), [])
+  assert.deepEqual(readdirSync(`${claims}.held`), ['1'])
+})
+
+test('serials/ swapped for a symlink after lstat is refused without writing outside --dir', (t) => {
+  const dir = tempDir(t)
+  const target = tempDir(t)
+  const claims = join(dir, 'serials')
+  const result = patchedSerial(dir, 'symlink-claims', claims, target)
+  assert.deepEqual(readdirSync(target), [])
+  assert.equal(result.status, 1, result.stderr)
+  assert.equal(result.stdout, '')
+  assert.ok(result.stderr.includes(`symlink refused: ${claims}`))
+  assert.deepEqual(readdirSync(dir), ['serials'])
+})
 
 test('stray claim names inflate the next serial or wedge allocation', (t) => {
   const dir = tempDir(t)
