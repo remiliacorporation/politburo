@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,18 +9,26 @@ import { test, type TestContext } from 'node:test'
 const skills = ['mob', 'mob-creation', 'policy', 'research', 'reviewer', 'spawner']
 const env: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
 
-function run(dir: string, ...flags: string[]) {
-  return runWithEnv(env, dir, ...flags)
-}
-
-function runWithEnv(spawnEnv: NodeJS.ProcessEnv, dir: string, ...flags: string[]) {
-  const result = spawnSync(process.execPath, ['src/cli.ts', 'skills', 'sync', '--dir', dir, ...flags], {
+function runSkillsWithEnv(spawnEnv: NodeJS.ProcessEnv, ...args: string[]) {
+  const result = spawnSync(process.execPath, ['src/cli.ts', 'skills', ...args], {
     cwd: new URL('../', import.meta.url),
     encoding: 'utf8',
     env: spawnEnv,
   })
   if (result.error) throw result.error
   return result
+}
+
+function runSkills(...args: string[]) {
+  return runSkillsWithEnv(env, ...args)
+}
+
+function runWithEnv(spawnEnv: NodeJS.ProcessEnv, dir: string, ...flags: string[]) {
+  return runSkillsWithEnv(spawnEnv, 'sync', '--dir', dir, ...flags)
+}
+
+function run(dir: string, ...flags: string[]) {
+  return runWithEnv(env, dir, ...flags)
 }
 
 function install(dir: string, ...flags: string[]) {
@@ -259,4 +268,148 @@ test('sync rejects an unknown party field with an error and no writes', (t) => {
   assert.equal(result.status, 1)
   assert.match(result.stderr, /^error:/m)
   assert.ok(!existsSync(dir))
+})
+
+function plan(dir: string, { tag = 'plb', job = 'build' } = {}, ...flags: string[]) {
+  return runSkills('plan-mob', '--skills', dir, '--tag', tag, '--job', job, '--serial', '280', ...flags)
+}
+
+test('plan-mob does not reuse live species or lose the serial in the ID and title', (t) => {
+  const root = tempDir(t)
+  const dir = join(root, 'skills')
+  const flags = party(root, species(['HERON', 'OTTER']))
+  install(dir, ...flags)
+  for (const [live, mob] of [['HERON', '280-OTTER'], ['HERON,OTTER,HERON2', '280-HERON3']] as const) {
+    const { status, stdout, stderr } = plan(dir, {}, ...flags, '--live', live, '--json')
+    assert.equal(status, 0, stderr)
+    const output = JSON.parse(stdout)
+    assert.equal(output.mob, mob)
+    assert.equal(output.title, `plb ${mob}`)
+  }
+})
+
+test('plan-mob does not suffix sprite items before their pool is exhausted or accept an unknown sprite job', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const flags = Array.from({ length: 4 }, () => ['--sprite', 'review']).flat()
+  const { status, stdout, stderr } = plan(dir, {}, ...flags, '--json')
+  assert.equal(status, 0, stderr)
+  const { mob, sprites } = JSON.parse(stdout)
+  assert.deepEqual(sprites, ['SWORD', 'BOW', 'TRIDENT', 'SWORD2'].map((item) => `${mob}.${item}`))
+  const unknown = plan(dir, {}, '--sprite', 'unknown-job')
+  assert.equal(unknown.status, 1)
+  assert.equal(unknown.stdout, '')
+})
+
+test('plan-mob does not miss live species with whitespace or numeric suffixes', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  for (const [live, mob] of [['BEE, DOLPHIN', 'BEE2'], ['BEE2', 'DOLPHIN'], ['BEE2,DOLPHIN', 'BEE3']] as const) {
+    const { status, stdout, stderr } = plan(dir, {}, '--live', live, '--json')
+    assert.equal(status, 0, stderr)
+    assert.equal(JSON.parse(stdout).mob, `280-${mob}`, live)
+  }
+})
+
+test('plan-mob does not reject a numeric suffix on an eight-character species', (t) => {
+  const root = tempDir(t)
+  const dir = join(root, 'skills')
+  const flags = party(root, species(['PILLAGER', 'OTTER']))
+  install(dir, ...flags)
+  const { status, stdout, stderr } = plan(dir, {}, ...flags, '--live', 'PILLAGER,OTTER', '--json')
+  assert.equal(status, 0, stderr)
+  assert.equal(JSON.parse(stdout).mob, '280-PILLAGER2')
+})
+
+test('plan-mob refuses species with embedded newlines or lowercase letters', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  for (const name of ['BE\nE', 'bee']) {
+    const { status, stdout, stderr } = plan(dir, {}, ...party(dir, species([name])))
+    assert.equal(status, 1)
+    assert.equal(stdout, '')
+    assert.equal(stderr, 'error: invalid name in names.mob_species.neutral.build\n')
+  }
+})
+
+for (const [label, text] of [
+  ['a carriage return', '\r'], ['an escape', '\x1b'], ['a C1 control', '\x85'],
+  ['a protected repo reference', 'TiGeRyArD'],
+]) {
+  test(`plan-mob refuses a template containing ${label} without echoing it`, (t) => {
+    const dir = tempDir(t)
+    install(dir)
+    const path = join(dir, 'mob-creation/brief-template.md')
+    writeFileSync(path, `${readFileSync(path, 'utf8')}${text}\n`)
+    const { status, stdout, stderr } = plan(dir)
+    assert.equal(status, 1)
+    assert.equal(stdout, '')
+    assert.match(stderr, /^error: (control character in brief template|protected repo reference in brief)\n$/)
+    assert.doesNotMatch(stderr, /tigeryard/i)
+  })
+}
+
+test('plan-mob does not let entity- or percent-encoded protected references through', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const path = join(dir, 'mob-creation/brief-template.md')
+  const template = readFileSync(path, 'utf8')
+  const attempts = ['&#84;igeryard', '%54igeryard'].map((text) => {
+    writeFileSync(path, `${template}${text}\n`)
+    return plan(dir)
+  })
+  assert.deepEqual(attempts.map(({ status }) => status), [1, 1])
+  for (const { stdout, stderr } of attempts) {
+    assert.equal(stdout, '')
+    assert.equal(stderr, 'error: protected repo reference in brief\n')
+  }
+})
+
+test('plan-mob does not emit an unusable brief or hash different bytes from what it prints', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const path = join(dir, 'mob-creation/brief-template.md')
+  writeFileSync(path, `${readFileSync(path, 'utf8')}\tindented\n`)
+  const { tags } = JSON.parse(readFileSync(new URL('../registry/tags.json', import.meta.url), 'utf8'))
+  for (const { tag } of tags) {
+    const { status, stdout, stderr } = plan(dir, { tag })
+    assert.equal(status, 0, `${tag}: ${stderr}`)
+    const split = stdout.indexOf('\n\n')
+    assert.ok(split > 0, `${tag}: missing brief separator`)
+    const header = stdout.slice(0, split)
+    const brief = stdout.slice(split + 2)
+    const mob = header.match(/^mob  (\S+)$/m)?.[1]
+    assert.ok(mob && header.split('\n').includes(`title  ${tag} ${mob}`), `${tag}: missing mob or title`)
+    assert.ok(brief.includes(mob), `${tag}: missing mob ID in brief`)
+    assert.doesNotMatch(brief, /<<mob_id>>/, tag)
+    assert.equal(header.match(/^brief  sha256:([a-f0-9]{64})$/m)?.[1],
+      createHash('sha256').update(brief).digest('hex'), tag)
+  }
+})
+
+test('plan-mob does not fall back when the installed brief template is missing or unmarked', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const path = join(dir, 'mob-creation', 'brief-template.md')
+  rmSync(path)
+  for (const template of ['missing', 'unmarked']) {
+    if (template === 'unmarked') writeFileSync(path, 'Hand-authored brief\n')
+    const { status, stderr } = plan(dir)
+    assert.equal(status, 1, template)
+    assert.match(stderr, /^error:/m, template)
+  }
+})
+
+test('plan-mob refuses boss jobs and unknown tags without output or writes', (t) => {
+  const root = tempDir(t)
+  const dir = join(root, 'skills')
+  install(dir)
+  const before = readdirSync(root, { recursive: true }).sort()
+  for (const options of [{ job: 'boss' }, { tag: 'unknown-tag' }]) {
+    const { status, stdout, stderr } = plan(dir, options)
+    assert.equal(status, 1, JSON.stringify(options))
+    assert.equal(stdout, '')
+    assert.match(stderr, /^error:/m)
+    assert.deepEqual(readdirSync(root, { recursive: true }).sort(), before)
+  }
 })
