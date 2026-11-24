@@ -2095,21 +2095,53 @@ const CHECKS: Check[] = [
     group: 'tasks',
     name: 'lets a named actor claim an unassigned task without naming its owner',
     run: async (ctx) => {
-      const agent = 'vercel:user:u_offeredagent'
-      let made: Awaited<ReturnType<typeof task>>
+      const placeholder = 'vercel:user:u_offeredagent'
+      let probe: Awaited<ReturnType<typeof task>>
       try {
-        made = await task(ctx, 'conformance: a task offered to an agent', { offer: [agent] })
+        probe = await task(ctx, 'conformance: a task offered to an agent', { offer: [placeholder] })
       } catch (error) {
         if (error instanceof BoardError && error.status === 501 && error.code === 'no_task_offer') return `not kept here: ${error.message}`
         throw error
       }
-      alike(made.task.task?.offer, [agent], 'who may claim it next')
-      alike((await ctx.board.tasks.offer(made.task.id, [agent])).task?.offer, [agent], 'offering the same actors again')
-      alike((await ctx.board.tasks.offer(made.task.id, [])).task?.offer, [], 'offering it to no one')
-      await ctx.board.tasks.offer(made.task.id, [agent])
-      const claim = await ctx.board.tasks.claim(made.task.id, { lease: 60 })
-      same(claim.task.task?.claim?.actor, ctx.me.actor, 'the owner still claims an offered task')
-      await claim.release()
+      alike(probe.task.task?.offer, [placeholder], 'who may claim it next')
+      alike((await ctx.board.tasks.offer(probe.task.id, [placeholder])).task?.offer, [placeholder], 'offering the same actors again')
+      alike((await ctx.board.tasks.offer(probe.task.id, [])).task?.offer, [], 'offering it to no one')
+      const open = ctx.withInviteToken
+      if (!open) return "this run can't call the board with a joined caller's token"
+      // A second principal, granted label here: claim-next takes the task only because the offer names them.
+      const created = await ctx.board.createInvite({
+        name: `conformance-${ctx.labels.conformance}-offer`,
+        can: { [ctx.channel]: ['read', 'label'] },
+        expiresIn: 60,
+      })
+      let held: { release: () => Promise<unknown> } | undefined
+      let joinedAs: string | undefined
+      try {
+        const { token, principal } = await ctx.board.join(created.secret)
+        joinedAs = principal
+        const agent = open(token)
+        const who = await agent.me()
+        if (who.principal === ctx.me.principal) return 'the joined caller is this run, so it cannot show a task offered to someone else'
+        const mark = { offer: ctx.labels.conformance }
+        const where = { channel: ctx.channel, label: { ...ctx.labels, ...mark } }
+        await task(ctx, 'conformance: a task not offered', { labels: mark })
+        const offered = await task(ctx, 'conformance: a task offered to the joined caller', { labels: mark, offer: [who.actor] })
+        alike(offered.task.task?.offer, [who.actor], 'who may claim it next, the joined caller')
+        const claim = await agent.tasks.claim({ ...where, lease: 60 })
+        held = claim ?? undefined
+        // The unoffered task is older, so claim-next returns this id only because the offer names the caller.
+        same(claim?.task.id ?? null, offered.task.id, 'the task a named actor claims next')
+        same(claim?.task.task?.claim?.actor, who.actor, 'who holds the offered task')
+      } finally {
+        await held?.release().catch(() => undefined)
+        // Redeeming writes an invitee grant that revoking the invite does not remove.
+        await ctx.board.revokeInvite(created.invite.id)
+        if (joinedAs) {
+          for (const grant of await ctx.board.grants()) {
+            if (grant.principals.some((principal) => principal.kind === 'invitee' && principal.id === joinedAs)) await ctx.board.revokeGrant(grant.id)
+          }
+        }
+      }
     },
   },
   {
