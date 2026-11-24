@@ -4,6 +4,7 @@ import type { Protocol } from '../api/protocol.ts'
 import { accessContract, ACCESS_SESSION, inboxContract, INBOXES_SESSION, registryContract, REGISTRY_SESSION, schedulesContract, SCHEDULES_SESSION, schemasContract, SCHEMAS_SESSION, workSettingsContract } from '../contract/contract.ts'
 import { workReducer, type WorkState } from '../contract/reducers.ts'
 import type { BoardSession } from './a2.ts'
+import { writerFor } from '../store/single-writer.ts'
 import { HttpError } from './errors.ts'
 
 const CONTROL_AUTHOR = { actor: 'board:control', principal: 'board:control', profile: null }
@@ -43,7 +44,7 @@ export function createControl(log: A2Store, session: BoardSession, initiallyPaus
       payload: { paused: true, pauseEpoch: 0, reason: 'initial configuration', by: CONTROL_AUTHOR },
     }).catch((error: unknown) => { if (!headMoved(error)) throw error })
   }
-  const ready = () => (boot ??= initialize().catch((error: unknown) => {
+  const ready = () => (boot ??= writerFor(log).run(initialize).catch((error: unknown) => {
     boot = undefined
     throw error
   }))

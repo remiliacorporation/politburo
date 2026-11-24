@@ -1,0 +1,124 @@
+{
+  "case_id": "review-marks-004-not-queued",
+  "description": "Refuse a current head with no review stage",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-project",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-project",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        }
+      ],
+      "pipeline_stages": [
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:59:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-project",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "qa",
+          "stage_id": "stage-current",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        }
+      ],
+      "review_marks": []
+    },
+    "exit_code": null,
+    "files": {},
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "op": "mark",
+        "result": {
+          "error": "no staged review candidate candidate-current for example-project"
+        }
+      },
+      {
+        "op": "find",
+        "result": null
+      },
+      {
+        "op": "queue",
+        "result": {
+          "awaiting": [],
+          "ready": [],
+          "reviewed": [],
+          "superseded": []
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "action": "reviewed",
+        "op": "mark"
+      },
+      {
+        "op": "find"
+      },
+      {
+        "op": "queue"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "The exact head has a QA stage only; neither marking nor an exact review lookup succeeds.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [
+      {
+        "head": "candidate-current"
+      }
+    ],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": [
+      {
+        "stage": "qa"
+      }
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql"
+    ]
+  }
+}

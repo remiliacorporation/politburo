@@ -1,0 +1,377 @@
+{
+  "case_id": "board-cli-messages-004-command-queue",
+  "description": "List ranked pending and persisted rejected commands",
+  "expected": {
+    "db": {
+      "agent_commands": [
+        {
+          "args_json": "{}",
+          "command": "inspect",
+          "command_id": 1,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-key-01",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:00:01+00:00",
+          "priority": 5,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "expired",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:01+00:00"
+        },
+        {
+          "args_json": "{}",
+          "command": "inspect",
+          "command_id": 3,
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "dedup_key": "example-key-03",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:00:02+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "pending",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:01+00:00"
+        },
+        {
+          "args_json": "{}",
+          "command": "status_request",
+          "command_id": 2,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "example-status",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "rejected",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"inspect\", \"command_id\": 1, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"status_request\", \"command_id\": 2, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "event_id": 5,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"inspect\", \"command_id\": 3, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"worker-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:00:01+00:00\",\n  \"network_state\": \"paused\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 1,\n  \"duplicate\": true,\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 2,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"paused\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 2,\n  \"duplicate\": true,\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "stale agent generation: expected 2, current 1\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "ttl must be positive\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"inspect\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-01\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:00:01+00:00\",\n    \"priority\": 5,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"pending\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      },
+      {
+        "fixture": "legacy-rejected-command",
+        "rows_changed": 1
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"status_request\",\n    \"command_id\": 2,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-status\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"rejected\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 3,\n  \"expires_at\": \"2026-01-01T00:00:02+00:00\",\n  \"network_state\": \"paused\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"inspect\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"example-key-01\",\n    \"display_name\": \"worker-01\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:00:01+00:00\",\n    \"priority\": 5,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"expired\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:01+00:00\"\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"profile_key\": \"sprite\", \"status\": \"idle\"}"
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "inspect",
+          "--priority",
+          "5",
+          "--ttl",
+          "1"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "inspect",
+          "--priority",
+          "5",
+          "--ttl",
+          "1"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "status_request",
+          "--dedup-key",
+          "example-status"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "status_request",
+          "--dedup-key",
+          "example-status"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "resume",
+          "--expected-generation",
+          "2"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "collect",
+          "--ttl",
+          "0"
+        ]
+      },
+      {
+        "argv": [
+          "commands",
+          "--agent",
+          "worker-01",
+          "--state",
+          "pending",
+          "--limit",
+          "1"
+        ]
+      },
+      {
+        "fixture": "legacy-rejected-command",
+        "id": 2
+      },
+      {
+        "argv": [
+          "commands",
+          "--state",
+          "rejected"
+        ]
+      },
+      {
+        "argv": [
+          "command",
+          "--agent",
+          "worker-01",
+          "--command",
+          "inspect",
+          "--ttl",
+          "1"
+        ],
+        "at": "2026-01-01T00:00:01+00:00"
+      },
+      {
+        "argv": [
+          "commands",
+          "--state",
+          "expired"
+        ]
+      }
+    ],
+    "tables": [
+      "agent_commands",
+      "agents",
+      "board_events",
+      "board_meta",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "Implicit and explicit deduplication preserve existing commands. A stale generation and zero TTL are refused. The CLI has no writer for rejected commands, so one legacy rejected row is seeded.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

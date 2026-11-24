@@ -1,0 +1,87 @@
+{
+  "case_id": "owner-decision-005-missing-default",
+  "description": "Reject a new decision without a default but read an existing legacy header.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "incoming.json": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0002\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-21T10:00:00Z\", \"event\": \"rejected\", \"hash\": \"ddeead0d507e289917ecc2903ec71ed7b21f651b6fbb50489ec0f0f845fe7594\", \"header\": {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0002\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"reason\": \"$.default_if_unanswered: required when needs is owner\", \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n",
+      "mail/owner/ex-0001.json": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n",
+      "mail/owner/rejected/ex-0002-c83d3829.reason.txt": "$.default_if_unanswered: required when needs is owner\n",
+      "mail/owner/rejected/ex-0002-c83d3829.yaml": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0002\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n",
+      "snapshots/legacy.yaml": "batch: \"owner-2026-11-21T10:00:00Z\"\nrepo: \"owner\"\nwindow: {\"from\": \"2026-11-21T10:00:00Z\", \"to\": \"2026-11-21T10:00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 1, \"p2\": 0, \"p3\": 0}\nact_on: [ex-0001]\nitems:\n  - {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-21T10:00:00Z\", \"event\": \"rejected\", \"hash\": \"ddeead0d507e289917ecc2903ec71ed7b21f651b6fbb50489ec0f0f845fe7594\", \"header\": {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0002\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"reason\": \"$.default_if_unanswered: required when needs is owner\", \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}"
+    ],
+    "stderr": "rejected: ex-0002: $.default_if_unanswered: required when needs is owner\n",
+    "stdout": "[{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}]\nFORWARD BATCH (p1, within 10 minutes)\nex-0001 p1 spawner.decide ex2 secretary: Example choice 1\n\ndigest: <WORK>/snapshots/legacy.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\n",
+    "steps": [
+      {
+        "exit_code": 1,
+        "stderr": "rejected: ex-0002: $.default_if_unanswered: required when needs is owner\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0001 p1 spawner.decide ex2 secretary: Example choice 1\n\ndigest: <WORK>/snapshots/legacy.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "deliver",
+          "incoming.json"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      },
+      {
+        "argv": [
+          "owner",
+          "list"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      },
+      {
+        "argv": [
+          "--repo",
+          "owner",
+          "--now",
+          "2026-11-21T10:00:00Z",
+          "--digest",
+          "snapshots/legacy.yaml"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      }
+    ]
+  },
+  "matrix_row": "M09",
+  "notes": "",
+  "setup": {
+    "files": {
+      "incoming.json": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0002\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n",
+      "mail/owner/ex-0001.json": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n"
+    },
+    "now": "2026-11-21T10:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
