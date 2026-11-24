@@ -21,13 +21,15 @@ async function assembledUsage() {
   const commands = await loadCommands()
   const config = commands.find((command) => command.name === 'config')
   const work = commands.find((command) => command.name === 'work')
-  assert.ok(config?.usage.length)
-  assert.ok(work?.usage.length)
+  const configLine = config?.usage[0]
+  const workLine = work?.usage[0]
+  assert.ok(configLine, 'config must publish a usage line')
+  assert.ok(workLine, 'work must publish a usage line')
   return {
     catalog: `${usageText(commands)}\n`,
     help: `${helpText(commands)}\n`,
-    configLine: config.usage[0],
-    workLine: work.usage[0],
+    configLine,
+    workLine,
   }
 }
 
