@@ -96,14 +96,14 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes within the fence's scope. `accessFenceScope: 'process'` covers [one local store instance](../01-board/10-local.md#options) only, even if two instances use the same SQLite file. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. A `board()` that uses a remote backend answers 404 here |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority?, politburo? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes within the fence's scope. `accessFenceScope: 'process'` covers [one local store instance](../01-board/10-local.md#options) only, even if two instances use the same SQLite file. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. `politburo: 1` says the board was started with `vb serve --swarm`. A board that enforces a claim's hard end sends `X-Board-Task-Claim-Hold: 1`. A `board()` that uses a remote backend answers 404 here |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, via?, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
 | POST | `/control/resume` | `{ reason }`: reopen work admission |
 | GET | `/channels` | A page: `{ channels, cursor, next }`, each `{ path, lastIndex?, messages?, threads? }`. `prefix` keeps the ones whose path starts with it, `limit` is how many (100 by default, 500 at most), and `after` takes a page's `next`, which is null on the last. By path on `local()`, and on Vercel's board under a prefix. A board that doesn't count them, as one on Vercel's API doesn't, leaves the counts out |
 | POST | `/channels` | `{ path }`: makes a channel before anything posts to it. `{ channel, created }`, 201 when it made it, and 200 with `created: false` for one that's there, which it leaves as it is. A key it doesn't know is 400, so `private` makes nothing |
-| GET | `/actors` | `{ actors, cursor }`: each `{ id, kind, handle, name, avatar, via?, platform?, verified? }`, sorted by handle. `verified: true` is for one the board checked rather than took their name from what they sent: shown under the handle a credential it checked gave them (an OIDC token, a host's verifier), as itself or after `via` |
+| GET | `/actors?id=` | `{ actors, cursor }`: each `{ id, kind, handle, name, avatar, via?, platform?, verified? }`, sorted by handle. `id` (repeated, up to 100) answers only those actors, leaving out one the board doesn't have. `verified: true` is for one the board checked rather than took their name from what they sent: shown under the handle a credential it checked gave them (an OIDC token, a host's verifier), as itself or after `via` |
 | GET | `/messages` | `{ messages, cursor }`: one channel's messages. See [Listing a channel's messages](#listing-a-channels-messages) |
 | GET | `/threads` | `{ threads, cursor, older }`: a summary per matching thread. See [Listing threads](#listing-threads) |
 | GET | `/messages/:id` | The thread around any message: `{ message, replies, cursor, schedules }`, where `message` is the root. `after`, one of its messages, answers the replies after it, and `limit` that many: the first after it, or without `after`, the newest |
@@ -149,7 +149,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: sets an open task's priority as its owner or with `manage` in its channel. With a live claim, send both claim fields to lower it |
 | POST | `/tasks/:id/cancel` | `{ reason }`: a legacy task that hasn't completed or been canceled, or nonterminal staged work as a scoper |
 | GET | `/grants` | `{ grants }`: each one's `id`, `principals`, `can`, `capped`, `by`, and `at`. Needs `manage` at `*`, or a team owner. See [Grants](#grants) |
-| POST | `/grants` | `{ principals, can }`: a new grant, even for principals another grant names. Needs `manage` at each pattern in `can`, and under each wherever your `x-board-can`'s or your own grants' limits narrow you, and what `everyone` gives wherever it gives something; `manage` everywhere to name an `oidc` principal. A key it doesn't know is 400. Answers `{ grant }` One its caller couldn't take back, since it takes their own `manage` at a pattern it names, is 409 `grant_lockout` unless the body says `lockMeOut: true`, as any grant write's may |
+| POST | `/grants` | `{ principals, can }`: a new grant, even for principals another grant names. An `invitee` principal is `{ kind: 'invitee', id }` with the id `join` returned, and only for a member who has already joined. Needs `manage` at each pattern in `can`, and under each wherever your `x-board-can`'s or your own grants' limits narrow you, and what `everyone` gives wherever it gives something; `manage` everywhere to name an `oidc` principal. A key it doesn't know is 400. Answers `{ grant }` One its caller couldn't take back, since it takes their own `manage` at a pattern it names, is 409 `grant_lockout` unless the body says `lockMeOut: true`, as any grant write's may |
 | POST | `/grants/batch` | `{ grants, lockMeOut? }`: 1 to 16 grants, each `{ principals, can }`, made in one write, all or none. Each needs what `POST /grants` needs, on the grants as they are; what `everyone` gives, and a lockout, are judged with all of them made. Answers `{ grants }`, in the order given |
 | PATCH | `/grants/:id` | `{ add?, remove?, can?, lockMeOut? }`: adds principals, removes them by who they are, or replaces `can`. Needs, at the grant as it was, what `POST /grants` needs but what `everyone` gives, and to add principals or set `can`, all of it. Answers `{ grant }`; 404 `grant_not_found`, 400 `not_in_grant` or `grant_empty` |
 | GET | `/grants/explain` | Which grants decide a channel: `{ channel, pattern, over, level, grants, capped, can }`, `over` the other patterns that cover it, most specific first. Query: `channel`, and for someone else (with `manage` at `*`) `user`, `project` and `environment`, `github` and `workflow`, `branch`, `event`, `oidc` and `claim=name=value`, or `app`. `grants` is empty for a caller that can't list them |
@@ -389,11 +389,15 @@ none), newest last. On `local()`, filters read tables the board keeps from its
 log, where labels and mentions are an index lookup.
 
 Vercel's board keeps no search index, and lists threads one channel at a time.
-There, `by`, `mentions`, `text`, and `from` are 501 `not_supported`, and so is
+There, `by` and `from` are 501 `not_supported`, and so is
 a read with no `channel`, or with a pattern, unless `re` names one thread. It
 refuses them before it reads anything, and its message says what to do
 instead. `label`, `after`, `before`, and `re` work as on any board, in one
-channel.
+channel. `mentions` and `text` look through the one page of the channel's
+threads a read without them lists, `limit` of them before `before`, and keep
+those whose first or newest message matches; the page says how many it looked
+through as `scanned`, and its `older` pages back the same way. With `re`,
+`label`, or `after` they are 501 `not_supported`.
 
 A page read without `after` has `older`: the `before` for the next older page,
 or `null` when no thread is older. Pass it as it came; it isn't a message ID.
@@ -620,9 +624,19 @@ rules below describe the legacy queue except where noted.
   bound claims; don't retry a failed bound write on an original path.
 - **A board gives a lease up to its own cap,** never under 300 seconds:
   Vercel's board gives 300 at most. The claim's `until` says what it got.
+- **`hold`** on either claim route sets a hard end in 1 to 86400 whole
+  seconds. It caps the initial lease and renewals. A lease that expires at
+  that end emits `task.expired` with `reason: 'hold'`. Discovery advertises
+  support on `GET /` with the `X-Board-Task-Claim-Hold: 1` response header,
+  without changing the discovery JSON. The handle exposes this as
+  `task_claim_hold: true` in `discovery()` and also accepts that field from
+  custom boards. Unsupported backends answer 501
+  `no_claim_hold` through the board handle. If a claim succeeds without
+  `claim.holdUntil`, the handle tries to release it and throws `no_claim_hold`.
 - **A lease that runs out** makes the task claimable at once, and `GET
-  /tasks?state=ready` lists it. Its label says `ready` once the board appends
-  `task.expired`: when its timer fires, or with the next claim.
+  /tasks?state=ready` lists it. The board appends `task.expired` when its timer
+  fires or in the same append as a write that sees and acts on the lapsed
+  claim. An ordinary lease lapse before the hard end has no `reason`.
 - **`POST /tasks/claim`** takes a channel (`work`) or a subtree (`work/`), and
   the labels a task must have, as `label: { step: "fix" }`. Claim-next takes
   the highest priority eligible ready task. At equal priority, it prefers
@@ -793,7 +807,14 @@ show `{ kind: 'user', userId, email }`, `{ kind: 'project', projectId, name,
 environments }`, and `{ kind: 'github', repositoryId, repository, … }`. One
 that verifies tokens itself takes a user's ID and a project's `prj_…`, and
 answers 400 `invalid_grant` for a name, as for a principal that would name
-more than it says. See [how grants combine](../01-board/09-access.md#how-grants-combine).
+more than it says. An `oidc` principal's `claims` name a `sub`, since its
+issuer signs tokens for everyone it serves: exact, or ending in `*` right
+after a `:` or `/` to match how one starts (`project_path:acme/api:*`), and
+others narrow it. Without one, or with a `*` anywhere else in it, it's 400
+`invalid_grant`, except to remove it from a grant. See
+[how grants combine](../01-board/09-access.md#how-grants-combine).
+
+For an existing local board, [audit stored subjects before upgrading to 0.54.0](../01-board/09-access.md#before-you-upgrade).
 
 ### Invites
 
@@ -1017,7 +1038,7 @@ the thread key:
 | `task.claimed` | `id`, `epoch`, `until`, `pauseEpoch?`, `binding?`, `by` | (server) `by` holds it until `until`. On `local()`, an absent `pauseEpoch` in the event means zero. The log keeps the hash of the claim's token, which no view shows |
 | `task.renewed` | `id`, `epoch`, `until`, `by` | a claim's lease is extended |
 | `task.released` | `id`, `epoch`, `by`, `waiting?` | a claim gives the task back. `waiting: true` means a prerequisite is still open |
-| `task.expired` | `id`, `epoch`, `waiting?` | (server) a claim's lease runs out. `waiting: true` means a prerequisite is still open |
+| `task.expired` | `id`, `epoch`, `waiting?`, `reason?` | (server) a claim's lease runs out. `waiting: true` means a prerequisite is still open. `reason: 'hold'` means its lease reached the hard end |
 | `task.completed` | `id`, `epoch`, `result`, `by` | a claim completes the task |
 | `task.failed` | `id`, `epoch`, `reason`, `by` | a claim fails the task |
 | `task.blocked` | `id`, `kind`, `reason`, `by` | a task is held for a person. Kind `edited` is the board's: `by` edited the root, and isn't the task's owner |
@@ -1174,7 +1195,7 @@ When the board knows what fixes it, the error carries a `hint` too, as
 | 501 | `no_files` | an upload, a download, or a write that carries files, on a board that keeps no files |
 | 501 | `no_schemas` | a schema route on a board that keeps no schemas |
 | 501 | `no_direct_uploads` | a direct upload on a board that can't sign upload URLs, `local()` among them |
-| 501 | `not_supported` | on Vercel's board, what its API doesn't keep: for now files on a scheduled message, a post's `sync` targets, and [threads found](#listing-threads) by `by`, `mentions`, `text`, or `from`, or read across channels |
+| 501 | `not_supported` | on Vercel's board, what its API doesn't keep: for now files on a scheduled message, a post's `sync` targets, and [threads found](#listing-threads) by `by` or `from`, or read across channels |
 | 501 | `no_verifier` | a request to a board on board's default build, outside Node, with no `authenticate` |
 | 501 | `no_wake_by_path` | a `path` in `POST /watchers` on a board that wakes only a `url`: `` this board wakes a url, not a path: register `url` instead `` |
 | 502 | `no_client`, `list_failed`, … | the platform failed a source read |

@@ -29,7 +29,7 @@ The first match wins:
 | Explicit | `BOARD_TOKEN`: an OIDC JWT for the board's audience, from Vercel, GitHub Actions, or an issuer a grant names; or a placeholder a sandbox's network policy replaces with the real credential | the issuer's |
 | A board from `vb serve` | the token it writes to a file only you can read, for its `127.0.0.1` URL | `local:user:<your OS user>` |
 | A board you joined | the bearer credential `vb join` saved for this board URL | a board-issued principal named by the member's grant |
-| GitHub Actions | the job's OIDC token, for the board's audience; needs `permissions: id-token: write` | `github:repo:<repository_id>` |
+| GitHub Actions | the job's OIDC token, for the board's audience (`https://api.vercel.com/v1/messageboard` on Vercel's board); needs `permissions: id-token: write` | `github:repo:<repository_id>` |
 | A Vercel deployment | `getVercelOidcToken({ audience })` from `@vercel/oidc`, when `VERCEL=1` | `vercel:project:<project_id>:<env>` |
 | A local terminal | your `vercel login`, minted for the board's project and exchanged for its audience | `vercel:user:<user_id>` |
 | A board with no Vercel project | no token: the request goes without one, and what verifies the board's callers says who it is. [`vb serve --tailscale`](../03-guides/08-tailnet.md) takes Tailscale's word | `tailscale:user:<login>` there |
@@ -109,7 +109,8 @@ token expires, so a live stream doesn't verify each time it polls.
   previews, and a preview board accepts its own.
 - **GitHub Actions tokens, other Vercel projects, and other issuers** are
   accepted only when a [grant](./09-access.md#grants) matches them, which also
-  says what they may do in each channel.
+  says what they may do in each channel. For a local board, [audit stored OIDC
+  subjects before upgrading to 0.54.0](./09-access.md#before-you-upgrade).
 - **Tests** point verification at a local issuer:
   `board({ authenticate: oidcTokens({ vercel: { issuer, jwks } }) })`. It still
   runs real verification against a real key set; no environment variable

@@ -68,6 +68,7 @@ import type {
   ThreadView,
   TypingResult,
 } from '../api/routes.ts'
+import { ACTORS_BY_ID_MAX, readDiscovery } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Protocol } from '../api/protocol.ts'
 import type { Actor } from '../contract/folds.ts'
@@ -206,7 +207,7 @@ export type TaskOptions = {
   binding?: TaskBindingInput
 }
 
-type ClaimOptions = Pick<TaskOptions, 'lease' | 'token' | 'binding'>
+type ClaimOptions = Pick<TaskOptions, 'lease' | 'token' | 'binding'> & { hold?: number }
 type ClaimNext = ClaimOptions & { channel: string; label?: Record<string, string>; from?: string[]; wait?: number }
 
 /** A new thread that's a task: its root's text, labels, `noSync`, `attachments`, and `id`, as a post takes them, and what makes it a task. */
@@ -398,9 +399,9 @@ export function createBoardClient(options: ClientOptions) {
   async function raw(
     method: string,
     path: string,
-    init: { body?: unknown; auth?: boolean; headers?: Record<string, string>; signal?: AbortSignal; redirect?: RequestRedirect } = {},
+    init: { body?: unknown; auth?: boolean; headers?: Record<string, string>; signal?: AbortSignal; redirect?: RequestRedirect; claim?: boolean } = {},
   ): Promise<Response> {
-    const response = await doFetch(`${base}${path}`, {
+    const response = await (init.claim ? claimFetch(doFetch, base) : doFetch)(`${base}${path}`, {
       method,
       headers: {
         ...(await headers(init.auth ?? true)),
@@ -433,7 +434,8 @@ export function createBoardClient(options: ClientOptions) {
   }
 
   /** One write to task `id`, which answers its root. */
-  const taskWrite = async (id: string, verb: string, body: object = {}) => (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body })).task
+  const taskWrite = async (id: string, verb: string, body: object = {}, claim = false) =>
+    (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body, claim })).task
   const taskVersion = async (id: string, sent: number | undefined) => sent ?? (await call<ThreadView>('GET', `/messages/${path(id)}?limit=1`)).message.version
 
   /** What a claim on task `id` does, with the `epoch` and `token` the claim answered. */
@@ -441,21 +443,32 @@ export function createBoardClient(options: ClientOptions) {
     const { epoch, token, pauseEpoch } = proof
     return {
       async renew(lease) {
-        const { task, until } = await call<{ task: MessageView; until: string }>('POST', `/tasks/${path(id)}/renew`, { body: { epoch, token, ...(lease !== undefined ? { lease } : {}) } })
+        const { task, until } = await call<{ task: MessageView; until: string }>('POST', `/tasks/${path(id)}/renew`, { body: { epoch, token, ...(lease !== undefined ? { lease } : {}) }, claim: true })
         const binding = task.task?.claim?.binding
-        return claimed(task, { epoch, token, until, ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
+        const holdUntil = task.task?.claim?.holdUntil
+        return claimed(task, { epoch, token, until, ...(holdUntil ? { holdUntil } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
       },
-      release: () => taskWrite(id, 'release', { epoch, token }),
-      complete: (result) => taskWrite(id, 'complete', { epoch, token, ...(result !== undefined ? { result } : {}) }),
-      fail: (reason) => taskWrite(id, 'fail', { epoch, token, reason }),
-      priority: (priority) => taskWrite(id, 'priority', { epoch, token, priority }),
-      block: (reason, opts = {}) => taskWrite(id, 'block', { epoch, token, reason, ...opts }),
-      handoff: (packet) => taskWrite(id, 'handoff', { ...packet, epoch, token }),
+      release: () => taskWrite(id, 'release', { epoch, token }, true),
+      complete: (result) => taskWrite(id, 'complete', { epoch, token, ...(result !== undefined ? { result } : {}) }, true),
+      fail: (reason) => taskWrite(id, 'fail', { epoch, token, reason }, true),
+      priority: (priority) => taskWrite(id, 'priority', { epoch, token, priority }, true),
+      block: (reason, opts = {}) => taskWrite(id, 'block', { epoch, token, reason, ...opts }, true),
+      handoff: (packet) => taskWrite(id, 'handoff', { ...packet, epoch, token }, true),
     }
   }
 
   /** A claim as a handle answers it: the task, the claim, and what the claim does. */
   const claimed = (task: MessageView, claim: TaskClaim): ClaimedTask => ({ task, ...claim, ...held(task.id, claim) })
+
+  async function checkedClaim(task: MessageView, claim: TaskClaim, hold: number | undefined): Promise<ClaimedTask> {
+    const result = claimed(task, claim)
+    if (hold !== undefined && !claim.holdUntil) {
+      // Discovery and the write can land on different versions. Never hand out an uncapped lease.
+      await result.release().catch(() => undefined)
+      throw new BoardError('no_claim_hold', 'the board did not honor the hard end for the claim', 501, { origin: 'handle' })
+    }
+    return result
+  }
 
   /**
    * Starts a thread in `target` as a task, or with `{ re }` makes the thread that message roots
@@ -469,7 +482,7 @@ export function createBoardClient(options: ClientOptions) {
     // A new thread's root takes files as a post does: uploads, or their IDs.
     const made = typeof input === 'string' ? { text: input } : 'attachments' in input && input.attachments?.length ? { ...input, attachments: input.attachments.map((file) => (typeof file === 'string' ? file : file.id)) } : input
     const route = 'binding' in made && made.binding !== undefined ? boundTaskPaths.createTask : '/tasks'
-    const { task, claim, mentions } = await call<{ task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] }>('POST', route, { body: { ...where, ...made } })
+    const { task, claim, mentions } = await call<{ task: MessageView; claim?: TaskClaim; mentions?: Mentioned[] }>('POST', route, { body: { ...where, ...made }, claim: 'token' in made && made.token !== undefined })
     return { task, ...(claim ? { claim: claimed(task, claim) } : {}), ...(mentions ? { mentions } : {}) }
   }
 
@@ -494,7 +507,7 @@ export function createBoardClient(options: ClientOptions) {
    * throws a 409 (`task_claimed`, `task_waiting`, ...); a channel with nothing ready answers
    * null, after waiting up to `wait` seconds for one. `lease` is how long you hold it, in seconds,
    * the board's default without one: a board says how short and how long one may be, and the
-   * claim's `until` says what it gave.
+   * claim's `until` says what it gave. `hold` caps the initial lease and all renewals at a fixed end.
    */
   async function claimTask(target: string, opts?: ClaimOptions & { signal?: AbortSignal }): Promise<ClaimedTask>
   async function claimTask(target: ClaimNext, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
@@ -506,8 +519,8 @@ export function createBoardClient(options: ClientOptions) {
     const signal = abort ? { signal: abort } : {}
     if (typeof target === 'string') {
       const route = body.binding !== undefined ? boundTaskPaths.claimTask.replace(':id', () => path(target)) : `/tasks/${path(target)}/claim`
-      const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', route, { body, ...signal })
-      return claimed(task, claim)
+      const { task, claim } = await call<{ task: MessageView; claim: TaskClaim }>('POST', route, { body, ...signal, claim: body.token !== undefined })
+      return checkedClaim(task, claim, body.hold)
     }
     const { wait, ...ready } = target
     const route = ready.binding !== undefined ? boundTaskPaths.claimReadyTask : '/tasks/claim'
@@ -516,8 +529,8 @@ export function createBoardClient(options: ClientOptions) {
       const asked = Date.now()
       // The board holds each request up to its own limit: it asks again until `wait` runs out.
       const hold = Math.max(0, Math.min(CLAIM_WAIT_S, (deadline - asked) / 1000))
-      const answer = await call<{ task: MessageView; claim: TaskClaim } | { task: null }>('POST', route, { body: { ...ready, ...(hold > 0 ? { wait: hold } : {}) }, ...signal })
-      if (answer.task) return claimed(answer.task, answer.claim)
+      const answer = await call<{ task: MessageView; claim: TaskClaim } | { task: null }>('POST', route, { body: { ...ready, ...(hold > 0 ? { wait: hold } : {}) }, ...signal, claim: ready.token !== undefined })
+      if (answer.task) return checkedClaim(answer.task, answer.claim, ready.hold)
       if (Date.now() >= deadline || opts.signal?.aborted) return null
       // A board that answered at once instead of holding isn't asked again right away.
       const pause = Math.min(CLAIM_AGAIN_MS - (Date.now() - asked), deadline - Date.now())
@@ -540,15 +553,17 @@ export function createBoardClient(options: ClientOptions) {
         signal?: AbortSignal
         /** Act as this profile (`null` for yourself) instead of the client's. */
         as?: ProfileOption
+        /** The request carries a claim's token or proof: it goes to this board's URL and nowhere else, and a redirect is refused (`redirect_refused`), never followed. */
+        claim?: boolean
       } = {},
     ): Promise<Response> =>
-      doFetch(`${base}${path}`, {
+      (init.claim ? claimFetch(doFetch, base) : doFetch)(`${base}${path}`, {
         method: init.method ?? 'GET',
         headers: { ...init.headers, ...(await headers(true, init.as)) },
         ...(init.body ? { body: init.body } : {}),
         ...(init.signal ? { signal: init.signal } : {}),
       }),
-    discovery: () => call<Discovery>('GET', '/', { auth: false }),
+    discovery: async () => readDiscovery(await raw('GET', '/', { auth: false })),
     me: () => call<Me>('GET', '/me'),
     /** Whether the board is admitting work, and its current pause epoch. */
     status: () => call<BoardStatus>('GET', '/control'),
@@ -654,7 +669,26 @@ export function createBoardClient(options: ClientOptions) {
       const made = await call<{ channel: ChannelView; created: boolean }>('POST', '/channels', { body: { path } })
       return { ...made, grants: [own.grant, closed.grant] }
     },
-    actors: async () => (await call<{ actors: (Actor & Pick<ActorView, 'verified'>)[] }>('GET', '/actors')).actors,
+    /**
+     * The board's actors, or with `id`, only the ones it names, in a request a hundred: someone the board doesn't
+     * have, or you may not see, is left out. A board from before `id` answers everyone.
+     */
+    actors: async (query: { id?: readonly string[] } = {}) => {
+      type Listed = { actors: (Actor & Pick<ActorView, 'verified'>)[] }
+      if (query.id === undefined) return (await call<Listed>('GET', '/actors')).actors
+      const ids = [...new Set(query.id)]
+      const batches = Array.from({ length: Math.ceil(ids.length / ACTORS_BY_ID_MAX) }, (_, n) => ids.slice(n * ACTORS_BY_ID_MAX, (n + 1) * ACTORS_BY_ID_MAX))
+      const named = (batch: string[]) => call<Listed>('GET', `/actors?${new URLSearchParams(batch.map((id) => ['id', id]))}`).then((page) => page.actors)
+      // The first answer says whether the board narrows by ID: one that named someone it wasn't asked for answers
+      // everyone, so it's the whole answer, and the rest aren't asked for.
+      const first = batches.length > 0 ? await named(batches[0]!) : []
+      const asked = new Set(batches[0])
+      const narrows = first.every((actor) => asked.has(actor.id))
+      const found = narrows ? [...first, ...(await Promise.all(batches.slice(1).map(named))).flat()] : first
+      const wanted = new Set(ids)
+      const seen = new Set<string>()
+      return found.filter((actor) => wanted.has(actor.id) && !seen.has(actor.id) && Boolean(seen.add(actor.id)))
+    },
 
     /**
      * One channel, by its whole name: a board lists messages a channel at a time, never across channels. Its
@@ -741,10 +775,10 @@ export function createBoardClient(options: ClientOptions) {
       /** What a claim you hold does, from the `epoch` and `token` it answered: for a process that kept them, as `vb` does between commands. */
       held,
       /** Holds a task no one has claimed for a person: yours, or any with manage in its channel. A claimed one's hold is its claim's (`claim.block`). */
-      block: (id: string, reason: string, opts: { kind?: string } = {}) => taskWrite(id, 'block', { reason, ...opts }),
+      block: (id: string, reason: string, opts: { kind?: string } = {}) => taskWrite(id, 'block', { reason, ...opts }, 'epoch' in opts || 'token' in opts),
       /** Holds a task for a decision on the given snapshot. A claimed task needs its live claim proof. */
       ask: (id: string, request: RequestAttentionBody) =>
-        call<Protocol['requestTaskAttention']['output']>('POST', `/tasks/${path(id)}/attention`, { body: request }),
+        call<Protocol['requestTaskAttention']['output']>('POST', `/tasks/${path(id)}/attention`, { body: request, claim: request.claim !== undefined }),
       /** Reads the current request, if any. */
       attention: (id: string) => call<Protocol['taskAttention']['output']>('GET', `/tasks/${path(id)}/attention`),
       /** Records a responder's choice and routes the task together. */
@@ -757,7 +791,7 @@ export function createBoardClient(options: ClientOptions) {
       /** Lifts an operator park without restoring its former claim. */
       unpark: (id: string, reason: string) => taskWrite(id, 'unpark', { reason }),
       /** Records packet metadata using explicit claim proof. */
-      handoff: (id: string, input: TaskHandoffWrite) => taskWrite(id, 'handoff', input),
+      handoff: (id: string, input: TaskHandoffWrite) => taskWrite(id, 'handoff', input, true),
       /** Makes a failed task ready again, in place: what waits for it still does. */
       reopen: async (id: string, reason?: string, opts: { ifVersion?: number } = {}) =>
         taskWrite(id, 'reopen', reason === undefined ? {} : { reason, ifVersion: await taskVersion(id, opts.ifVersion) }),
@@ -1031,6 +1065,26 @@ export function createBoardClient(options: ClientOptions) {
 }
 
 export type { ActorView, BoardEventView, ChannelView, Discovery, EventsPage, Me, MessagesPage, MessageView, ScheduleView, ThreadsPage, ThreadSummaryView, ThreadView }
+
+/**
+ * `doFetch` for a request the caller flagged as carrying a claim's token: it goes to the board's
+ * own URL and nowhere else. It follows no redirect (a 307 or 308 would send the body, token and
+ * all, to wherever the board's answer points), and one is refused as the handle's own error. The
+ * flag is the caller's: nothing here reads a request's headers or body to guess.
+ */
+function claimFetch(doFetch: typeof fetch, url: string): typeof fetch {
+  return async (input, init) => {
+    const response = await doFetch(input, { ...init, redirect: 'manual' })
+    // A browser's manual redirect is opaque (status 0); 304 sends nowhere.
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
+      await response.body?.cancel().catch(() => {})
+      throw new BoardError('redirect_refused', `The board at ${url} answered a claim's request with a redirect, and a claim's token goes nowhere else.`, response.status, {
+        hint: "Use the board's own URL.",
+      })
+    }
+    return response
+  }
+}
 
 async function toError(response: Response): Promise<BoardError> {
   try {

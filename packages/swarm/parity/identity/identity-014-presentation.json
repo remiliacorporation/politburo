@@ -1,0 +1,183 @@
+{
+  "case_id": "identity-014-presentation",
+  "description": "Present validated identity, otherwise fail closed",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "issue_priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": {
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": null,
+    "files": {
+      "project-identity.json": null
+    },
+    "log_lines": [],
+    "presentation": [
+      {
+        "name": "<p class='project-name' data-project-identity title='Example R&amp;D &#x27;Lab&#x27;'>Example R&amp;D &#x27;Lab&#x27;</p>",
+        "title": "Example R&D 'Lab' — Issue board",
+        "view": [
+          "Example R&D 'Lab'",
+          "valid",
+          ""
+        ],
+        "warning": ""
+      },
+      {
+        "name": "<p class='project-name unconfigured' data-project-identity>Project name not configured</p>",
+        "title": "Project name not configured — Issue board",
+        "view": [
+          null,
+          "unchecked",
+          "identity has not been validated by the spawner"
+        ],
+        "warning": "<p class=identity-warning role=alert>Identity unchecked: identity has not been validated by the spawner. Correct the private project identity profile and restart the spawner; new dispatch stays paused until it validates.</p>"
+      },
+      {
+        "name": "<p class='project-name unconfigured' data-project-identity>Project name not configured</p>",
+        "title": "Project name not configured — Issue board",
+        "view": [
+          null,
+          "misconfigured",
+          "Example <reason>"
+        ],
+        "warning": "<p class=identity-warning role=alert>Identity misconfigured: Example &lt;reason&gt;. Correct the private project identity profile and restart the spawner; new dispatch stays paused until it validates.</p>"
+      },
+      {
+        "name": "<p class='project-name unconfigured' data-project-identity>Project name not configured</p>",
+        "title": "Project name not configured — Issue board",
+        "view": [
+          null,
+          "misconfigured",
+          "display name failed presentation checks"
+        ],
+        "warning": "<p class=identity-warning role=alert>Identity misconfigured: display name failed presentation checks. Correct the private project identity profile and restart the spawner; new dispatch stays paused until it validates.</p>"
+      }
+    ],
+    "project_ids": [
+      true,
+      false,
+      false,
+      true,
+      false,
+      false
+    ],
+    "startup": {
+      "generation": 0,
+      "reason": "identity has not been validated by the spawner",
+      "status": "unchecked"
+    },
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "collect": [
+      "project-identity.json"
+    ],
+    "kind": "presentation",
+    "metadata": [
+      {
+        "identity_status": "valid",
+        "project_display_name": "Example R&D 'Lab'"
+      },
+      {},
+      {
+        "identity_reason": "Example <reason>",
+        "identity_status": "misconfigured",
+        "project_display_name": "Example Workshop"
+      },
+      {
+        "identity_status": "valid",
+        "project_display_name": "Example\tWorkshop"
+      }
+    ],
+    "project_ids": [
+      "example-project",
+      "a",
+      "Example Project",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      null
+    ]
+  },
+  "matrix_row": "M88",
+  "notes": "Call identity presentation and stable-ID helpers directly: escaping, unchecked startup, misconfiguration, and a valid status with an unsafe stored name.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-03T00:00:00Z",
+    "profile_modes": {}
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/identity.py",
+      "board/board.py",
+      "board/history.py",
+      "board/schema.sql"
+    ]
+  }
+}

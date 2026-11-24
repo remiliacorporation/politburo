@@ -1,6 +1,16 @@
 status: proposed
 bonklek decides on this PR
 
+Partly replaced by [the merger design](swarm-merger.md): section 3 uses
+[swarm mail](swarm-mail.md) instead of the operational inbox, and tier shares, models, name pools and the usage stop become
+[party configuration](swarm-party-config.md). Two more passages are replaced:
+mobs do not reach a board (D4), so a mob's claim is renewed by its party's
+dispatcher from the mob's Git-backed status, not by `vb tasks renew` from the mob
+([work items](swarm-work-items.md#claim-rule)); and the usage guard's fixed 95%
+stop and missing wake at reset become `limits.usage_stop_percent` (default 100)
+and one token-free wake ([spend](swarm-spend.md#limits-and-admission)). The tier
+and authority text stands.
+
 # Swarm architecture
 
 The swarm has four tiers: core, spawner, mob and sprite, in that order.
@@ -134,11 +144,14 @@ class limits.
 
 ## 3. Messaging
 
-The secretary relays mail through the [operational inbox](../SPEC.md#operational-inbox).
-Address a verified principal ID or a configured inbox role, not a profile.
-Send through `team.operationalInbox` or HTTP. Mail stays out of threads,
-public feeds, watchers and sync. See [swarm secretaries](swarm-secretaries.md)
-for routing by header and urgency.
+The secretary relays mail as board threads, not through the
+[operational inbox](../SPEC.md#operational-inbox). A message is a thread root
+with a `swarm-message@1` block and the labels `swarm.class`, `swarm.urgency`
+and `swarm.state`, in the recipient's inbox channel. The inbox is unfit
+because a newer send to the same recipient and topic replaces the older one,
+and it has no feed, no history and no labels. Threads give filters, a live
+feed and compare-and-set. [Swarm mail](swarm-mail.md) is the transport; see
+[swarm secretaries](swarm-secretaries.md) for routing by header and urgency.
 
 Escalate one step at a time: secretary to spawner, spawner to core as needed,
 then core to the user for a human decision. The runtime's

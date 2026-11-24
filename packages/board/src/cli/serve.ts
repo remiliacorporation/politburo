@@ -7,13 +7,14 @@ import { dirname, join, resolve } from 'node:path'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose'
 import { BoardError, createBoardClient, type BoardClient } from '../client/client.ts'
 import { localTokenFile } from '../client/node.ts'
-import { local } from '../server/local.ts'
+import { local, lockLocalDirectory } from '../server/local.ts'
 import { oidcTokens } from '../server/tokens.ts'
 import { board } from '../server/index.ts'
 import { hostCheckedBy } from '../server/board.ts'
 import type { Authenticate, HostPrincipal } from '../server/auth.ts'
 import { unauthorized } from '../server/errors.ts'
 import { Failed } from './main.ts'
+import { swarmOptions } from './swarm.ts'
 import { tailscale, tailscaleLogin } from './tailscale.ts'
 
 export const DEFAULT_SERVE_PORT = 4100
@@ -64,6 +65,8 @@ type ServeOptions = {
   hosts?: readonly string[]
   tailscale?: readonly string[]
   agentOps?: true
+  swarm?: true
+  responders?: readonly string[]
 }
 
 /** Your OS username as a handle: lowercase letters, digits, `.`, `_`, `-`. */
@@ -173,14 +176,15 @@ async function localIssuer() {
  */
 export async function serveLocal(options: ServeOptions): Promise<LocalBoard | TeamBoard> {
   const { ip, hostname } = bindHost(options)
+  const handle = options.handle ?? localHandle()
+  const principal = `local:user:${handle}`
+  const features = swarmOptions(options, principal)
   const auth = options.teamTokens === undefined
     ? await localIssuer()
     : { authenticate: await teamVerifier(options.teamTokens) }
   const dir = resolve(options.dir)
-  await mkdir(dir, { recursive: true, mode: 0o700 })
   quietSqliteWarning()
-  await carryOver(dir)
-  const backend = local({ dir, ...(options.agentOps ? { agentOps: true } : {}) })
+  const backend = local({ dir, ...features })
 
   const tailnet = new Set((options.tailscale ?? []).map((host) => host.toLowerCase()))
   const hosts = new Set([...(options.hosts ?? []).map((host) => host.toLowerCase()), ...tailnet])
@@ -229,17 +233,19 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
     await backend.close()
   }
   const serving = { url, port, dir, close }
-  let handle: string
   let token: string
   let file: string
+  let unlock: (() => void) | undefined
   try {
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    unlock = lockLocalDirectory(dir)
+    await carryOver(dir)
     // Opened now, so a directory it can't write says so before it serves.
     await team.channels({ limit: 1 })
     if (!('sign' in auth)) {
       handler = team.fetch
       return { mode: 'team', ...serving }
     }
-    handle = options.handle ?? localHandle()
     token = await auth.sign(url, handle)
     file = localTokenFile(url)
     await mkdir(dirname(file), { recursive: true, mode: 0o700 })
@@ -248,6 +254,9 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
   } catch (error) {
     await close()
     throw error
+  } finally {
+    // On success the store now holds its own reference, until backend.close().
+    unlock?.()
   }
 
   // One client a person at each host: the page's requests reach the board in this process, as Tailscale named them.
@@ -281,7 +290,7 @@ export async function serveLocal(options: ServeOptions): Promise<LocalBoard | Te
       visitors.set(key, client)
       return client
     },
-    principal: `local:user:${handle}`,
+    principal,
     handle,
     token,
     async close() {

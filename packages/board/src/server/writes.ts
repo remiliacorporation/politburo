@@ -21,6 +21,8 @@ import type { MessageView } from '../api/routes.ts'
 import type { WriteSource } from './middleware.ts'
 import type { Via, WriteOrigin } from './origin.ts'
 import { workOpen, type createControl } from './control.ts'
+import { appendRefusal, type SingleWriter } from '../store/single-writer.ts'
+import { expiredClaim } from './task-lease.ts'
 
 export { syncTarget, type SyncTarget }
 
@@ -37,6 +39,7 @@ export function deploymentIdentity(actor: string, handle: string): Identity {
 }
 
 export type WriteContext = {
+  writer: SingleWriter
   session: BoardSession
   /** The board's tables, where writes check what they write to. */
   reads: BoardReads
@@ -243,7 +246,7 @@ export type Events = Parameters<BoardSession['append']>
  * refuses the write, and returns the index its reads reflect with what to append for the root, given
  * the ID and thread key it will have. The whole batch lands only while that index is the log's last.
  */
-export type Along = () => Promise<{ position: number; events: (root: { id: number; thread: string }) => Events }>
+export type Along = (now: number) => Promise<{ position: number; events: (root: { id: number; thread: string }) => Events }>
 
 export async function writePost(ctx: WriteContext, input: PostInput): Promise<MessageView> {
   const { identity } = input
@@ -392,8 +395,8 @@ async function commitPost(
       const along = input.with
       // The batch lands right after the index it read at, so the root's ID is known before it's written.
       const before = events.findIndex((event) => event.type === 'message.posted')
-      rows = await appendFrom(ctx, async () => {
-        const { position, events: more } = await along()
+      rows = await appendFrom(ctx, async (now) => {
+        const { position, events: more } = await along(now)
         if (input.workEpoch !== undefined) workOpen((await ctx.work.at(position)).status, input.workEpoch)
         // As of the same index the batch is conditioned on: see `unclaimedAt`.
         for (const target of targets) await unclaimed(ctx, target, thread, identity.principal.access)
@@ -640,15 +643,25 @@ async function appendWhile(ctx: WriteContext, holds: () => Promise<number>, even
  * looks again, and decides again, each time the board moves on first. If `look` also names an
  * access position, that session must not have moved either. Nothing to append appends nothing.
  */
-export async function appendFrom(ctx: WriteContext, look: () => Promise<{ position: number; events: Events; access?: number }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+export async function appendFrom(ctx: WriteContext, look: (now: number) => Promise<{ position: number; events: Events; access?: number }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+  let retry = false
   return whileHeadMoves(async () => {
     await ctx.reads.ensure()
-    const { position, events, access } = await look()
+    ctx.writer.beginDecision(retry)
+    retry = true
+    const { position, events, access } = await look(ctx.writer.time())
     if (events.length === 0) return []
-    const append = () => appendIfLast(ctx.session, position, events)
-    if (access === undefined) return append()
-    if (!ctx.fence) throw noAccessFence()
-    return ctx.fence.guarded(ctx.accessPosition, access, append)
+    const append = () => appendIfLast(ctx.session, position, events).catch((error: unknown) => { throw appendRefusal(error) })
+    // Release the writer before the access fence waits, so a grant change can
+    // reach the same fence and queue behind this append instead of deadlocking.
+    const fenced = () => {
+      if (access === undefined) return append()
+      if (!ctx.fence) throw noAccessFence()
+      return ctx.fence.guarded(ctx.accessPosition, access, append)
+    }
+    // Task decisions and pause can race across transport; the native append
+    // rejoins the FIFO and tests the head before landing either decision.
+    return events.some(({ type }) => type.startsWith('task.')) ? ctx.writer.outside(fenced) : fenced()
   })
 }
 
@@ -737,12 +750,13 @@ async function commitEdit(ctx: WriteContext, input: EditInput, message: Message)
   const rows =
     message.re === null
       ? // A root may be a task, as of the index the edit lands after: one its owner didn't make holds it.
-        await appendFrom(ctx, async () => {
+        await appendFrom(ctx, async (now) => {
           const { position, found } = await asOfNow(ctx, message.id)
           if (revision !== undefined) atRevision(found, message.id, revision)
           const changes = heldByEdit(found, input.identity)
+          const expired = changes.length && found?.task?.claim ? expiredClaim(found, now, (await ctx.work.at(position)).status.pauseEpoch) : []
           // Invalidate work before the edit: even the feed's edit snapshot shows no stale scope or lease.
-          return { position, events: found?.task?.work ? [...authors, ...changes, edited] : [...events, ...changes] }
+          return { position, events: found?.task?.work ? [...authors, ...expired, ...changes, edited] : [...expired, ...events, ...changes] }
         })
       : revision === undefined
         ? await ctx.session.append(...events)
@@ -783,11 +797,14 @@ export async function writeDelete(
   const rows =
     message.re === null
       ? // A root may be a task, as of the index the delete lands after: it's canceled in the same append.
-        await appendFrom(ctx, async () => {
+        await appendFrom(ctx, async (now) => {
           const { position, found } = await asOfNow(ctx, message.id)
           if (revision !== undefined) atRevision(found, message.id, revision)
           // Deleted in between: there's nothing left to delete, or to cancel.
-          return { position, events: found?.deleted ? [] : [...canceledByDelete(found, input.identity), ...deleted] }
+          if (found?.deleted) return { position, events: [] }
+          const canceled = canceledByDelete(found, input.identity)
+          const expired = canceled.length && found?.task?.claim ? expiredClaim(found, now, (await ctx.work.at(position)).status.pauseEpoch) : []
+          return { position, events: [...expired, ...canceled, ...deleted] }
         })
       : revision === undefined
         ? await ctx.session.append(...deleted)

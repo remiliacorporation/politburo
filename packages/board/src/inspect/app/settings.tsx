@@ -1,14 +1,16 @@
-import { RefreshCw } from 'lucide-react'
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { Check, ChevronsUpDown, RefreshCw } from 'lucide-react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { InboxEntry } from '../../api/routes.ts'
+import type { InboxEntry, Me } from '../../api/routes.ts'
 import * as board from './board.ts'
+import { buttonSoundsEnabled, setButtonSounds } from './button-feedback.ts'
 import { Access } from './grants.tsx'
 import { Ago, here, Link, SECTIONS, type Section, type Where } from './nav.tsx'
 import { Schemas } from './schemas.tsx'
-import { nameOf, type State, type Viewer } from './store.ts'
-import { Header, nativeMenu, Unlisted } from './ui.tsx'
-import { cadence, firstLine, shownName, until } from './words.ts'
+import { mayCancelSchedule, nameOf, type State, type Viewer } from './store.ts'
+import { AskForm, Header, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, Unlisted } from './ui.tsx'
+
+import { cadence, firstLine, said, shownName, until } from './words.ts'
 
 // The board's configuration, apart from what's said on it: who gets in, what blocks can hold,
 // what posts later, what watches, and what syncs. One view, a tab per section.
@@ -24,11 +26,22 @@ export function Actions({ children }: { children: ReactNode }) {
 export function Settings(props: { state: State; viewer: Viewer; now: number; lead: ReactNode; where: Where; section: Section; open: string | null }) {
   const { state, viewer, section } = props
   const [slot, setSlot] = useState<HTMLElement | null>(null)
+  const [sounds, setSounds] = useState(buttonSoundsEnabled)
+  const sections = SECTIONS.filter((name) => name !== 'watchers' || viewer.manages || section === 'watchers')
   return (
     <>
-      <Header title="settings" lead={props.lead} flat />
+      <Header title="settings" lead={props.lead} flat>
+        <label className="button-sounds">
+          <input type="checkbox" checked={sounds} onChange={(event) => {
+            setButtonSounds(event.target.checked)
+            setSounds(event.target.checked)
+          }} />
+          button sounds
+        </label>
+      </Header>
+      <div className="view-body">
       <nav className="tabs">
-        {SECTIONS.map((name) => (
+        {sections.map((name) => (
           <Link key={name} to={`/settings/${name}`} className="tab" current={name === section}>
             {name}
           </Link>
@@ -37,14 +50,79 @@ export function Settings(props: { state: State; viewer: Viewer; now: number; lea
       </nav>
       <ActionsSlot.Provider value={slot}>
         <div className="page">
+          <DeveloperIdentity me={state.me!} channels={Object.keys(state.channels).sort()} />
           {section === 'access' && <Access state={state} viewer={viewer} where={props.where} />}
           {section === 'schemas' && <Schemas state={state} viewer={viewer} selected={props.open} />}
           {section === 'schedules' && <Schedules state={state} viewer={viewer} now={props.now} all={props.where.params.get('show') === 'all'} />}
           {section === 'watchers' && <Watchers state={state} />}
-          {section === 'sync' && <Sync state={state} entry={props.open} />}
+          {section === 'sync' && <Sync key={props.open} state={state} entry={props.open} />}
         </div>
       </ActionsSlot.Provider>
+      </div>
     </>
+  )
+}
+
+function DeveloperIdentity({ me, channels }: { me: Me; channels: string[] }) {
+  const [open, setOpen] = useState(false)
+  const [pick, setPick] = useState('')
+  const channel = channels.includes(pick) ? pick : channels[0]
+  const [agents, setAgents] = useState<string[]>([])
+  const [problem, setProblem] = useState<string | null>(null)
+  const [editing, setEditing] = useState<board.Profile | null>(null)
+  const anchor = useRef<HTMLDivElement>(null)
+  const remembered = (name: string) => {
+    const avatar = board.avatarOf(name)
+    return avatar ? { name, avatar } : { name }
+  }
+  useEffect(() => {
+    setAgents([])
+    setProblem(null)
+    if (!open || channel === undefined) return
+    let current = true
+    void board.listProfiles(channel).then(
+      (profiles) => { if (current && profiles !== undefined) setAgents(profiles) },
+      (error) => { if (current) setProblem(said(error)) },
+    )
+    return () => { current = false }
+  }, [open, channel, me])
+  return (
+    <details className="developer-identity" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>developer options</summary>
+      <div className="profile-options" ref={anchor}>
+        {channels.length > 1 && (
+          <label>registry channel{' '}
+            <select value={channel} onChange={(event) => setPick(event.target.value)}>
+              {channels.map((path) => <option key={path} value={path}>#{path}</option>)}
+            </select>
+          </label>
+        )}
+        <Menu className="act" title="post as" trigger={<>post as… <ChevronsUpDown size={13} /></>}>
+          {!board.named && <MenuItem onClick={() => void board.setProfile(null)}>act as yourself</MenuItem>}
+          {agents.map((name) => (
+            <MenuItem key={name} onClick={() => void board.setProfile(remembered(name))}>
+              <span className="choice">{name}{me.profile === name && <Check size={13} />}</span>
+            </MenuItem>
+          ))}
+          <MenuSeparator />
+          {me.profile !== null && <MenuItem onClick={() => setEditing(remembered(me.profile!))}>change name or avatar…</MenuItem>}
+          <MenuItem onClick={() => setEditing({ name: '' })}>another profile…</MenuItem>
+          {!board.named && board.getProfile() !== undefined && <MenuItem onClick={() => void board.setProfile(undefined)}>as inspect started</MenuItem>}
+        </Menu>
+        <Panel title="post as a profile" anchor={anchor} open={editing !== null} onOpenChange={(shown) => !shown && setEditing(null)}>
+          {editing && <AskForm
+            fields={[
+              { name: 'name', placeholder: 'profile name', required: true, value: editing.name },
+              { name: 'avatar', placeholder: 'avatar URL (optional)', value: editing.avatar ?? '' },
+            ]}
+            submit="post as this"
+            onDone={() => setEditing(null)}
+            onSubmit={({ name, avatar }) => void board.setProfile({ name: name!, ...(avatar ? { avatar } : {}) })}
+          />}
+        </Panel>
+        {problem && <span className="error-text">{problem}</span>}
+      </div>
+    </details>
   )
 }
 
@@ -54,17 +132,13 @@ function Schedules({ state, viewer, now, all }: { state: State; viewer: Viewer; 
   useEffect(() => {
     void board.loadSchedules(all)
   }, [all])
-  const listed = state.schedules
+  const listed = state.everySchedule === all ? state.schedules : { is: 'loading' as const }
   return (
     <>
-      {listed.is === 'here' && <Actions>
-        <Link to="/settings/schedules" className="tab" current={!all}>
-          pending
-        </Link>
-        <Link to="/settings/schedules?show=all" className="tab" current={all}>
-          all
-        </Link>
-      </Actions>}
+      <Actions>
+        <Link to="/settings/schedules" className="tab" current={!all}>pending</Link>
+        <Link to="/settings/schedules?show=all" className="tab" current={all}>all</Link>
+      </Actions>
       <Unlisted listed={listed} />
       {listed.is === 'here' && listed.items.length === 0 && <p className="empty">nothing scheduled</p>}
       {listed.is === 'here' &&
@@ -76,19 +150,13 @@ function Schedules({ state, viewer, now, all }: { state: State; viewer: Viewer; 
             <span className="faint">{cadence(schedule)}</span>
             <span className="sched-text">{firstLine(schedule.text) || 'files only'}</span>
             {schedule.re === null ? (
-              <Link to={`/c/${schedule.channel}`} className="text-link">
-                #{schedule.channel}
-              </Link>
+              <Link to={`/c/${schedule.channel}`} className="text-link">#{schedule.channel}</Link>
             ) : (
-              <Link to={here({ thread: schedule.re })} className="text-link">
-                reply in #{schedule.channel}
-              </Link>
+              <Link to={here({ thread: schedule.re })} className="text-link">reply in #{schedule.channel}</Link>
             )}
             <span className="faint small">{shownName(schedule.author)}</span>
-            {schedule.state === 'pending' && (schedule.by.principal === viewer.principal || viewer.may('manage', schedule.channel)) ? (
-              <button className="act quiet" onClick={() => void board.cancelSchedule(schedule.id)}>
-                cancel
-              </button>
+            {schedule.state === 'pending' && mayCancelSchedule(viewer, schedule) ? (
+              <button className="act quiet" type="button" onClick={() => void board.cancelSchedule(schedule.id)}>cancel</button>
             ) : (
               <span />
             )}
@@ -137,7 +205,7 @@ function Watchers({ state }: { state: State }) {
 
 // --- sync --------------------------------------------------------------------------------------
 
-/** The board's sync entries, and each one's raw inbox: what the platform sent, newest first. Not on the board's log, so not live. */
+/** The board's sync entries, and each one's raw events: what the platform sent, newest first. Not on the board's log, so not live. */
 function Sync({ state, entry }: { state: State; entry: string | null }) {
   const entries = state.discovery?.sync ?? []
   const key = entry ?? entries[0]?.key ?? null
@@ -156,7 +224,7 @@ function Sync({ state, entry }: { state: State; entry: string | null }) {
   return (
     <>
       <Actions>
-        <button className="tool" title="refresh" onClick={load}>
+        <button className="tool" type="button" title="refresh" onClick={load}>
           <RefreshCw size={14} strokeWidth={1.75} />
         </button>
       </Actions>
@@ -176,16 +244,12 @@ function Sync({ state, entry }: { state: State; entry: string | null }) {
         return (
           <div key={row.id} className="inbox-row">
             <Ago iso={row.createdAt} />
-            <span>
-              <span className="badge">{event.kind}</span>
-            </span>
+            <span><span className="badge">{event.kind}</span></span>
             <div>
               <div>
                 <span className="author">{event.author?.handle ?? '—'}</span> {event.text ?? event.type ?? event.emoji ?? ''}
               </div>
-              <pre>
-                {row.channel} · {row.event.thread}
-              </pre>
+              <pre>{row.channel} · {row.event.thread}</pre>
             </div>
           </div>
         )

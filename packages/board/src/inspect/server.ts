@@ -109,6 +109,8 @@ export async function createInspector(options: {
         },
         ...(body ? { body } : {}),
         signal: controller.signal,
+        // A write may carry a claim's proof, and the proxy can't tell: none follows a redirect.
+        claim: !reading,
       })
       response.writeHead(upstream.status, {
         'content-type': upstream.headers.get('content-type') ?? 'application/json',

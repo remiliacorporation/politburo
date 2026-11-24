@@ -1,0 +1,361 @@
+{
+  "case_id": "board-cli-issues-014-operational-target",
+  "description": "Declare and explicitly supersede a non-code target",
+  "expected": {
+    "database": {
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "controller-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "planned",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"controller\", \"version\": 1}"
+        },
+        {
+          "actor": "registrar-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"controller-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"planned\"}"
+        },
+        {
+          "actor": "controller-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "issue_updated",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 2}"
+        },
+        {
+          "actor": "controller-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "operational_target_declared",
+          "issue_key": "example-issue",
+          "payload_json": "{\"approved_scope\": \"example-scope\", \"basis_set_by\": \"operator-01\", \"controller\": \"controller-01\", \"declarer_steward\": \"registrar-01\", \"outcome_id\": \"example-outcome\", \"outcome_version\": 1, \"packet_sha256\": null, \"reason\": \"Scope the example outcome\", \"scope_ref\": \"example-scope\", \"supersedes\": null}"
+        },
+        {
+          "actor": "controller-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "operational_target_declared",
+          "issue_key": "example-issue",
+          "payload_json": "{\"approved_scope\": \"example-scope\", \"basis_set_by\": \"operator-01\", \"controller\": \"controller-01\", \"declarer_steward\": \"registrar-01\", \"outcome_id\": \"example-outcome\", \"outcome_version\": 2, \"packet_sha256\": null, \"reason\": \"Scope the example outcome\", \"scope_ref\": \"example-scope\", \"supersedes\": {\"outcome_id\": \"example-outcome\", \"outcome_version\": 1}}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": "example-scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "working",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 2,
+          "worktree": null
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/controller.md",
+          "personality": null,
+          "profile_key": "controller",
+          "title": "controller",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 1,
+        "stderr": "--scope-ref does not match the issue's recorded approved_scope or packet_sha256\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "the declaring actor set this issue's controller or approved scope and cannot also declare it\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-issue\",\n      \"version\": 2\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "only the issue's recorded controller or a registered spawner (coordinator) or controller may declare an operational target\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"operational_outcome\": \"example-outcome\",\n  \"outcome_version\": 1\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "an operational target declaration is already active for this issue; pass --supersedes to replace it explicitly\n",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"operational_outcome\": \"example-outcome\",\n  \"outcome_version\": 2\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "controller-01",
+        "argv": [
+          "operational-target",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--operational-outcome",
+          "example-outcome",
+          "--outcome-version",
+          "1",
+          "--reason",
+          "Scope the example outcome",
+          "--scope-ref",
+          "other-scope"
+        ]
+      },
+      {
+        "actor": "controller-01",
+        "argv": [
+          "operational-target",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--operational-outcome",
+          "example-outcome",
+          "--outcome-version",
+          "1",
+          "--reason",
+          "Scope the example outcome",
+          "--scope-ref",
+          "example-scope"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "approved_scope": "example-scope",
+          "controller": "controller-01",
+          "issue_key": "example-issue",
+          "state": "working",
+          "title": "Example issue"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "operational-target",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--operational-outcome",
+          "example-outcome",
+          "--outcome-version",
+          "1",
+          "--reason",
+          "Scope the example outcome",
+          "--scope-ref",
+          "example-scope"
+        ]
+      },
+      {
+        "actor": "controller-01",
+        "argv": [
+          "operational-target",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--operational-outcome",
+          "example-outcome",
+          "--outcome-version",
+          "1",
+          "--reason",
+          "Scope the example outcome",
+          "--scope-ref",
+          "example-scope"
+        ]
+      },
+      {
+        "actor": "controller-01",
+        "argv": [
+          "operational-target",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--operational-outcome",
+          "example-outcome",
+          "--outcome-version",
+          "2",
+          "--reason",
+          "Scope the example outcome",
+          "--scope-ref",
+          "example-scope"
+        ]
+      },
+      {
+        "actor": "controller-01",
+        "argv": [
+          "operational-target",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--operational-outcome",
+          "example-outcome",
+          "--outcome-version",
+          "2",
+          "--reason",
+          "Scope the example outcome",
+          "--scope-ref",
+          "example-scope",
+          "--supersedes"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "Scope mismatch, self-declaration by the scope setter and an unregistered declarer are refused. The registered controller declares the outcome; replacing it requires explicit supersession and does not change the issue version.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": {
+          "instructions_path": "roles/controller.md",
+          "profile_key": "controller",
+          "title": "controller"
+        }
+      },
+      {
+        "actor": "registrar-01",
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": {
+          "agent_id": "controller-01",
+          "display_name": "controller-01",
+          "profile_key": "controller"
+        }
+      },
+      {
+        "actor": "controller-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "approved_scope": "example-scope",
+          "controller": "controller-01",
+          "issue_key": "example-issue",
+          "state": "working",
+          "title": "Example issue"
+        }
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py"
+    ]
+  }
+}

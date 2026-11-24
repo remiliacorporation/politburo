@@ -649,3 +649,111 @@ it('skips run-health conformance without registering a probe agent on a board th
   })
   expect((await client.agents.list(channel)).agents).toMatchObject([{ status: 'disabled' }])
 }, 30_000)
+
+/** That nothing posted `text` in `channel` since `start`, as a tombstone no longer has its text: the channel's events say. */
+async function neverPosted(client: ReturnType<typeof via>, channel: string, start: string, text: string) {
+  for (let after = start; ; ) {
+    const { events, cursor } = await client.poll({ channel, after, wait: 0 })
+    expect(events.filter(({ type, message }) => type === 'message.posted' && message?.text === text)).toEqual([])
+    if (cursor === after) break
+    after = cursor
+  }
+}
+
+const healthPath = (request: Request) => new URL(request.url).pathname.startsWith(`${new URL(BOARD_URL).pathname}/ops/health/`)
+const noRunHealth = 'not kept here: this board serves no run health'
+
+// A mount that advertises intents and has no health route answers its own 404, or the discovery
+// document an older mount answers any GET with: neither is a board that keeps health.
+it.for([
+  ['its own unknown-route 404', () => Response.json({ error: { code: 'not_found', message: 'no such route' } }, { status: 404 })],
+  ['discovery JSON', () => Response.json({ version: '0.0.0', url: BOARD_URL, audience: BOARD_URL, team_id: null, project_id: null, sync: [], agent_ops: true, agent_intents: true })],
+] as const)('skips run-health conformance, writing nothing for it, on a mount that answers the health route with %s', { timeout: 30_000 }, async ([, answer], { onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const channel = 'conformance'
+  const client = via(async (request) => (healthPath(request) ? answer() : team.fetch(request)), await personToken())
+  const { cursor: start } = await client.channel(channel).messages()
+
+  const report = await conformance(client, { channel })
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({ status: 'skipped', detail: noRunHealth })
+  expect(report.checks.filter(({ status }) => status === 'failed')).toEqual([])
+  // Only the registry check leaves an agent, and no probe task was made.
+  expect((await client.agents.list(channel)).agents).toMatchObject([{ status: 'disabled' }])
+  await neverPosted(client, channel, start, 'conformance: run health')
+})
+
+// A board that took the probe task and keeps no tasks beyond it: claiming or releasing it says so.
+it.for(['claim', 'release'] as const)('skips run-health conformance, and retires its probe agent, when a task %s is answered no_tasks', { timeout: 30_000 }, async (verb, { onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const channel = 'conformance'
+  let probe: string | undefined
+  const client = via(async (request) => {
+    if (request.method === 'POST' && probe !== undefined && new URL(request.url).pathname.endsWith(`/tasks/${probe}/${verb}`)) {
+      return Response.json({ error: { code: 'no_tasks', message: 'this board keeps no tasks' } }, { status: 501 })
+    }
+    const sent = request.method === 'POST' ? await request.clone().text() : ''
+    const response = await team.fetch(request)
+    // Only the run-health probe's task answers no_tasks: the other checks keep their tasks.
+    if (probe === undefined && sent.includes('"conformance: run health"')) probe = ((await response.clone().json()) as { task: { id: string } }).task.id
+    return response
+  }, await personToken())
+
+  const report = await conformance(client, { channel })
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({ status: 'skipped', detail: 'not kept here: this board keeps no tasks' })
+  expect(report.checks.filter(({ status }) => status === 'failed')).toEqual([])
+  expect((await client.agents.list(channel)).agents.map(({ status }) => status)).toEqual(['disabled', 'disabled'])
+})
+
+it('fails run-health conformance, rather than pass, when its probe agent cannot be retired', { timeout: 30_000 }, async ({ onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const channel = 'conformance'
+  let retired = 0
+  const client = via(async (request) => {
+    // The registry check retires its agent first. The probe's is the second retire.
+    if (request.method === 'POST' && /\/ops\/agents\/[^/]+\/retire$/.test(new URL(request.url).pathname) && ++retired === 2) {
+      return Response.json({ error: { code: noOps.code, message: 'this board does not advertise agent operations' } }, { status: noOps.status })
+    }
+    return team.fetch(request)
+  }, await personToken())
+
+  const report = await conformance(client, { channel })
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({
+    status: 'failed', detail: expect.stringMatching(/^the probe agent \S+ stays enabled: retiring it was answered with no_agent_ops$/),
+  })
+  expect(report.ok).toBe(false)
+  expect((await client.agents.list(channel)).agents.map(({ status }) => status).sort()).toEqual(['disabled', 'enabled'])
+})
+
+it.for([500, 404])('reports a cleanup delete that returns HTTP %i on the run-health check', { timeout: 30_000 }, async (status, { onTestFinished }) => {
+  const team = localBoard({ agentOps: true })
+  onTestFinished(() => team.close())
+  const text = 'conformance: run health'
+  const echoed = 'untrusted delete error'
+  let probe: string | undefined
+  const client = via(async (request) => {
+    const path = new URL(request.url).pathname
+    if (probe !== undefined && request.method === 'POST') {
+      if (path.endsWith(`/messages/${probe}/delete`))
+        return Response.json({ error: { code: 'delete_failed', message: echoed } }, { status })
+      // A probe that would be skipped also fails when it can't be cleaned up.
+      if (status === 404 && path.endsWith(`/tasks/${probe}/claim`))
+        return Response.json({ error: { code: 'no_tasks', message: 'this board keeps no tasks' } }, { status: 501 })
+    }
+    const response = await team.fetch(request.clone())
+    if (request.method === 'POST' && path.endsWith('/tasks') && response.ok && (await request.json()).text === text)
+      probe = (await response.clone().json() as { task: { id: string } }).task.id
+    return response
+  }, await personToken())
+
+  const report = await conformance(client)
+  expect(probe).toBeDefined()
+  expect((await client.thread(probe!)).message).toMatchObject({ text, deleted: false })
+  expect(report.checks.find(({ name }) => name === runHealthCheck)).toMatchObject({
+    status: 'failed', detail: expect.stringContaining(`deleting a message this run created: got HTTP ${status}`),
+  })
+  expect(report.ok).toBe(false)
+  expect(JSON.stringify(report)).not.toContain(echoed)
+})

@@ -1,0 +1,109 @@
+{
+  "case_id": "review-marks-009-changes",
+  "description": "Validate and ingest a changes verdict",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [],
+      "pipeline_stages": [],
+      "review_marks": []
+    },
+    "exit_code": 0,
+    "files": {
+      "verdict.json": "{\"findings\": [{\"file\": \"example/view.py\", \"line\": 4, \"scenario\": \"An empty list shows the wrong count.\", \"severity\": \"high\"}], \"head\": \"bfb003c312c7625fdba81565a3166c5f96cf4aeb\", \"mac\": \"99b1dc32eab37e58cbc0e5b07752be5747ba761a0c30bf987c5805d137a82236\", \"pr\": 1, \"schema\": \"tigeryard.review-verdict.v1\", \"session\": \"example-reviewer-session\", \"task\": \"example-project\", \"verdict\": \"changes\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"valid\": true, \"errors\": []}\n",
+    "steps": [
+      {
+        "op": "validate",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\"valid\": true, \"errors\": []}\n",
+          "watcher": {
+            "github_writes": [],
+            "outcome": "accepted",
+            "outcomes": [
+              {
+                "outcome": "review_registered",
+                "task": "example-project"
+              },
+              {
+                "outcome": "review_accepted",
+                "task": "example-project",
+                "verdict": "changes"
+              }
+            ],
+            "pending_comments": [
+              {
+                "body": "Tigeryard remote watcher: Review verdict for bfb003c312c7625fdba81565a3166c5f96cf4aeb: **changes**.\n\n- **high** `example/view.py:4`: An empty list shows the wrong count.",
+                "key": "review:56b8afb49cbd72b5cdcf69b441e7f335bdf9079e",
+                "pr": 1,
+                "task": "example-project"
+              }
+            ],
+            "pending_messages": [
+              {
+                "actionable": true,
+                "body": "Remote task example-project: reviewer verdict changes on bfb003c312c7625fdba81565a3166c5f96cf4aeb (1 findings). The pull request stays a draft until a clean verdict for its head.",
+                "kind": "qa_result"
+              }
+            ],
+            "phase": "active",
+            "ready_after_verdict": false,
+            "ready_before_verdict": false,
+            "review": {
+              "findings": 1,
+              "head": "bfb003c312c7625fdba81565a3166c5f96cf4aeb",
+              "high": 1,
+              "session": "example-reviewer-session",
+              "sha": "56b8afb49cbd72b5cdcf69b441e7f335bdf9079e",
+              "verdict": "changes"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "findings": [
+          {
+            "file": "example/view.py",
+            "line": 4,
+            "scenario": "An empty list shows the wrong count.",
+            "severity": "high"
+          }
+        ],
+        "op": "validate",
+        "verdict": "changes",
+        "watch": "current"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "A valid changes verdict is recorded and queued for comment, but the passed check still leaves the PR a draft.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": []
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "supervisor/review.py",
+      "supervisor/review_verdict.py",
+      "supervisor/remote_watch.py"
+    ]
+  }
+}

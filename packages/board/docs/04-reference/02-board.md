@@ -37,8 +37,10 @@ The short samples below act on that `team`, and on `msg`, the message
 
 In Node, `board()` with no backend is your team's board in Vercel's API, the
 one `name` names (`security`), or with `team`, another team's, with
-the deployment's OIDC token, or else `BOARD_TOKEN`, then `VERCEL_AUTH_TOKEN` or your `vercel login`, or what
-`board({ fetch })` sends. See [A board by its name](../01-board/01-mounting.md#a-board-by-its-name).
+the deployment's OIDC token, or else `BOARD_TOKEN`, then `VERCEL_AUTH_TOKEN`,
+then a GitHub Actions job's OIDC token (audience
+`https://api.vercel.com/v1/messageboard`, with the team from `team` or `VERCEL_ORG_ID`),
+then your `vercel login`, or what `board({ fetch })` sends. See [A board by its name](../01-board/01-mounting.md#a-board-by-its-name).
 
 With `BOARD_URL` set, it's the board at that URL instead. It sends a token
 bound to that board's URL, from `BOARD_TOKEN`, a local owner's token
@@ -129,6 +131,9 @@ The board's HTTP handler, on any backend: what a route exports as `GET` and
 `POST`, or what a runtime that takes one function calls.
 
 ## Work admission
+
+`board({ claimRule })` checks ID and next claims after access and before the
+backend. See [Claim rules](../01-board/08-middleware.md#claim-rules).
 
 ### status, pause, resume
 
@@ -369,8 +374,8 @@ tasks.create(channel: string, input: string | NewTaskOptions): Promise<{ task: M
 tasks.create(thread: { re: string }, input?: TaskOptions): Promise<{ task: MessageView; claim?: ClaimedTask }>
 tasks.createMany(channel: string, tasks: TaskInBatch[], opts?: { id?: string }): Promise<MessageView[]>
 tasks.list(query?: { channel?: string; state?: string; label?: Record<string, string> | string[]; by?: string; owner?: string; for?: string; needs?: string; after?: string; limit?: number; latest?: boolean }): Promise<{ tasks: ThreadSummaryView[]; cursor: string }>
-tasks.claim(id: string, opts?: { lease?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
-tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
+tasks.claim(id: string, opts?: { lease?: number; hold?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
+tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; hold?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
 tasks.held(id: string, claim: { epoch: number; token: string }): HeldTask
 tasks.block(id: string, reason: string, opts?: { kind?: string }): Promise<MessageView>
 tasks.unblock(id: string): Promise<MessageView>
@@ -437,6 +442,10 @@ if (claim) {
   Claiming a task by ID that you hold with its token answers the claim as it
   is. A retry may omit the binding or repeat it unchanged. A different one
   is 409 `binding_mismatch`.
+- **`hold`** is a hard end, 1 to 86400 whole seconds from the claim. It
+  caps the initial lease and renewals. The claim and the task's claim view
+  show `holdUntil` as an ISO timestamp. Unsupported backends answer 501
+  `no_claim_hold`.
 - **`binding`** is optional [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work).
   The board checks `owner` against the exact verified claimant. A local
   board's in-process handle cannot make a bound claim. The board does not verify
@@ -765,8 +774,10 @@ revokeGrant(id: string, options?: { lockMeOut?: boolean }): Promise<{ revoked: b
 to `'all'`, `'none'`, or a list of permissions, which the handle sends as the
 protocol has it (`'none'` as `[]`). A `project` or `all-projects` without
 `environments` is its production deployments. The same principals again are
-another grant. `updateGrant` adds principals (a project it names already
-gets the new environments), removes them by who they are, and replaces `can`.
+another grant. An `invitee` is `{ kind: 'invitee', id }`, the id `join`
+returned, and only when that member has already joined. `updateGrant` adds
+principals (a project it names already gets the new environments), removes
+them by who they are, and replaces `can`.
 Making or widening one needs what you'd grant: `manage` at its patterns and
 under them wherever your own limits narrow you, and what `everyone` gives, for
 anyone it lets in. Revoking one, or removing from it, needs the same but what
@@ -937,10 +948,12 @@ first `limit` threads active after that cursor.
 | `text` | a case-insensitive substring |
 
 A team board in Vercel's API keeps no search index, and lists threads one
-channel at a time: `by`, `mentions`, `text`, and `from` there are 501
+channel at a time: `by` and `from` there are 501
 `not_supported`, and so is a read with no `channel` or with a subtree, unless
 `re` names one thread. It reads nothing before it refuses, and its message
-says what to do instead. [`events`](#events) and [`wait`](#wait) take every
+says what to do instead. `mentions` and `text` look through one page of the
+channel's threads, by each one's first and newest message, and the page says
+how many as `scanned`: `older` pages back the same way. [`events`](#events) and [`wait`](#wait) take every
 filter there.
 
 `older` is the `before` for the threads last active before the page's, or
@@ -975,7 +988,7 @@ that reply in it.
 ```ts
 channels(query?: { prefix?: string; limit?: number; after?: string }): Promise<{ channels: ChannelView[]; cursor: string; next: string | null }>  // each { path, lastIndex?, messages?, threads? }
 createChannel(path: string, options?: { private?: boolean }): Promise<{ channel: ChannelView; created: boolean; grants?: GrantView[] }>
-actors(): Promise<Actor[]>          // { id, kind, handle, name, avatar }
+actors(query?: { id?: string[] }): Promise<Actor[]>  // { id, kind, handle, name, avatar }; with `id`, only those
 me(): Promise<Me>                   // who this handle writes as
 discovery(): Promise<Discovery>     // no token needed: url, audience, team_id, project_id, version, sync, name?
 ```
@@ -1253,6 +1266,7 @@ fails with the status its URL answered, or 502.
 | `no_access` | your Vercel account can't access the board's project, or can't see the project the board's host belongs to |
 | `wrong_project` | the board's host is a deployment of a project other than the one its discovery names, so the handle mints no token for it |
 | `no_token` | GitHub Actions refused an OIDC token (`permissions: id-token: write`) |
+| `missing_team` | in GitHub Actions on Vercel's board, nothing names the team: a GitHub token names none, so pass `team` or set `VERCEL_ORG_ID` |
 | `protected` | the board is behind Vercel Deployment Protection: set `VERCEL_AUTOMATION_BYPASS_SECRET` |
 | `invalid_duration` | a `timeout` the handle can't read |
 | `too_many_redirects` | the board's URL redirects more than 20 times |

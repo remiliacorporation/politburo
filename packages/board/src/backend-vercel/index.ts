@@ -1,11 +1,12 @@
 // Your team's board in Vercel's API, internal: board()'s default backend, and the CLI's. In Node, it finds credentials the way
-// a deployment and the Vercel CLI do: the deployment's OIDC token, or else `BOARD_TOKEN` or your login. Never
-// `VERCEL_TOKEN`, a name people set for other reasons, and nothing in the environment replaces a deployment's
-// own token: only the login of an app that runs board's CLI goes ahead of it, since the app says who its commands run as.
+// a deployment and the Vercel CLI do: the deployment's OIDC token, or else `BOARD_TOKEN`, `VERCEL_AUTH_TOKEN`, a GitHub
+// Actions job's OIDC token, or your `vercel login`. Never `VERCEL_TOKEN`, a name people set for other reasons, and nothing in the environment replaces a
+// deployment's own token: only the login of an app that runs board's CLI goes ahead of it, since the app says who its commands run as.
 import { readFile } from 'node:fs/promises'
 import { getVercelOidcToken, getVercelToken } from '@vercel/oidc'
 import { decodeJwt } from 'jose'
-import { appLogin, asYou, environmentProfile, loginHanded, PASSED, passedToken, sandboxHeaders, vercelLogin, vercelProjectFile } from '../client/node.ts'
+import { BoardError } from '../client/client.ts'
+import { appLogin, asYou, environmentProfile, expiry, githubActionsToken, inGithubActions, loginHanded, PASSED, passedToken, sandboxHeaders, vercelLogin, vercelProjectFile } from '../client/node.ts'
 import { createVercel, type VercelBackend, type VercelEnvironment, type VercelOptions } from '../server/backend-vercel.ts'
 import { HttpError } from '../server/errors.ts'
 
@@ -19,13 +20,52 @@ const asDeployment = () => !appLogin() && (process.env.VERCEL === '1' || !!proce
 /** Off a deployment, a credential Vercel's API takes, set for board: what a sandbox or CI passes. Not ahead of an app's login either. */
 const boardToken = () => (appLogin() || asDeployment() ? null : process.env.BOARD_TOKEN || null)
 
-/** Whether what goes is a Vercel login: an app's, or with no deployment's token and no `BOARD_TOKEN`, yours. */
-const asLogin = () => !asDeployment() && !boardToken()
+/**
+ * Whether a GitHub Actions job's own OIDC token goes: in a job that may ask for one, with nothing above to send.
+ * A `VERCEL_AUTH_TOKEN` the workflow sets goes ahead of it: `id-token: write` is often there for something else.
+ */
+const asGithubActions = () => !appLogin() && !asDeployment() && !boardToken() && !process.env.VERCEL_AUTH_TOKEN && inGithubActions()
+
+/** Whether what goes is a Vercel login: an app's, or with nothing else to send, yours. */
+const asLogin = () => !asDeployment() && !boardToken() && !asGithubActions()
+
+/** The audience a GitHub Actions token for Vercel's board is made out to, whichever board it names. */
+const GITHUB_AUDIENCE = 'https://api.vercel.com/v1/messageboard'
+
+/** Where that token may go: its audience's origin, or a test's own API on this machine, never anywhere else. */
+const githubTokenGoesTo = (url: URL) => url.origin === new URL(GITHUB_AUDIENCE).origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(url.origin)
+
+/** The job's GitHub Actions token, kept until a minute before it expires: GitHub mints one each time it's asked. */
+let github: { job: string; token: Promise<string>; until: number } | null = null
+
+function githubToken(): Promise<string> {
+  const job = `${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}\n${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`
+  if (github?.job === job && Date.now() < github.until) return github.token
+  const held: NonNullable<typeof github> = {
+    job,
+    until: Infinity,
+    token: githubActionsToken(GITHUB_AUDIENCE).then(
+      (token) => {
+        held.until = expiry(token) - 60_000
+        return token
+      },
+      (error: unknown) => {
+        if (github === held) github = null
+        // The handle's own words, not that Vercel's API didn't answer.
+        if (error instanceof BoardError) throw new HttpError(401, 'no_token', error.message, { ...(error.hint ? { hint: error.hint } : {}), origin: 'handle' })
+        throw new HttpError(502, 'no_token', `GitHub Actions gave no OIDC token: ${error instanceof Error ? error.message : String(error)}`, { origin: 'handle' })
+      },
+    ),
+  }
+  github = held
+  return held.token
+}
 
 /**
  * A token Vercel's API takes: the login of the app that runs board's CLI, when it gave one (the
  * token it was passed, as `vercel board --token`, or else its own), or else this deployment's OIDC
- * token, or else `BOARD_TOKEN`, or your Vercel login: `VERCEL_AUTH_TOKEN`, or your `vercel login`.
+ * token, or else `BOARD_TOKEN`, or else `VERCEL_AUTH_TOKEN`, or else a GitHub Actions job's OIDC
+ * token, or your `vercel login`.
  */
 async function token(): Promise<string> {
   if (asDeployment()) return getVercelOidcToken()
@@ -42,6 +82,7 @@ export function credentialSource(): string {
   if (passedToken() !== null) return PASSED
   if (asDeployment()) return 'Vercel OIDC'
   if (boardToken()) return 'BOARD_TOKEN'
+  if (asGithubActions()) return 'GitHub Actions OIDC'
   return loginHanded() ? 'the Vercel CLI' : 'vercel login'
 }
 
@@ -86,8 +127,30 @@ async function team(): Promise<string | null> {
   return null
 }
 
+/**
+ * A request with the job's GitHub Actions token: only to Vercel's API, which the token is made out
+ * to, and only on a team the request names, since the token names none. Checked where the token
+ * is sent, so a `board({ fetch })` with credentials of its own is never held to it.
+ */
+async function withGithubActions(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : String(input))
+  if (!githubTokenGoesTo(url))
+    throw new HttpError(400, 'wrong_audience', `A GitHub Actions token for Vercel's board goes only to ${new URL(GITHUB_AUDIENCE).origin}, not ${url.origin}.`, {
+      origin: 'handle',
+    })
+  if (!url.searchParams.has('teamId') && !url.searchParams.has('slug'))
+    throw new HttpError(400, 'missing_team', "A GitHub Actions token names no Vercel team, so there's no team's board to use.", {
+      hint: 'Pass --scope <team ID>, or set VERCEL_ORG_ID.',
+      origin: 'handle',
+    })
+  const headers = new Headers(init.headers)
+  headers.set('authorization', `Bearer ${await githubToken()}`)
+  return globalThis.fetch(input, { ...init, headers })
+}
+
 const environment: VercelEnvironment = {
   fetch: () => async (input, init = {}) => {
+    if (asGithubActions()) return withGithubActions(input, init)
     const credential = await token()
     // Your login goes through the fetch the CLI that runs board's hands it, which adds its own
     // credentials. A deployment's token, or BOARD_TOKEN, goes as it is.

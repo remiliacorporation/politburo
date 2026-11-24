@@ -30,7 +30,7 @@ async function setup(staged = true) {
 async function viewer(handle: Awaited<ReturnType<typeof setup>>['worker']): Promise<Viewer> {
   const { actor, principal, profile, can } = await handle.me()
   const access = compileAccess(can)
-  return { actor, principal, profile, may: (permission, channel) => access.can(permission, channel), manages: access.at('manage', '*') }
+  return { actor, principal, profile, may: (permission, channel) => access.can(permission, channel), manages: access.at('manage', '*'), person: true }
 }
 
 function controls(root: MessageView, who: Viewer, state = initialState, now = Date.now()) {
@@ -58,7 +58,7 @@ it('offers only stage-appropriate moves and keeps legacy controls', async () => 
 
   const { worker: legacy } = await setup(false)
   const ready = (await legacy.tasks.create('work', 'Legacy work')).task
-  expect(controls(ready, who)).toEqual(['claim', 'hold', 'assign', 'cancel'])
+  expect(controls(ready, who)).toEqual(['claim', 'park', 'priority', 'hold', 'assign', 'cancel'])
   const failed = await (await legacy.tasks.claim(ready.id)).fail('Try again later')
   expect(controls(failed, who)).toEqual(['reopen', 'cancel'])
 
@@ -67,8 +67,8 @@ it('offers only stage-appropriate moves and keeps legacy controls', async () => 
   const scoped = await scoper.tasks.scope(id, 'Scope is ready')
   const claim = await worker.tasks.claim(id)
   const tab = claimed(initialState, claim.task, { epoch: claim.epoch })
-  expect.soft(controls(claim.task, who, tab)).toEqual(['held', 'settle'])
-  expect.soft(controls(claim.task, await viewer(worker.as('different-profile')), tab)).toEqual([])
+  expect.soft(controls(claim.task, who, tab)).toEqual(['held', 'settle', 'park'])
+  expect.soft(controls(claim.task, await viewer(worker.as('different-profile')), tab)).toEqual(['priority'])
   const handoff = await claim.complete()
   const review = await scoper.tasks.stage(id, 'review', 'Review started')
   const qa = await scoper.tasks.stage(id, 'qa', 'Test the patch')
@@ -83,8 +83,8 @@ it('offers only stage-appropriate moves and keeps legacy controls', async () => 
   expect(Object.fromEntries([proposed, scoped, handoff, review, qa, repair, approved, done, rejected, canceled].map((root) =>
     [root.task?.work?.stage, controls(root, who)],
   ))).toEqual({
-    proposed: ['hold'], scoped: ['claim', 'hold'], handoff: [], review: [], qa: [],
-    repair: ['claim', 'hold'], approved: [], done: [], rejected: [], canceled: [],
+    proposed: ['park', 'priority', 'hold'], scoped: ['claim', 'park', 'priority', 'hold'], handoff: ['park', 'priority'], review: ['park', 'priority'], qa: ['park', 'priority'],
+    repair: ['claim', 'park', 'priority', 'hold'], approved: ['park', 'priority'], done: [], rejected: [], canceled: [],
   })
 })
 

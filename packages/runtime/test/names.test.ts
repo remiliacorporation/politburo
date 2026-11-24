@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { pickName, namePool, spawnerTitle } from '../src/names.ts'
-import * as runtime from '../src/index.ts'
 
 const expectedNames = [
   'ZAVOD', 'FABRIKA', 'KOMBINAT', 'KOLKHOZ', 'SOVKHOZ',
@@ -16,6 +16,15 @@ test('namePool lists unique uppercase ASCII names in allocation order', () => {
   assert.equal(new Set(namePool).size, namePool.length)
   for (const name of namePool) assert.match(name, /^[A-Z]{1,8}$/)
   assert.deepEqual(namePool, expectedNames)
+})
+
+test('the README name table lists the pool in allocation order', async () => {
+  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8')
+  const namesSection = readme.split(/^## /m).find((section) => /^Names\r?\n/.test(section))
+  assert.ok(namesSection, 'README has a Names section')
+  const rows = namesSection.split(/\r?\n/).filter((line) => line.trimStart().startsWith('|'))
+  const documented = rows.flatMap((row) => Array.from(row.matchAll(/`([^`]+)`/g), (entry) => entry[1]))
+  assert.deepEqual(documented, namePool)
 })
 
 test('pickName starts at ZAVOD and follows the order as earlier names are taken', () => {
@@ -61,6 +70,27 @@ test('pickName counts pool names in use, not the size of the input', () => {
   assert.equal(pickName(new Set([...expectedNames.slice(0, -1), 'UNKNOWN'])), lastName)
 })
 
+test('duplicate in-use names do not exhaust the pool', () => {
+  const used = expectedNames.slice(0, -1)
+  assert.equal(pickName([...used, 'ZAVOD']), expectedNames.at(-1))
+})
+
+test('spawnerTitle and pickName reject control and format characters', () => {
+  for (const invalid of ['R\0W', 'R\u0080W', 'R\u202eW', 'R\ufeffW', 'R\u{e0001}W']) {
+    const label = `U+${invalid.codePointAt(1)!.toString(16).toUpperCase()}`
+    assert.throws(() => spawnerTitle(invalid, 'ZAVOD'), { name: 'RangeError', message: /tag.*control or format/ }, label)
+    assert.throws(() => pickName(['ZAVOD', invalid]), { name: 'RangeError', message: /in-use names.*control or format/ }, label)
+  }
+})
+
+test('spawnerTitle and pickName reject non-string tags and entries without coercion', () => {
+  for (const value of [123, null, { toString: () => 'RW' }, Symbol('RW')]) {
+    const invalid = value as unknown as string
+    assert.throws(() => spawnerTitle(invalid, 'ZAVOD'), { name: 'TypeError', message: /tag must be a string/ })
+    assert.throws(() => pickName([invalid]), { name: 'TypeError', message: /in-use name must be a string/ })
+  }
+})
+
 test('the pool cannot be reordered by a caller', () => {
   assert.throws(() => (namePool as unknown as string[]).sort())
   assert.equal(pickName([]), 'ZAVOD')
@@ -83,7 +113,8 @@ test('spawnerTitle rejects names outside the pool', () => {
   }
 })
 
-test('the package entry point exports the pool and its helpers', () => {
+test('the package entry point exports the pool and its helpers', async () => {
+  const runtime = await import('@remilia/politburo-runtime')
   assert.deepEqual(runtime.namePool, expectedNames)
   assert.equal(runtime.pickName(['ZAVOD']), 'FABRIKA')
   assert.equal(runtime.spawnerTitle('RW', 'ZAVOD'), 'RW ZAVOD')

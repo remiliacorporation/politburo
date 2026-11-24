@@ -1,10 +1,13 @@
 import { Circle, CircleCheck, CircleDashed, CircleDot, CirclePause, CircleSlash, CircleX, Ellipsis } from 'lucide-react'
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
+import type { AttentionView } from '../../api/routes.ts'
+import { TaskPriority } from '../../contract/schemas.ts'
 import * as board from './board.ts'
-import { here, Link } from './nav.tsx'
+import { toast } from './chrome.ts'
+import { here, Link, RelativeTime } from './nav.tsx'
 import { isTask, moves, nameOf, profilesOf, stateNow, type State, type TaskRoot, type TaskState, type Viewer } from './store.ts'
 import { AskForm, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, type AskProps } from './ui.tsx'
-import { clock, firstLine } from './words.ts'
+import { firstLine, left, refusal } from './words.ts'
 
 // A task is a thread with a state, so it shows as one more line on its root: the state, who holds
 // it and for how long, who it's for, what it waits for, and how it ended. The thread pane shows the
@@ -45,22 +48,12 @@ export function useLapse(until: string | undefined): number {
 }
 
 /** What's left of a lease, counted down a second at a time. */
-export function Lease({ until }: { until: string }) {
-  const [, tick] = useReducer((n: number) => n + 1, 0)
-  useEffect(() => {
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
-  }, [])
-  const left = Date.parse(until) - Date.now()
-  return (
-    <span className="lease" title={`until ${new Date(until).toLocaleString()}`}>
-      {left > 0 ? `${clock(left)} left` : 'lease ran out'}
-    </span>
-  )
+export function Lease({ until }: { until: string; now?: number }) {
+  return <RelativeTime iso={until} className="lease">{left(until)}</RelativeTime>
 }
 
 /** The tasks one waits for, each a link to its thread, with its state where the page has it. */
-export function Needs({ ids, state }: { ids: string[]; state: State }) {
+export function Needs({ ids, state, now = Date.now() }: { ids: string[]; state: State; now?: number }) {
   return (
     <span className="needs">
       {ids.map((id) => {
@@ -68,7 +61,7 @@ export function Needs({ ids, state }: { ids: string[]; state: State }) {
         return (
           <Link key={id} to={here({ thread: id })} className="need" title={need ? firstLine(need.text) : `#${id}`}>
             #{id}
-            {isTask(need) && <span className={`need-state ${stateNow(need.task, Date.now())}`}>{stateNow(need.task, Date.now())}</span>}
+            {isTask(need) && <span className={`need-state ${stateNow(need.task, now)}`}>{stateNow(need.task, now)}</span>}
           </Link>
         )
       })}
@@ -121,7 +114,7 @@ export const taskIds = (text: string): string[] => [...new Set(text.split(/[\s,]
 const HOLD_KINDS = ['needs_input', 'awaiting_approval']
 
 /** What a task's card asks about before it acts. */
-type Asked = 'complete' | 'fail' | 'block' | 'assign' | 'cancel'
+type Asked = 'complete' | 'fail' | 'park' | 'unpark' | 'block' | 'assign' | 'priority' | 'cancel'
 
 /** A task in full, at the top of its thread: its facts, and what you can do to it now. */
 export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State; viewer: Viewer }) {
@@ -163,6 +156,10 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         release
       </button>,
     )
+  if (can.answer) next.push(<Answer key={task.attentionId} task={root.id} request={task.attentionId!} />)
+  if (can.unpark) next.push(
+    <button key="unpark" className="act primary" disabled={busy} onClick={() => setAsking('unpark')}>unpark…</button>,
+  )
   if (can.unblock)
     next.push(
       <button key="unblock" className="act primary" disabled={busy} onClick={() => run(board.unblockTask(root.id))}>
@@ -188,6 +185,8 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         fail…
       </MenuItem>,
     )
+  if (can.park) more.push(<MenuItem key="park" onClick={() => setAsking('park')}>park…</MenuItem>)
+  if (can.priority) more.push(<MenuItem key="priority" onClick={() => setAsking('priority')}>change priority…</MenuItem>)
   if (can.held || can.hold)
     more.push(
       <MenuItem key="block" onClick={() => setAsking('block')}>
@@ -213,7 +212,7 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         cancel the task…
       </MenuItem>,
     )
-  const asks: Record<Asked, { title: string } & AskProps> = {
+  const asks: Record<Exclude<Asked, 'priority'>, { title: string } & AskProps> = {
     complete: {
       title: 'complete it',
       submit: 'complete',
@@ -225,6 +224,19 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
       submit: 'fail',
       fields: [{ name: 'reason', placeholder: 'why it failed', required: true, long: true }],
       onSubmit: ({ reason }) => run(board.failTask(root.id, reason!)),
+    },
+    park: {
+      title: 'park the task',
+      submit: 'park',
+      note: current === 'claimed' ? "Ends its holder's claim." : undefined,
+      fields: [{ name: 'reason', placeholder: 'why it should wait', required: true }],
+      onSubmit: ({ reason }) => run(board.parkTask(root.id, reason!)),
+    },
+    unpark: {
+      title: 'unpark the task',
+      submit: 'unpark',
+      fields: [{ name: 'reason', placeholder: 'why it can go ahead', required: true }],
+      onSubmit: ({ reason }) => run(board.unparkTask(root.id, reason!)),
     },
     block: {
       title: 'hold it for a person',
@@ -270,6 +282,8 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
       <dl className="facts" {...nativeMenu}>
         <dt>owner</dt>
         <dd>{nameOf(state, task.owner)}</dd>
+        <dt>priority</dt>
+        <dd>{task.priority}</dd>
         {task.for && (
           <>
             <dt>for</dt>
@@ -321,13 +335,68 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
           )}
         </div>
       )}
-      {asking && canAsk && (
-        <Panel title={asks[asking].title} open onOpenChange={(open) => !open && setAsking(null)} anchor={acts}>
-          <AskForm {...asks[asking]} disabled={busy} onDone={() => setAsking(null)} />
+      {asking && (asking === 'priority' || canAsk) && (
+        <Panel title={asking === 'priority' ? 'change priority' : asks[asking].title} open onOpenChange={(open) => !open && setAsking(null)} anchor={acts}>
+          {asking === 'priority' ? (
+            <form className="ask" onSubmit={(event) => {
+              event.preventDefault()
+              const priority = TaskPriority.parse(new FormData(event.currentTarget).get('priority'))
+              run(board.prioritizeTask(root.id, priority))
+              setAsking(null)
+            }}>
+              <select name="priority" aria-label="priority" defaultValue={task.priority}>
+                {TaskPriority.options.map((priority) => <option key={priority}>{priority}</option>)}
+              </select>
+              <button className="send small" disabled={busy}>set priority</button>
+            </form>
+          ) : <AskForm {...asks[asking]} disabled={busy} onDone={() => setAsking(null)} />}
         </Panel>
       )}
-      {can.held && <p className="hint">Held by this tab: a reload loses the claim.</p>}
-      {can.elsewhere && <p className="hint">Yours, but not from this tab: it's held until the lease ends.</p>}
     </section>
+  )
+}
+
+/** Show the board's choices for this request and submit the selected one against its exact commit. */
+function Answer({ task, request }: { task: string; request: string }) {
+  const [open, setOpen] = useState(false)
+  const [attention, setAttention] = useState<AttentionView | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    let current = true
+    setAttention(null)
+    setProblem(null)
+    void board.loadAttention(task).then((result) => {
+      if (!current || !result) return
+      const { attention } = result
+      if (attention?.id === request && attention.status === 'pending') setAttention(attention)
+      else setProblem('this request is no longer awaiting an answer')
+    }, (error) => { if (current) setProblem(refusal(error)) })
+    return () => { current = false }
+  }, [open, task, request])
+  return (
+    <Panel title="answer the task" trigger="answer…" triggerClass="act primary" open={open} onOpenChange={setOpen}>
+      {attention ? (
+        <form className="ask" onSubmit={(event) => {
+          event.preventDefault()
+          const option = new FormData(event.currentTarget).get('option')?.toString()
+          if (!option || busy) return
+          setBusy(true)
+          void board.answerTask(task, request, { option, commit: attention.commit }).then((ok) => {
+            if (ok) setOpen(false)
+          }).catch((error) => toast(refusal(error))).finally(() => setBusy(false))
+        }}>
+          <strong>{attention.question}</strong>
+          {attention.context && <p>{attention.context}</p>}
+          {attention.options.map((option) => (
+            <label key={option.id}>
+              <input type="radio" name="option" value={option.id} required /> {option.label} · {option.consequence}
+            </label>
+          ))}
+          <button className="send small" disabled={busy}>answer</button>
+        </form>
+      ) : <p className="hint">{problem ?? 'loading…'}</p>}
+    </Panel>
   )
 }

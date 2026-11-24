@@ -1,11 +1,12 @@
 import { Clock, CloudOff, FileText, ListTodo, Paperclip, Tag, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { ATTACHMENT_BYTES_MAX, ATTACHMENTS_PER_MESSAGE_MAX } from '../../contract/schemas.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { toast } from './chrome.ts'
 import { profilesOf, type State } from './store.ts'
 import { actorFor, taskIds } from './task.tsx'
 import { fieldMenu, LabelEditor, Panel, Suggest, type KnownLabels } from './ui.tsx'
+import { LabelValue } from './sha.tsx'
 import { fileSize, laterFields, timingWords } from './words.ts'
 
 // Just Chat's composer: one outlined box, the textarea, a quiet toolbar.
@@ -57,12 +58,18 @@ export function Composer(props: {
   /** `data-composer`, for typing anywhere to land here. */
   role: string
   placeholder: string
+  label?: string
   known: KnownLabels
+  syncConfigured: boolean
+  mayLabel: (channel: string) => boolean
+  mayPost?: (channel: string) => boolean
   channels?: string[]
   /** The channel it starts on, where it picks one. */
   channel?: string
   /** Where a new thread can start as a task: the page's state, for who you are and what's open; `always` for a view that only starts tasks. */
   tasks?: { state: State; always?: boolean }
+  /** A pane can keep its file draft while its thread is temporarily hidden. */
+  fileDraft?: [File[], Dispatch<SetStateAction<File[]>>]
   onSend: (send: Send) => void
   onEditLast?: () => void
 }) {
@@ -80,7 +87,8 @@ export function Composer(props: {
   const [noSync, setNoSync] = useState(false)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [labelsOpen, setLabelsOpen] = useState(false)
-  const [files, setFiles] = useState<File[]>([])
+  const localFiles = useState<File[]>([])
+  const [files, setFiles] = props.fileDraft ?? localFiles
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
 
@@ -101,7 +109,6 @@ export function Composer(props: {
 
   useEffect(() => {
     setText(readDraft(props.scope))
-    if (!matchMedia('(max-width: 900px)').matches && !props.channels) area.current?.focus({ preventScroll: true })
   }, [props.scope])
 
   useLayoutEffect(() => {
@@ -116,17 +123,19 @@ export function Composer(props: {
   }
 
   const target = channel.trim().replace(/^#/, '')
-  const canSend = (text.trim().length > 0 || files.length > 0) && (!props.channels || target.length > 0)
+  const canLabel = props.mayLabel(target)
+  const validTarget = !props.channels || (target.length > 0 && (props.mayPost?.(target) ?? true))
+  const canSend = (text.trim().length > 0 || files.length > 0) && validTarget
 
   const send = () => {
     if (!text.trim() && files.length === 0) return
-    if (props.channels && !target) return toast('pick a channel to post in')
+    if (!validTarget) return toast('pick a channel you can post in')
     const me = tasking?.state.me
     props.onSend({
       text: text.trim(),
-      noSync,
+      noSync: props.syncConfigured && noSync,
       channel: target,
-      labels,
+      labels: canLabel ? labels : {},
       files,
       ...(asTask && me ? { task: { needs: taskIds(needs), for: assignee.trim() ? actorFor(me.principal, assignee) : null } } : {}),
       ...(later && !asTask ? { later } : {}),
@@ -223,7 +232,7 @@ export function Composer(props: {
           <div className="chips composer-labels">
             {labelEntries.map(([key, value]) => (
               <span key={key} className="label">
-                {key}={value}
+                {key}=<LabelValue name={key} value={value} />
                 <button
                   title={`remove ${key}`}
                   onClick={() =>
@@ -247,6 +256,7 @@ export function Composer(props: {
           maxLength={10_000}
           value={text}
           placeholder={props.placeholder}
+          aria-label={props.label}
           onChange={(event) => change(event.target.value)}
           onKeyDown={onKeyDown}
           onPaste={(event) => {
@@ -284,7 +294,7 @@ export function Composer(props: {
               event.target.value = ''
             }}
           />
-          <Panel
+          {canLabel && <Panel
             title="labels"
             trigger={
               <>
@@ -309,16 +319,16 @@ export function Composer(props: {
                 })
               }
             />
-          </Panel>
-          <button
+          </Panel>}
+          {props.syncConfigured && <button
             className={`tool${noSync ? ' on' : ''}`}
             aria-pressed={noSync}
-            title={noSync ? 'board only: this message stays off Slack and GitHub' : 'syncs to Slack and GitHub (click to keep it on the board)'}
+            title={noSync ? 'board only: do not sync this message' : 'keep this message on the board only'}
             onClick={() => setNoSync(!noSync)}
           >
             <CloudOff size={14} />
             {noSync && <span className="tool-label">board only</span>}
-          </button>
+          </button>}
           {tasking && !tasking.always && (
             <button
               className={`tool${task ? ' on' : ''}`}

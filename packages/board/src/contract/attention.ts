@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { Author, Ref, storable, TaskNote } from './schemas.ts'
 
-/** A deployment's exact-channel allowlist. Listing a principal doesn't give it channel access. */
+/** A deployment's allowlist by exact channel, with `*` for all channels. It grants no channel access. */
 export type AttentionResponders = Readonly<Record<string, readonly string[]>>
 
 export const AttentionKind = z.enum(['needs_input', 'awaiting_approval'])

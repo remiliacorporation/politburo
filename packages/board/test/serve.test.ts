@@ -6,7 +6,9 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose'
 import { afterEach, describe, expect, it } from 'vitest'
+import { local } from '../src/backend-local/index.ts'
 import { localHandle } from '../src/cli/serve.ts'
+import { board } from '../src/server/index.ts'
 import { localTokenFile } from '../src/client/node.ts'
 import { BOARD_URL, caller, personToken, testAuth, testBoard } from './harness.ts'
 import { CLI, tmp } from './cli-harness.ts'
@@ -228,6 +230,33 @@ describe('vb serve', () => {
     expect(existsSync(join(board, 'board.db'))).toBe(false)
     second.child.kill('SIGINT')
     expect(await second.exited).toBe(0)
+  })
+
+  it('leaves legacy files untouched when another process owns the board directory', async () => {
+    const { project, env } = await setup()
+    const dir = join(project, '.board')
+    const backend = local({ dir })
+    // A named board owns the directory without creating the default board's local.db.
+    const owner = board({ backend, name: 'owner' })
+    try {
+      await owner.post('dev', 'holding the directory')
+      const legacy = ['board.db', 'board.db-wal', 'board.db-shm', 'attachments/shot.txt']
+      await mkdir(join(dir, 'attachments'))
+      for (const file of legacy) await writeFile(join(dir, file), file)
+
+      const refused = await vb(project, env, ['serve', '--dir', '.board', '--port', '0', '--no-inspect'])
+      expect(refused.code).toBe(1)
+      for (const file of legacy) {
+        expect(existsSync(join(dir, file)), `${file} should stay in place`).toBe(true)
+        expect(await readFile(join(dir, file), 'utf8')).toBe(file)
+      }
+      for (const file of ['local.db', 'local.db-wal', 'local.db-shm', 'local']) expect(existsSync(join(dir, file))).toBe(false)
+      expect(refused.stderr).toContain('another process owns this board\'s directory')
+      expect(refused.stderr).toContain('--url')
+      expect(refused.stderr).not.toContain(dir)
+    } finally {
+      await backend.close()
+    }
   })
 
   it("serves the inspector beside the board, on its port, and the board alone with --no-inspect", async () => {

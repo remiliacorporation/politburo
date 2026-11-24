@@ -31,6 +31,7 @@ export function Feed(props: {
     const el = ref.current!
     el.scrollTop = el.scrollHeight
     pinned.current = true
+    el.setAttribute('data-pinned', '')
     setBehind(false)
   }
 
@@ -69,6 +70,7 @@ export function Feed(props: {
         onScroll={() => {
           const el = ref.current!
           pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+          el.toggleAttribute('data-pinned', pinned.current)
           if (pinned.current) setBehind(false)
           if (el.scrollTop < 240 && props.older && !loading.current && !done.current) {
             loading.current = true

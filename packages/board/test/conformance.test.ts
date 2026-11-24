@@ -46,7 +46,7 @@ const boardWithInviteToken = (fetch: Fetch, token: string) =>
     backend: http(BOARD_URL, {
       fetch: (input, init) => {
         const request = new Request(input, { ...init, redirect: 'error' })
-        if (!request.url.startsWith(`${BOARD_URL}/`)) throw new Error('unexpected invite endpoint')
+        if (request.url !== BOARD_URL && !request.url.startsWith(`${BOARD_URL}/`)) throw new Error('unexpected invite endpoint')
         request.headers.set('authorization', `Bearer ${token}`)
         return fetch(request)
       },

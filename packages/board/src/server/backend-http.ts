@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { BoardStatus, routes, type Discovery, type EventsPage } from '../api/routes.ts'
+import { BoardStatus, readDiscovery, routes, type Discovery, type EventsPage } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Method, Protocol } from '../api/protocol.ts'
 import { BoardError, createBoardClient, type BoardClient, type ProfileOption } from '../client/client.ts'
@@ -117,6 +117,17 @@ function attachmentOf(id: string, response: Response): Protocol['attachment']['o
   return { attachment, data: response.body ?? new Uint8Array() }
 }
 
+/** The protocol methods that are a claim's own writes: each carries its proof. */
+const CLAIM_WRITES = new Set<Method>(['renewTask', 'releaseTask', 'completeTask', 'failTask', 'handoffTask'])
+/** The ones that carry a claim's token only when the caller brings one. */
+const CLAIM_WITH_TOKEN = new Set<Method>(['createTask', 'claimTask', 'claimReadyTask', 'blockTask', 'setTaskPriority'])
+
+/** Whether a call's request carries a claim's token, by the method and its input: the flag the client's transport refuses redirects for. */
+const carriesClaim = (method: Method, input: Record<string, unknown>): boolean =>
+  CLAIM_WRITES.has(method) ||
+  (CLAIM_WITH_TOKEN.has(method) && input.token !== undefined) ||
+  (method === 'requestTaskAttention' && input.claim !== undefined)
+
 /**
  * Another board that speaks the protocol, at `url` (in Node, the one the environment points at
  * by default): this board keeps nothing, and this deployment reads and writes that one as itself.
@@ -188,7 +199,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     // This handle's own finding about the URL it was given, not the remote's words.
     if (!response.ok)
       throw new HttpError(response.status >= 400 ? response.status : 502, 'no_board', `There's no board at ${remote}: it answered ${response.status}.`, { origin: 'handle' })
-    return (await response.json()) as Discovery
+    return readDiscovery(response)
   }
 
   let discovered: Promise<Discovery> | null = null
@@ -242,13 +253,15 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
           body: data as Uint8Array<ArrayBuffer>,
           headers: { ...(type ? { 'content-type': type } : {}), ...(name !== null ? { 'x-board-filename': encodeURIComponent(name) } : {}) },
           signal,
+          // The inspector flags the writes it forwards, and the handle in between drops the flag: a file goes nowhere but here.
+          claim: true,
         })
         .catch(rethrow)
     } else if (route.method === 'GET') response = await client.request(`${path}${queryString(fields)}`, { signal }).catch(rethrow)
     else if (method === 'archiveOperationalMessage') response = await client.request(path, { method: 'POST', signal }).catch(rethrow)
     else
       response = await client
-        .request(path, { method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal })
+        .request(path, { method: route.method, body: new TextEncoder().encode(JSON.stringify(fields)), headers: { 'content-type': 'application/json' }, signal, claim: carriesClaim(method, input) })
         .catch(rethrow)
     if (response.ok) return response
     try {
@@ -278,6 +291,10 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
           origin: 'handle', hint: 'Upgrade the board before using a bound claim.',
         })
       }
+    }
+    if ((method === 'claimTask' || method === 'claimReadyTask') && input.hold !== undefined &&
+        (await fetchDiscovery({ signal, cache: 'no-store' }))?.task_claim_hold !== true) {
+      throw new HttpError(501, 'no_claim_hold', 'the HTTP board does not advertise a hard end for claims', { origin: 'handle' })
     }
     const agentOps = isAgentOpsMethod(method)
     if (agentOps) {

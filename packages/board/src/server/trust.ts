@@ -25,7 +25,8 @@ import {
 } from './auth.ts'
 import type { Identity, Trust } from './backend.ts'
 import type { Decided } from './policy.ts'
-import { whileHeadMoves } from './writes.ts'
+import { AccessMoved } from '../store/single-writer.ts'
+import { movedOn, whileHeadMoves } from './writes.ts'
 import { badRequest, forbidden, HttpError, notFound } from './errors.ts'
 
 /** A grant as the fold keeps it: `event` is the index of the event that made it, null for the one the board starts with. */
@@ -340,6 +341,14 @@ async function mayGrant(
 
 /** An oidc principal: naming one makes the board fetch its issuer's keys, so it takes manage everywhere. */
 const namesIssuer = (principals: readonly GrantPrincipal[]) => principals.some((principal) => principal.kind === 'oidc')
+
+/** An invitee grant names someone who already joined: the id is not a new member. */
+function requireJoined(state: AccessState, principals: readonly GrantPrincipal[]) {
+  const ids = new Set(Object.values(state.joined).map((entry) => entry.id))
+  for (const principal of principals) {
+    if (principal.kind === 'invitee' && !ids.has(principal.id)) throw badRequest(`no joined member is ${principal.id}`, 'invalid_grant')
+  }
+}
 const ISSUER: Named = { what: 'naming an oidc issuer', doing: 'naming an oidc issuer' }
 
 /**
@@ -376,6 +385,7 @@ async function updated(identity: Identity, state: AccessState, { id, add, remove
     else principals[at] = joined(added, principals[at]!)!
   }
   if (principals.length === 0) throw badRequest(`that leaves ${id} naming no one: revoke it instead`, 'grant_empty')
+  requireJoined(state, principals)
   if (principals.length > 32) throw badRequest('a grant names at most 32 principals', 'invalid_grant')
   const next = can === undefined ? row.can : checkCan(can)
   // As it was, it's lifted, so it's judged by reach; adding principals or setting `can` widens it too.
@@ -392,6 +402,7 @@ async function updated(identity: Identity, state: AccessState, { id, add, remove
  * defaults and the grants.
  */
 export function createTrust(options: {
+  clock: () => number
   store: Parameters<typeof createServer>[0]['store']
   fence?: AccessFence
   /** What a principal may do now, or under `grants`, the snapshot a grant write appends to. */
@@ -406,7 +417,7 @@ export function createTrust(options: {
   const logins = () => options.logins?.() ?? false
   const accessIn: AccessIn = (principal, grants) => options.accessNow(principal, grants)
   const session = createServer({ contract: accessContract, store: options.store }).session(ACCESS_SESSION)
-  const read = async () => (await session.state(accessReducer)).state
+  const read = async () => (await latest()).state
   /** The grants as they are now, and the index a conditional write holds them at. */
   const latest = () => session.state(accessReducer, { through: 'latest' })
   // Every access append shares the lock with staged writes. Reads stay outside it.
@@ -444,7 +455,11 @@ export function createTrust(options: {
       const before = Object.values(state.grants).map(storedGrant)
       const made: StoredGrant[] = []
       // Each against the issuers of the grants before it in the write too: two that name the same principals can't sit side by side.
-      for (const body of bodies) made.push({ id: grantId(state.nextGrant + made.length), ...checkGrant(body, grantIssuers([...before, ...made]), team, logins()) })
+      for (const body of bodies) {
+        const grant = { id: grantId(state.nextGrant + made.length), ...checkGrant(body, grantIssuers([...before, ...made]), team, logins()) }
+        requireJoined(state, grant.principals)
+        made.push(grant)
+      }
       const after = [...before, ...made]
       const standing = await standingOf(identity, before, accessIn, lockMeOut ? undefined : after)
       made.forEach((grant, at) => {
@@ -482,7 +497,7 @@ export function createTrust(options: {
         const before = Object.values(state.grants).map(storedGrant)
         const standing = await inviteAdmin(identity, 'create invites', before)
         judge(identity, standing, { changed: { can } }, before, { what: 'this invite', doing: 'this invite' })
-        const now = Date.now()
+        const now = options.clock()
         const payload = { id, name: input.name, can, digest, expiresAt: now + (input.expiresIn ?? 86400) * 1000, by: identity.actor.id }
         await append(index, { type: 'invite.created', payload })
         return inviteView({ ...payload, state: 'pending' }, now)
@@ -495,7 +510,7 @@ export function createTrust(options: {
         const { state, index } = await latest()
         await inviteAdmin(identity, 'revoke invites', Object.values(state.grants).map(storedGrant))
         const row = Object.hasOwn(state.invites, id) ? state.invites[id] : undefined
-        if (!row || inviteState(row, Date.now()) !== 'pending') return { revoked: false }
+        if (!row || inviteState(row, options.clock()) !== 'pending') return { revoked: false }
         await append(index, { type: 'invite.revoked', payload: { id, by: identity.actor.id } })
         return { revoked: true }
       })
@@ -509,9 +524,18 @@ export function createTrust(options: {
         const { state, index } = await latest()
         const id = state.pending[key]
         const row = id === undefined ? undefined : state.invites[id]
-        if (!row || inviteState(row, Date.now()) !== 'pending') throw invalidInvite()
+        if (!row || inviteState(row, options.clock()) !== 'pending') throw invalidInvite()
         // A loser of a concurrent redemption or revocation must look again, not issue a second credential.
-        await append(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
+        try {
+          await append(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
+        } catch (error) {
+          let accessMoved = false
+          for (let cause = error; cause instanceof Error; cause = cause.cause) {
+            if (cause instanceof AccessMoved) accessMoved = true
+          }
+          if (accessMoved) throw movedOn()
+          throw error
+        }
       })
       return { principal, token }
     },
