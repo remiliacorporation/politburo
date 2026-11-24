@@ -1,0 +1,105 @@
+{
+  "case_id": "attempt-ledger-008-append-only",
+  "description": "Refuse direct observation edits and roll back a partial batch",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64:eJzt3VtP21YAB3B70IQEKN2liiZU4QahEgGLnQsQpqkN1GVRaaAhSK2myjqxT8DDsYPtsFZVH+im7WWfadK+wb7Hpu1tmva0YzsXx9AK1HVb2f8nR7F9Lj43o/iCvftwS3ep0LTsFnGFPHeN43nujiBwHDfGPuPcQIx9RkPLPHdOk1N/cBOJGW7q0dSPV3embl39fWLramr8z/HlpJ2YSX523nwAAAAA/gEvp8fjqZs3+W94lzQMetQhNjFd3QzNJTdqcrkuC/Xy+pYsDNYL80nBoUdCpVqXN+WasFOrPCjXHgv35cdCea++XamyhA/kan1RcKyOrVLlUDc1oS4/qgvVbfbZ29oaBNFnkZBkL8g5ILnicjSdamk0us5qONQ+pprCfulFM9urVh7uyfOhkoS3vTi8sSD7TCY/EUtt3uQ5Fps+dY4M9ktSIR3X8peVQVMo0mB+/KScjE+X5sZeZl1b39+ndlAs4uqW6SimpWjUoC4Nr+21cK2y6bXk2QmEdfnedk0W7spbMou8XR2Kl1yXNytVYZcFbtSFWrmyK8+X17drrPVvEdelrbYrGFRjxRlKJhCbCqTdpqa2ZJnGs1uZTwW5eveknHh9HTptjVyoDkGCXh32du6W33YddsZiqYUF/rE/sLudx8Zrh5pqdDExNMQjgfMmadFFtpT5+vNYPDU3x3+76+cZLkN4Pj6U21BJz73LJIVuhRU9sssINfmeXJOrG/JuL44zP4icGew4F9rdXru3JYU2sVk1lGNqO6wiF9nxTFb1Y5av63V/JB19StWO1zJnB9tUtWxN+dI5tcX+/jyo+NBfmVP783D5M5mVeCx1f+5Ve/bQ4JXCS2MnsyPx1I0b/MuP/THQ64He9+hQ3/fWev0e7c9Q3y8K3hBz2kQ91QTd1osOgkED9FOG4mYy2Sux1MaNV1WvVywl15uLZUfPlUDqzV3Z5+Op2Vn+5LrfDMFeqbSoS0Kz7w01RihAmO8PwKFmOCZGJ9IEmeJ7sVRl9lUlC2WqSKGFES44vucm2Yef+oVjEwAAAAAAAABcAh/wI5kpRz2gLdI70yMlOe/4/1eOTQAAAAAAAABwKbw/kkkMnwAIrv//wLEJAAAAAAAAAP6T7vCjdGaauO6SRrV8UVzVCqKUo7mCtCoVJa1JxBxZLeRFtbSalwpEXFm12tT2/1XDai8ZxKXB9f+fODYBAAAAAAAAwDsiO0ITFzkfEBz//8yxCQAAAAAAAADefR+Nzkwnotf//fv/JwSOTQAAAAAA8D/33RN+kqMLt08ms7enp7+/fpFri0QjbZfaik1Vqrddu2M62e5hR7a77hPv4fWFRiPXFCWtmKNaiSxrxVKpWFppiIViUywRqVTINaik5lellaaUJ7lcqbBcIFqJ5rVSQ6NqqbudpW6e2VxOzC0viRKb6qK4JubWRHHBmxFZEUzd3O9+PU+rlmFQ1aVaek1oEsOhi0I68tB9FpLuxk+z0Cb7pnbb1k3XC5HeUDdL3TkYKoOuUdPV3Wds1fM02WcLiu6Fp7+y7ENWU9FPqDtOx39XgRdCn5JW26BL/sr0CxbcYrNeqdeEL/rbUIjrpXSo4/3zN+uZprfYcdg20k/YXP9x+V6W/WPFtB/SfXp+EOL3Ymj9WW3VfTFAQzd6Vdnv6ApRWYJgRbpjkmOiG94j8r0EBsvJZEXzgpo2dQ4Ueuw1hUpZSY86us0aiUVzrUNqOtH0XpWtjqtaLa8cZscw2Io2sanfU4Pl0HsOvCxODR6/ffqvgehW6eyBG46qm1oou96YD8UIXrXgxXnT8e63gc46ymVd7vgNy2ZtN+hetoHI+Bf7499vpKC3gyZ5EVz/P+TYBAAAAAAAAABv7uTDOF04mcxe6P78yPmEv/1UWfD8v984NgEAAAAAAADA5TDFj8wluvdleHd2ON7xP3ft3y4WAAAAAAAAALxN3v3/OP4HAAAAAAAAuNz+AmE4+XM=",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 1, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\natt-ded3508d4012e2418151dfa02a8430c98314a078 operation stale sources=1 observations=1\ntotal=1 shown=1 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 1, \"duplicates\": 0, \"observations_added\": 1, \"quarantined\": 0}\n"
+      },
+      "6c28d5a8b0d8205c598fd41757a3905abf95e9b977ab8c06bff8796b93622300",
+      {
+        "delete": {
+          "error": "IntegrityError",
+          "message": "attempt ledger observations are append-only"
+        },
+        "update": {
+          "error": "IntegrityError",
+          "message": "attempt ledger observations are append-only"
+        }
+      },
+      null,
+      {
+        "error": "KeyError",
+        "message": "'namespace'"
+      },
+      "6c28d5a8b0d8205c598fd41757a3905abf95e9b977ab8c06bff8796b93622300",
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-ded3508d4012e2418151dfa02a8430c98314a078 operation stale sources=1 observations=1\ntotal=1 shown=1 quarantined=0\n"
+      }
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "digest",
+        "path": "attempt_ledger.sqlite"
+      },
+      {
+        "op": "append_guards"
+      },
+      {
+        "op": "write_file",
+        "path": "runs/op-late/receipt.json",
+        "text": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"finished_at\": \"2026-01-01T00:02:00+00:00\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-late\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n"
+      },
+      {
+        "op": "rollback_write"
+      },
+      {
+        "op": "digest",
+        "path": "attempt_ledger.sqlite"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Both mutation triggers refuse. A subsequent write sees changed evidence but rolls it back when a later record is invalid. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {
+      "runs/op-late/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-late\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"running\"}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

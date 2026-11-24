@@ -19,3 +19,8 @@ node packages/swarm/dist/cli.js config show
 `swarm cutover rollback <tag> --execute` restores the service if the final
 bridge drain is stale and the old loop is confirmed stopped. Add `--allow-stale`
 to accept stale files and finish in files mode instead (exit 1, `rolled_back_stale`).
+
+## sync agent skills
+
+Run `swarm skills sync --dir ./agent-skills --party party.yaml` to install skills.
+Use `--repo` for repo overrides, `--dry-run` to preview, `--force` to replace unmarked files, or `--json` for file actions.
