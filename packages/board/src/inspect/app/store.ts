@@ -32,7 +32,7 @@ export type Pending = {
   /** Set for one to send later: when, and how often. It's kept until the board has its schedule. */
   later?: ScheduleTiming
   /** Set for a thread that starts as a task: what it waits for, and the actor it's for. */
-  task?: { needs: string[]; for: string | null }
+  task?: { needs: string[]; for: string | null; hold?: string }
   createdAt: string
   error: string | null
 }

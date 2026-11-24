@@ -1,6 +1,7 @@
 import { DEFAULT_TASK_PRIORITY, priorityRank, type TaskPriority } from '../../contract/schemas.ts'
 import { needsAttentionAnswer } from './attention-store.ts'
 import { byClaim, claimable, lapsed } from './claim-order.ts'
+import { repoOfTask } from './repos.ts'
 import { byWritten, initialState, isTask, type State, type TaskRoot, type Viewer } from './store.ts'
 import { ago, firstLine, until } from './words.ts'
 
@@ -51,6 +52,8 @@ export type WorkRow = {
   workId: string
   title: string
   priority: TaskPriority
+  /** The repo's tag: its work id's, else its channel's first segment. */
+  repo: string | null
   party: { id: string; name: string; colour: string } | null
   claimant: string | null
   group: WorkGroup
@@ -84,6 +87,8 @@ function classify(root: TaskRoot, obs: Observation | null | undefined, viewer: V
   const expired = lapsed(root, now)
   const held = task.state === 'blocked' || !!task.parked
   if (task.state === 'completed' || task.state === 'failed' || task.state === 'canceled') return ['done', task.state]
+  if (task.state === 'blocked' && (task.blocked?.kind === 'needs_input' || task.blocked?.kind === 'awaiting_approval'))
+    return ['needs', task.blocked.reason || (task.blocked.kind === 'needs_input' ? 'input needed' : 'approval needed')]
   if (needsAttentionAnswer(state, root)) return ['needs', 'attention answer needed']
   if (contract === 'invalid' || contract === 'missing') return ['needs', `contract ${contract}`]
   if (obs?.humanRequest) return ['needs', 'human decision requested']
@@ -165,6 +170,7 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
       root, group, reason,
       workId: id ?? `#${root.id}`,
       title: firstLine(root.text),
+      repo: repoOfTask(root),
       priority: root.task.priority ?? DEFAULT_TASK_PRIORITY,
       party: partyId ? { id: partyId, name: party?.name ?? partyId, colour: party?.colour ?? '' } : null,
       claimant: root.task.claim?.actor ?? null,
@@ -239,7 +245,7 @@ export function homeOf(rows: WorkRow[], records: SwarmRecords | null, now: numbe
     const id = row.party?.id ?? null
     let bucket = parties.get(id)
     if (!bucket) {
-      bucket = { party: row.party ?? { id: null, name: 'external', colour: '' }, rows: [] }
+      bucket = { party: row.party ?? { id: null, name: 'no party', colour: '' }, rows: [] }
       parties.set(id, bucket)
     }
     bucket.rows.push(row)
@@ -260,13 +266,17 @@ export function homeOf(rows: WorkRow[], records: SwarmRecords | null, now: numbe
     party,
     cells: [...cells].sort(([a], [b]) => (a ?? '').localeCompare(b ?? '')).map(([claimant, rows]) => ({ claimant, rows })),
   }))
+  const byRepo = new Map<string | null, WorkRow[]>()
+  for (const row of rows) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row])
+  const perRepo = [...byRepo].sort(([a], [b]) => Number(a === null) - Number(b === null) || (a ?? '').localeCompare(b ?? ''))
+    .map(([repo, rows]) => ({ repo, ...healthOf(rows, now) }))
   const total = healthOf(rows, now)
   const perParty = [...parties.values()].sort((a, b) => byParty(a.party, b.party)).map(({ party, rows }) => ({
     party, ...healthOf(rows, now),
   }))
   const openClaimLimit = perParty.length > 0 && perParty.every(({ party }) => party.openClaimLimit !== undefined)
     ? perParty.reduce((sum, { party }) => sum + party.openClaimLimit!, 0) : undefined
-  const health = { perParty, total: { ...total, openClaimLimit } }
+  const health = { perRepo, perParty, total: { ...total, openClaimLimit } }
   const counts = { needs: needs.length, review: review.length, running: runningCount, expiring: total.expiring }
   return { counts, needs, review, running, health }
 }

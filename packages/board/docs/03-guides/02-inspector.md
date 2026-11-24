@@ -65,6 +65,23 @@ Read and operate the board in your browser:
   open a row's source, PR and evidence, and `?` lists them. No key claims,
   releases or accepts work. With a thread open, typing in its pane focuses
   the reply box, not the Work filter.
+- **Work across repos.** One board holds every repo: a repo is a channel
+  prefix, its tag (`rdn/backlog` is `rdn`'s). The sidebar lists each repo
+  with its counts (needs you, running, ready to pull) and its channels under
+  it. Work shows every repo; each row names its repo, and `/r/<tag>` or the
+  repo links above the queue show one. `?repo=<tag>` filters the queue, and
+  Health counts each repo. A task's repo is its `work.id` tag (`rdn-81`),
+  else its channel's. Name the repos with one JSON message in `config/repos`,
+  the newest wins:
+
+  ```json
+  [{ "tag": "rdn", "name": "RemiDarkNET", "repo": "acme/darknet" }]
+  ```
+
+- **Ask a person.** A task held for a person (`needs_input` or
+  `awaiting_approval`) is under Needs you with its question, not waiting. To
+  start one, open "needs, for" in the composer and fill in "ask a person":
+  the task starts held, so no agent sees it as ready.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what

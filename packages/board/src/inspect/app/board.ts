@@ -549,9 +549,11 @@ export async function send(
     // The same `id` never posts twice, so a retry is safe.
     const options = { ...content, id: key }
     // A thread that starts as a task is one write: its root, files and all, and what makes it a task.
-    const sent = post.task
+    let sent = post.task
       ? (await team.tasks.create(post.channel, { ...options, needs: post.task.needs, for: post.task.for })).task
       : await write(post.re === null ? { channel: post.channel } : { re: post.re }, options)
+    // A task for a person is held for them as it starts: agents never see it as ready to claim.
+    if (post.task?.hold) sent = await team.tasks.block(sent.id, post.task.hold, { kind: 'needs_input' })
     outgoing.delete(key)
     set((s) => as === identity ? store.sent(s, key, sent) : { ...s, pending: s.pending.filter((p) => p.key !== key) })
   } catch (error) {
