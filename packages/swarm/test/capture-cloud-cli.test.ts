@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
 import { accessSync, chmodSync, closeSync, constants, existsSync, linkSync, mkdirSync,
-  mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+  mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync,
+  writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -127,6 +128,28 @@ test('CLI serve does not write claims to a replacement ledger path', async (t) =
   assert.equal((await post(url, capability)).status, 202)
   assert.equal(readFileSync(ledgerFile, 'utf8'), '', 'replacement must remain untouched')
   assert.equal(records(original).length, 1, 'claim must reach the ledger opened at startup')
+})
+
+test('CLI serve does not acknowledge a claim after the ledger inode is unlinked', async (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  const book = new Book({ file: bookFile })
+  const { capability } = book.issue(envelope, { ttlMs: 3_600_000 })
+  book.bind(capability, session)
+  const url = await listen(t, bookFile, ledgerFile)
+  unlinkSync(ledgerFile)
+  const response = await post(url, capability)
+  assert.notEqual(response.status, 202, 'unlinked inode acknowledged as stored')
+  assert.notEqual(response.status, 200, 'unlinked inode acknowledged as duplicate')
+})
+
+test('CLI serve refuses an existing world-readable ledger', (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  writeFileSync(bookFile, '{}', { mode: 0o600 })
+  writeFileSync(ledgerFile, '', { mode: 0o644 })
+  serveError(bookFile, ledgerFile, 'ledger path is not a safe regular file')
+  chmodSync(ledgerFile, 0o600)
+  // A 0600 ledger is allowed; serve would listen. Do not start it here.
+  assert.equal(statSync(ledgerFile).mode & 0o777, 0o600)
 })
 
 function serveError(book: string, ledger: string, message: string) {

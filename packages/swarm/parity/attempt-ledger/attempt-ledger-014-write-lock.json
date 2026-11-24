@@ -1,0 +1,84 @@
+{
+  "case_id": "attempt-ledger-014-write-lock",
+  "description": "Refuse a second writer under a held SQLite write reservation",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64:eJzt3VtP21YAB3C70IQEaLqbogpVnAahEgGLk0CATlMbqMui0kBDkFpNk3Vin4CHYwfbYa2qPtBN28s+06R9g32PTXucpj3t2M7FMaUCdd1W9P/JgeNz87kZcBKc3cdbustI07Jb1CVF4bogisI9QgRBSPDHuDAQ44/R0L4onNNk6k9hIjEtpJ6kfr62k7p97Y+JrWvp8b/GS0k7MZ38/Lz1AAAAAPwLXk2Nx9O3bonfiS5tGOyoQ21quroZCiU3anK5LpN6eX1LJoN4MpckDjsilWpd3pRrZKdWeVSuPSUP5aekvFffrlR5wUdytb5AHKtjq0w51E2N1OUndVLd5o+9ra1BEnseSUn2kpwDWlguRcuplsaicVbDYfYx0xT+l160sr1q5fGePBdqSfjYC8MHC6rPZosTsfTmLVHgudkz58jgf0kqtONa/r4yGAolPwiPn5ST8am12bFXOdfW9/eZHTSLurplOoppKRozmMvCsb0RrlU2vZF8fQGyLj/Yrsnkvrwl88zb1aF8yXV5s1Iluzxxo05q5cquPFde367x0b9NXZe12i4xmMabM1SMUJsR2m4zU1u0TOP57exnRK7ePykn3tyHTlujF+pDUKDXh72d++V33YedsVh6fl586i/s7uTx9dphphrdTQwt8UjinElbbIHvZb/9IhZPz86K3+/6dYbbEA7Hh2obaum5T5kk6XZY0SOnDKnJD+SaXN2Qd3t5nLlB5uzgxLnQ6fbGsy1J2tTm3VCOme3wjlzkxDN51495va43/ZFy7BlTO97IvD7ZZqpla8rXzqkj9s/nQceHfsqcOp+H25/NrsRj6YezZ53ZQ4s3H94bO5kZiadv3hRf3fDXQG8Get9Hh+a+F+vNe3Q+Q3O/QLwl5rSpemoIuqMXXQSDAeiXDOXNZnNXY+mNm2d1r9cspdALxXKj5yqQ74Wu7ovx9MyMePKJPwzBWam0mEtDwStDgxFKIHP9BTg0DMfU6ESGILt8JZauzJzVslClSj60M8J/t415v+Am+UNM/SbwDQAAAAAAAAAugQ/FkWzKUQ9Yi/ae6cknBe/6/3eBbwAAAAAAAABwKXwwkk0MPwEQvP7/k8A3AAAAAAAAAPhfuieOsukp6rqL6pJK2dLaUmOltNooFZrNUiNPm4XVZmNpuZgvNotsjeWZxqw2s/1/1bDai/uWpQWv//8i8A0AAAAAAAAA3hO5EZa4yPMBwfX/rwLfAAAAAAAAAOD99/Ho9FQi+vq///7/iVmBbwAAAAAAAILwwxNxUmDzd08mc3dv3PgxdZEXGKlG2y6zFZupTG+7dsd0ct1rj1w37lPvDvZrxUZxtdlsLGvNFUql1VWpRAul5caqWqQFdanQ1PIqP1ZpjSeXCkxqaPxw0lKpxNZW1mhR6h5nsVtnrlCQCqVFKc+3uiTdkQp3JGneC0jsme7yhvlfX2RUyzCYyoOZO6RJDYctkEzkvvs8JRNkz/DEpm7uM7tt66brJeTfUrdK3Tnwm8AHyGuBrjHT1d3nPOZFhu7zHUX3kjPfWPYh76Xkl9Mdp+N/WEHQQtpqG2zRj8y85MktHuSN5Ylf9g+hUNcr6TDH++9vPitNb7fj8GNkvuKh/v3yvSr7F4sZP6V7+/wgxZ/BUPxrRqr7wQAN3ej1ZL+jK1Tl+YOITMekx1Q3vFvkewUMXpHJW+YlNW3mHCjs2BsJlfGGHnV0O6jXtQ6Z6UTLez22Oq5qtbxmmB3D4BFtajN/ngb7oc858Ko4tW784el/DISX5cw1G86qm1qout5yD+UIPmrBy/O2S90fA53Pk8tn3PEHlgdtN5hdfoDI0pf6S98fpGCygyF5Gbz+fyjwDQAAAAAAAADe3slHcTZ/Mpm70PvzI88n/OPPkgX3/8P9/wEAAAAAAAAuj+viyKzYfVuG974O58qkH/1ftwsAAAAAAAAA3iXv/f+4/gcAAAAAAAC43P4GICz+uA==",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "att-c4cae494b768b62ff6b1af28fb45313f3e9e1ede operation exited sources=1 observations=1\ntotal=1 shown=1 quarantined=0\n{\"attempts_created\": 0, \"duplicates\": 1, \"observations_added\": 0, \"quarantined\": 0}\n",
+    "steps": [
+      {
+        "after_unlock": {
+          "attempts_created": 1,
+          "duplicates": 0,
+          "observations_added": 1,
+          "quarantined": 0
+        },
+        "while_locked": {
+          "error": "OperationalError",
+          "message": "database is locked"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-c4cae494b768b62ff6b1af28fb45313f3e9e1ede operation exited sources=1 observations=1\ntotal=1 shown=1 quarantined=0\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 1, \"observations_added\": 0, \"quarantined\": 0}\n"
+      }
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "op": "locked_write"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Independent connections contend for BEGIN IMMEDIATE with no busy wait; the same writer succeeds after release. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {
+      "runs/op-good/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-good\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

@@ -1,0 +1,401 @@
+{
+  "case_id": "issue-refill-003-apply-below",
+  "description": "One below the ready threshold with usage below 100%",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": [
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 5,
+            "event_type": "issue_imported",
+            "issue_key": "refill-007",
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "envelope_version": 1,
+              "priority": 3,
+              "reason": "1 ready for 2 free slots",
+              "reason_code": "issue_refill",
+              "version": 1
+            }
+          },
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 6,
+            "event_type": "issue_imported",
+            "issue_key": "refill-008",
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "envelope_version": 1,
+              "priority": 3,
+              "reason": "1 ready for 2 free slots",
+              "reason_code": "issue_refill",
+              "version": 1
+            }
+          },
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 7,
+            "event_type": "dependency_added",
+            "issue_key": "refill-007",
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "depends_on": "refill-008",
+              "envelope_version": 1,
+              "kind": "outcome",
+              "reason": "1 ready for 2 free slots",
+              "reason_code": "issue_refill"
+            }
+          },
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 8,
+            "event_type": "dependency_added",
+            "issue_key": "refill-008",
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "depends_on": "example-working",
+              "envelope_version": 1,
+              "kind": "outcome",
+              "reason": "1 ready for 2 free slots",
+              "reason_code": "issue_refill"
+            }
+          },
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 9,
+            "event_type": "refill_run",
+            "issue_key": null,
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "base_sha": "example-base",
+              "dropped": 0,
+              "envelope_version": 1,
+              "errors": [],
+              "issues": [
+                "refill-007",
+                "refill-008"
+              ],
+              "outcome": "written",
+              "reason": "1 ready for 2 free slots",
+              "reason_code": "issue_refill",
+              "trigger": "1 ready for 2 free slots"
+            }
+          }
+        ]
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": [
+          {
+            "actionable": 1,
+            "archived_at": null,
+            "body": "refill added 2 issues: refill-007 (proposed), refill-008 (ready)",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "dedup_key": null,
+            "from_actor": "coordinator",
+            "issue_key": null,
+            "kind": "note",
+            "message_id": 1,
+            "payload_ref": null,
+            "priority": 100,
+            "status": "active",
+            "summary": "refill added 2 issues: refill-007 (proposed), refill-008 (ready)",
+            "supersedes_message_id": null,
+            "to_agent": null,
+            "to_role": "coordinator",
+            "topic_key": "issue-refill",
+            "valid_until": null
+          }
+        ]
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": [
+          {
+            "contract": null,
+            "depends_on": "refill-008",
+            "issue_key": "refill-007",
+            "kind": "outcome",
+            "resolved_at": null
+          },
+          {
+            "contract": null,
+            "depends_on": "example-working",
+            "issue_key": "refill-008",
+            "kind": "outcome",
+            "resolved_at": null
+          }
+        ]
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": [
+          {
+            "approved_scope": "Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\n\nProblem: The current implementation does not cover this case.\n\nWhere (default branch example-base):\n- src/export.py:2\n\nEvidence: The example inputs expose the missing branch of this routine.\n\nDone when: A regression test exercises the case and passes consistently.\n\nCategory: improvement. Lens: defects.\n\nResearcher-named dependencies not on the board: refill-006",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "refill-007",
+            "issue_priority": 3,
+            "lane": "refill",
+            "last_activity_at": "2026-01-01T12:00:00+00:00",
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "Finish the partial export",
+            "updated_at": "2026-01-01T12:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": "Scope written by the issue refill under this board's refill rules (non-behavioral work). No person reviewed it.\n\nProblem: The current implementation does not cover this case.\n\nWhere (default branch example-base):\n- src/cache.py:2\n\nEvidence: The example inputs expose the missing branch of this routine.\n\nDone when: A regression test exercises the case and passes consistently.\n\nCategory: defect. Lens: defects.\n\nResearcher-named dependencies not on the board: export (would form a cycle)",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "refill-008",
+            "issue_priority": 3,
+            "lane": "refill",
+            "last_activity_at": "2026-01-01T12:00:00+00:00",
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "ready",
+            "title": "Guard an empty cache lookup",
+            "updated_at": "2026-01-01T12:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          }
+        ]
+      }
+    },
+    "claim": {
+      "exit_code": 1,
+      "stderr": "issue is not claimable from state proposed\n",
+      "stdout": ""
+    },
+    "exit_code": 0,
+    "files": {
+      "export/tasks/refill-007/snapshot.json": "{\n  \"base_sha\": \"example-base\",\n  \"dependencies\": [\n    {\n      \"contract\": null,\n      \"depends_on\": \"refill-008\",\n      \"kind\": \"outcome\",\n      \"resolved_at\": null\n    }\n  ],\n  \"issue\": {\n    \"approved_scope\": \"Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\\n\\nProblem: The current implementation does not cover this case.\\n\\nWhere (default branch example-base):\\n- src/export.py:2\\n\\nEvidence: The example inputs expose the missing branch of this routine.\\n\\nDone when: A regression test exercises the case and passes consistently.\\n\\nCategory: improvement. Lens: defects.\\n\\nResearcher-named dependencies not on the board: refill-006\",\n    \"issue_key\": \"refill-007\",\n    \"issue_priority\": 3,\n    \"lane\": \"refill\",\n    \"state\": \"proposed\",\n    \"title\": \"Finish the partial export\"\n  },\n  \"schema\": \"tigeryard.board-event.v1\",\n  \"source\": \"issue-refill\",\n  \"task\": \"refill-007\",\n  \"type\": \"snapshot\"\n}\n",
+      "export/tasks/refill-008/snapshot.json": "{\n  \"base_sha\": \"example-base\",\n  \"dependencies\": [\n    {\n      \"contract\": null,\n      \"depends_on\": \"example-working\",\n      \"kind\": \"outcome\",\n      \"resolved_at\": null\n    }\n  ],\n  \"issue\": {\n    \"approved_scope\": \"Scope written by the issue refill under this board's refill rules (non-behavioral work). No person reviewed it.\\n\\nProblem: The current implementation does not cover this case.\\n\\nWhere (default branch example-base):\\n- src/cache.py:2\\n\\nEvidence: The example inputs expose the missing branch of this routine.\\n\\nDone when: A regression test exercises the case and passes consistently.\\n\\nCategory: defect. Lens: defects.\\n\\nResearcher-named dependencies not on the board: export (would form a cycle)\",\n    \"issue_key\": \"refill-008\",\n    \"issue_priority\": 3,\n    \"lane\": \"refill\",\n    \"state\": \"ready\",\n    \"title\": \"Guard an empty cache lookup\"\n  },\n  \"schema\": \"tigeryard.board-event.v1\",\n  \"source\": \"issue-refill\",\n  \"task\": \"refill-008\",\n  \"type\": \"snapshot\"\n}\n",
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 3, \"usage\": {\"file\": \"<WORK>/usage.json\"}}\n",
+      "usage.json": "{\"percent_used\": 99.9, \"resets_at\": \"2026-01-01T15:00:00Z\"}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [
+      [
+        "critic",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-defects",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-gaps",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-operability",
+        "example-project",
+        1200
+      ]
+    ],
+    "source_calls": [
+      [
+        "fetch_head",
+        "origin",
+        "main"
+      ],
+      [
+        "add_worktree",
+        "example-base"
+      ],
+      [
+        "pulls"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/cache.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/export.py"
+      ],
+      [
+        "remove_worktree",
+        "example-project"
+      ]
+    ],
+    "stderr": "",
+    "stdout": "refill: written (1 ready for 2 free slots)\ndefault branch at example-base\n\nrefill-007  [proposed]  P3  Finish the partial export\n  depends on: refill-008\n  Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\n\n  Problem: The current implementation does not cover this case.\n\n  Where (default branch example-base):\n  - src/export.py:2\n\n  Evidence: The example inputs expose the missing branch of this routine.\n\n  Done when: A regression test exercises the case and passes consistently.\n\n  Category: improvement. Lens: defects.\n\n  Researcher-named dependencies not on the board: refill-006\n\nrefill-008  [ready]  P3  Guard an empty cache lookup\n  depends on: example-working\n  Scope written by the issue refill under this board's refill rules (non-behavioral work). No person reviewed it.\n\n  Problem: The current implementation does not cover this case.\n\n  Where (default branch example-base):\n  - src/cache.py:2\n\n  Evidence: The example inputs expose the missing branch of this routine.\n\n  Done when: A regression test exercises the case and passes consistently.\n\n  Category: defect. Lens: defects.\n\n  Researcher-named dependencies not on the board: export (would form a cycle)\n"
+  },
+  "inputs": {
+    "argv": [
+      "--export-tree",
+      "export"
+    ],
+    "claim": "refill-007",
+    "kind": "bin",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "Real bin dispatch applies ranked ready and proposed issues, allocates keys after a seed, refuses a cyclic dependency, and exports snapshots. A board claim of the proposed issue is refused.",
+  "setup": {
+    "config": {
+      "slots": 3
+    },
+    "dependencies": [
+      [
+        "example-waiting",
+        "example-working"
+      ]
+    ],
+    "files": {
+      "usage.json": "{\"percent_used\": 99.9, \"resets_at\": \"2026-01-01T15:00:00Z\"}\n"
+    },
+    "issues": [
+      {
+        "issue_key": "example-ready",
+        "state": "ready",
+        "title": "Refresh the example index"
+      },
+      {
+        "issue_key": "example-working",
+        "state": "working",
+        "title": "Generate the example catalog"
+      },
+      {
+        "issue_key": "example-waiting",
+        "state": "authorized",
+        "title": "Check the example bundle"
+      },
+      {
+        "issue_key": "refill-006",
+        "state": "done",
+        "title": "Review the prior fixture"
+      }
+    ],
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z",
+    "proposals": {
+      "defects": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [
+            "export",
+            "example-working"
+          ],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        },
+        {
+          "category": "improvement",
+          "changes_behavior": false,
+          "dependencies": [
+            "cache",
+            "refill-006"
+          ],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "export",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return list(rows)",
+          "title": "Finish the partial export",
+          "where": [
+            "src/export.py:2"
+          ]
+        }
+      ]
+    },
+    "source_files": {
+      "docs/queue.md": "Drain the queue after each batch.\n",
+      "src/cache.py": "def get(key):\n    return entries[key]\n",
+      "src/export.py": "def export_rows(rows):\n    return list(rows)\n",
+      "src/queue.py": "def drain(queue):\n    return queue.pop()\n"
+    },
+    "usage_file": "usage.json",
+    "verdicts": [
+      {
+        "changes_behavior": false,
+        "id": "defects:export",
+        "keep": true,
+        "rank": 1
+      },
+      {
+        "changes_behavior": false,
+        "id": "defects:cache",
+        "keep": true,
+        "rank": 2
+      }
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

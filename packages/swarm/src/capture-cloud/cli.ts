@@ -100,7 +100,8 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
       const fd = openLedger(ledgerPath)
       try {
         const ledgerStat = fstatSync(fd, { bigint: true })
-        if (!ledgerStat.isFile()) return fail(unsafeLedger)
+        if (!ledgerStat.isFile() || ledgerStat.uid !== BigInt(process.getuid?.() ?? -1) ||
+          (ledgerStat.mode & 0o077n)) return fail(unsafeLedger)
         const bookStat = statSync(bookPath, { bigint: true, throwIfNoEntry: false })
         if (bookStat && bookStat.dev === ledgerStat.dev && bookStat.ino === ledgerStat.ino) {
           return fail(differentFiles)

@@ -1,0 +1,240 @@
+{
+  "case_id": "review-marks-003-repeat",
+  "description": "Repeat both marks with a later clock and a different actor",
+  "expected": {
+    "db_dump": {
+      "board_events": [
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 1,
+          "event_type": "candidate_review_opened",
+          "issue_key": "example-project",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "reason": "Candidate review opened",
+            "reason_code": "review_opened",
+            "stage_id": "stage-current"
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:02:00+00:00",
+          "event_id": 2,
+          "event_type": "candidate_reviewed",
+          "issue_key": "example-project",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "reason": "Candidate review result recorded",
+            "reason_code": "review_recorded",
+            "stage_id": "stage-current"
+          }
+        }
+      ],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-project",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-project",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        }
+      ],
+      "pipeline_stages": [
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:59:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-project",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-current",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        }
+      ],
+      "review_marks": [
+        {
+          "actor": "reviewer-01",
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "first_seen_at": "2026-01-01T12:00:00+00:00",
+          "issue_key": "example-project",
+          "reviewed_at": "2026-01-01T12:02:00+00:00",
+          "updated_at": "2026-01-01T12:02:00+00:00"
+        }
+      ]
+    },
+    "exit_code": null,
+    "files": {},
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "first_seen_at": "2026-01-01T12:00:00+00:00",
+            "issue_key": "example-project",
+            "reviewed_at": null,
+            "updated_at": "2026-01-01T12:00:00+00:00"
+          },
+          "recorded": "opened"
+        }
+      },
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "first_seen_at": "2026-01-01T12:00:00+00:00",
+            "issue_key": "example-project",
+            "reviewed_at": null,
+            "updated_at": "2026-01-01T12:00:00+00:00"
+          },
+          "recorded": null
+        }
+      },
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "first_seen_at": "2026-01-01T12:00:00+00:00",
+            "issue_key": "example-project",
+            "reviewed_at": "2026-01-01T12:02:00+00:00",
+            "updated_at": "2026-01-01T12:02:00+00:00"
+          },
+          "recorded": "reviewed"
+        }
+      },
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "first_seen_at": "2026-01-01T12:00:00+00:00",
+            "issue_key": "example-project",
+            "reviewed_at": "2026-01-01T12:02:00+00:00",
+            "updated_at": "2026-01-01T12:02:00+00:00"
+          },
+          "recorded": null
+        }
+      },
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "first_seen_at": "2026-01-01T12:00:00+00:00",
+            "issue_key": "example-project",
+            "reviewed_at": "2026-01-01T12:02:00+00:00",
+            "updated_at": "2026-01-01T12:02:00+00:00"
+          },
+          "recorded": null
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "action": "open",
+        "op": "mark"
+      },
+      {
+        "action": "open",
+        "actor": "reviewer-02",
+        "op": "mark",
+        "seconds": 60
+      },
+      {
+        "action": "reviewed",
+        "op": "mark",
+        "seconds": 120
+      },
+      {
+        "action": "reviewed",
+        "actor": "reviewer-02",
+        "op": "mark",
+        "seconds": 180
+      },
+      {
+        "action": "open",
+        "actor": "reviewer-02",
+        "op": "mark",
+        "seconds": 240
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "Preserve first-seen and reviewed timestamps, the last effective actor and the two-event audit history.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [
+      {
+        "head": "candidate-current"
+      }
+    ],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": [
+      {}
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql"
+    ]
+  }
+}

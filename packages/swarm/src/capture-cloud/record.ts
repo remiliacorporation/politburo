@@ -1,5 +1,5 @@
 // stand-in until WP-103's ledger API lands; the sink is the only seam
-import { appendFileSync, closeSync, fsyncSync, openSync, readFileSync } from 'node:fs'
+import { appendFileSync, closeSync, fstatSync, fsyncSync, openSync, readFileSync, readlinkSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 export interface Envelope {
@@ -47,9 +47,19 @@ export type SpendRecord = (
 
 export interface LedgerSink { append(record: SpendRecord): Promise<'appended' | 'duplicate'> }
 
-function syncParent(path: string): void {
-  const fd = openSync(dirname(path), 'r')
-  try { fsyncSync(fd) } finally { closeSync(fd) }
+function syncOpenedParent(fd: number, path: string) {
+  let dir = dirname(path)
+  try { dir = dirname(readlinkSync(`/proc/self/fd/${fd}`)) } catch { /* fall back to the supplied path */ }
+  const dirfd = openSync(dir, 'r')
+  try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
+}
+
+function privateLedger(fd: number) {
+  const stat = fstatSync(fd, { bigint: true })
+  if (!stat.isFile()) return
+  if (stat.uid !== BigInt(process.getuid?.() ?? -1) || (stat.mode & 0o077n)) {
+    throw new Error('unsafe ledger file')
+  }
 }
 
 // STUB: single writer. A supplied append-mode descriptor stays owned by the caller.
@@ -59,34 +69,32 @@ export function jsonlLedger(path: string, openFd?: number): LedgerSink {
   try {
     const fd = openFd ?? openSync(path, 'r')
     try {
+      privateLedger(fd)
       try { fsyncSync(fd) }
       catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
       text = readFileSync(fd, 'utf8')
-      try {
-        const dirfd = openSync(dirname(path), 'r')
-        try { fsyncSync(dirfd) } finally { closeSync(dirfd) }
-      } catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
+      try { syncOpenedParent(fd, path) }
+      catch (error) { throw new Error(`failed to sync existing ledger ${path}`, { cause: error }) }
     } finally { if (openFd === undefined) closeSync(fd) }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     syncDir = true
   }
-  // The caller may have just created this file, or reopened it after a failed
-  // directory sync. Persist its name before accepting claims or duplicates.
-  if (openFd !== undefined) syncParent(path)
   for (const line of (text ?? '').split('\n')) if (line.trim()) keys.add(JSON.parse(line).dedupe_key)
   return { async append(record) {
     const key = record.dedupe_key
     if (keys.has(key)) return 'duplicate'
     const fd = openFd ?? openSync(path, 'a', 0o600)
     try {
+      privateLedger(fd)
       if (!written.has(key)) {
         appendFileSync(fd, `${JSON.stringify(record)}\n`)
         written.add(key)
       }
       fsyncSync(fd)
+      if (fstatSync(fd).nlink === 0) throw new Error(`ledger file was unlinked ${path}`)
       if (syncDir) {
-        syncParent(path)
+        syncOpenedParent(fd, path)
         syncDir = false
       }
     } finally { if (openFd === undefined) closeSync(fd) }
