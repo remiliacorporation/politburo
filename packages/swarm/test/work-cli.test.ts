@@ -15,19 +15,25 @@ function swarm(...args: string[]) {
 
 const run = (...args: string[]) => swarm('work', ...args)
 
-const configUsage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n'
+const configUsage =
+  'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
+  '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n' +
+  '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n' +
+  '       swarm capture <run|collect>\n'
 
-test('config help must print only the original config usage line', () => {
+test('config help must print the original config usage and not work usage', () => {
   const result = swarm('config', '--help')
   assert.equal(result.status, 0)
   assert.equal(result.stdout, configUsage)
   assert.equal(result.stderr, '')
+  assert.doesNotMatch(result.stdout, /swarm work /)
 })
 
 test('config misuse must not append work usage to the original diagnostic', () => {
   const result = swarm('config', 'bogus')
   assert.equal(result.status, 2)
   assert.equal(result.stderr, `error: unknown config command bogus\n${configUsage}`)
+  assert.doesNotMatch(result.stderr, /swarm work /)
 })
 
 function description(t: TestContext, text: string) {
