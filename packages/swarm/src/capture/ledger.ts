@@ -1,6 +1,8 @@
 // Stub until WP-103's ledger store lands; same interface.
-import { mkdir, open, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { link, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 import { copyEnvelope } from './types.ts'
 import type { Envelope, SpendRecord } from './types.ts'
@@ -10,7 +12,7 @@ export interface CaptureLedger {
   append(r: SpendRecord): Promise<{ written: boolean }>
 }
 
-// Serialize the check and append across handles in the single writer process.
+// Queue handles in this process before competing for the on-disk lock.
 const pending = new Map<string, Promise<unknown>>()
 const qualities = new Set([
   'unknown', 'provider_reported', 'provider_reported_partial',
@@ -94,6 +96,124 @@ async function serialized<T>(path: string, action: () => Promise<T>): Promise<T>
   }
 }
 
+function pidIsDead(raw: string): boolean {
+  const pid = Number(raw)
+  if (!Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return false
+    throw error
+  }
+}
+
+async function lockPathIsFree(path: string): Promise<boolean> {
+  const owner = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+  })
+  if (owner === undefined) return true
+  if (!pidIsDead(owner)) return false
+
+  const tombstone = `${path}.stale.${process.pid}.${randomUUID()}`
+  try {
+    await rename(path, tombstone)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+  const moved = await readFile(tombstone, 'utf8')
+  if (moved === owner && pidIsDead(moved)) {
+    await unlink(tombstone)
+    return true
+  }
+  // Never replace another owner's marker while restoring. If the path is
+  // occupied, leave the tombstone alone and wait for the current owner.
+  try {
+    await link(tombstone, path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw error
+  }
+  await unlink(tombstone) // Only remove the extra name; the marker is restored.
+  return false
+}
+
+async function withOwnerMarker<T>(path: string, action: () => Promise<T>): Promise<T> {
+  const draft = `${path}.owner.${process.pid}.${randomUUID()}`
+  const file = await open(draft, 'wx', 0o600)
+  let ownsMarker = false
+  try {
+    try {
+      await file.writeFile(`${process.pid}\n`)
+      await link(draft, path) // Publish the complete PID atomically, without replacing a marker.
+      ownsMarker = true
+    } finally {
+      try {
+        await file.close()
+      } finally {
+        await unlink(draft)
+      }
+    }
+    return await action()
+  } finally {
+    if (ownsMarker) await unlink(path)
+  }
+}
+
+function openGuard(path: string) {
+  // Keep Node 22's SQLite startup warning out of capture's JSON CLI output.
+  const emitWarning = process.emitWarning
+  process.emitWarning = ((warning: string | Error, ...args: unknown[]) => {
+    if (typeof warning === 'string' && args[0] === 'ExperimentalWarning'
+      && warning.startsWith('SQLite is an experimental feature')) return
+    Reflect.apply(emitWarning, process, [warning, ...args])
+  }) as typeof process.emitWarning
+  try {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite')
+    return new DatabaseSync(path)
+  } finally {
+    process.emitWarning = emitWarning
+  }
+}
+
+async function withLock<T>(root: string, action: () => Promise<T>): Promise<T> {
+  await mkdir(root, { recursive: true })
+  const dir = await realpath(root)
+  const path = join(dir, '.lock')
+  return serialized(path, async () => {
+    // As with the board's directory lock, SQLite holds an OS lock on a stable
+    // inode. Never unlink the guard file. It serializes recovery, publication,
+    // writes and release, and the OS releases it when a process dies. Stop
+    // writers from versions that don't use the guard before upgrading.
+    const guard = openGuard(join(dir, '.lock.guard'))
+    try {
+      const deadline = performance.now() + 5000
+      while (true) {
+        let acquired = false
+        try {
+          guard.exec('BEGIN IMMEDIATE')
+          acquired = true
+        } catch (error) {
+          const { code, errcode } = error as { code?: string; errcode?: number }
+          // SQLite's primary SQLITE_BUSY code is 5, including extended codes.
+          if (code !== 'ERR_SQLITE_ERROR' || errcode === undefined || (errcode & 0xff) !== 5) throw error
+        }
+        if (acquired) {
+          if (await lockPathIsFree(path)) return await withOwnerMarker(path, action)
+          guard.exec('ROLLBACK')
+        }
+        const remaining = deadline - performance.now()
+        if (remaining <= 0) throw new Error('capture ledger lock timed out')
+        await sleep(Math.min(25, remaining))
+      }
+    } finally {
+      guard.close()
+    }
+  })
+}
+
 export function jsonlLedger(dir: string): CaptureLedger {
   const root = resolve(dir)
   const spend = join(root, 'spend.jsonl')
@@ -101,8 +221,7 @@ export function jsonlLedger(dir: string): CaptureLedger {
   return {
     async registerEnvelope(e) {
       const envelope = copyEnvelope(e)
-      await serialized(envelopes, async () => {
-        await mkdir(root, { recursive: true })
+      await withLock(root, async () => {
         const { rows, truncateAt } = await readRows<Envelope>(envelopes)
         const registered = rows.filter(row => row.trace.execution_id === envelope.trace.execution_id)
         if (registered.some(row => !isDeepStrictEqual(row, envelope))) throw new Error('execution_id conflict')
@@ -113,14 +232,16 @@ export function jsonlLedger(dir: string): CaptureLedger {
     async append(r) {
       const line = spendLine(r)
       const record = JSON.parse(line) as SpendRecord
-      return serialized(spend, async () => {
-        await mkdir(root, { recursive: true })
+      return withLock(root, async () => {
         const { rows, truncateAt } = await readRows<SpendRecord>(spend)
         if (rows.some(row => row.record_id === record.record_id && row.dedupe_key !== record.dedupe_key)) {
           throw new Error('record_id conflict')
         }
         const duplicates = rows.filter(row => row.dedupe_key === record.dedupe_key)
-        if (duplicates.some(row => !isDeepStrictEqual(row, record))) throw new Error('dedupe_key conflict')
+        // A pi log can be collected again later; keep its first receipt timestamp.
+        if (duplicates.some(row => !isDeepStrictEqual(
+          row, record.source === 'pi_json' ? { ...record, received: row.received } : record,
+        ))) throw new Error('dedupe_key conflict')
         if (duplicates.length > 0) return { written: false }
         await appendLine(spend, line, truncateAt)
         return { written: true }
