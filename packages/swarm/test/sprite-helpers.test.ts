@@ -7,7 +7,9 @@ import { describe, test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
+import { macSkip } from './mac-skip.ts'
 
+const needsSetsid = macSkip('needs Linux setsid to run pi in its own session')
 const helpers = fileURLToPath(new URL('../sprite/', import.meta.url))
 const sprites = '/tmp/sprites'
 const reply = 'fake assistant reply'
@@ -157,20 +159,20 @@ describe('sprite helpers', { concurrency: true }, () => {
     }
   })
 
-  test('pi-task passes through 0 and prints the status, model, and assistant reply', async (t) => {
+  test('pi-task passes through 0 and prints the status, model, and assistant reply', { skip: needsSetsid }, async (t) => {
     const result = await fixture(t).run('pi-task', ['task'])
     assert.equal(result.status, 0)
     assert.match(result.stdout, new RegExp(`^pi-task: rc=0 secs=\\d+\npi-task: model fake/test\n${reply}\n$`))
   })
 
-  test('pi-task passes through 7 and prints the failing status', async (t) => {
+  test('pi-task passes through 7 and prints the failing status', { skip: needsSetsid }, async (t) => {
     const result = await fixture(t, 'fail').run('pi-task', ['task'])
     assert.equal(result.status, 7)
     assert.match(result.stdout, /^pi-task: rc=7\b/m)
   })
 
   for (const [code, reason, max, idle] of [[124, 'timeout', '1', '180'], [125, 'idle', '180', '1']] as const) {
-    test(`pi-task exits ${code} and kills the pi process group on ${reason}`, async (t) => {
+    test(`pi-task exits ${code} and kills the pi process group on ${reason}`, { skip: needsSetsid }, async (t) => {
       const { run, pids } = fixture(t, 'sleep')
       const result = await run('pi-task', ['task', max], { PI_IDLE_SECONDS: idle })
       assert.equal(result.status, code)
@@ -189,7 +191,7 @@ describe('sprite helpers', { concurrency: true }, () => {
     }
   })
 
-  test('sprite-start exits 0 with the three-line banner and the detached job writes rc and out', async (t) => {
+  test('sprite-start exits 0 with the three-line banner and the detached job writes rc and out', { skip: needsSetsid }, async (t) => {
     const { run, name, state, cwd } = fixture(t)
     const result = await run('sprite-start', [name, 'task'])
     await until(() => existsSync(`${state}.rc`) && statSync(`${state}.rc`).size > 0, 'detached job did not write rc')
@@ -240,7 +242,7 @@ describe('sprite helpers', { concurrency: true }, () => {
     assert.equal(read(`${state}.rc`), '7\n')
   })
 
-  test('sprite-stop exits 0 and kills a running pi started by sprite-start', async (t) => {
+  test('sprite-stop exits 0 and kills a running pi started by sprite-start', { skip: needsSetsid }, async (t) => {
     const { run, name, state, ready, pids } = fixture(t, 'sleep')
     await run('sprite-start', [name, 'task'])
     const pidFile = `${state}.jsonl.pid`

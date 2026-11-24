@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { bdRunner } from '../src/trackers/beads/index.ts'
+import { macSkip } from './mac-skip.ts'
 
 function fakeBd(t: TestContext, body = 'printf "[]\\n"', timeoutMs?: number) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'swarm-fake-bd-')))
@@ -51,7 +52,9 @@ test('refused verbs, flags and ids cannot spawn bd', async (t) => {
   }
 })
 
-test('bd cannot lose read-only flags, run in the wrong cwd or inherit the parent environment', (t) => {
+test('bd cannot lose read-only flags, run in the wrong cwd or inherit the parent environment', {
+  skip: macSkip('needs Linux /proc/pid/environ to read the environment before the shell sets _'),
+}, (t) => {
   const fake = fakeBd(t, '[ -d "$HOME" ] || exit 4\nprintf "[]\\n"')
   const verbs = ['list', 'ready', 'blocked']
   const module = new URL('../src/trackers/beads/run.ts', import.meta.url).href
