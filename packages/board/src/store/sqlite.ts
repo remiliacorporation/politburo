@@ -1,4 +1,5 @@
 import { sqlite as a2Sqlite } from 'experimental-a2/store-sqlite'
+import { guardedLog } from './single-writer.ts'
 import { sqliteDb } from './sqlite-db.ts'
 import { sqlTables } from './sql.ts'
 import type { BoardStore } from './types.ts'
@@ -11,7 +12,7 @@ import type { BoardStore } from './types.ts'
 export function sqlite(options: { path: string }): BoardStore {
   const { path } = options
   // A2's store first: it creates the file and switches it to WAL, which the second handle needs.
-  const log = a2Sqlite({ path })
+  const log = guardedLog((clock) => a2Sqlite({ path, clock }))
   let tables: ReturnType<typeof sqlTables>
   try {
     tables = sqlTables(sqliteDb(path))
