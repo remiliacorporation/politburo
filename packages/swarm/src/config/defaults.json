@@ -62,7 +62,10 @@
       "core": "inherit",
       "spawner": "inherit",
       "mob": "inherit",
-      "sprite": {"model": "fallback/codex-cursor", "thinking": "medium"},
+      "sprite": {
+        "routes": [{"label": "Cursor Grok", "provider": "cursor", "model": "cursor-grok-4.6-high"}],
+        "thinking": "medium"
+      },
       "adviser": "openai-codex/gpt-5.6-terra",
       "classifier": "typesafe/jev-1.14"
     }
