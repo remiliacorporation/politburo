@@ -95,6 +95,24 @@
     "dock": {"missed_claim": 1}
   },
   "review": {"docs_only": {"model_review": false}, "code": {"review_rounds": 1, "fix_rounds": 1}},
+  "score": {
+    "state": "off",
+    "merged_work": 10,
+    "stays_merged_days": 7,
+    "revert": 10,
+    "review_round": 1,
+    "free_review_rounds": 1,
+    "tokens_per_merged_pr": {"target": 500000, "tokens_per_point": 100000, "max_penalty": 5},
+    "human_minutes": { "per_point": 15, "max_penalty": 10 },
+    "missed_claim": 5,
+    "unknown_spend": 2,
+    "levels": [{"name": "1", "min": 0}, {"name": "2", "min": 20}, {"name": "3", "min": 60}, {"name": "4", "min": 150}, {"name": "5", "min": 400}],
+    "milestones": [
+      {"id": "first-stable-merge", "metric": "stable_merges", "at": 1},
+      {"id": "ten-stable-merges", "metric": "stable_merges", "at": 10},
+      {"id": "first-fully-reported-merge", "metric": "fully_reported_merges", "at": 1}
+    ]
+  },
   "limits": {"usage_stop_percent": 100, "budgets": []},
   "heartbeat_minutes": 30,
   "setup": {
