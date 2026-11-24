@@ -1,4 +1,4 @@
-import { CircleHelp, ClipboardList, House, ListTodo, LayoutGrid, PanelLeftClose, Settings } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleHelp, ClipboardList, House, ListTodo, LayoutGrid, PanelLeftClose, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { ChannelView } from '../../api/routes.ts'
 import { attentionTasks, hasUnshownRefusal } from './attention-store.ts'
@@ -45,8 +45,33 @@ function useSeen(state: State, current: Route): Record<string, number> {
   return seen
 }
 
+/** Folded repo tags for this board. A missing or unreadable record means every repo is open. */
+function readFolded(storage: string): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storage) ?? 'null')
+    return Array.isArray(parsed) ? parsed.filter((tag) => typeof tag === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function useFoldedRepos(state: State): { has: (tag: string) => boolean; toggle: (tag: string) => void } {
+  const storage = `board.repos.folded:${state.discovery?.url ?? location.host}`
+  const [folded, setFolded] = useState<string[]>(() => readFolded(storage))
+  useEffect(() => { setFolded(readFolded(storage)) }, [storage])
+  const toggle = (tag: string) => {
+    setFolded((current) => {
+      const next = current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]
+      try { localStorage.setItem(storage, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+  return { has: (tag) => folded.includes(tag), toggle }
+}
+
 export function Sidebar({ state, current, onHome, onCollapse }: { state: State; current: Route; onHome: () => void; onCollapse: () => void }) {
   const seen = useSeen(state, current)
+  const folded = useFoldedRepos(state)
   const listed = useMemo(() => listedRepos(state.messages), [state.messages])
   const repos = useMemo(() => reposOf(state.channels, listed), [state.channels, listed])
   const hasRepoList = Object.hasOwn(state.channels, REPO_LIST_CHANNEL)
@@ -137,15 +162,26 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
         {repos.length > 0 && <h2>repos</h2>}
         {repos.map((repo) => {
           const count = counts.get(repo.tag) ?? { needs: 0, running: 0, pull: 0 }
+          const channels = byRepo.get(repo.tag) ?? []
+          const shut = folded.has(repo.tag)
+          const name = repoLabel(repo)
           return (
             <section key={repo.tag} aria-label={`repo ${repo.tag}`}>
-              <Link to={`/r/${repo.tag}`} className="item repo" current={current.view === 'repo' && current.repo === repo.tag}
-                title={`${repo.repo ?? repo.tag}: ${count.needs} need you · ${count.running} running · ${count.pull} ready to pull`}>
-                <span className="name">{repoLabel(repo)}</span>
-                {repo.name && <small className="faint">{repo.tag}</small>}
-                <span className="count">{count.needs} · {count.running} · {count.pull}</span>
-              </Link>
-              {(byRepo.get(repo.tag) ?? []).map((channel) => channelItem(channel, channel.path.slice(repo.tag.length + 1), true))}
+              <div className="repo-line">
+                {channels.length > 0 && (
+                  <button type="button" className="tool fold" aria-expanded={!shut} aria-label={`${shut ? 'Show' : 'Hide'} ${name} channels`}
+                    onClick={() => folded.toggle(repo.tag)}>
+                    {shut ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+                  </button>
+                )}
+                <Link to={`/r/${repo.tag}`} className="item repo" current={current.view === 'repo' && current.repo === repo.tag}
+                  title={`${repo.repo ?? repo.tag}: ${count.needs} need you · ${count.running} running · ${count.pull} ready to pull`}>
+                  <span className="name">{name}</span>
+                  {repo.name && <small className="faint">{repo.tag}</small>}
+                  <span className="count">{count.needs} · {count.running} · {count.pull}</span>
+                </Link>
+              </div>
+              {!shut && channels.map((channel) => channelItem(channel, channel.path.slice(repo.tag.length + 1), true))}
             </section>
           )
         })}
