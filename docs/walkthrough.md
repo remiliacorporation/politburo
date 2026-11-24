@@ -13,7 +13,9 @@ that version in this checkout. Otherwise, install that pnpm version directly.
 macOS opens zsh by default. Run `bash` first in each terminal in this
 walkthrough. The `read -p` prompts below work in Bash, not in zsh.
 
-Clone `main` into a new directory.
+If you already have a fresh checkout, stay on your branch and run the
+remaining commands from the checkout root. Otherwise, clone `main` into a
+new directory and enter it:
 
 ```bash
 git clone --branch main https://github.com/remiliacorporation/politburo.git
@@ -158,8 +160,8 @@ vb tasks create work/acme/web 'Confirm the local work board' --no-sync
 read -r -p 'Task ID: ' task_id
 ```
 
-Claim the task. Check that it moves to **Running**. Seeing the row in the
-browser is the work for this exercise.
+Claim the task. Check that it moves to **Running now**. Seeing the row in
+the browser is the work for this exercise.
 
 ```bash
 vb tasks claim "${task_id:?}" --lease 15m
