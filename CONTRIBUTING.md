@@ -5,6 +5,11 @@ and the CLI (`board`, alias `vb`). This fork keeps a private package beside it,
 `@remilia/politburo-runtime`, in `packages/runtime`. [SPEC.md](./SPEC.md) is the
 design; read it before changing behavior.
 
+The swarm layer is a third package, `@remilia/politburo-swarm`, in
+`packages/swarm` (CLI `swarm`). It uses the public `board()` handle and the
+runtime only. Start with [the swarm overview](./design/swarm-overview.md): it
+says what is on `main`, which rulings apply, and where to begin.
+
 ## Try the local development loop
 
 Use the [local task and review walkthrough](./LOCAL-DEVELOPMENT.md) to build

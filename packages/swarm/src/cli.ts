@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { skillsMain } from './skills/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>'
 
 class ReadError extends Error {}
 
@@ -41,6 +42,7 @@ function main(args: string[]): number {
     console.log(usage)
     return 0
   }
+  if (command === 'skills') return skillsMain(args.slice(1))
   if (command === undefined) return misuse('missing command')
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
@@ -93,6 +95,14 @@ function main(args: string[]): number {
   }
 }
 
-if (process.argv[2] === 'secretary') {
-  process.exitCode = await (await import('./secretary/cli.ts')).secretaryMain(process.argv.slice(3))
-} else process.exitCode = main(process.argv.slice(2))
+// One line per area: the loader returns run(argv): Promise<number>.
+const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  check: () => import('./checks/cli.ts'),
+  watch: () => import('./watch/cli.ts'),
+  trackers: () => import('./trackers/cli.ts'),
+  capture: async () => ({ run: (await import('./capture/cli.ts')).captureMain }),
+  secretary: async () => ({ run: (await import('./secretary/cli.ts')).secretaryMain }),
+}
+const [subcommand, ...subargs] = process.argv.slice(2)
+const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
+process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))

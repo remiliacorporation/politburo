@@ -1,0 +1,210 @@
+{
+  "case_id": "controllers-pause-resume-014-harness-actions",
+  "description": "Drive the cloud harness CLI with offline ports",
+  "expected": {
+    "db_rows": {},
+    "details": {
+      "port_calls": [
+        [
+          "python3",
+          "-m",
+          "supervisor.remote_watch",
+          "--config",
+          "<WORK>/watcher.json",
+          "register",
+          "task-example",
+          "--session",
+          "ty-task-example-a1-01020304",
+          "--brief-sha",
+          "<BRIEF>",
+          "--attempt",
+          "1"
+        ],
+        [
+          "example-claude",
+          "-p",
+          "[Tigeryard coordinator, task task-example, session ty-task-example-a1-01020304]\nPreserve the current output.",
+          "--cloud",
+          "example-cloud-session"
+        ],
+        [
+          "example-claude",
+          "-p",
+          "[Tigeryard coordinator, task task-example, session ty-task-example-a1-01020304]\nTigeryard cancel for task task-example (session ty-task-example-a1-01020304). Push your work branch now, write a final status with state cancelled, then stop.",
+          "--cloud",
+          "example-cloud-session"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "ls-remote",
+          "origin",
+          "refs/heads/agent-example/ty/task-example"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "fetch",
+          "--no-tags",
+          "--quiet",
+          "origin",
+          "+refs/heads/agent-example/ty/task-example:refs/tigeryard/harness/agent-example/ty/task-example"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "cat-file",
+          "blob",
+          "refs/tigeryard/harness/agent-example/ty/task-example:status.json"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "ls-remote",
+          "origin",
+          "refs/heads/agent-example/ty/task-example"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "fetch",
+          "--no-tags",
+          "--quiet",
+          "origin",
+          "+refs/heads/agent-example/ty/task-example:refs/tigeryard/harness/agent-example/ty/task-example"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "cat-file",
+          "blob",
+          "refs/tigeryard/harness/agent-example/ty/task-example:status.json"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "ls-remote",
+          "origin",
+          "refs/heads/agent-example/ty/task-example"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "fetch",
+          "--no-tags",
+          "--quiet",
+          "origin",
+          "+refs/heads/agent-example/ty/task-example:refs/tigeryard/harness/agent-example/ty/task-example"
+        ],
+        [
+          "git",
+          "-C",
+          "<WORK>/example-project",
+          "cat-file",
+          "blob",
+          "refs/tigeryard/harness/agent-example/ty/task-example:status.json"
+        ]
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "cloud/harness/ty-task-example-a1-01020304.json": "{\n \"attempt\": 1,\n \"backend\": \"claude-cloud\",\n \"brief_sha\": \"<BRIEF>\",\n \"data\": {\n  \"cloud_session\": \"example-cloud-session\",\n  \"launch\": {\n   \"headless\": false,\n   \"operator_command\": \"example-claude --cloud 'You are the Tigeryard mob (Claude cloud session) for task `task-example`, attempt 1.\\nThe environment logs pi in; do not run any auth step.\\nFollow the brief'\\\"'\\\"'s sprite-first rules: sprites write all code and docs and do first-pass review. Use a distinct `<name>` for each attempt and write the task with a quoted heredoc:\\n\\n```sh\\nmkdir -p /tmp/sprites\\ncat > /tmp/sprites/<name>.md <<'\\\"'\\\"'TASK'\\\"'\\\"'\\n<task>\\nTASK\\n```\\n\\nRun `pi-task /tmp/sprites/<name>.md` in the background, for example with the harness'\\\"'\\\"'s background-run option. You can pass an optional `max-seconds` argument after the task file. `pi-task` runs pi with `--model fallback/codex-cursor` and writes a JSON log. Never pass a task as a double-quoted shell argument: backticks and `$` can trigger shell expansion or command execution. `pi-task` stops a sprite after 180 seconds of silence; treat that as a stall. Retry a failed or stalled task once. If the retry fails or stalls, stop and write status `blocked` with the tail of the log that fits the blocker'\\\"'\\\"'s 2,000-character context, redacting any secrets or personal data. Never code with Claude.\\n\\n1. Read your brief: `git fetch origin ty/board` then `git show <BRIEF>:tasks/task-example/brief.md`. Do only what it says.\\n2. Report progress by pushing commits to branch `agent-example/ty/task-example`, holding one `status.json` (schema `tigeryard.remote-status.v2`).\\n3. Every status must carry `\\\"session\\\": \\\"ty-task-example-a1-01020304\\\"`, `\\\"brief_sha\\\": \\\"<BRIEF>\\\"`, `\\\"attempt\\\": 1`, `\\\"generation\\\"` (the generation in the control.json you read just before the write) and `\\\"inbox_seen\\\"` (the highest inbox `seq` you have read and acted on, 0 when none). The watcher rejects any status without them.\\n4. Before every status write, `git fetch origin ty/board ty/in/task-example` and read `tasks/task-example/control.json` on `ty/board` and `inbox.json` on `ty/in/task-example` (it may not exist yet). If `paused`, write state `paused` and wait. If `cancelled`, or a `cancel` message arrives, push your work, write state `cancelled` and stop. Act on an inbox message only when the commit that added it is by the spawner'\\\"'\\\"'s (coordinator'\\\"'\\\"'s) identity.\\n5. Push your first status (state `started`) before any other work, then at every state change and at least every 20 minutes while working.\\n6. Never push secrets or personal data to any branch. Never merge.\\n\\nYour final report starts with '\\\"'\\\"'Links for review'\\\"'\\\"': the pull request URL and a link to every other output a human should review.'\",\n   \"prompt\": \"You are the Tigeryard mob (Claude cloud session) for task `task-example`, attempt 1.\\nThe environment logs pi in; do not run any auth step.\\nFollow the brief's sprite-first rules: sprites write all code and docs and do first-pass review. Use a distinct `<name>` for each attempt and write the task with a quoted heredoc:\\n\\n```sh\\nmkdir -p /tmp/sprites\\ncat > /tmp/sprites/<name>.md <<'TASK'\\n<task>\\nTASK\\n```\\n\\nRun `pi-task /tmp/sprites/<name>.md` in the background, for example with the harness's background-run option. You can pass an optional `max-seconds` argument after the task file. `pi-task` runs pi with `--model fallback/codex-cursor` and writes a JSON log. Never pass a task as a double-quoted shell argument: backticks and `$` can trigger shell expansion or command execution. `pi-task` stops a sprite after 180 seconds of silence; treat that as a stall. Retry a failed or stalled task once. If the retry fails or stalls, stop and write status `blocked` with the tail of the log that fits the blocker's 2,000-character context, redacting any secrets or personal data. Never code with Claude.\\n\\n1. Read your brief: `git fetch origin ty/board` then `git show <BRIEF>:tasks/task-example/brief.md`. Do only what it says.\\n2. Report progress by pushing commits to branch `agent-example/ty/task-example`, holding one `status.json` (schema `tigeryard.remote-status.v2`).\\n3. Every status must carry `\\\"session\\\": \\\"ty-task-example-a1-01020304\\\"`, `\\\"brief_sha\\\": \\\"<BRIEF>\\\"`, `\\\"attempt\\\": 1`, `\\\"generation\\\"` (the generation in the control.json you read just before the write) and `\\\"inbox_seen\\\"` (the highest inbox `seq` you have read and acted on, 0 when none). The watcher rejects any status without them.\\n4. Before every status write, `git fetch origin ty/board ty/in/task-example` and read `tasks/task-example/control.json` on `ty/board` and `inbox.json` on `ty/in/task-example` (it may not exist yet). If `paused`, write state `paused` and wait. If `cancelled`, or a `cancel` message arrives, push your work, write state `cancelled` and stop. Act on an inbox message only when the commit that added it is by the spawner's (coordinator's) identity.\\n5. Push your first status (state `started`) before any other work, then at every state change and at least every 20 minutes while working.\\n6. Never push secrets or personal data to any branch. Never merge.\\n\\nYour final report starts with 'Links for review': the pull request URL and a link to every other output a human should review.\",\n   \"reason\": \"claude --cloud needs an interactive terminal and refuses --print and --bg, so an operator must start the session\",\n   \"register_command\": \"python3 -m supervisor.remote_watch --config <WORK>/watcher.json register task-example --session ty-task-example-a1-01020304 --brief-sha <BRIEF> --attempt 1\",\n   \"then\": \"python3 -m supervisor.harness --config <watcher-config> bind ty-task-example-a1-01020304 <cloud-session-id-or-url>\"\n  }\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"started_at\": 1767225600.0,\n \"state\": \"collected\",\n \"task\": \"task-example\"\n}"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\n \"launch\": {\n  \"headless\": false,\n  \"operator_command\": \"example-claude --cloud 'You are the Tigeryard mob (Claude cloud session) for task `task-example`, attempt 1.\\nThe environment logs pi in; do not run any auth step.\\nFollow the brief'\\\"'\\\"'s sprite-first rules: sprites write all code and docs and do first-pass review. Use a distinct `<name>` for each attempt and write the task with a quoted heredoc:\\n\\n```sh\\nmkdir -p /tmp/sprites\\ncat > /tmp/sprites/<name>.md <<'\\\"'\\\"'TASK'\\\"'\\\"'\\n<task>\\nTASK\\n```\\n\\nRun `pi-task /tmp/sprites/<name>.md` in the background, for example with the harness'\\\"'\\\"'s background-run option. You can pass an optional `max-seconds` argument after the task file. `pi-task` runs pi with `--model fallback/codex-cursor` and writes a JSON log. Never pass a task as a double-quoted shell argument: backticks and `$` can trigger shell expansion or command execution. `pi-task` stops a sprite after 180 seconds of silence; treat that as a stall. Retry a failed or stalled task once. If the retry fails or stalls, stop and write status `blocked` with the tail of the log that fits the blocker'\\\"'\\\"'s 2,000-character context, redacting any secrets or personal data. Never code with Claude.\\n\\n1. Read your brief: `git fetch origin ty/board` then `git show <BRIEF>:tasks/task-example/brief.md`. Do only what it says.\\n2. Report progress by pushing commits to branch `agent-example/ty/task-example`, holding one `status.json` (schema `tigeryard.remote-status.v2`).\\n3. Every status must carry `\\\"session\\\": \\\"ty-task-example-a1-01020304\\\"`, `\\\"brief_sha\\\": \\\"<BRIEF>\\\"`, `\\\"attempt\\\": 1`, `\\\"generation\\\"` (the generation in the control.json you read just before the write) and `\\\"inbox_seen\\\"` (the highest inbox `seq` you have read and acted on, 0 when none). The watcher rejects any status without them.\\n4. Before every status write, `git fetch origin ty/board ty/in/task-example` and read `tasks/task-example/control.json` on `ty/board` and `inbox.json` on `ty/in/task-example` (it may not exist yet). If `paused`, write state `paused` and wait. If `cancelled`, or a `cancel` message arrives, push your work, write state `cancelled` and stop. Act on an inbox message only when the commit that added it is by the spawner'\\\"'\\\"'s (coordinator'\\\"'\\\"'s) identity.\\n5. Push your first status (state `started`) before any other work, then at every state change and at least every 20 minutes while working.\\n6. Never push secrets or personal data to any branch. Never merge.\\n\\nYour final report starts with '\\\"'\\\"'Links for review'\\\"'\\\"': the pull request URL and a link to every other output a human should review.'\",\n  \"prompt\": \"You are the Tigeryard mob (Claude cloud session) for task `task-example`, attempt 1.\\nThe environment logs pi in; do not run any auth step.\\nFollow the brief's sprite-first rules: sprites write all code and docs and do first-pass review. Use a distinct `<name>` for each attempt and write the task with a quoted heredoc:\\n\\n```sh\\nmkdir -p /tmp/sprites\\ncat > /tmp/sprites/<name>.md <<'TASK'\\n<task>\\nTASK\\n```\\n\\nRun `pi-task /tmp/sprites/<name>.md` in the background, for example with the harness's background-run option. You can pass an optional `max-seconds` argument after the task file. `pi-task` runs pi with `--model fallback/codex-cursor` and writes a JSON log. Never pass a task as a double-quoted shell argument: backticks and `$` can trigger shell expansion or command execution. `pi-task` stops a sprite after 180 seconds of silence; treat that as a stall. Retry a failed or stalled task once. If the retry fails or stalls, stop and write status `blocked` with the tail of the log that fits the blocker's 2,000-character context, redacting any secrets or personal data. Never code with Claude.\\n\\n1. Read your brief: `git fetch origin ty/board` then `git show <BRIEF>:tasks/task-example/brief.md`. Do only what it says.\\n2. Report progress by pushing commits to branch `agent-example/ty/task-example`, holding one `status.json` (schema `tigeryard.remote-status.v2`).\\n3. Every status must carry `\\\"session\\\": \\\"ty-task-example-a1-01020304\\\"`, `\\\"brief_sha\\\": \\\"<BRIEF>\\\"`, `\\\"attempt\\\": 1`, `\\\"generation\\\"` (the generation in the control.json you read just before the write) and `\\\"inbox_seen\\\"` (the highest inbox `seq` you have read and acted on, 0 when none). The watcher rejects any status without them.\\n4. Before every status write, `git fetch origin ty/board ty/in/task-example` and read `tasks/task-example/control.json` on `ty/board` and `inbox.json` on `ty/in/task-example` (it may not exist yet). If `paused`, write state `paused` and wait. If `cancelled`, or a `cancel` message arrives, push your work, write state `cancelled` and stop. Act on an inbox message only when the commit that added it is by the spawner's (coordinator's) identity.\\n5. Push your first status (state `started`) before any other work, then at every state change and at least every 20 minutes while working.\\n6. Never push secrets or personal data to any branch. Never merge.\\n\\nYour final report starts with 'Links for review': the pull request URL and a link to every other output a human should review.\",\n  \"reason\": \"claude --cloud needs an interactive terminal and refuses --print and --bg, so an operator must start the session\",\n  \"register_command\": \"python3 -m supervisor.remote_watch --config <WORK>/watcher.json register task-example --session ty-task-example-a1-01020304 --brief-sha <BRIEF> --attempt 1\",\n  \"then\": \"python3 -m supervisor.harness --config <watcher-config> bind ty-task-example-a1-01020304 <cloud-session-id-or-url>\"\n },\n \"outcome\": \"awaiting_operator\",\n \"session\": \"ty-task-example-a1-01020304\"\n}\n{\n \"delivered\": false,\n \"detail\": {\n  \"reason\": \"session not bound; run bind with its cloud session id\"\n },\n \"method\": \"operator\"\n}\n{\"outcome\": \"error\", \"error\": \"not a cloud session id or claude.ai/code URL\"}\n{\n \"outcome\": \"bound\",\n \"session\": \"ty-task-example-a1-01020304\"\n}\n{\n \"delivered\": true,\n \"detail\": {\n  \"attempts\": 1\n },\n \"method\": \"claude-cli\"\n}\n{\n \"delivered\": true,\n \"detail\": {\n  \"attempts\": 1\n },\n \"method\": \"claude-cli\"\n}\n{\n \"alive\": false,\n \"detail\": {\n  \"blocker\": \"Synthetic stopped run\",\n  \"branch\": \"agent-example/ty/task-example\",\n  \"report\": null,\n  \"seq\": 1,\n  \"status_sha\": \"<STATUS-HEAD>\",\n  \"step\": \"editing the list view\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"work_branch\": \"agent-example/frontend-task-example\",\n  \"work_head\": \"<WORK-HEAD>\"\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"state\": \"failed\",\n \"trusted\": true\n}\n{\n \"detail\": {\n  \"blocker\": \"Synthetic stopped run\",\n  \"branch\": \"agent-example/ty/task-example\",\n  \"reason\": \"untrusted_status\",\n  \"report\": null,\n  \"seq\": 1,\n  \"status_sha\": \"<STATUS-HEAD>\",\n  \"step\": \"editing the list view\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"work_branch\": \"agent-example/frontend-task-example\",\n  \"work_head\": \"<WORK-HEAD>\"\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"state\": \"failed\",\n \"terminal\": false\n}\n{\n \"detail\": {\n  \"blocker\": \"Synthetic stopped run\",\n  \"branch\": \"agent-example/ty/task-example\",\n  \"report\": null,\n  \"seq\": 1,\n  \"status_sha\": \"<STATUS-HEAD>\",\n  \"step\": \"editing the list view\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"work_branch\": \"agent-example/frontend-task-example\",\n  \"work_head\": \"<WORK-HEAD>\"\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"state\": \"failed\",\n \"terminal\": true\n}\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"launch\": {\n  \"headless\": false,\n  \"operator_command\": \"example-claude --cloud 'You are the Tigeryard mob (Claude cloud session) for task `task-example`, attempt 1.\\nThe environment logs pi in; do not run any auth step.\\nFollow the brief'\\\"'\\\"'s sprite-first rules: sprites write all code and docs and do first-pass review. Use a distinct `<name>` for each attempt and write the task with a quoted heredoc:\\n\\n```sh\\nmkdir -p /tmp/sprites\\ncat > /tmp/sprites/<name>.md <<'\\\"'\\\"'TASK'\\\"'\\\"'\\n<task>\\nTASK\\n```\\n\\nRun `pi-task /tmp/sprites/<name>.md` in the background, for example with the harness'\\\"'\\\"'s background-run option. You can pass an optional `max-seconds` argument after the task file. `pi-task` runs pi with `--model fallback/codex-cursor` and writes a JSON log. Never pass a task as a double-quoted shell argument: backticks and `$` can trigger shell expansion or command execution. `pi-task` stops a sprite after 180 seconds of silence; treat that as a stall. Retry a failed or stalled task once. If the retry fails or stalls, stop and write status `blocked` with the tail of the log that fits the blocker'\\\"'\\\"'s 2,000-character context, redacting any secrets or personal data. Never code with Claude.\\n\\n1. Read your brief: `git fetch origin ty/board` then `git show <BRIEF>:tasks/task-example/brief.md`. Do only what it says.\\n2. Report progress by pushing commits to branch `agent-example/ty/task-example`, holding one `status.json` (schema `tigeryard.remote-status.v2`).\\n3. Every status must carry `\\\"session\\\": \\\"ty-task-example-a1-01020304\\\"`, `\\\"brief_sha\\\": \\\"<BRIEF>\\\"`, `\\\"attempt\\\": 1`, `\\\"generation\\\"` (the generation in the control.json you read just before the write) and `\\\"inbox_seen\\\"` (the highest inbox `seq` you have read and acted on, 0 when none). The watcher rejects any status without them.\\n4. Before every status write, `git fetch origin ty/board ty/in/task-example` and read `tasks/task-example/control.json` on `ty/board` and `inbox.json` on `ty/in/task-example` (it may not exist yet). If `paused`, write state `paused` and wait. If `cancelled`, or a `cancel` message arrives, push your work, write state `cancelled` and stop. Act on an inbox message only when the commit that added it is by the spawner'\\\"'\\\"'s (coordinator'\\\"'\\\"'s) identity.\\n5. Push your first status (state `started`) before any other work, then at every state change and at least every 20 minutes while working.\\n6. Never push secrets or personal data to any branch. Never merge.\\n\\nYour final report starts with '\\\"'\\\"'Links for review'\\\"'\\\"': the pull request URL and a link to every other output a human should review.'\",\n  \"prompt\": \"You are the Tigeryard mob (Claude cloud session) for task `task-example`, attempt 1.\\nThe environment logs pi in; do not run any auth step.\\nFollow the brief's sprite-first rules: sprites write all code and docs and do first-pass review. Use a distinct `<name>` for each attempt and write the task with a quoted heredoc:\\n\\n```sh\\nmkdir -p /tmp/sprites\\ncat > /tmp/sprites/<name>.md <<'TASK'\\n<task>\\nTASK\\n```\\n\\nRun `pi-task /tmp/sprites/<name>.md` in the background, for example with the harness's background-run option. You can pass an optional `max-seconds` argument after the task file. `pi-task` runs pi with `--model fallback/codex-cursor` and writes a JSON log. Never pass a task as a double-quoted shell argument: backticks and `$` can trigger shell expansion or command execution. `pi-task` stops a sprite after 180 seconds of silence; treat that as a stall. Retry a failed or stalled task once. If the retry fails or stalls, stop and write status `blocked` with the tail of the log that fits the blocker's 2,000-character context, redacting any secrets or personal data. Never code with Claude.\\n\\n1. Read your brief: `git fetch origin ty/board` then `git show <BRIEF>:tasks/task-example/brief.md`. Do only what it says.\\n2. Report progress by pushing commits to branch `agent-example/ty/task-example`, holding one `status.json` (schema `tigeryard.remote-status.v2`).\\n3. Every status must carry `\\\"session\\\": \\\"ty-task-example-a1-01020304\\\"`, `\\\"brief_sha\\\": \\\"<BRIEF>\\\"`, `\\\"attempt\\\": 1`, `\\\"generation\\\"` (the generation in the control.json you read just before the write) and `\\\"inbox_seen\\\"` (the highest inbox `seq` you have read and acted on, 0 when none). The watcher rejects any status without them.\\n4. Before every status write, `git fetch origin ty/board ty/in/task-example` and read `tasks/task-example/control.json` on `ty/board` and `inbox.json` on `ty/in/task-example` (it may not exist yet). If `paused`, write state `paused` and wait. If `cancelled`, or a `cancel` message arrives, push your work, write state `cancelled` and stop. Act on an inbox message only when the commit that added it is by the spawner's (coordinator's) identity.\\n5. Push your first status (state `started`) before any other work, then at every state change and at least every 20 minutes while working.\\n6. Never push secrets or personal data to any branch. Never merge.\\n\\nYour final report starts with 'Links for review': the pull request URL and a link to every other output a human should review.\",\n  \"reason\": \"claude --cloud needs an interactive terminal and refuses --print and --bg, so an operator must start the session\",\n  \"register_command\": \"python3 -m supervisor.remote_watch --config <WORK>/watcher.json register task-example --session ty-task-example-a1-01020304 --brief-sha <BRIEF> --attempt 1\",\n  \"then\": \"python3 -m supervisor.harness --config <watcher-config> bind ty-task-example-a1-01020304 <cloud-session-id-or-url>\"\n },\n \"outcome\": \"awaiting_operator\",\n \"session\": \"ty-task-example-a1-01020304\"\n}\n",
+        "step": "start"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"delivered\": false,\n \"detail\": {\n  \"reason\": \"session not bound; run bind with its cloud session id\"\n },\n \"method\": \"operator\"\n}\n",
+        "step": "unbound send"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"outcome\": \"error\", \"error\": \"not a cloud session id or claude.ai/code URL\"}\n",
+        "step": "invalid bind"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"outcome\": \"bound\",\n \"session\": \"ty-task-example-a1-01020304\"\n}\n",
+        "step": "bind"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"delivered\": true,\n \"detail\": {\n  \"attempts\": 1\n },\n \"method\": \"claude-cli\"\n}\n",
+        "step": "send"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"delivered\": true,\n \"detail\": {\n  \"attempts\": 1\n },\n \"method\": \"claude-cli\"\n}\n",
+        "step": "cancel"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"alive\": false,\n \"detail\": {\n  \"blocker\": \"Synthetic stopped run\",\n  \"branch\": \"agent-example/ty/task-example\",\n  \"report\": null,\n  \"seq\": 1,\n  \"status_sha\": \"<STATUS-HEAD>\",\n  \"step\": \"editing the list view\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"work_branch\": \"agent-example/frontend-task-example\",\n  \"work_head\": \"<WORK-HEAD>\"\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"state\": \"failed\",\n \"trusted\": true\n}\n",
+        "step": "observe"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"detail\": {\n  \"blocker\": \"Synthetic stopped run\",\n  \"branch\": \"agent-example/ty/task-example\",\n  \"reason\": \"untrusted_status\",\n  \"report\": null,\n  \"seq\": 1,\n  \"status_sha\": \"<STATUS-HEAD>\",\n  \"step\": \"editing the list view\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"work_branch\": \"agent-example/frontend-task-example\",\n  \"work_head\": \"<WORK-HEAD>\"\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"state\": \"failed\",\n \"terminal\": false\n}\n",
+        "step": "untrusted terminal collect"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n \"detail\": {\n  \"blocker\": \"Synthetic stopped run\",\n  \"branch\": \"agent-example/ty/task-example\",\n  \"report\": null,\n  \"seq\": 1,\n  \"status_sha\": \"<STATUS-HEAD>\",\n  \"step\": \"editing the list view\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"work_branch\": \"agent-example/frontend-task-example\",\n  \"work_head\": \"<WORK-HEAD>\"\n },\n \"session\": \"ty-task-example-a1-01020304\",\n \"state\": \"failed\",\n \"terminal\": true\n}\n",
+        "step": "trusted terminal collect"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "message": "Preserve the current output.",
+    "scenario": "harness_actions",
+    "task": "task-example"
+  },
+  "matrix_row": "M83",
+  "notes": "Register before operator launch; refuse unbound send and invalid bind; bind, send, request cancellation, observe exact identity, then collect only a trusted terminal status.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/harness.py",
+      "supervisor/harness_claude_cloud.py",
+      "supervisor/remote_watch.py"
+    ]
+  }
+}
