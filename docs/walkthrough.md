@@ -6,9 +6,9 @@ description: Start a local board, define a party, finish a task, and run the swa
 ## 1. Install and build
 
 Use a Mac or Linux laptop with Bash, Git, Node 22.18 or later, and pnpm
-11.23.0. The pnpm pin is in [package.json](../package.json). If Corepack is
-available, use `corepack enable pnpm` to let it select the pinned version in
-this checkout. Otherwise, install that pnpm version directly.
+11.23.0. The pnpm pin is in [package.json](../package.json). If you need to
+install pnpm and have Corepack, use `corepack enable pnpm` to let it select
+that version in this checkout. Otherwise, install that pnpm version directly.
 
 Clone `main` into a new directory.
 
@@ -163,8 +163,9 @@ vb tasks claim "${task_id:?}" --lease 15m
 ```
 
 Complete the task before the lease expires. Check that the row leaves
-**Work**. Then click **Tasks** in the sidebar and select **completed**.
-Confirm that the same task appears with the result `Confirmed in the inspector`.
+**Work**. Then click **tasks** in the sidebar and select **completed**.
+Confirm that the same task appears. Open the row to read the full result,
+`Confirmed in the inspector`.
 
 ```bash
 vb tasks complete "${task_id:?}" 'Confirmed in the inspector'
