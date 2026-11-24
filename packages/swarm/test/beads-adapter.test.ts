@@ -212,7 +212,11 @@ test('the rendered queue exceeds 80 columns or prints a title with raw ESC', asy
 })
 
 test('an unrecorded argv looks like an empty scan instead of surfacing the fixture error', async () => {
-  await assert.rejects(adapter().scan({ epic: 'rw-nope' }), {
-    message: 'unrecorded call: list --all --json -n 0 --parent rw-nope',
+  const epic = 'sk-livetestkey'
+  await assert.rejects(adapter().scan({ epic }), (error) => {
+    assert.ok(error instanceof Error)
+    assert.equal(error.message, 'unrecorded call')
+    assert.equal(error.message.includes(epic), false)
+    return true
   })
 })

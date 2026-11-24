@@ -1,5 +1,5 @@
 import { Clock, CloudOff, FileText, ListTodo, Paperclip, Tag, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { ATTACHMENT_BYTES_MAX, ATTACHMENTS_PER_MESSAGE_MAX } from '../../contract/schemas.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
 import { toast } from './chrome.ts'
@@ -68,6 +68,8 @@ export function Composer(props: {
   channel?: string
   /** Where a new thread can start as a task: the page's state, for who you are and what's open; `always` for a view that only starts tasks. */
   tasks?: { state: State; always?: boolean }
+  /** A pane can keep its file draft while its thread is temporarily hidden. */
+  fileDraft?: [File[], Dispatch<SetStateAction<File[]>>]
   onSend: (send: Send) => void
   onEditLast?: () => void
 }) {
@@ -85,7 +87,8 @@ export function Composer(props: {
   const [noSync, setNoSync] = useState(false)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [labelsOpen, setLabelsOpen] = useState(false)
-  const [files, setFiles] = useState<File[]>([])
+  const localFiles = useState<File[]>([])
+  const [files, setFiles] = props.fileDraft ?? localFiles
   const area = useRef<HTMLTextAreaElement>(null)
   const picker = useRef<HTMLInputElement>(null)
 

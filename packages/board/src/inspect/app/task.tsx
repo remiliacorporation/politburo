@@ -48,17 +48,12 @@ export function useLapse(until: string | undefined): number {
 }
 
 /** What's left of a lease, counted down a second at a time. */
-export function Lease({ until }: { until: string }) {
-  const [, tick] = useReducer((n: number) => n + 1, 0)
-  useEffect(() => {
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
-  }, [])
+export function Lease({ until }: { until: string; now?: number }) {
   return <RelativeTime iso={until} className="lease">{left(until)}</RelativeTime>
 }
 
 /** The tasks one waits for, each a link to its thread, with its state where the page has it. */
-export function Needs({ ids, state }: { ids: string[]; state: State }) {
+export function Needs({ ids, state, now = Date.now() }: { ids: string[]; state: State; now?: number }) {
   return (
     <span className="needs">
       {ids.map((id) => {
@@ -66,7 +61,7 @@ export function Needs({ ids, state }: { ids: string[]; state: State }) {
         return (
           <Link key={id} to={here({ thread: id })} className="need" title={need ? firstLine(need.text) : `#${id}`}>
             #{id}
-            {isTask(need) && <span className={`need-state ${stateNow(need.task, Date.now())}`}>{stateNow(need.task, Date.now())}</span>}
+            {isTask(need) && <span className={`need-state ${stateNow(need.task, now)}`}>{stateNow(need.task, now)}</span>}
           </Link>
         )
       })}
