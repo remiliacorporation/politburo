@@ -1,0 +1,180 @@
+{
+  "case_id": "board-server-015-bind-host",
+  "description": "Check loopback-only startup and the explicit numeric wildcard override",
+  "expected": {
+    "binds": [
+      {
+        "return": "127.0.0.1"
+      },
+      {
+        "return": "127.0.0.2"
+      },
+      {
+        "return": "::1"
+      },
+      {
+        "return": "127.0.0.1"
+      },
+      {
+        "return": "127.0.0.1"
+      },
+      {
+        "exception": "ValueError",
+        "message": "refusing --host '': not a numeric address; use 'localhost', '127.0.0.1' or '::1'"
+      },
+      {
+        "exception": "ValueError",
+        "message": "refusing --host '': not a numeric address; use 'localhost', '127.0.0.1' or '::1'"
+      },
+      {
+        "exception": "ValueError",
+        "message": "refusing --host '0.0.0.0': the unauthenticated board listens on loopback only; pass --unsafe-bind-any to override"
+      },
+      {
+        "return": "0.0.0.0"
+      },
+      {
+        "exception": "ValueError",
+        "message": "refusing --host '::': the unauthenticated board listens on loopback only; pass --unsafe-bind-any to override"
+      },
+      {
+        "return": "::"
+      },
+      {
+        "exception": "ValueError",
+        "message": "refusing --host 'example.invalid': not a numeric address; use 'localhost', '127.0.0.1' or '::1'"
+      },
+      {
+        "exception": "ValueError",
+        "message": "refusing --host 'example.invalid': not a numeric address; use 'localhost', '127.0.0.1' or '::1'"
+      }
+    ],
+    "exit_code": null,
+    "files": {},
+    "log_lines": [],
+    "main": [
+      {
+        "exit_code": 1,
+        "stderr": "refusing --host '0.0.0.0': the unauthenticated board listens on loopback only; pass --unsafe-bind-any to override\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "refusing --host '::': the unauthenticated board listens on loopback only; pass --unsafe-bind-any to override\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "refusing --host 'example.invalid': not a numeric address; use 'localhost', '127.0.0.1' or '::1'\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "board not found: <WORK>/missing.sqlite\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "board not found: <WORK>/missing.sqlite\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "board not found: <WORK>/missing.sqlite\n",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "binds": [
+      {
+        "host": "127.0.0.1"
+      },
+      {
+        "host": "127.0.0.2"
+      },
+      {
+        "host": "::1"
+      },
+      {
+        "host": "localhost"
+      },
+      {
+        "host": "LOCALHOST"
+      },
+      {
+        "host": "",
+        "unsafe_bind_any": false
+      },
+      {
+        "host": "",
+        "unsafe_bind_any": true
+      },
+      {
+        "host": "0.0.0.0",
+        "unsafe_bind_any": false
+      },
+      {
+        "host": "0.0.0.0",
+        "unsafe_bind_any": true
+      },
+      {
+        "host": "::",
+        "unsafe_bind_any": false
+      },
+      {
+        "host": "::",
+        "unsafe_bind_any": true
+      },
+      {
+        "host": "example.invalid",
+        "unsafe_bind_any": false
+      },
+      {
+        "host": "example.invalid",
+        "unsafe_bind_any": true
+      }
+    ],
+    "kind": "bind-host",
+    "main_args": [
+      [
+        "--host",
+        "0.0.0.0"
+      ],
+      [
+        "--host",
+        "::"
+      ],
+      [
+        "--host",
+        "example.invalid",
+        "--unsafe-bind-any"
+      ],
+      [],
+      [
+        "--host",
+        "0.0.0.0",
+        "--unsafe-bind-any"
+      ],
+      [
+        "--host",
+        "::",
+        "--unsafe-bind-any"
+      ]
+    ]
+  },
+  "matrix_row": "M82",
+  "notes": "Bind checks do not use DNS or sockets. CLI refusals cover blocked host values and allowed binds that stop at a missing board; no listener is started.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:10:00Z"
+  },
+  "source": {
+    "commit": "41865d405b75b321736ca1554be60ed97b1bd8af",
+    "modules": [
+      "board/server.py"
+    ]
+  }
+}

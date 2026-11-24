@@ -263,6 +263,8 @@ export const LEASE_DEFAULT_S = 900
  * to its own cap, never under 300.
  */
 const Lease = z.number()
+/** A claim's hard end, in seconds from the claiming append. */
+const Hold = z.number().int().min(1).max(86400)
 
 /** What a claim's own writes carry: the `epoch` and `token` its claim answered. */
 const Claimed = { epoch: z.number().int().positive(), token: z.string().min(1).max(128) }
@@ -389,7 +391,7 @@ export const TasksQuery = z.object({
 })
 
 
-export const ClaimTaskBody = z.object({ lease: Lease.optional(), binding: TaskBinding.optional(), ...ClaimToken }).optional()
+export const ClaimTaskBody = z.object({ lease: Lease.optional(), hold: Hold.optional(), binding: TaskBinding.optional(), ...ClaimToken }).optional()
 
 /**
  * Claims the highest priority eligible ready task in `channel`. At equal priority, it prefers
@@ -404,6 +406,7 @@ export const ClaimReadyTaskBody = z.object({
   /** How many owners one claim takes from is the backend's to say. */
   from: z.array(z.string().min(1).max(256)).optional(),
   lease: Lease.optional(),
+  hold: Hold.optional(),
   wait: z.number().min(0).max(300).optional(),
   binding: TaskBinding.optional(),
   ...ClaimToken,
@@ -948,7 +951,7 @@ export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention'> 
   /** The tasks it waits for, by their IDs. */
   needs: string[]
   /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
-  claim: { actor: string; until: string; binding?: TaskBinding } | null
+  claim: { actor: string; until: string; holdUntil?: string; binding?: TaskBinding } | null
 }
 
 /** Assignment metadata attested by a claimant, not a grant of authority. */
@@ -962,6 +965,7 @@ export type TaskClaim = {
   epoch: number
   token: string
   until: string
+  holdUntil?: string
   /** Board pause epoch at admission, when the backend supports network pause. */
   pauseEpoch?: number
   binding?: TaskBinding
@@ -1045,6 +1049,14 @@ export type BoardEventView = PublicBoardEvent extends infer E
     : never
   : never
 
+export const TASK_CLAIM_HOLD_HEADER = 'x-board-task-claim-hold'
+
+/** Read the capability without requiring a change to the discovery JSON. */
+export async function readDiscovery(response: Response): Promise<Discovery> {
+  const info = (await response.json()) as Discovery
+  return response.headers.get(TASK_CLAIM_HOLD_HEADER) === '1' ? { ...info, task_claim_hold: true } : info
+}
+
 export type Discovery = {
   version: string
   url: string
@@ -1067,6 +1079,7 @@ export type Discovery = {
   task_authority?: boolean
   /** Whether this board is configured to keep structured task attention requests. */
   task_attention?: true
+  task_claim_hold?: true
   /** This board opts into the fork's agent registry. */
   agent_ops?: true
   /** Advertises command intents and run health. `agent_ops` alone only advertises the registry. */

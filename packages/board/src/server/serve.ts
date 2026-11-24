@@ -65,6 +65,7 @@ import {
   SyncImportBody,
   UploadStartBody,
   SyncReceiptBody,
+  TASK_CLAIM_HOLD_HEADER,
   ThreadQuery,
   ThreadsQuery,
   TypingBody,
@@ -91,7 +92,7 @@ import { badRequest, batchTooLarge, forbidden, HttpError, json, noAgentOps, notF
 import { extractMentions, settleMentions, type Mentioned, type MentionedActor } from '../contract/mentions.ts'
 import { DroppedError, runMiddleware, type Write, type WriteSource } from './middleware.ts'
 import { ATTENTION_METHODS, createRouter, INVITE_METHODS, isAgentIntentMethod, isAgentOpsMethod, isOperationalInboxMethod, METHODS, openapi, queryObject, readCapped, readJson, type BoardRoute } from './routing.ts'
-import { authorize, FULL_ACCESS, parseCan, type Access } from './access.ts'
+import { authorize, compileAccess, FULL_ACCESS, parseCan, type Access } from './access.ts'
 import { syncTarget, type SyncTarget } from './targets.ts'
 import { SYNC_ACTOR, type WriteOrigin } from './origin.ts'
 import type { WatcherContext } from './watcher.ts'
@@ -1010,6 +1011,49 @@ export async function createServe(context: BoardContext): Promise<Serve> {
     return { message: await read(message!) }
   }
 
+  let claims = Promise.resolve()
+  function admittingClaim<T>(caller: Caller, target: Protocol['claimTask']['input'] | Protocol['claimReadyTask']['input'], signal: AbortSignal, claim: () => Promise<T>): Promise<T> {
+    const rule = options.claimRule
+    if (!rule || (target.binding && backend.supportsTaskAuthority === false)) return claim()
+    const next = claims.then(async () => {
+      signal.throwIfAborted()
+      await checkClaim(rule, caller, target, signal)
+      signal.throwIfAborted()
+      return claim()
+    })
+    claims = next.then(() => undefined, () => undefined)
+    return next
+  }
+
+  async function checkClaim(rule: NonNullable<typeof options.claimRule>, caller: Caller, target: Protocol['claimTask']['input'] | Protocol['claimReadyTask']['input'], signal: AbortSignal) {
+    const remote = backend.keeps ? null : await backend.me(caller, {}, signal)
+    const access = remote ? compileAccess(remote.can).narrow(accessOf(caller) ?? FULL_ACCESS) : accessOf(caller)
+    const task = 'id' in target ? target.id : null
+    const message = task === null ? null : await lookup(caller, task, signal)
+    if (task !== null && !message) throw notFound(`message not found: #${task}`, 'message_not_found')
+    if (task !== null && !message?.task) throw notFound(`#${task} isn't a task`, 'not_a_task')
+    const channel = 'channel' in target ? target.channel : message!.channel
+    if (access && 'channel' in target && channel.endsWith('/')) {
+      // A subtree may contain narrower grants even if its root grants no label.
+      if (!access.at('label', channel) && !Object.entries(access.summary()).some(([path, permissions]) =>
+        (path === channel.slice(0, -1) || path.startsWith(channel)) && permissions.includes('label')))
+        throw forbidden(`this token can't label in ${channel}`)
+    } else if (access) authorize(access, 'label', channel)
+    if (target.binding && !remote && !('identity' in caller)) throw forbidden('a bound claim needs a verified claimant')
+    const who = remote ?? await whoIs(caller, signal)
+    const actor = typeof who.actor === 'string' ? who.actor : who.actor.id
+    if (target.binding && (target.binding.owner.principal !== who.principal || target.binding.owner.actor !== actor))
+      throw forbidden('the binding owner must be the verified claimant')
+    signal.throwIfAborted()
+    let result
+    try {
+      result = await rule({ actor, channel, task })
+    } catch {
+      throw new HttpError(503, 'claim_rule_failed', 'the claim rule could not decide')
+    }
+    if (result) throw new HttpError(409, result.refuse.code, result.refuse.message)
+  }
+
   /** The protocol method `name`, as board() serves it: what it posts, edits, and imports goes through the middleware. */
   async function invoke(name: Method, caller: Caller, input: unknown, signal: AbortSignal): Promise<unknown> {
     if (isOperationalInboxMethod(name)) {
@@ -1029,6 +1073,14 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         const { set, unset } = input as Protocol['label']['input']
         ownLabels(set, unset)
         return backend.label(caller, input as Protocol['label']['input'], signal)
+      }
+      case 'claimTask': {
+        const body = input as Protocol['claimTask']['input']
+        return admittingClaim(caller, body, signal, () => backend.claimTask(caller, body, signal))
+      }
+      case 'claimReadyTask': {
+        const body = input as Protocol['claimReadyTask']['input']
+        return admittingClaim(caller, body, signal, () => backend.claimReadyTask(caller, body, signal))
       }
       case 'createTask': {
         const body = input as Protocol['createTask']['input']
@@ -1245,18 +1297,18 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    * for, and the project people mint them with), which is board()'s to say, and the sync entries
    * accounts link on. Those are the backend's, where it keeps the board; a board on `http()` lists its own.
    */
-  async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Protocol['discovery']['output']> {
+  async function discovery(request: Request, url: string, signal: AbortSignal): Promise<Response> {
     const { projectId, teamId } = await policy.discoveryIdentity(request.headers)
     const capabilities = backend.keeps ? await backend.discovery(OWN, {}, signal) : null
     const sync = capabilities?.sync ?? Object.entries(entries).map(([key, entry]) => ({ key, platform: entry.platform }))
-    return {
+    return json({
       version: VERSION, url, audience: url, team_id: teamId, project_id: projectId, sync,
       ...(backend.supportsTaskAuthority === true ? { task_authority: true } : {}),
       ...(capabilities?.task_attention === true ? { task_attention: true } : {}),
       ...(capabilities?.agent_ops === true ? { agent_ops: true } : {}),
       ...(capabilities?.agent_intents === true ? { agent_intents: true } : {}),
       ...(capabilities?.politburo === 1 ? { politburo: 1 } : {}),
-    }
+    }, 200, capabilities?.task_claim_hold === true ? { [TASK_CLAIM_HOLD_HEADER]: '1' } : undefined)
   }
 
   async function dispatch(request: Request, injected: Caller | PlatformCaller | null): Promise<Response> {
@@ -1292,7 +1344,7 @@ export async function createServe(context: BoardContext): Promise<Serve> {
         ? (isAgentIntentMethod(target.name) ? 'intents' : 'registry')
         : null
       if (!injected && !policy.open) throw ops ? noAgentOps(ops) : servesOnly()
-      if (!injected && target.kind === 'protocol' && target.name === 'discovery') return json(await discovery(request, audienceOf(at), request.signal))
+      if (!injected && target.kind === 'protocol' && target.name === 'discovery') return await discovery(request, audienceOf(at), request.signal)
       if (target.kind === 'protocol' && target.name === 'redeemInvite') return await redeem(request, at, injected !== null, backend, OWN, ownUrl, audienceOf)
       if (target.kind === 'protocol' && !CONTROL.has(target.name) && !ATTENTION_METHODS.has(target.name)
         && !isOperationalInboxMethod(target.name) && typeof backend[target.name] !== 'function') {

@@ -1,0 +1,212 @@
+{
+  "case_id": "issue-refill-014-bin-usage",
+  "description": "Top-level and refill help and usage errors",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 2}\n"
+    },
+    "followups": [
+      {
+        "board_changes": {
+          "board_events": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_messages": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_meta": {
+            "deleted": [],
+            "upserted": []
+          },
+          "dependencies": {
+            "deleted": [],
+            "upserted": []
+          },
+          "issues": {
+            "deleted": [],
+            "upserted": []
+          }
+        },
+        "exit_code": 2,
+        "runner_calls": [],
+        "source_calls": [],
+        "stderr": "usage: tigeryard {refill,tick,wake,due} [options]\nThe usage guard pauses new work at 100% or more of the 5-hour window by default.\n",
+        "stdout": ""
+      },
+      {
+        "board_changes": {
+          "board_events": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_messages": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_meta": {
+            "deleted": [],
+            "upserted": []
+          },
+          "dependencies": {
+            "deleted": [],
+            "upserted": []
+          },
+          "issues": {
+            "deleted": [],
+            "upserted": []
+          }
+        },
+        "exit_code": 2,
+        "runner_calls": [],
+        "source_calls": [],
+        "stderr": "usage: tigeryard {refill,tick,wake,due} [options]\nThe usage guard pauses new work at 100% or more of the 5-hour window by default.\n",
+        "stdout": ""
+      },
+      {
+        "board_changes": {
+          "board_events": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_messages": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_meta": {
+            "deleted": [],
+            "upserted": []
+          },
+          "dependencies": {
+            "deleted": [],
+            "upserted": []
+          },
+          "issues": {
+            "deleted": [],
+            "upserted": []
+          }
+        },
+        "exit_code": 0,
+        "runner_calls": [],
+        "source_calls": [],
+        "stderr": "",
+        "stdout": "usage: tigeryard refill [-h] --config CONFIG [--dry-run] [--force] [--json]\n                        [--export-tree EXPORT_TREE]\n\nResearch, critique and add issues when ready work runs low. With a usage\nsource, pause at 100% or more of the 5-hour window by default.\n\noptions:\n  -h, --help            show this help message and exit\n  --config CONFIG       instance refill.json\n  --dry-run             research and print the proposals; write nothing\n  --force               ignore the trigger and interval (still needs an active\n                        network)\n  --json                print the result as JSON\n  --export-tree EXPORT_TREE\n                        also write tasks/<key>/snapshot.json files for\n                        ty/board here\n"
+      },
+      {
+        "board_changes": {
+          "board_events": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_messages": {
+            "deleted": [],
+            "upserted": []
+          },
+          "board_meta": {
+            "deleted": [],
+            "upserted": []
+          },
+          "dependencies": {
+            "deleted": [],
+            "upserted": []
+          },
+          "issues": {
+            "deleted": [],
+            "upserted": []
+          }
+        },
+        "exit_code": 2,
+        "runner_calls": [],
+        "source_calls": [],
+        "stderr": "usage: tigeryard refill [-h] --config CONFIG [--dry-run] [--force] [--json]\n                        [--export-tree EXPORT_TREE]\ntigeryard refill: error: the following arguments are required: --config\n",
+        "stdout": ""
+      }
+    ],
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "usage: tigeryard {refill,tick,wake,due} [options]\nThe usage guard pauses new work at 100% or more of the 5-hour window by default.\nTigeryard spawner CLI: refill the board, run a tick, wake, or check what is due.\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argv": [
+      "--help"
+    ],
+    "followups": [
+      {
+        "argv": [],
+        "kind": "bin",
+        "with_config": false
+      },
+      {
+        "argv": [
+          "example-command"
+        ],
+        "kind": "bin",
+        "with_config": false
+      },
+      {
+        "argv": [
+          "--help"
+        ],
+        "kind": "bin",
+        "subcommand": "refill",
+        "with_config": false
+      },
+      {
+        "argv": [],
+        "kind": "bin",
+        "subcommand": "refill",
+        "with_config": false
+      }
+    ],
+    "kind": "bin",
+    "with_config": false
+  },
+  "matrix_row": "M85",
+  "notes": "Capture wrapper help, missing and unknown subcommands, delegated refill help, and the parser error for missing --config, including which stream receives each message.",
+  "setup": {
+    "config": {
+      "slots": 2
+    },
+    "files": {},
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

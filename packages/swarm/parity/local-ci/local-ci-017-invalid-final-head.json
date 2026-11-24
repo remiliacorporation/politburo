@@ -1,0 +1,155 @@
+{
+  "case_id": "local-ci-017-invalid-final-head",
+  "description": "An invalid response to the final PR lookup prevents publication.",
+  "expected": {
+    "exit_code": 3,
+    "files": {
+      "out/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-20260101T000000.000000Z.json": "{\n  \"command\": \"example-check --label 'example suite'\",\n  \"exit_code\": 0,\n  \"elapsed_seconds\": 1.25,\n  \"state\": \"success\",\n  \"sha256\": \"c01f9a2cc5291c469a9debed2e15a46fa09be5232173eda78f255d83d030220e\",\n  \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"repo\": \"example-owner/example-repo\",\n  \"context\": \"local-ci/mac\",\n  \"start_time\": \"2026-01-01T00:00:00+00:00\"\n}\n",
+      "out/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-20260101T000000.000000Z.log": "Ran 2 tests\n\nOK\n",
+      "snapshots/example-first/.github/workflows/unittest.yml": "steps:\n  - name: Other\n    run: example-other\n  - name: Run unittest suite\n    run: |\n      example-check --label 'example suite'\n",
+      "snapshots/example-next/.github/workflows/unittest.yml": "steps:\n  - name: Run unittest suite\n    run: example-check --label next\n"
+    },
+    "log_lines": [
+      "local-ci-status: PR head lookup failed or returned an invalid SHA"
+    ],
+    "runs": [
+      {
+        "api_calls": [
+          [
+            "api",
+            "repos/example-owner/example-repo/pulls/7",
+            "--jq",
+            ".head.sha"
+          ],
+          [
+            "api",
+            "repos/example-owner/example-repo/pulls/7",
+            "--jq",
+            ".head.sha"
+          ],
+          [
+            "api",
+            "repos/example-owner/example-repo/pulls/7",
+            "--jq",
+            ".head.sha"
+          ]
+        ],
+        "exit_code": 3,
+        "git_calls": [
+          [
+            "-C",
+            "repo",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          [
+            "-C",
+            "repo",
+            "cat-file",
+            "-e",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa^{commit}"
+          ],
+          [
+            "-C",
+            "repo",
+            "worktree",
+            "add",
+            "--detach",
+            "<WORK>/example-temp/checkout",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          [
+            "-C",
+            "repo",
+            "-C",
+            "<WORK>/example-temp/checkout",
+            "rev-parse",
+            "--verify",
+            "HEAD"
+          ],
+          [
+            "-C",
+            "repo",
+            "worktree",
+            "remove",
+            "--force",
+            "<WORK>/example-temp/checkout"
+          ],
+          [
+            "-C",
+            "repo",
+            "worktree",
+            "prune"
+          ]
+        ],
+        "lock_present": false,
+        "tempdir_left": false,
+        "test_calls": [
+          {
+            "argv": [
+              "example-check",
+              "--label",
+              "example suite"
+            ],
+            "cwd": "<WORK>/example-temp/checkout",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "start_new_session": true
+          },
+          {
+            "communicate_timeout": 1200
+          }
+        ]
+      }
+    ],
+    "stderr": "local-ci-status: PR head lookup failed or returned an invalid SHA\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "cli",
+    "runs": [
+      {
+        "argv": [
+          "--repo-dir",
+          "repo",
+          "--repo",
+          "example-owner/example-repo",
+          "--sha",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "--mail-root",
+          "notes",
+          "--out-dir",
+          "out",
+          "--pr",
+          "7"
+        ],
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "pr_heads": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "not a SHA"
+        ]
+      }
+    ]
+  },
+  "matrix_row": "M18",
+  "notes": "",
+  "setup": {
+    "commits": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "snapshots/example-first",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "snapshots/example-next"
+    },
+    "files": {
+      "snapshots/example-first/.github/workflows/unittest.yml": "steps:\n  - name: Other\n    run: example-other\n  - name: Run unittest suite\n    run: |\n      example-check --label 'example suite'\n",
+      "snapshots/example-next/.github/workflows/unittest.yml": "steps:\n  - name: Run unittest suite\n    run: example-check --label next\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/local_ci_status.py",
+      "supervisor/sec_push.py",
+      "supervisor/check_runner.py"
+    ]
+  }
+}
