@@ -17,9 +17,9 @@ const run = (...args: string[]) => swarm('work', ...args)
 
 const configUsage =
   'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
+  '       swarm ledger <dispatch|append|rollup> --db FILE [options]\n' +
   '       swarm party <list|show|add|remove|member|jockey> ...\n' +
   '       registry file: --registry FILE or SWARM_REGISTRY\n' +
-  '       swarm ledger <dispatch|append|rollup> --db FILE [options]\n' +
   '       swarm score <leaderboard|card|history|drill> ...\n' +
   '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n' +
   '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n' +

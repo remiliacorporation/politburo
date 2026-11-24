@@ -14,5 +14,5 @@ swarm ledger rollup --db ledger.sqlite --unmatched
 `dispatch` and `append` read one JSON object from a file or stdin (omit the
 file or use `-`). Bench runs without `--execution` go to the unmatched view.
 Rollups require an existing ledger and report unknown counts alongside known
-subtotals. See [the ledger design](../../design/swarm-spend.md) for the input
+subtotals. See [the ledger design](../../../design/swarm-spend.md) for the input
 shapes.
