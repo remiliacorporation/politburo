@@ -15,7 +15,7 @@ function isTier(value: unknown): value is Tier {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const route = value as Record<string, unknown>;
   return Object.keys(route).length === 3 && ["label", "provider", "model"].every(
-    (key) => Object.hasOwn(route, key) && typeof route[key] === "string",
+    (key) => Object.hasOwn(route, key) && typeof route[key] === "string" && route[key].length > 0,
   );
 }
 

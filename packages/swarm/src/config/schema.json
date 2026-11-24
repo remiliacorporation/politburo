@@ -133,9 +133,9 @@
                     "additionalProperties": false,
                     "required": ["label", "provider", "model"],
                     "properties": {
-                      "label": {"type": "string"},
-                      "provider": {"type": "string"},
-                      "model": {"type": "string"}
+                      "label": {"type": "string", "minLength": 1},
+                      "provider": {"type": "string", "minLength": 1},
+                      "model": {"type": "string", "minLength": 1}
                     }
                   }
                 },
