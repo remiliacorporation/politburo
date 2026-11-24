@@ -21,3 +21,8 @@ node packages/swarm/dist/cli.js config show
 Keep the capture ledger on a local filesystem. Leave `.lock.guard` in place:
 SQLite locks that file while a writer updates the JSONL ledger. Stop all older
 capture writers before upgrading so every writer uses the same guard.
+
+## sync agent skills
+
+Run `swarm skills sync --dir ./agent-skills --party party.yaml` to install skills.
+Use `--repo` for repo overrides, `--dry-run` to preview, `--force` to replace unmarked files, or `--json` for file actions.

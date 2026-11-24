@@ -1,0 +1,767 @@
+{
+  "case_id": "board-cli-messages-007-message-kinds",
+  "description": "Post every message kind to agent and role destinations",
+  "expected": {
+    "db": {
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "planned",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"coordinator\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 10,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"qa_result\", \"message_id\": 5, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 11,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"ownership\", \"message_id\": 6, \"to_agent\": null, \"to_role\": \"coordinator\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 12,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"requirement\", \"message_id\": 7, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 13,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"review_request\", \"message_id\": 8, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 14,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 9, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 15,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"system\", \"message_id\": 10, \"to_agent\": \"worker-01\", \"to_role\": null, \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"planned\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"assignment\", \"message_id\": 1, \"to_agent\": \"worker-01\", \"to_role\": null, \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"decision\", \"message_id\": 2, \"to_agent\": null, \"to_role\": \"coordinator\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"blocker\", \"message_id\": 3, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 9,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"kind\": \"handoff\", \"message_id\": 4, \"to_agent\": \"worker-01\", \"to_role\": null, \"topic\": null}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "Example system notice\n",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "cb6a49162fd874ebabad6c7ae473f9f235960b5baa63600896378718ab71efb9",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "system",
+          "message_id": 10,
+          "payload_ref": "example-notice",
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": "worker-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example assignment",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "a72563d599142411640fe4d095ff79af4cfb068fccf50e03773324657c251302",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "assignment",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": "worker-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example blocker",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "f133f7f59bc3f58c40bbd0f6d51e7195c48cd64a448330407810582811e0be0b",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "blocker",
+          "message_id": 3,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example decision",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "46bb0a284f01e12df769421b097cd070d6e7312912a42bd256e6cff873a80d37",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "decision",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "coordinator",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example handoff",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "f58dd5b88f1a44f1fc51f0ed85bdcd4e88cce21c527b1caa83833e105629b747",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "handoff",
+          "message_id": 4,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": "worker-01",
+          "to_role": null,
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example note",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "edffc39b88653da3b617857d0d4144c102fd804e0d9b980587a35098df698846",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "note",
+          "message_id": 9,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example ownership",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "21e08bcf51f93db9a197e2e28776931dc8a32e2d3e899169e61d768bb8fd8ac8",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "ownership",
+          "message_id": 6,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "coordinator",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example qa_result",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "5b04e573a6c0ce1da51fd8707828aab64df13e9e1e6b5362748693c2b4e2f24a",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "qa_result",
+          "message_id": 5,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example requirement",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "b817515b5a3a4b70d2b418490ae5dc655d819fcf15cd6d331a913320ace188cf",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "requirement",
+          "message_id": 7,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Example review_request",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "69a92ac4070019d3dc05f27d824c9c7c97e7d25b36ea695fc61dfca25dbab3cb",
+          "from_actor": "operator",
+          "issue_key": "example-issue",
+          "kind": "review_request",
+          "message_id": 8,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "proposed",
+          "title": "Example decision",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/coordinator.md",
+          "personality": null,
+          "profile_key": "coordinator",
+          "title": "Coordinator",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        },
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/mob.md",
+          "personality": null,
+          "profile_key": "worker",
+          "title": "Worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        },
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "notice.txt": "Example system notice\n"
+    },
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"coordinator\",\n      \"version\": 1\n    },\n    {\n      \"profile_key\": \"worker\",\n      \"version\": 1\n    },\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"worker-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-issue\",\n      \"version\": 1\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"a72563d599142411640fe4d095ff79af4cfb068fccf50e03773324657c251302\",\n  \"message_id\": 1,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"46bb0a284f01e12df769421b097cd070d6e7312912a42bd256e6cff873a80d37\",\n  \"message_id\": 2,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"f133f7f59bc3f58c40bbd0f6d51e7195c48cd64a448330407810582811e0be0b\",\n  \"message_id\": 3,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"f58dd5b88f1a44f1fc51f0ed85bdcd4e88cce21c527b1caa83833e105629b747\",\n  \"message_id\": 4,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"5b04e573a6c0ce1da51fd8707828aab64df13e9e1e6b5362748693c2b4e2f24a\",\n  \"message_id\": 5,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"21e08bcf51f93db9a197e2e28776931dc8a32e2d3e899169e61d768bb8fd8ac8\",\n  \"message_id\": 6,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"b817515b5a3a4b70d2b418490ae5dc655d819fcf15cd6d331a913320ace188cf\",\n  \"message_id\": 7,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"69a92ac4070019d3dc05f27d824c9c7c97e7d25b36ea695fc61dfca25dbab3cb\",\n  \"message_id\": 8,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"edffc39b88653da3b617857d0d4144c102fd804e0d9b980587a35098df698846\",\n  \"message_id\": 9,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"cb6a49162fd874ebabad6c7ae473f9f235960b5baa63600896378718ab71efb9\",\n  \"message_id\": 10,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example decision\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"46bb0a284f01e12df769421b097cd070d6e7312912a42bd256e6cff873a80d37\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"decision\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"coordinator\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example requirement\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"b817515b5a3a4b70d2b418490ae5dc655d819fcf15cd6d331a913320ace188cf\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"requirement\",\n    \"message_id\": 7,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example blocker\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"f133f7f59bc3f58c40bbd0f6d51e7195c48cd64a448330407810582811e0be0b\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"blocker\",\n    \"message_id\": 3,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example note\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"edffc39b88653da3b617857d0d4144c102fd804e0d9b980587a35098df698846\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"note\",\n    \"message_id\": 9,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example review_request\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"69a92ac4070019d3dc05f27d824c9c7c97e7d25b36ea695fc61dfca25dbab3cb\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"review_request\",\n    \"message_id\": 8,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example handoff\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"f58dd5b88f1a44f1fc51f0ed85bdcd4e88cce21c527b1caa83833e105629b747\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"handoff\",\n    \"message_id\": 4,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": \"worker-01\",\n    \"to_role\": null,\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Example assignment\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"a72563d599142411640fe4d095ff79af4cfb068fccf50e03773324657c251302\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"proposed\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"assignment\",\n    \"message_id\": 1,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": \"worker-01\",\n    \"to_role\": null,\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 0,\n    \"archived_at\": null,\n    \"body\": \"Example system notice\\n\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"cb6a49162fd874ebabad6c7ae473f9f235960b5baa63600896378718ab71efb9\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"system\",\n    \"message_id\": 10,\n    \"payload_ref\": \"example-notice\",\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": \"worker-01\",\n    \"to_role\": null,\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "[{\"instructions_path\": \"roles/coordinator.md\", \"profile_key\": \"coordinator\", \"title\": \"Coordinator\"}, {\"instructions_path\": \"roles/mob.md\", \"profile_key\": \"mob\", \"title\": \"Worker\"}, {\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}]"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"profile_key\": \"sprite\"}"
+      },
+      {
+        "argv": [
+          "upsert"
+        ],
+        "stdin": "{\"issue_key\": \"example-issue\", \"title\": \"Example decision\"}"
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "assignment",
+          "--body",
+          "Example assignment",
+          "--to-agent",
+          "worker-01",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "decision",
+          "--body",
+          "Example decision",
+          "--to-role",
+          "spawner",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "blocker",
+          "--body",
+          "Example blocker",
+          "--to-role",
+          "mob",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "handoff",
+          "--body",
+          "Example handoff",
+          "--to-agent",
+          "worker-01",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "qa_result",
+          "--body",
+          "Example qa_result",
+          "--to-role",
+          "sprite",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "ownership",
+          "--body",
+          "Example ownership",
+          "--to-role",
+          "spawner",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "requirement",
+          "--body",
+          "Example requirement",
+          "--to-role",
+          "mob",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "review_request",
+          "--body",
+          "Example review_request",
+          "--to-role",
+          "sprite",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Example note",
+          "--to-role",
+          "sprite",
+          "--issue",
+          "example-issue",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "system",
+          "--to-agent",
+          "worker-01",
+          "--body-file",
+          "notice.txt",
+          "--payload-ref",
+          "example-notice"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "spawner",
+          "--issue",
+          "example-issue",
+          "--kind",
+          "decision"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "mob",
+          "--query",
+          "Example decision"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "sprite",
+          "--after",
+          "5"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--agent",
+          "worker-01",
+          "--limit",
+          "3"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "issues",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "Role reads use spawner, mob and sprite aliases; an agent read includes its own profile's role queue, ranked below direct messages. One system message reads body text from a file.",
+  "setup": {
+    "files": {
+      "notice.txt": "Example system notice\n"
+    },
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

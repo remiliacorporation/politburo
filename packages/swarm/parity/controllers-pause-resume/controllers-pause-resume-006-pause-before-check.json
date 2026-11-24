@@ -1,0 +1,232 @@
+{
+  "case_id": "controllers-pause-resume-006-pause-before-check",
+  "description": "Defer a watcher check when pause arrives during preparation",
+  "expected": {
+    "db_rows": {},
+    "details": {
+      "after_race": {
+        "adopt_only": [],
+        "board": {
+          "controls": {
+            "task-example": {
+              "cancelled": false,
+              "generation": 1,
+              "paused": false,
+              "schema": "tigeryard.control.v1",
+              "task": "task-example"
+            }
+          },
+          "sha": "<BOARD-ACTIVE>"
+        },
+        "inboxes": {},
+        "outbox": [],
+        "pr_comments": [],
+        "queue": [
+          "task-example"
+        ],
+        "refs": {
+          "agent-example/ty/task-example": "<STATUS-HEAD>"
+        },
+        "registrations": {
+          "task-example": {
+            "attempt": 1,
+            "brief_sha": "<BRIEF>",
+            "registered_at": "2026-01-01T00:00:00+00:00",
+            "session": "session-task-example"
+          }
+        },
+        "retries": {},
+        "review_refs": {},
+        "review_registrations": {},
+        "running": null,
+        "tasks": {
+          "task-example": {
+            "attempt": 1,
+            "blocker": null,
+            "check": {
+              "head": "<WORK-HEAD>",
+              "seq": 1,
+              "status": "queued"
+            },
+            "cleanup": "none",
+            "committed_at": 1767225600.0,
+            "demote": false,
+            "generation": 1,
+            "handoff": null,
+            "inbox_seen": 0,
+            "observed_at": 1767225600.0,
+            "phase": "active",
+            "pr": 101,
+            "pr_closed": false,
+            "pr_ready": false,
+            "promoted_head": null,
+            "rejection_comments": [],
+            "report": "## Summary\n\nFixes the empty state.",
+            "review": null,
+            "schema": "tigeryard.remote-status.v1",
+            "seq": 1,
+            "setup_attempts": 0,
+            "state": "ready",
+            "status_sha": "<STATUS-HEAD>",
+            "step": "editing the list view",
+            "updated_at": "2026-10-01T12:00:00Z",
+            "verified": [
+              "story before fix: 1 failed",
+              "story after fix: 12 passed"
+            ],
+            "work_branch": "agent-example/frontend-task-example",
+            "work_head": "<WORK-HEAD>"
+          }
+        },
+        "version": 1
+      },
+      "board_posts": [
+        {
+          "actionable": false,
+          "body": "Remote task task-example: state=ready seq=1 work_head=<WORK-HEAD> work_branch=agent-example/frontend-task-example step=editing the list view",
+          "dedup_key": "1f5e07d37a305b7387c7a7b8c9c891769218009083c3345f35657c7a650bea5a",
+          "kind": "note",
+          "payload_ref": null,
+          "priority": 100,
+          "topic": "remote-status/task-example"
+        },
+        {
+          "actionable": true,
+          "body": "Remote task task-example reports ready at seq 1, work_head <WORK-HEAD>. The local check is queued or waiting for a slot. Verified: story before fix: 1 failed; story after fix: 12 passed",
+          "dedup_key": "53afe96815575cd7b4b378b8e2e904b4db6bc24a841540635d44865925fc8bf9",
+          "kind": "review_request",
+          "payload_ref": null,
+          "priority": 100,
+          "topic": "remote-attention/task-example"
+        },
+        {
+          "actionable": false,
+          "body": "Remote task task-example: draft pull request #101 tracks agent-example/frontend-task-example.",
+          "dedup_key": "82d21af5793f4798f381f1413db9a5662ab9ccd05b4ac8a872b15a4b155b3fbb",
+          "kind": "note",
+          "payload_ref": null,
+          "priority": 100,
+          "topic": "remote-pr/task-example"
+        },
+        {
+          "actionable": false,
+          "body": "Remote task task-example: paused in control.json. No check starts and its pull request is not marked ready until that is cleared.",
+          "dedup_key": "75181119edaef3bacd8e0f11dc2ee786f0a597779ea53d513b6e5d692b94a36d",
+          "kind": "note",
+          "payload_ref": null,
+          "priority": 100,
+          "topic": "remote-status/task-example"
+        }
+      ],
+      "ports_order": [
+        "ls_remote",
+        "prepare_worktree",
+        "ls_remote",
+        "ls_remote"
+      ],
+      "removed_worktrees": [
+        "<FAKE-WORKTREE>/task-example-<WORK-HEAD-SHORT>"
+      ],
+      "started_checks": []
+    },
+    "exit_code": null,
+    "files": {
+      "watcher/remote-watch-audit.log": "{\"at\": \"2026-01-01T00:00:00+00:00\", \"outcome\": \"registered\", \"task\": \"task-example\"}\n{\"at\": \"2026-01-01T00:00:00+00:00\", \"outcome\": \"check_queued\", \"task\": \"task-example\"}\n{\"at\": \"2026-01-01T00:00:00+00:00\", \"outcome\": \"accepted\", \"seq\": 1, \"state\": \"ready\", \"task\": \"task-example\"}\n{\"at\": \"2026-01-01T00:00:00+00:00\", \"outcome\": \"draft_pr_opened\", \"pr\": 101, \"task\": \"task-example\"}\n{\"at\": \"2026-01-01T00:00:00+00:00\", \"outcome\": \"check_deferred_board_moved\", \"task\": \"task-example\"}\n{\"at\": \"2026-01-01T00:00:01+00:00\", \"outcome\": \"control_paused\", \"task\": \"task-example\"}\n",
+      "watcher/remote-watch-state.json": "{\n \"adopt_only\": [],\n \"board\": {\n  \"controls\": {\n   \"task-example\": {\n    \"cancelled\": false,\n    \"generation\": 1,\n    \"paused\": true,\n    \"schema\": \"tigeryard.control.v1\",\n    \"task\": \"task-example\"\n   }\n  },\n  \"sha\": \"<BOARD-PAUSED>\"\n },\n \"inboxes\": {},\n \"outbox\": [],\n \"pr_comments\": [],\n \"queue\": [],\n \"refs\": {\n  \"agent-example/ty/task-example\": \"<STATUS-HEAD>\"\n },\n \"registrations\": {\n  \"task-example\": {\n   \"attempt\": 1,\n   \"brief_sha\": \"<BRIEF>\",\n   \"registered_at\": \"2026-01-01T00:00:00+00:00\",\n   \"session\": \"session-task-example\"\n  }\n },\n \"retries\": {},\n \"review_refs\": {},\n \"review_registrations\": {},\n \"running\": null,\n \"tasks\": {\n  \"task-example\": {\n   \"attempt\": 1,\n   \"blocker\": null,\n   \"check\": {\n    \"head\": null,\n    \"seq\": null,\n    \"status\": \"none\"\n   },\n   \"cleanup\": \"none\",\n   \"committed_at\": 1767225600.0,\n   \"demote\": false,\n   \"generation\": 1,\n   \"handoff\": null,\n   \"inbox_seen\": 0,\n   \"observed_at\": 1767225600.0,\n   \"phase\": \"active\",\n   \"pr\": 101,\n   \"pr_closed\": false,\n   \"pr_ready\": false,\n   \"promoted_head\": null,\n   \"rejection_comments\": [],\n   \"report\": \"## Summary\\n\\nFixes the empty state.\",\n   \"review\": null,\n   \"schema\": \"tigeryard.remote-status.v1\",\n   \"seq\": 1,\n   \"setup_attempts\": 0,\n   \"state\": \"ready\",\n   \"status_sha\": \"<STATUS-HEAD>\",\n   \"step\": \"editing the list view\",\n   \"updated_at\": \"2026-10-01T12:00:00Z\",\n   \"verified\": [\n    \"story before fix: 1 failed\",\n    \"story after fix: 12 passed\"\n   ],\n   \"work_branch\": \"agent-example/frontend-task-example\",\n   \"work_head\": \"<WORK-HEAD>\"\n  }\n },\n \"version\": 1\n}\n",
+      "watcher/remote-watch.lock": ""
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": null,
+        "returned": {
+          "events": [
+            {
+              "outcome": "registered",
+              "task": "task-example"
+            }
+          ],
+          "outcome": "registered"
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "register"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "errors": [],
+          "events": [
+            {
+              "outcome": "check_queued",
+              "task": "task-example"
+            },
+            {
+              "outcome": "accepted",
+              "seq": 1,
+              "state": "ready",
+              "task": "task-example"
+            },
+            {
+              "outcome": "draft_pr_opened",
+              "pr": 101,
+              "task": "task-example"
+            },
+            {
+              "outcome": "check_deferred_board_moved",
+              "task": "task-example"
+            }
+          ],
+          "network_active": true,
+          "outbox": 0,
+          "outcome": "completed",
+          "queue": 1,
+          "running": false
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "poll during pause race"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "errors": [],
+          "events": [
+            {
+              "outcome": "control_paused",
+              "task": "task-example"
+            }
+          ],
+          "network_active": true,
+          "outbox": 0,
+          "outcome": "completed",
+          "queue": 0,
+          "running": false
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "poll sees the pause"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "scenario": "watcher_race",
+    "task": "task-example"
+  },
+  "matrix_row": "M83",
+  "notes": "The fake remote advances after worktree preparation. The first poll releases the worktree without starting; the next ingests the pause and drops the queued check.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/remote_watch.py",
+      "supervisor/board_ref.py"
+    ]
+  }
+}

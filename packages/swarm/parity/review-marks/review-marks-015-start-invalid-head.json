@@ -1,0 +1,58 @@
+{
+  "case_id": "review-marks-015-start-invalid-head",
+  "description": "Refuse an invalid reviewer start without launching",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [],
+      "pipeline_stages": [],
+      "review_marks": []
+    },
+    "exit_code": 1,
+    "files": {
+      "watch.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"branch_prefix\": \"example/\", \"check\": {\"command\": [\"true\"]}, \"instance_id\": \"example-project\", \"repo_path\": \"<WORK>/repo\", \"state_dir\": \"<WORK>/state\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"outcome\": \"error\", \"error\": \"task, head or pull request number is invalid\"}\n",
+    "steps": [
+      {
+        "op": "start",
+        "result": {
+          "exit_code": 1,
+          "stderr": "",
+          "stdout": "{\"outcome\": \"error\", \"error\": \"task, head or pull request number is invalid\"}\n"
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "head": "candidate-current",
+        "op": "start"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "The start CLI reads a valid synthetic watcher config but rejects a non-hex head before generating a key or contacting the watcher.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": []
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "supervisor/review.py",
+      "supervisor/remote_watch.py"
+    ]
+  }
+}
