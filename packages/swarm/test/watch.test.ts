@@ -207,8 +207,8 @@ for (const reason of ['deadline', 'SIGTERM']) {
     const clock = reason === 'deadline' ? `const timer = globalThis.setTimeout;
       globalThis.setTimeout = (fn, ms, ...args) => timer(fn, ms === 30_000 ? 400 : ms, ...args);` : ''
     const child = spawn(process.execPath, ['--input-type=module', '--eval', `${clock}
-      const { run } = await import('./dist/watch/cli.js');
-      process.exitCode = await run(['run', '--shadow', '--out', process.argv[1]]);`, join(home, 'watch.jsonl')], {
+      process.argv.splice(1, 0, 'src/cli.ts', 'watch', 'run', '--shadow', '--out');
+      await import('./src/cli.ts');`, join(home, 'watch.jsonl')], {
       cwd: new URL('../', import.meta.url), env: { BOARD_URL: url, HOME: home }, stdio: 'ignore',
     })
     const exited = once(child, 'exit')

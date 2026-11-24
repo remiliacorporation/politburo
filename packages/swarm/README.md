@@ -16,6 +16,10 @@ pnpm --filter @remilia/politburo-swarm build
 node packages/swarm/dist/cli.js config show
 ```
 
+`swarm cutover rollback <tag> --execute` restores the service if the final
+bridge drain is stale and the old loop is confirmed stopped. Add `--allow-stale`
+to accept stale files and finish in files mode instead (exit 1, `rolled_back_stale`).
+
 ## Capture ledger
 
 Keep the capture ledger on a local filesystem. Leave `.lock.guard` in place:
@@ -26,3 +30,5 @@ capture writers before upgrading so every writer uses the same guard.
 
 Run `swarm skills sync --dir ./agent-skills --party party.yaml` to install skills.
 Use `--repo` for repo overrides, `--dry-run` to preview, `--force` to replace unmarked files, or `--json` for file actions.
+
+Run `swarm skills plan-mob --skills ./agent-skills --tag plb --job build --serial 1` to preview a mob and its brief without launching it or writing files.
