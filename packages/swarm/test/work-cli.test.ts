@@ -22,6 +22,7 @@ const catalogLines = [
   '       swarm ledger <dispatch|append|rollup> --db FILE [options]',
   '       swarm party <list|show|add|remove|member|jockey> ...',
   '       registry file: --registry FILE or SWARM_REGISTRY',
+  '       swarm review record <task-id> <pass|blocked> --head <sha> [--finding TEXT]... [--follow-up]',
   '       swarm score <leaderboard|card|history|drill> ...',
   '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]',
   '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]',
