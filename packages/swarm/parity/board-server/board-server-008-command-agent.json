@@ -1,0 +1,505 @@
+{
+  "case_id": "board-server-008-command-agent",
+  "description": "Queue a pending command without dispatching it",
+  "expected": {
+    "exit_code": null,
+    "files": {},
+    "log_lines": [],
+    "requests": [
+      {
+        "body": "",
+        "db_changes": {
+          "agent_commands": [
+            {
+              "args_json": {},
+              "command": "inspect",
+              "command_id": 1,
+              "created_at": "2026-01-01T00:10:00+00:00",
+              "dedup_key": "<dedup-1>",
+              "expected_generation": 1,
+              "expires_at": "2026-01-01T00:25:00+00:00",
+              "priority": 10,
+              "reason": "Check the recorded state.",
+              "requested_by": "user",
+              "state": "pending",
+              "supersedes_command_id": null,
+              "target_agent_id": "worker-01",
+              "updated_at": "2026-01-01T00:10:00+00:00"
+            }
+          ],
+          "board_events": [
+            {
+              "actor": "user",
+              "archived_at": null,
+              "created_at": "2026-01-01T00:10:00+00:00",
+              "event_id": 2,
+              "event_type": "agent_command_requested",
+              "issue_key": null,
+              "payload_json": {
+                "actor_role": "operator",
+                "actor_type": "user",
+                "command": "inspect",
+                "command_id": 1,
+                "envelope_version": 1,
+                "reason": "Operator requested an agent control command",
+                "reason_code": "operator_command",
+                "target_agent_id": "worker-01"
+              }
+            },
+            {
+              "actor": "worker-01",
+              "archived_at": null,
+              "created_at": "2026-01-01T00:00:00+00:00",
+              "event_id": 1,
+              "event_type": "attention_requirement",
+              "issue_key": "example-decision",
+              "payload_json": {
+                "kind": "user_decision",
+                "reason": "Question: Which keyboard behavior should ship? Context: The example flow is waiting on a product choice. Options: A: keep the current contract; B: revert to the previous one. Evidence: board issue details. Impact: implementation waits; unrelated work continues. Actor: the human user. Why human: the configured agents lack authority to pick product behavior; only the user can choose it. Channel: the user records the pick on this board issue page. Release: the chosen option unblocks implementation.",
+                "request": {
+                  "choices": [
+                    {
+                      "confirm": false,
+                      "consequence": "Work continues unchanged.",
+                      "id": "keep",
+                      "label": "Keep current",
+                      "next_action": "Continue as scoped.",
+                      "next_state": "ready",
+                      "recommended": true
+                    }
+                  ],
+                  "why_agents_cannot": "The user chooses product behavior."
+                }
+              }
+            }
+          ],
+          "sqlite_sequence": [
+            {
+              "name": "agent_commands",
+              "seq": 1
+            },
+            {
+              "name": "agent_observations",
+              "seq": 1
+            },
+            {
+              "name": "board_events",
+              "seq": 2
+            }
+          ]
+        },
+        "headers": {
+          "cache-control": null,
+          "content-type": null,
+          "location": "/health?notice=<notice-1>#worker-01"
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command",
+        "status": 303
+      },
+      {
+        "body": {
+          "field_errors": [],
+          "headings": [
+            {
+              "tag": "h1",
+              "text": "Agent health"
+            },
+            {
+              "tag": "h2",
+              "text": "Example worker"
+            }
+          ],
+          "notices": [
+            "Command queued"
+          ],
+          "sha256": "3473969179c499f8b30a326a613e81431b31fdb41bdbf4d07bdbdfbc08a3b0da",
+          "table_row_counts": [],
+          "title": "Project name not configured — Agent health"
+        },
+        "db_changes": {},
+        "headers": {
+          "cache-control": null,
+          "content-type": "text/html; charset=utf-8",
+          "location": null
+        },
+        "method": "GET",
+        "path": "/health?notice=<notice-1>",
+        "status": 200
+      },
+      {
+        "body": "",
+        "db_changes": {},
+        "headers": {
+          "cache-control": null,
+          "content-type": null,
+          "location": "/health?notice=<notice-2>#worker-01"
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command",
+        "status": 303
+      },
+      {
+        "body": {
+          "field_errors": [
+            "Command must be one of the commands listed.",
+            "Reason is required and must be 500 characters or fewer."
+          ],
+          "headings": [
+            {
+              "tag": "h1",
+              "text": "Agent health"
+            },
+            {
+              "tag": "h2",
+              "text": "Example worker"
+            }
+          ],
+          "notices": [
+            "There is a problem"
+          ],
+          "sha256": "a836d9775e7a2de4822bf56a0f8c6d477ca1cf60ad1150032ac4dd986a7a1c5c",
+          "table_row_counts": [],
+          "title": "Project name not configured — Agent health"
+        },
+        "db_changes": {},
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "text/html; charset=utf-8",
+          "location": null
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command",
+        "status": 400
+      },
+      {
+        "body": {
+          "field_errors": [],
+          "headings": [
+            {
+              "tag": "h1",
+              "text": "Agent health"
+            },
+            {
+              "tag": "h2",
+              "text": "Example worker"
+            }
+          ],
+          "notices": [
+            "The request was not queued."
+          ],
+          "sha256": "6602ad3b121edcb20518ea76c61d3f6e4956d86162763ae48cb4edf0aa5ec0c1",
+          "table_row_counts": [],
+          "title": "Project name not configured — Agent health"
+        },
+        "db_changes": {},
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "text/html; charset=utf-8",
+          "location": null
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command",
+        "status": 400
+      },
+      {
+        "body": "",
+        "db_changes": {
+          "agent_commands": [
+            {
+              "args_json": {
+                "force": false,
+                "operation_id": "example-operation"
+              },
+              "command": "pause",
+              "command_id": 2,
+              "created_at": "2026-01-01T00:10:00+00:00",
+              "dedup_key": "<dedup-2>",
+              "expected_generation": 1,
+              "expires_at": "2026-01-01T00:25:00+00:00",
+              "priority": 10,
+              "reason": "Check the recorded state.",
+              "requested_by": "user",
+              "state": "pending",
+              "supersedes_command_id": null,
+              "target_agent_id": "worker-01",
+              "updated_at": "2026-01-01T00:10:00+00:00"
+            },
+            {
+              "args_json": {},
+              "command": "inspect",
+              "command_id": 1,
+              "created_at": "2026-01-01T00:10:00+00:00",
+              "dedup_key": "<dedup-1>",
+              "expected_generation": 1,
+              "expires_at": "2026-01-01T00:25:00+00:00",
+              "priority": 10,
+              "reason": "Check the recorded state.",
+              "requested_by": "user",
+              "state": "pending",
+              "supersedes_command_id": null,
+              "target_agent_id": "worker-01",
+              "updated_at": "2026-01-01T00:10:00+00:00"
+            }
+          ],
+          "board_events": [
+            {
+              "actor": "user",
+              "archived_at": null,
+              "created_at": "2026-01-01T00:10:00+00:00",
+              "event_id": 2,
+              "event_type": "agent_command_requested",
+              "issue_key": null,
+              "payload_json": {
+                "actor_role": "operator",
+                "actor_type": "user",
+                "command": "inspect",
+                "command_id": 1,
+                "envelope_version": 1,
+                "reason": "Operator requested an agent control command",
+                "reason_code": "operator_command",
+                "target_agent_id": "worker-01"
+              }
+            },
+            {
+              "actor": "user",
+              "archived_at": null,
+              "created_at": "2026-01-01T00:10:00+00:00",
+              "event_id": 3,
+              "event_type": "agent_command_requested",
+              "issue_key": null,
+              "payload_json": {
+                "actor_role": "operator",
+                "actor_type": "user",
+                "command": "pause",
+                "command_id": 2,
+                "envelope_version": 1,
+                "reason": "Operator requested an agent control command",
+                "reason_code": "operator_command",
+                "target_agent_id": "worker-01"
+              }
+            },
+            {
+              "actor": "worker-01",
+              "archived_at": null,
+              "created_at": "2026-01-01T00:00:00+00:00",
+              "event_id": 1,
+              "event_type": "attention_requirement",
+              "issue_key": "example-decision",
+              "payload_json": {
+                "kind": "user_decision",
+                "reason": "Question: Which keyboard behavior should ship? Context: The example flow is waiting on a product choice. Options: A: keep the current contract; B: revert to the previous one. Evidence: board issue details. Impact: implementation waits; unrelated work continues. Actor: the human user. Why human: the configured agents lack authority to pick product behavior; only the user can choose it. Channel: the user records the pick on this board issue page. Release: the chosen option unblocks implementation.",
+                "request": {
+                  "choices": [
+                    {
+                      "confirm": false,
+                      "consequence": "Work continues unchanged.",
+                      "id": "keep",
+                      "label": "Keep current",
+                      "next_action": "Continue as scoped.",
+                      "next_state": "ready",
+                      "recommended": true
+                    }
+                  ],
+                  "why_agents_cannot": "The user chooses product behavior."
+                }
+              }
+            }
+          ],
+          "sqlite_sequence": [
+            {
+              "name": "agent_commands",
+              "seq": 2
+            },
+            {
+              "name": "agent_observations",
+              "seq": 1
+            },
+            {
+              "name": "board_events",
+              "seq": 3
+            }
+          ]
+        },
+        "headers": {
+          "cache-control": null,
+          "content-type": null,
+          "location": "/health?notice=<notice-3>#worker-01"
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command",
+        "status": 303
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "collect": [],
+    "kind": "http",
+    "requests": [
+      {
+        "form": {
+          "command": "inspect",
+          "reason": "Check the recorded state."
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command"
+      },
+      {
+        "follow_last_redirect": true,
+        "method": "GET"
+      },
+      {
+        "form": {
+          "command": "inspect",
+          "reason": "Check the recorded state."
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command"
+      },
+      {
+        "form": {
+          "command": "example-command",
+          "reason": ""
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command"
+      },
+      {
+        "form": {
+          "command": "pause",
+          "expected_generation": "1",
+          "operation_id": "example-other-run",
+          "reason": "Check the recorded state."
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command"
+      },
+      {
+        "form": {
+          "command": "pause",
+          "expected_generation": "1",
+          "operation_id": "example-operation",
+          "reason": "Check the recorded state."
+        },
+        "method": "POST",
+        "path": "/agent/worker-01/command"
+      }
+    ]
+  },
+  "matrix_row": "M82",
+  "notes": "Inspect is generation-bound and expires after 15 minutes. Exact-run pause queues an intent; duplicates, invalid commands, and mismatched runs do not enqueue.",
+  "setup": {
+    "files": {
+      "runs/example-attempt/collection.json": "{\"candidate_sha\": \"candidate-example\", \"change_summary\": \"Clarified the keyboard example.\"}\n",
+      "runs/example-operation/receipt.json": "{\"agent_generation\": 1, \"agent_id\": \"worker-01\", \"control_protocol\": 1, \"operation_id\": \"example-operation\", \"state\": \"running\"}\n"
+    },
+    "now": "2026-01-01T00:10:00Z",
+    "rows": {
+      "agent_observations": [
+        {
+          "agent_id": "worker-01",
+          "health": "healthy",
+          "observed_at": "2026-01-01T00:00:00+00:00",
+          "process_state": "idle",
+          "source": "adapter"
+        }
+      ],
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "Example worker",
+          "harness_key": "example-harness",
+          "profile_key": "controller",
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "worker-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "attention_requirement",
+          "issue_key": "example-decision",
+          "payload_json": "{\"kind\": \"user_decision\", \"reason\": \"Question: Which keyboard behavior should ship? Context: The example flow is waiting on a product choice. Options: A: keep the current contract; B: revert to the previous one. Evidence: board issue details. Impact: implementation waits; unrelated work continues. Actor: the human user. Why human: the configured agents lack authority to pick product behavior; only the user can choose it. Channel: the user records the pick on this board issue page. Release: the chosen option unblocks implementation.\", \"request\": {\"choices\": [{\"confirm\": false, \"consequence\": \"Work continues unchanged.\", \"id\": \"keep\", \"label\": \"Keep current\", \"next_action\": \"Continue as scoped.\", \"next_state\": \"ready\", \"recommended\": true}], \"why_agents_cannot\": \"The user chooses product behavior.\"}}"
+        }
+      ],
+      "dependencies": [
+        {
+          "contract": "Wait for example review.",
+          "depends_on": "example-review",
+          "issue_key": "example-ready"
+        }
+      ],
+      "harnesses": [
+        {
+          "adapter": "adapters.codex_cli",
+          "harness_key": "example-harness",
+          "title": "Example harness",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "issues": [
+        {
+          "approved_scope": "Update the example interface only.",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "issue_key": "example-ready",
+          "lane": "interface",
+          "state": "ready",
+          "title": "Keyboard guidance",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "approved_scope": "Update the example interface only.",
+          "blocker": "Question: Which keyboard behavior should ship? Context: The example flow is waiting on a product choice. Options: A: keep the current contract; B: revert to the previous one. Evidence: board issue details. Impact: implementation waits; unrelated work continues. Actor: the human user. Why human: the configured agents lack authority to pick product behavior; only the user can choose it. Channel: the user records the pick on this board issue page. Release: the chosen option unblocks implementation.",
+          "controller": "worker-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "issue_key": "example-decision",
+          "lane": "interface",
+          "state": "blocked",
+          "title": "Choose keyboard behavior",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "approved_scope": "Update the example interface only.",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": "candidate-example",
+          "issue_key": "example-review",
+          "lane": "interface",
+          "state": "review_ready",
+          "title": "Review keyboard example",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "pipeline_stages": [
+        {
+          "candidate_sha": "candidate-example",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "evidence_ref": "runs/example-attempt/collection.json",
+          "issue_key": "example-review",
+          "stage": "review",
+          "stage_id": "example-stage",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "role_profiles": [
+        {
+          "instructions_path": "roles/controller.md",
+          "profile_key": "controller",
+          "title": "Controller",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ]
+    }
+  },
+  "source": {
+    "commit": "41865d405b75b321736ca1554be60ed97b1bd8af",
+    "modules": [
+      "board/server.py",
+      "board/textfmt.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

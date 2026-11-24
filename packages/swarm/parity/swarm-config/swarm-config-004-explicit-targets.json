@@ -1,0 +1,100 @@
+{
+  "case_id": "swarm-config-004-explicit-targets",
+  "description": "Notify an explicit list with a prior notice, a missing mailbox, and rejected targets.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "mail/ex/ex-0009.json": "{\"id\": \"ex-0009\", \"class\": \"policy\", \"urgency\": \"p2\", \"from\": \"example-one\", \"to\": \"ex\", \"summary\": \"Example prior notice\", \"ref\": {\"version\": 7}, \"at\": \"2026-02-03T04:05:06Z\"}\n",
+      "mail/ex2/ex2-0001.yaml": "id: \"ex2-0001\"\nclass: \"policy\"\nurgency: \"p2\"\nfrom: \"swarm-config\"\nto: \"ex2\"\nref: {version: 7}\nsummary: \"swarm-config v7: heartbeat_minutes 30 -> 20\"\nat: \"2026-02-03T04:05:06Z\"\n",
+      "mail/ex2/id-counter.txt": "1\n",
+      "mail/ex3/.keep": "",
+      "mail/log.yaml": "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"35c2f01b7a34cb899f6c555f989966f0cae19856c184eeba13f91d80a3d43d42\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex2-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: heartbeat_minutes 30 -> 20\", \"to\": \"ex2\", \"urgency\": \"p2\"}, \"id\": \"ex2-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex2\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"35c2f01b7a34cb899f6c555f989966f0cae19856c184eeba13f91d80a3d43d42\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex2-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: heartbeat_minutes 30 -> 20\", \"to\": \"ex2\", \"urgency\": \"p2\"}, \"id\": \"ex2-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex2\"}"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "log_line_count": 1,
+        "return": [
+          {
+            "action": "rejected",
+            "id": "",
+            "notice": null,
+            "path": null,
+            "reason": "invalid mailbox target",
+            "to": "bad target"
+          },
+          {
+            "action": "rejected",
+            "id": "",
+            "notice": null,
+            "path": null,
+            "reason": "mailbox does not accept policy mail",
+            "to": "core"
+          },
+          {
+            "action": "created",
+            "id": "ex2-0001",
+            "notice": null,
+            "path": "mail/ex2/ex2-0001.yaml",
+            "reason": null,
+            "to": "ex2"
+          }
+        ]
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "kind": "notify",
+        "mailboxes": [
+          "ex",
+          "bad target",
+          "core",
+          "ex2",
+          "ex2"
+        ],
+        "new": {
+          "heartbeat_minutes": 20,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:05:06Z",
+          "usage_stop_percent": 95,
+          "version": 7
+        },
+        "old": {
+          "heartbeat_minutes": 30,
+          "mob_limit_rule": "Keep example limits",
+          "sprite_default_model": "example-model",
+          "sprite_thinking_default": "medium",
+          "updated_at": "2026-02-03T04:00:00Z",
+          "usage_stop_percent": 95,
+          "version": 6
+        }
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "The existing policy notice has a different sender. The missing ex2 is requested twice; ex3 is not requested.",
+  "setup": {
+    "files": {
+      "mail/ex/ex-0009.json": "{\"id\": \"ex-0009\", \"class\": \"policy\", \"urgency\": \"p2\", \"from\": \"example-one\", \"to\": \"ex\", \"summary\": \"Example prior notice\", \"ref\": {\"version\": 7}, \"at\": \"2026-02-03T04:05:06Z\"}\n",
+      "mail/ex3/.keep": ""
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}

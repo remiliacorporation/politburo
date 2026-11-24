@@ -1,0 +1,59 @@
+{
+  "case_id": "liveness-005-malformed-read",
+  "description": "Reject invalid JSON and a valid non-object JSON value.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "notes/alive/example.secretaryd": "[]\n",
+      "notes/alive/example.wake": "{broken\n"
+    },
+    "log_lines": [],
+    "runs": [
+      {
+        "return": null,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "return": null,
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "function",
+    "steps": [
+      {
+        "args": {
+          "path": "notes/alive/example.wake"
+        },
+        "function": "read"
+      },
+      {
+        "args": {
+          "path": "notes/alive/example.secretaryd"
+        },
+        "function": "read"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {
+      "notes/alive/example.secretaryd": "[]\n",
+      "notes/alive/example.wake": "{broken\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py"
+    ]
+  }
+}
