@@ -393,6 +393,7 @@ const TAGGED_MAX = 200
 
 /** What Vercel's boards don't do, and with `instead`, what to do there. */
 const notSupported = (what: string, instead?: string) => new HttpError(501, 'not_supported', `Vercel's boards don't support ${what} yet${instead ? `: ${instead}` : ''}`)
+const noClaimHold = () => { throw new HttpError(501, 'no_claim_hold', "Vercel's boards don't support a hard end for claims") }
 const noTaskAttention = () => { throw new HttpError(501, 'no_task_attention', "Vercel's boards don't support task attention") }
 
 /** What credentials may do when the API doesn't say: read, post, react, and label everywhere, as any it lets in. */
@@ -3758,7 +3759,8 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       // it to make the batch, and its key says whether it has: a retry goes through the middleware once more on the way.
       throw notFound(`no batch of yours has id ${id}`, 'batch_not_found')
     },
-    async claimTask(caller, { id, lease, token: sent }, signal) {
+    async claimTask(caller, { id, lease, hold, token: sent }, signal) {
+      if (hold !== undefined) noClaimHold()
       const who = whoOf(caller)
       const token = sent ?? newClaimToken()
       // The API gives what's asked up to its own cap, and the board's default when nothing is.
@@ -3766,6 +3768,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       return { task: await rootOf(who, made), claim: claimOf(made, token) }
     },
     async claimReadyTask(caller, input, signal) {
+      if (input.hold !== undefined) noClaimHold()
       const who = whoOf(caller)
       // An owner is named by ID, as on any board: a handle is how someone shows, and several can show the same.
       for (const owner of input.from ?? []) if (!isId(owner)) throw badRequest(`from: ${owner} is a handle, which several can share: name the owner by ID`, 'invalid_from')

@@ -534,6 +534,7 @@ function build(options: A2Options, binding: BoardBinding) {
         audience: url,
         team_id: teamId,
         project_id: id,
+        task_claim_hold: true,
         ...(attentionEnabled ? { task_attention: true } : {}),
         // Its own sync's entries, and those of the syncs registered here.
         sync: await syncEntries(),
