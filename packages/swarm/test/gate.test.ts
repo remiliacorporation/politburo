@@ -171,6 +171,49 @@ test('two plb tasks naming the pull request do not pass', async (t) => {
   assert.deepEqual(result.github, [])
 })
 
+test('the task labelled pr.number owns the pull request when a fix round names it too', async (t) => {
+  const { team, run } = await fixture(t)
+  await task(team, {
+    'pr.number': pr, 'work.repo': repo, 'review.verdict': 'pass', 'review.head': sha,
+  }, 'done')
+  await task(team, { 'work.id': 'plb-103' }, `https://github.com/${repo}/pull/${pr}`)
+  const result = await run()
+  assert.equal(result.stderr, '')
+  assert.equal(result.stdout, 'pass\n')
+  assert.equal(result.status, 0)
+})
+
+test('a fix round labelled fix.of is not a second owner', async (t) => {
+  const { team, run } = await fixture(t)
+  await task(team, {
+    'pr.number': pr, 'work.repo': repo, 'review.verdict': 'pass', 'review.head': sha,
+  }, 'done')
+  await task(team, {
+    'work.id': 'plb-103', 'pr.number': pr, 'fix.of': pr, 'work.repo': repo,
+    'review.verdict': 'pass', 'review.head': sha,
+  }, `https://github.com/${repo}/pull/${pr}`)
+  const result = await run()
+  assert.equal(result.stderr, '')
+  assert.equal(result.stdout, 'pass\n')
+  assert.equal(result.status, 0)
+  assert.deepEqual(result.github, [
+    `GET /repos/${repo}/pulls/${pr}`,
+    `GET /repos/${repo}/commits/${sha}/check-runs?per_page=100&page=1`,
+  ])
+})
+
+test('two tasks labelled pr.number for the pull request do not pass', async (t) => {
+  const { team, run } = await fixture(t)
+  await task(team, { 'pr.number': pr, 'work.repo': repo, 'review.verdict': 'pass', 'review.head': sha }, 'done')
+  await task(team, {
+    'work.id': 'plb-103', 'pr.number': pr, 'work.repo': repo, 'review.verdict': 'pass', 'review.head': sha,
+  }, 'done')
+  const result = await run()
+  assert.equal(result.stdout, 'more than one task\n')
+  assert.equal(result.status, 1)
+  assert.deepEqual(result.github, [])
+})
+
 test('an unfinished task is refused before its parked label', async (t) => {
   const { team, run } = await fixture(t)
   await task(team, { 'pr.number': pr, parked: 'hold' })
