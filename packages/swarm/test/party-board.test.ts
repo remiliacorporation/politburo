@@ -198,6 +198,39 @@ test('reconciling a mixed grant removes the former member without dropping the p
   await as('stranger')((b) => assert.rejects(b.thread(id), hidden))
 })
 
+test('reconciling keeps an everyone deny beside an allow and the audit flags widening', async (t) => {
+  const as = openBoard(t)
+  const closed = 'vault'
+  const project = { project: 'prj_fixture', environment: 'production' } as const
+  await as('jockey')(async (b) => {
+    await b.createChannel(closed)
+    await b.post(closed, 'sealed')
+    await b.createGrant({ principals: [projectPrincipal], can: { '*': ['read'] } })
+    await applyGrants(b, registry, repo)
+    // Closer than everyone at the closed channel, so the operator can still change that grant.
+    await b.createGrant({ principals: [userPrincipal(people.jockey)], can: { [closed]: 'all' } })
+    const { grant } = await b.createGrant({
+      principals: [{ kind: 'everyone' }],
+      can: { '*': ['read'], [closed]: [] },
+    })
+    assert.deepEqual((await b.explain(closed, project)).can, [])
+    const before = await b.grants()
+    await b.revokeGrant(grant.id)
+    assert.deepEqual((await b.explain(closed, project)).can, ['read'])
+    const widened = await auditGrants(b, registry, repo, before)
+    assert.equal(widened.ok, false, widened.violations.join('; '))
+    assert.ok(
+      widened.violations.some((entry) => entry.includes('prj_fixture') && entry.includes(closed) && entry.includes('gained')),
+      widened.violations.join('; '),
+    )
+    await b.createGrant({ principals: [{ kind: 'everyone' }], can: { '*': ['read'], [closed]: [] } })
+    await applyGrants(b, registry, repo)
+    assert.deepEqual((await b.explain(closed, project)).can, [])
+    const kept = (await b.grants()).find((row) => row.principals.some((principal) => principal.kind === 'everyone'))
+    assert.deepEqual(kept?.can, { [closed]: [] })
+  })
+})
+
 test('reconciling an edited starting grant strips broad principals without dropping the project', async (t) => {
   await openBoard(t)('jockey')(async (b) => {
     const { grant } = await b.updateGrant('g1', {
