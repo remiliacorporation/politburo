@@ -1,0 +1,280 @@
+{
+  "case_id": "board-cli-messages-011-maintenance",
+  "description": "Preview then apply expiry and topic cleanup",
+  "expected": {
+    "db": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 1, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": \"example-label\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 2, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": \"example-label\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 3, \"to_agent\": null, \"to_role\": \"worker\", \"topic\": \"example-label\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "queue_maintained",
+          "issue_key": null,
+          "payload_json": "{\"expired\": [3], \"superseded\": [1]}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "Expired",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "53d94b80aeff22541176d5c52c8cdfad4bfa9f6ece11f6dd36557ac99d75bd59",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 3,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "resolved",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": "example-label",
+          "valid_until": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "First valid",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "cd73aa394ec4b2b82989483542c470be7893d3d2ba7bf48b9c3ea7d2b53cf701",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "superseded",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": "example-label",
+          "valid_until": null
+        },
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "Last valid",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "7bc743ba12b76133d5d24806462a4330a3dda95abb5ce65d43d2151bcf2d8beb",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "worker",
+          "topic_key": "example-label",
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"cd73aa394ec4b2b82989483542c470be7893d3d2ba7bf48b9c3ea7d2b53cf701\",\n  \"message_id\": 1,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"7bc743ba12b76133d5d24806462a4330a3dda95abb5ce65d43d2151bcf2d8beb\",\n  \"message_id\": 2,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"53d94b80aeff22541176d5c52c8cdfad4bfa9f6ece11f6dd36557ac99d75bd59\",\n  \"message_id\": 3,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"actionable\": 0,\n    \"archived_at\": null,\n    \"body\": \"Last valid\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"7bc743ba12b76133d5d24806462a4330a3dda95abb5ce65d43d2151bcf2d8beb\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"worker\",\n    \"topic_key\": \"example-label\",\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 0,\n    \"archived_at\": null,\n    \"body\": \"First valid\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"cd73aa394ec4b2b82989483542c470be7893d3d2ba7bf48b9c3ea7d2b53cf701\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 1,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"worker\",\n    \"topic_key\": \"example-label\",\n    \"valid_until\": null\n  }\n]\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": false,\n  \"expired\": [\n    3\n  ],\n  \"ok\": true,\n  \"superseded\": [\n    1\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": true,\n  \"expired\": [\n    3\n  ],\n  \"ok\": true,\n  \"superseded\": [\n    1\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": false,\n  \"expired\": [],\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"actionable\": 0,\n    \"archived_at\": null,\n    \"body\": \"Last valid\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"7bc743ba12b76133d5d24806462a4330a3dda95abb5ce65d43d2151bcf2d8beb\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"worker\",\n    \"topic_key\": \"example-label\",\n    \"valid_until\": null\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "First valid",
+          "--to-role",
+          "mob",
+          "--topic",
+          "example-label"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Last valid",
+          "--to-role",
+          "mob",
+          "--topic",
+          "example-label",
+          "--keep-prior-topic"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Expired",
+          "--to-role",
+          "mob",
+          "--topic",
+          "example-label",
+          "--keep-prior-topic",
+          "--valid-until",
+          "2026-01-01T00:00:00+00:00"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "mob"
+        ]
+      },
+      {
+        "argv": [
+          "queue-maintain"
+        ]
+      },
+      {
+        "argv": [
+          "queue-maintain",
+          "--apply"
+        ]
+      },
+      {
+        "argv": [
+          "queue-maintain"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "mob"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "An equal-to-clock expiry is already ineligible. Keeping prior topics allows two valid revisions; maintenance chooses the latest valid revision, not a newer expired row.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

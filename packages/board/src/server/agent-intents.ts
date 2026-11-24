@@ -60,11 +60,11 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
   const snapshot = () => ctx.session.state(agentIntentsReducer, { through: 'latest' })
   type Snapshot = Awaited<ReturnType<typeof snapshot>>
 
-  async function change<T>(decide: (snapshot: Snapshot) => Promise<{ answer: T; events: Events }>): Promise<T> {
+  async function change<T>(decide: (snapshot: Snapshot, now: number) => Promise<{ answer: T; events: Events }>): Promise<T> {
     let answer!: T
-    const rows = await appendFrom(ctx, async () => {
+    const rows = await appendFrom(ctx, async (now) => {
       const view = await snapshot()
-      const decision = await decide(view)
+      const decision = await decide(view, now)
       answer = decision.answer
       return { position: view.index, events: decision.events }
     })
@@ -118,7 +118,7 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
       ...(principal.scope === undefined ? {} : { scope: principal.scope }),
       expiresAt: principal.expiresAt?.toISOString() ?? null,
     }
-    return change(async (view) => {
+    return change(async (view, now) => {
       const { state } = view
       const permitted = (agent: Agent | undefined) => {
         if (!agent || !access.readable(agent.channel)) throw missingAgent()
@@ -130,7 +130,6 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
       const previous = own(state.issues, requestKey)
       if (previous) {
         if (previous.hash !== requestHash) throw duplicateId()
-        const now = Date.now()
         const intents = previous.ids.map((id) => {
           const { intent } = state.intents[id]!
           return effective(intent, permitted(own(state.agents, intent.agent)), now)
@@ -152,7 +151,6 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
       }
       if (run && agents.length !== 1) throw badRequest('a run probe must address exactly one agent', 'invalid_run_probe')
       const leaseUntil = run ? await findRun(view, run, agents[0]!, access) : Infinity
-      const now = Date.now()
       if (leaseUntil <= now) throw claimLost()
       const intents = agents.map((agent): AgentIntent => ({
         id: crypto.randomUUID(), agent: agent.id, generation, by: author,
@@ -164,27 +162,25 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
   }
 
   async function checkIssuer(state: AgentIntentsState, agent: Agent,
-    { intent, requestKey }: AgentIntentsState['intents'][string], cachedAccess?: Map<string, Access | null>) {
+    { intent, requestKey }: AgentIntentsState['intents'][string], now: number, cachedAccess?: Map<string, Access | null>) {
     const { issuer } = state.issues[requestKey]!
     let allowed = cachedAccess?.get(requestKey)
     if (allowed === undefined) {
       // Grants live in their own session: ask policy for current access after reading the board snapshot.
-      allowed = await accessNow(issuer)
+      allowed = await accessNow(issuer, undefined, now)
       cachedAccess?.set(requestKey, allowed)
     }
     if (!allowed || !mayIssue(state, agent, allowed, intent.by))
       throw new HttpError(403, 'issuer_revoked', 'the issuer may no longer issue this intent')
-    const now = Date.now()
     if (issuer.expiresAt !== null && Date.parse(issuer.expiresAt) <= now)
       throw new HttpError(403, 'issuer_revoked', 'the issuer credential has expired')
-    return now
   }
 
   async function receive(caller: Caller, id: string, generation: number, outcome?: NonNullable<AgentIntent['report']>['outcome']) {
     const identity = verified(caller)
     if (!identity) throw missingIntent()
     const { author, principal: { access } } = identity
-    return change<AgentIntent>(async (view) => {
+    return change<AgentIntent>(async (view, now) => {
       const { state } = view
       const row = own(state.intents, id)
       const agent = row && own(state.agents, row.intent.agent)
@@ -193,7 +189,7 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
       const { intent } = row
       checkGeneration(agent, generation)
       if (agent.status !== 'enabled' || intent.generation !== generation) throw conflict('intent_fenced', 'the intent is fenced')
-      if (Date.parse(intent.expiresAt) <= Date.now()) throw conflict('intent_expired', 'the intent has expired')
+      if (Date.parse(intent.expiresAt) <= now) throw conflict('intent_expired', 'the intent has expired')
       if (outcome === undefined) {
         if (intent.state !== 'pending') throw conflict('intent_taken', 'the intent has already been taken')
       } else {
@@ -202,8 +198,7 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
         if (!intent.taken) throw conflict('intent_not_taken', 'the intent has not been taken')
       }
       const leaseUntil = intent.run ? await findRun(view, intent.run, agent, access) : Infinity
-      const now = outcome === undefined ? await checkIssuer(state, agent, row) : Date.now()
-      if (Date.parse(intent.expiresAt) <= now) throw conflict('intent_expired', 'the intent has expired')
+      if (outcome === undefined) await checkIssuer(state, agent, row, now)
       if (leaseUntil <= now) throw claimLost()
       const receipt = { by: author, generation, at: iso(now) }
       if (outcome === undefined)
@@ -243,7 +238,7 @@ export function createAgentIntents(ctx: WriteContext, { accessNow }: BoardBindin
         if (intent.run) {
           try {
             if (await findRun(view, intent.run, agent, access, getStatus) <= now) continue
-            await checkIssuer(state, agent, row, issuerAccess)
+            await checkIssuer(state, agent, row, now, issuerAccess)
           } catch (error) {
             if (error instanceof HttpError && (error.code === 'not_a_task' || error.code === 'claim_lost' || error.code === 'issuer_revoked')) continue
             throw error

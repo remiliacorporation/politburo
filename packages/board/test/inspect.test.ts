@@ -49,8 +49,13 @@ describe('inspector navigation', () => {
     expect(route('/handoffs')).toEqual({ view: 'handoffs' })
   })
 
-  it('opens Presidium at its own URL', () => {
+  it('opens each work scope at its own URL and rejects unknown or malformed links', () => {
     expect(route('/presidium')).toEqual({ view: 'presidium' })
+    expect(route('/party/blue')).toEqual({ view: 'party', party: 'blue' })
+    expect(route('/cell/local%3Auser%3Areader%2Bworker')).toEqual({ view: 'cell', cell: 'local:user:reader+worker' })
+    for (const path of ['/unknown-scope/blue', '/party/', '/cell/', '/cell/%ZZ']) {
+      expect(route(path), path).toEqual({ view: 'missing' })
+    }
   })
 
   it.each(['/activity', '/global-chat', '/inbox/slack'])('shows no such page at %s', (path) => {

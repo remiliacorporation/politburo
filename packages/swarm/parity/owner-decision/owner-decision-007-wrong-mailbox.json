@@ -1,0 +1,54 @@
+{
+  "case_id": "owner-decision-007-wrong-mailbox",
+  "description": "Reject a stored owner decision in a non-owner mailbox during routing.",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "mail/ex/ex-0001.json": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"summary\": \"Example choice 1\", \"to\": \"ex\", \"urgency\": \"p1\"}\n",
+      "mail/log.yaml": "",
+      "snapshots/wrong-mailbox.yaml": "batch: \"ex-1970-01-01T00:00Z\"\nrepo: \"ex\"\nwindow: {\"from\": \"1970-01-01T00:00Z\", \"to\": \"1970-01-01T00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 0}\nact_on: []\nitems: []\n"
+    },
+    "log_lines": [],
+    "stderr": "invalid: ex-0001.json: $.needs: owner mail must be in the owner mailbox\n",
+    "stdout": "digest: <WORK>/snapshots/wrong-mailbox.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=1\n",
+    "steps": [
+      {
+        "exit_code": 1,
+        "stderr": "invalid: ex-0001.json: $.needs: owner mail must be in the owner mailbox\n",
+        "stdout": "digest: <WORK>/snapshots/wrong-mailbox.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=1\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "--repo",
+          "ex",
+          "--now",
+          "2026-11-21T10:00:00Z",
+          "--digest",
+          "snapshots/wrong-mailbox.yaml"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      }
+    ]
+  },
+  "matrix_row": "M09",
+  "notes": "The recipient matches the inbox tag, but this header was placed there without going through delivery.",
+  "setup": {
+    "files": {
+      "mail/ex/ex-0001.json": "{\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"summary\": \"Example choice 1\", \"to\": \"ex\", \"urgency\": \"p1\"}\n"
+    },
+    "now": "2026-11-21T10:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

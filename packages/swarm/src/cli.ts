@@ -4,8 +4,9 @@ import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { ledgerCommand } from './ledger/cli.ts'
+import { skillsMain } from './skills/cli.ts'
 
-const usage = 'usage: swarm <config|ledger> ...'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm ledger <dispatch|append|rollup> --db FILE [options]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>'
 const configUsage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]'
 
 class ReadError extends Error {}
@@ -41,6 +42,7 @@ function main(args: string[]): number {
     return 0
   }
   if (command === 'ledger') return ledgerCommand(args.slice(1))
+  if (command === 'skills') return skillsMain(args.slice(1))
   if (command === undefined) return misuse('missing command', usage)
   if (command !== 'config') return misuse(`unknown command ${command}`, usage)
   if (args.length === 2 && action === '--help') {
@@ -97,4 +99,13 @@ function main(args: string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2))
+// One line per area: the loader returns run(argv): Promise<number>.
+const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  check: () => import('./checks/cli.ts'),
+  watch: () => import('./watch/cli.ts'),
+  trackers: () => import('./trackers/cli.ts'),
+  capture: async () => ({ run: (await import('./capture/cli.ts')).captureMain }),
+}
+const [subcommand, ...subargs] = process.argv.slice(2)
+const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
+process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))
