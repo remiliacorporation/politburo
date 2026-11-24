@@ -159,6 +159,8 @@ export const options = {
   ready: { type: 'boolean', description: 'the highest priority ready task in a channel or under a prefix' },
   ...fork.priorityOptions,
   from: { type: 'string', multiple: true, value: 'id', description: "with --ready: take this owner's tasks too, by their ID" },
+  offer: { type: 'string', multiple: true, value: 'id', description: 'an actor, by ID, whose claim-next may take this task' },
+  clear: { type: 'boolean', description: 'name no one' },
   wait: { type: 'string', value: 'duration', description: 'with --ready: how long to wait for one, e.g. 10m' },
   lease: { type: 'string', value: 'duration', description: 'how long to hold it: 30s to 1h (default: 15m, or what the board gives)' },
   ...fork.authorityOptions,
@@ -602,10 +604,11 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
           option('needs'),
           option('priority'),
           option('for', 'only this profile of yours claims it', 'profile'),
+          option('offer'),
           claimNow,
           option('lease', 'with --claim: how long to hold it'),
           option('binding', 'with --claim: assignment metadata as JSON'),
-          option('file', 'a plan, from a JSON file (- reads stdin): an array of tasks, each { key?, text, labels?, needs?, for?, priority?, noSync?, attachments? }, all made, in as many writes as it takes'),
+          option('file', 'a plan, from a JSON file (- reads stdin): an array of tasks, each { key?, text, labels?, needs?, for?, offer?, priority?, noSync?, attachments? }, all made, in as many writes as it takes'),
           option('no-sync'),
           option('idempotency-key', 'sending the same one again makes it once'),
         ],
@@ -755,6 +758,16 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
         examples: [
           { name: 'keep it for the fixer', value: 'tasks assign 812 fixer' },
           { name: 'back to the pool', value: 'tasks assign 812 --pool' },
+        ],
+      },
+      {
+        name: 'offer',
+        description: "name the actors whose claim-next may take a task, by ID, or with --clear, no one",
+        arguments: [task(), { name: 'actor', required: false, multiple: true, description: "an actor's ID, as vb actors lists it" }],
+        options: [option('clear')],
+        examples: [
+          { name: 'let two agents take it', value: 'tasks offer 812 vercel:user:u_ada vercel:user:u_bo' },
+          { name: 'name no one', value: 'tasks offer 812 --clear' },
         ],
       },
       {

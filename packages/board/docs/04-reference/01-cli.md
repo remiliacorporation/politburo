@@ -1312,10 +1312,10 @@ with a deadline, or `stale` if the run is not confirmed. See
 
 ```text
 vb tasks [channel] [--state <state>|open|all] [--label k=v]... [--by <handle>] [--for <profile>] [--after <cursor>] [--limit N]
-vb tasks create <channel> "<text>" [--label k=v]... [--needs <id>]... [--for <profile>]
+vb tasks create <channel> "<text>" [--label k=v]... [--needs <id>]... [--for <profile>] [--offer <id>]...
                 [--priority <level>] [--claim [--lease <duration>] [--binding <JSON>]]
                 [--no-sync] [--idempotency-key <key>]
-vb tasks create <id> [--needs <id>]... [--for <profile>] [--priority <level>]
+vb tasks create <id> [--needs <id>]... [--for <profile>] [--offer <id>]... [--priority <level>]
                 [--claim [--lease <duration>] [--binding <JSON>]]
 vb tasks create <channel> --file <path> [--idempotency-key <key>]
 vb tasks show <id>
@@ -1344,6 +1344,7 @@ vb tasks scope <id> "<reason>"
 vb tasks stage <id> <stage> "<reason>"
 vb tasks reopen <id> ["<reason>"]
 vb tasks assign <id> (<profile> | --pool)
+vb tasks offer <id> (<actor-id>... | --clear)
 vb tasks needs <id> (<id>... | --none)
 vb tasks cancel <id> "<reason>"
 ```
@@ -1393,6 +1394,7 @@ can't erase a newer claim.
 | `tasks stage` | moves staged work to `review`, `qa`, `repair`, `approved`, `done`, or `rejected`, as a scoper | the stage and ID, such as `review 812` |
 | `tasks reopen` | returns done or rejected work to `proposed`, with a reason and as a scoper, or retries a failed legacy task | `reopened 812` |
 | `tasks assign` | keeps a task for one of its owner's profiles, or with `--pool` for anyone. Staged work requires a scoper | `assigned 812 to fixer`, `unassigned 812` |
+| `tasks offer` | names the actors, by ID, whose claim-next may take a task, or with `--clear` no one | `offered 812 to vercel:user:u_ada`, `offered 812 to no one` |
 | `tasks needs` | replaces what a task waits for. Staged work requires a scoper | `814 needs #812 #813`, `814 needs nothing` |
 | `tasks cancel` | calls a task off and ends any claim. Staged work requires a scoper | `canceled 812` |
 
@@ -1429,8 +1431,10 @@ $ vb tasks work/ --state all --limit 2
   and on the list. `assign <id> <profile>` names one of the task's owner's.
 - **`--ready`** takes the highest priority eligible ready task. At equal
   priority, it prefers tasks assigned to you, then takes the oldest. It can
-  take one assigned to you, or an unassigned one you own or whose owner
-  `--from <id>` names. `--wait` holds until one is ready. Its `--label` is an
+  take one assigned to you, or an unassigned one you own, one its owner
+  offered to you, or one whose owner `--from <id>` names. `--offer <id>` on
+  `create`, and `tasks offer`, name those actors by ID. `--wait` holds until
+  one is ready. Its `--label` is an
   exact `key=value`: the list's `key=a|b` and bare `key` are misuse there.
 - **`--binding <JSON>`** records [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work)
   on an ID or `--ready` claim, including `run` and `create --claim`. It is
@@ -1440,13 +1444,13 @@ $ vb tasks work/ --state all --limit 2
   adds a priority column. `show` always shows it. JSON includes `task.priority`
   on each task root.
 - **`--file <path>`** makes a plan: a JSON array of tasks, each `{ key?,
-  text, labels?, needs?, for?, priority?, noSync?, attachments? }`, from a file, or from
+  text, labels?, needs?, for?, offer?, priority?, noSync?, attachments? }`, from a file, or from
   stdin for `-`. A task's `key` names it for the others of the file, and
   `needs` takes `{ "key": "fix" }` for one of them or a task's ID for one
   that's there. `for` takes a profile's name. A key a task doesn't take is
   misuse, said with the task it's on and the key it's a letter from (`need`
   for `needs`), before anything is made. Text, `--label`, `--needs`, `--for`,
-  `--priority`, `--claim`, `--binding`, and `--no-sync` are one task's, so they don't go with it.
+  `--priority`, `--offer`, `--claim`, `--binding`, and `--no-sync` are one task's, so they don't go with it.
 - **A plan of any length works.** Up to 100 tasks go in one write, all or
   none. A longer plan goes in several, each task after the ones it waits for,
   so a ready task of an earlier write can be claimed before a later one lands.

@@ -23,6 +23,7 @@ import type {
   RegisterOpsAgentBody,
   ReportOpsIntentBody,
   AssignTaskBody,
+  OfferTaskBody,
   AttentionAnswerBody,
   AttentionView,
   RequestAttentionBody,
@@ -213,6 +214,8 @@ export type Protocol = {
   /** Move staged work along an allowed edge. */
   stageTask: { input: Id & Input<typeof StageTaskBody>; output: { task: MessageView } }
   assignTask: { input: Id & Input<typeof AssignTaskBody>; output: { task: MessageView } }
+  /** 501 `no_task_offer` where a board keeps no offer list. */
+  offerTask: { input: Id & Input<typeof OfferTaskBody>; output: { task: MessageView } }
   /** 400 `invalid_needs` for a prerequisite that isn't one, or that would make the task wait for itself. The same set is left as it is. */
   setTaskNeeds: { input: Id & Input<typeof TaskNeedsBody>; output: { task: MessageView } }
   setTaskPriority: { input: Id & Input<typeof TaskPriorityBody>; output: { task: MessageView } }

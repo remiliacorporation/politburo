@@ -131,7 +131,7 @@ describe('a task', () => {
     expect(made.status).toBe(201)
     const root = made.body.task as MessageView
     expect(root).toMatchObject({ channel: 'work', text: 'fix CVE-123 in acme/web', re: null, by: { actor: ADA }, labels: { step: 'fix', 'board.task': 'ready' } })
-    expect(root.task).toEqual({ state: 'ready', priority: 'normal', owner: ADA, by: ADA, for: null, needs: [], epoch: 0, claim: null, blocked: null, result: null, reason: null })
+    expect(root.task).toEqual({ state: 'ready', priority: 'normal', owner: ADA, by: ADA, for: null, offer: [], needs: [], epoch: 0, claim: null, blocked: null, result: null, reason: null })
     expect(made.body.claim).toBeUndefined()
 
     // Anyone who reads the channel reads it, replies in it, and finds it by its state.

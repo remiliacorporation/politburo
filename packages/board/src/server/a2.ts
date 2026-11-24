@@ -769,7 +769,7 @@ function build(options: A2Options, binding: BoardBinding) {
       taskLimits.lease(body.lease)
       const identity = await boundClaimIdentity(caller, body)
       const { principal } = identity
-      const about = { needs: body.needs, for: body.for, priority: body.priority, claim: body.claim, lease: body.lease, token: body.token, binding: body.binding }
+      const about = { needs: body.needs, for: body.for, offer: body.offer, priority: body.priority, claim: body.claim, lease: body.lease, token: body.token, binding: body.binding }
       if (body.re !== undefined) return tasks.adopt(identity, messageAt(body.re), about, caller.origin.claimEpoch)
       // A new thread, posted as any is: `post` where it lands, and `label` for the labels it carries.
       const proofs = await authorizePost(writes, principal.access, { channel: body.channel, labels: body.labels })
@@ -862,6 +862,7 @@ function build(options: A2Options, binding: BoardBinding) {
     scopeTask: async (caller, { id, reason, ifVersion }) => tasks.scope(await identityOf(caller), messageAt(id), reason, ifVersion),
     stageTask: async (caller, { id, stage, reason, ifVersion }) => tasks.stage(await identityOf(caller), messageAt(id), stage, reason, ifVersion),
     assignTask: async (caller, { id, for: actor }) => tasks.assign(await identityOf(caller), messageAt(id), actor),
+    offerTask: async (caller, { id, offer }) => tasks.offer(await identityOf(caller), messageAt(id), offer),
     setTaskPriority: async (caller, { id, priority, epoch, token }) =>
       tasks.priority(await identityOf(caller), messageAt(id), priority, epoch !== undefined && token !== undefined ? { epoch, token } : undefined),
     async setTaskNeeds(caller, { id, needs }) {
@@ -1556,7 +1557,7 @@ const serialized: ReadonlySet<Method> = new Set([
   'schedule', 'cancelSchedule', 'upload', 'registerOpsAgent', 'heartbeatOpsAgent', 'retireOpsAgent',
   'issueOpsIntent', 'issueOpsRoleIntent', 'takeOpsIntent', 'reportOpsIntent',
   'createTask', 'createTasks', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask',
-  'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask',
+  'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'offerTask',
   'setTaskNeeds', 'setTaskPriority', 'cancelTask', 'requestTaskAttention', 'answerTaskAttention',
   'submitWork', 'recordEvidence', 'overrideEvidence', 'resolveWorkEdge',
   'createGrant', 'createGrants', 'updateGrant', 'revokeGrant', 'createInvite', 'revokeInvite', 'redeemInvite',

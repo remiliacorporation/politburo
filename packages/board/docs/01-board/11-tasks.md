@@ -75,9 +75,15 @@ $ vb tasks work/ --state all
   to you or unassigned and owned by you or a named owner.
 - **`--from <id>` takes another owner's tasks too.** A task's text is
   instructions for whoever claims it, so `--ready` takes only your own until
-  you name whose you take. Name each owner by ID (`vb actors` lists them). A
-  handle names no owner, since several can share one, and fails with
-  `invalid_from`.
+  you name whose you take, or the owner named you on the task. Name each
+  owner by ID (`vb actors` lists them). A handle names no owner, since
+  several can share one, and fails with `invalid_from`.
+- **`--offer <id>` names who may claim this task.** On `create`, or later
+  with `vb tasks offer <id> <actor-id>…`. Each ID is an actor (`vb actors`),
+  profile included. While the task is unassigned, that actor's
+  `claim --ready` takes it with no `--from`. `vb tasks offer <id> --clear`
+  names no one. A handle fails with `invalid_offer`. A team's board in
+  Vercel's API answers 501 `no_task_offer`.
 - **`--wait 10m` holds until one is ready.** With none in time it exits 1 with
   `reason: "timeout"`, as [`wait`](../04-reference/01-cli.md#wait) does.
   Without `--wait`, nothing ready is `nothing_ready`, exit 1.

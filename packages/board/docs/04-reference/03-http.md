@@ -81,7 +81,7 @@ uses the target's own.
 | `react` | `POST /messages/:id/reactions` |
 | `label` | `POST /messages/:id/labels`, and a post, schedule, or new task with `labels`; `POST /tasks` with `re`, `/tasks/:id/claim`, `/tasks/claim`, and a task made with `claim` |
 | `sync` | `POST /messages/:id/sync`, a post with `sync` targets, and [sync's routes](#syncs-routes); in every channel, `GET /inbox/:key` for the board's own inbox |
-| `manage` | `POST /schedules/:id/cancel` for someone else's; `POST /tasks/:id/block`, `/unblock`, `/reopen`, `/assign`, and `/cancel` for someone else's task; `/tasks/:id/park` and `/unpark` for a verified person without a profile; in every channel, `GET /sources/:key/read`, `POST /sources/:key/join`, every registration in `GET /watchers`, and `/grants`; at `*`, `POST /schemas` |
+| `manage` | `POST /schedules/:id/cancel` for someone else's; `POST /tasks/:id/block`, `/unblock`, `/reopen`, `/assign`, `/offer`, and `/cancel` for someone else's task; `/tasks/:id/park` and `/unpark` for a verified person without a profile; in every channel, `GET /sources/:key/read`, `POST /sources/:key/join`, every registration in `GET /watchers`, and `/grants`; at `*`, `POST /schemas` |
 
 `react`, `label`, and `sync` imply `read`, and `manage` implies everything. A
 message, schedule, or file the caller can't read answers 404 on every route;
@@ -145,6 +145,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/:id/stage` | `{ stage, reason, ifVersion }`: moves staged work to `review`, `qa`, `repair`, `approved`, `done`, or `rejected` |
 | POST | `/tasks/:id/reopen` | `{ reason?, ifVersion? }`: retries failed legacy work with no required fields. A failed legacy task reopens as `ready`, or as `waiting` if any prerequisite is incomplete. Open legacy tasks stay as they are; completed or canceled legacy tasks return 409 `task_finished`. Both fields are required to return staged `done` or `rejected` work to `proposed` |
 | POST | `/tasks/:id/assign` | `{ for }`: one of the owner's actors, or `null` for anyone who may claim it. Staged work requires a scoper |
+| POST | `/tasks/:id/offer` | `{ offer }`: actor IDs whose claim-next may take it while it is unassigned, besides its owner, or `[]`. 501 `no_task_offer` where the board keeps no list. Staged work requires a scoper |
 | POST | `/tasks/:id/needs` | `{ needs }`: the IDs of the tasks it waits for now, in place of what it waited for. Staged work requires a scoper |
 | POST | `/tasks/:id/priority` | `{ priority, epoch?, token? }`: sets an open task's priority as its owner or with `manage` in its channel. With a live claim, send both claim fields to lower it |
 | POST | `/tasks/:id/cancel` | `{ reason }`: a legacy task that hasn't completed or been canceled, or nonterminal staged work as a scoper |
@@ -518,6 +519,7 @@ A task is a thread with a state. Its ID is its root's, and its root carries
   "owner": "vercel:user:u_abc123",
   "by": "vercel:user:u_abc123+triage",
   "for": null,
+  "offer": ["vercel:user:u_ada"],
   "needs": ["810"],
   "priority": "high",
   "epoch": 2,
@@ -535,6 +537,7 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 | `owner` | the principal that made the thread a task |
 | `by` | the actor it did that as: the principal itself, or one of its profiles. That actor changes the task as its owner, and so does the principal as itself |
 | `for` | the one actor that claims it, or `null` |
+| `offer` | actor IDs whose claim-next may take it while it is unassigned, besides its owner. `[]` when the owner named no one |
 | `needs` | the tasks it waits for, by ID. It's `waiting` until each has completed |
 | `epoch` | how many times it's been claimed |
 | `claim` | who holds it, and until when. Never the claim's token |
@@ -641,8 +644,8 @@ rules below describe the legacy queue except where noted.
   the labels a task must have, as `label: { step: "fix" }`. Claim-next takes
   the highest priority eligible ready task. At equal priority, it prefers
   tasks assigned to the caller, then takes the oldest. The task must be
-  assigned to the caller or unassigned and owned by the caller or an owner
-  `from` names by ID. `wait` holds the request up to that many seconds, at most
+  assigned to the caller, or unassigned and owned by the caller, listed in the
+  task's `offer`, or owned by someone `from` names by ID. `wait` holds the request up to that many seconds, at most
   300, then answers `{ task: null }`.
   A board holds one request as long as it can: Vercel's board answers after
   25 seconds at most, and sooner where many tasks change in the channels it
@@ -1059,8 +1062,9 @@ the thread key:
 | `message.sync_failed` | `id`, `target`, `error` | (server) a delivery gave up after its retries |
 | `actor.seen` | `actor`, `kind`, `handle`, `name`, `avatar`, `host`, `verified` | an actor writes for the first time or changes its display details. `host` (server) marks a principal a host's `authenticate` made, or one of its profiles, which sync never writes as. `verified` (server) says this write's credential named the actor as shown: under the handle it gave the principal, as itself or after `via`; each `actor.seen` says it anew, and its absence clears it |
 | `work.control` | `paused`, `pauseEpoch`, `reason`, `by` | (server) work admission changes, or a new board starts paused |
-| `task.created` | `id`, `needs`, `for`, `priority?`, `by`, `work?` | the thread rooted at `id` becomes a task, owned by `by.principal`. `work: 'proposed'` marks staged work. A legacy task waits while it has `needs` |
+| `task.created` | `id`, `needs`, `for`, `offer?`, `priority?`, `by`, `work?` | the thread rooted at `id` becomes a task, owned by `by.principal`. `work: 'proposed'` marks staged work. A legacy task waits while it has `needs`. `offer`, when set, is who may claim-next it besides its owner |
 | `task.assigned` | `id`, `for`, `by` | a task is assigned to an actor, or with `null` to anyone |
+| `task.offered` | `id`, `offer`, `by` | who may claim-next the task while it is unassigned, besides its owner. `offer` is actor IDs, or `[]` |
 | `task.priority_changed` | `id`, `priority`, `epoch?`, `by` | a task's priority is set. `epoch` is there when a live claim lowered it |
 | `task.needs_changed` | `id`, `needs`, `by` | what a task waits for changes, or a prerequisite reopens. It waits while it has `needs`, until `task.ready`, and with none it's ready. On prerequisite reopen, `by` names the board instead of the scoper, who is named on `task.stage_changed` in the prerequisite's channel |
 | `task.ready` | `id` | (server) every task it needs has completed |

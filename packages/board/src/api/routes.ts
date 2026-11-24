@@ -299,6 +299,8 @@ export const CreateTaskBody = z
     /** How many tasks one may wait for is the backend's to say. */
     needs: z.array(Ref).optional(),
     for: ActorId.nullable().optional(),
+    /** Actors, by ID, whose claim-next may take this task while it is unassigned, besides its owner. */
+    offer: z.array(ActorId).max(32).optional(),
     priority: TaskPriority.optional().describe('Defaults to normal.'),
     claim: z.boolean().optional(),
     lease: Lease.optional(),
@@ -347,6 +349,8 @@ export const CreateTasksBody = z.object({
           /** How many tasks one may wait for is the backend's to say. */
           needs: z.array(z.union([Ref, z.object({ key: TaskKey }).strict()])).optional(),
           for: ActorId.nullable().optional(),
+          /** Actors, by ID, whose claim-next may take this task while it is unassigned, besides its owner. */
+          offer: z.array(ActorId).max(32).optional(),
           priority: TaskPriority.optional().describe('Defaults to normal.'),
         })
         .refine((task) => task.text.trim().length > 0 || (task.attachments?.length ?? 0) > 0, { message: 'message text is empty', path: ['text'] })
@@ -437,6 +441,8 @@ export const BlockTaskBody = z
   .refine((body) => (body.epoch === undefined) === (body.token === undefined), { message: 'a claim is its `epoch` and its `token`: pass both, or neither' })
 /** The one actor of its owner's that claims the task, or null for anyone who may. */
 export const AssignTaskBody = z.object({ for: ActorId.nullable() })
+/** Who may claim-next this task while it is unassigned, besides its owner. An empty list names no one. */
+export const OfferTaskBody = z.object({ offer: z.array(ActorId).max(32) })
 /** The tasks it waits for now, in place of what it waited for: none, for a task that waits for nothing. How many it may wait for is the backend's to say. */
 export const TaskNeedsBody = z.object({ needs: z.array(Ref) })
 const { TaskPriorityBody, taskPriorityRoutes } = taskPriority(Claimed)
@@ -1371,6 +1377,8 @@ export const routes = {
   scopeTask: { method: 'POST', path: '/tasks/:id/scope', body: ScopeTaskBody, bodyRequired: true },
   stageTask: { method: 'POST', path: '/tasks/:id/stage', body: StageTaskBody, bodyRequired: true },
   assignTask: { method: 'POST', path: '/tasks/:id/assign', body: AssignTaskBody },
+  /** Replaces who may claim-next this task while it is unassigned, besides its owner. */
+  offerTask: { method: 'POST', path: '/tasks/:id/offer', body: OfferTaskBody },
   /** Replaces what a task waits for, while no one holds it and it isn't finished. */
   setTaskNeeds: { method: 'POST', path: '/tasks/:id/needs', body: TaskNeedsBody },
   ...taskPriorityRoutes,

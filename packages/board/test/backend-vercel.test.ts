@@ -140,6 +140,7 @@ describe('vercel()', () => {
       'tasks: binds a claim to its verified owner and fences an older generation even with the same token': 'skipped',
       'tasks: records an immutable handoff and accepts only one of two replacements naming the same predecessor': 'skipped',
       'tasks: keeps a task assigned to a profile for that actor alone': 'passed',
+      'tasks: lets a named actor claim an unassigned task without naming its owner': 'skipped',
       'tasks: lets a profile change only the tasks it made, and its principal all of them': 'passed',
       'tasks: takes label in its channel to claim a task: a caller narrowed to reading and posting claims none': 'passed',
       "tasks: takes read in a prerequisite's channel to wait for it: a caller narrowed out of it makes no task that needs it": 'passed',

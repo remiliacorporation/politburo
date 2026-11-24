@@ -19,7 +19,7 @@ export function resetTaskBoard() {
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-export const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel', 'submit', 'evidence', 'attest', 'override', 'resolve'])
+export const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'offer', 'needs', 'priority', 'show', 'cancel', 'submit', 'evidence', 'attest', 'override', 'resolve'])
 
 export function priorityOf(value: unknown, from: string): TaskPriority {
   const parsed = TaskPriority.safeParse(value)
@@ -38,7 +38,7 @@ export async function createPlan(target: string, text: string | undefined, path:
   if (text !== undefined) throw usage("Text is one task's: with --file, each task in the file has its own.")
   // What the file holds comes first: one task's text in it means these options are that task's, on stdin.
   const parsed = await planSource(path)
-  const own = (['label', 'needs', 'for', 'claim', 'lease', 'binding', 'no-sync', 'priority'] as const).find((name) => flags[name] !== undefined && flags[name] !== false)
+  const own = (['label', 'needs', 'for', 'offer', 'claim', 'lease', 'binding', 'no-sync', 'priority'] as const).find((name) => flags[name] !== undefined && flags[name] !== false)
   if (own !== undefined) throw usage(`--${own} is one task's: with --file, each task in the file has its own.`)
   const board = client()
   const tasks = await planFrom(parsed, path, board)
@@ -75,7 +75,7 @@ export async function createPlan(target: string, text: string | undefined, path:
 }
 
 /** What a task of a plan's `--file` takes, as `tasks.createMany` does. */
-const PLAN_KEYS = ['key', 'text', 'labels', 'needs', 'for', 'noSync', 'attachments', 'priority']
+const PLAN_KEYS = ['key', 'text', 'labels', 'needs', 'for', 'offer', 'noSync', 'attachments', 'priority']
 
 /** The help page that says what a plan holds. */
 const planHelp = (): Recovery => ({ instruction: 'See what a plan takes', argv: [...cli(), 'tasks', 'create', '--help'] })
@@ -569,6 +569,10 @@ export function taskFailure(code: string, status: number, hold: TaskHold): { cla
       return { class: 'conflict', message: `${named === undefined ? 'That' : ref(named)} is a task already.`, next: read('See it'), whole: true }
     case 'invalid_from':
       return { class: 'usage', message: `Can't ${doing()}. --from takes an owner's ID: several can share a handle.`, next: [{ instruction: "See everyone's IDs", argv: [...cli(), 'actors'] }] }
+    case 'invalid_offer':
+      return { class: 'usage', message: `Can't ${doing()}. --offer takes an actor's ID: several can share a handle.`, next: [{ instruction: "See everyone's IDs", argv: [...cli(), 'actors'] }] }
+    case 'no_task_offer':
+      return status === 501 ? { class: 'platform', message: `Can't ${doing()}. This board does not let a task name who may claim it.`, next: [] } : null
     case 'invalid_needs':
       // A plan's tasks name each other by key too: what's wrong is in the board's words, under this.
       if (flags.file !== undefined) return { class: 'usage', message: `Can't ${doing()}. A task's needs are tasks you can read, or keys of the plan's own.`, next: [{ instruction: 'See the tasks there are', argv: [...cli(), 'tasks', '--state', 'all'] }] }

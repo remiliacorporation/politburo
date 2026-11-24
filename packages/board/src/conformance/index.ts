@@ -2093,6 +2093,27 @@ const CHECKS: Check[] = [
   },
   {
     group: 'tasks',
+    name: 'lets a named actor claim an unassigned task without naming its owner',
+    run: async (ctx) => {
+      const agent = 'vercel:user:u_offeredagent'
+      let made: Awaited<ReturnType<typeof task>>
+      try {
+        made = await task(ctx, 'conformance: a task offered to an agent', { offer: [agent] })
+      } catch (error) {
+        if (error instanceof BoardError && error.status === 501 && error.code === 'no_task_offer') return `not kept here: ${error.message}`
+        throw error
+      }
+      alike(made.task.task?.offer, [agent], 'who may claim it next')
+      alike((await ctx.board.tasks.offer(made.task.id, [agent])).task?.offer, [agent], 'offering the same actors again')
+      alike((await ctx.board.tasks.offer(made.task.id, [])).task?.offer, [], 'offering it to no one')
+      await ctx.board.tasks.offer(made.task.id, [agent])
+      const claim = await ctx.board.tasks.claim(made.task.id, { lease: 60 })
+      same(claim.task.task?.claim?.actor, ctx.me.actor, 'the owner still claims an offered task')
+      await claim.release()
+    },
+  },
+  {
+    group: 'tasks',
     name: 'lets a profile change only the tasks it made, and its principal all of them',
     run: async (ctx) => {
       // A board that keeps no tasks says so first, whatever the run can send.

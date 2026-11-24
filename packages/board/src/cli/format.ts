@@ -193,6 +193,7 @@ function taskState(message: MessageView, task: TaskView, names: Map<string, stri
   if (priority !== DEFAULT_TASK_PRIORITY) parts.push(`priority ${priority}`)
   if (task.needs.length) parts.push(`needs ${task.needs.map((id) => `#${id}`).join(' ')}`)
   if (task.for !== null) parts.push(`for ${profileOf(task.for)}`)
+  if (task.offer?.length) parts.push(`offered to ${task.offer.join(' ')}`)
   if (task.owner !== message.by.principal) parts.push(`owner ${named(task.owner)}`)
   return parts.join(' · ')
 }
@@ -485,6 +486,7 @@ export function formatEvent(event: BoardEventView): string {
       return `#${message.id}  ${where}  ✗ didn't reach ${event.payload.target}: ${event.payload.error}`
     case 'task.created':
     case 'task.assigned':
+    case 'task.offered':
     case 'task.priority_changed':
     case 'task.needs_changed':
     case 'task.ready':
@@ -520,11 +522,13 @@ function taskEvent(event: Extract<BoardEventView, { type: `task.${string}` }>): 
   const more = (...parts: (string | null | undefined)[]) => parts.filter((part): part is string => !!part).map((part) => ` · ${part}`).join('')
   switch (event.type) {
     case 'task.created':
-      return `created${by}${more(event.payload.work, event.payload.needs.length ? `needs ${event.payload.needs.map((id) => `#${id}`).join(' ')}` : null, event.payload.for !== null ? `for ${profileOf(event.payload.for)}` : null)}`
+      return `created${by}${more(event.payload.work, event.payload.needs.length ? `needs ${event.payload.needs.map((id) => `#${id}`).join(' ')}` : null, event.payload.for !== null ? `for ${profileOf(event.payload.for)}` : null, event.payload.offer?.length ? `offered to ${event.payload.offer.join(' ')}` : null)}`
     case 'task.stage_changed':
       return `${event.payload.from} to ${event.payload.to}${by}${more(noteLine(event.payload.reason))}`
     case 'task.assigned':
       return event.payload.for !== null ? `assigned to ${profileOf(event.payload.for)}${by}` : `unassigned${by}`
+    case 'task.offered':
+      return event.payload.offer.length ? `offered to ${event.payload.offer.join(' ')}${by}` : `offered to no one${by}`
     case 'task.priority_changed':
       return `priority ${event.payload.priority}${by}`
     case 'task.needs_changed':

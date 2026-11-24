@@ -99,6 +99,7 @@ describe("vercel()'s tasks", () => {
       'binds a claim to its verified owner and fences an older generation even with the same token': 'skipped: not kept here: no task authority',
       'records an immutable handoff and accepts only one of two replacements naming the same predecessor': 'skipped: not kept here: no task authority',
       'keeps a task assigned to a profile for that actor alone': 'passed',
+      'lets a named actor claim an unassigned task without naming its owner': "skipped: not kept here: Vercel's boards don't let a task name who may claim it yet",
       // This run sends no headers of its own: the kit's run with them, in backend-vercel.test.ts, checks it.
       'lets a profile change only the tasks it made, and its principal all of them': "skipped: this run can't call the board with headers of its own",
       // This run sends no x-board-can: the kit's run with headers, in backend-vercel.test.ts, checks it.
@@ -235,7 +236,7 @@ describe("vercel()'s tasks", () => {
     // A task is its root: its ID is the root message's, and it reads as its thread does.
     expect(fix.id).toMatch(/^msg_[0-9a-f-]{36}_1$/)
     expect(fix).toMatchObject({ channel: 'work', text: 'fix CVE-123 in acme/web', re: null, labels: { step: 'fix', 'board.task': 'ready' } })
-    expect(fix.task).toEqual({ state: 'ready', priority: 'normal', owner: JULIAN, by: JULIAN, for: null, needs: [], epoch: 0, claim: null, blocked: null, result: null, reason: null })
+    expect(fix.task).toEqual({ state: 'ready', priority: 'normal', owner: JULIAN, by: JULIAN, for: null, offer: [], needs: [], epoch: 0, claim: null, blocked: null, result: null, reason: null })
     // What it waits for is named by its root's ID, as the board names a task, where the API names its thread.
     expect(review.task).toMatchObject({ state: 'waiting', needs: [fix.id], for: `${JULIAN}+reviewer` })
     expect(review.labels['board.task']).toBe('waiting')

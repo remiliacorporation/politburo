@@ -116,9 +116,10 @@ export const indexOf = (value: string): number | null => (/^(0|[1-9]\d{0,15})$/.
 
 /** A task as every reader sees it: the tasks it waits for as refs, and its claim without the token, hashed or not. */
 export function taskView(task: Task): TaskView {
-  const { needs, claim, attention, handoff, parked, evidence: _evidence, releases: _releases, ...shown } = task
+  const { needs, claim, attention, handoff, parked, evidence: _evidence, releases: _releases, offer, ...shown } = task
   return {
     ...shown,
+    offer: offer ?? [],
     priority: task.priority ?? DEFAULT_TASK_PRIORITY,
     ...(task.work ? { work: { ...task.work } } : {}),
     ...(attention ? { attentionId: attention.id, attentionStatus: attention.status } : {}),
