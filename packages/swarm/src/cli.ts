@@ -5,7 +5,7 @@ import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { skillsMain } from './skills/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm sprite routes [--party FILE] [--repo FILE]'
 
 class ReadError extends Error {}
 
@@ -100,6 +100,7 @@ const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<n
   check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
   trackers: () => import('./trackers/cli.ts'),
+  sprite: () => import('./sprite/cli.ts'),
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
