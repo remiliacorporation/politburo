@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { routes } from '../api/routes.ts'
+import { CompleteWithEvidenceBody, completeWithEvidencePath, routes } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
 import type { Method } from '../api/protocol.ts'
 import { ATTACHMENT_BYTES_MAX } from '../contract/schemas.ts'
@@ -22,11 +22,12 @@ export type Match = {
   params: Record<string, string>
   /** The client chose a bound-only route. */
   requiresTaskBinding?: true
+  requiresWorkCommit?: true
   /** At the mount itself: discovery. Any unknown GET lands here too, so it teaches no mount. */
   root?: true
 }
 
-type Pattern = { method: string; pattern: RegExp; names: string[]; target: Target; segments: number; literals: number; own: boolean; requiresTaskBinding?: true }
+type Pattern = { method: string; pattern: RegExp; names: string[]; target: Target; segments: number; literals: number; own: boolean; requiresTaskBinding?: true; requiresWorkCommit?: true }
 
 export const INVITE_METHODS: ReadonlySet<Method> = new Set<InviteMethod>(['invites', 'createInvite', 'revokeInvite', 'redeemInvite'])
 
@@ -46,6 +47,10 @@ export const OPERATIONAL_INBOX_METHODS = ['sendOperationalMessage', 'readOperati
 export type OperationalInboxMethod = (typeof OPERATIONAL_INBOX_METHODS)[number]
 export const isOperationalInboxMethod = (name: Method): name is OperationalInboxMethod => (OPERATIONAL_INBOX_METHODS as readonly Method[]).includes(name)
 
+const WORK_EVIDENCE_METHODS = ['workEvidence', 'submitWork', 'recordEvidence', 'overrideEvidence', 'resolveWorkEdge'] as const
+export type WorkEvidenceMethod = (typeof WORK_EVIDENCE_METHODS)[number]
+export const isWorkEvidenceMethod = (name: Method): name is WorkEvidenceMethod => (WORK_EVIDENCE_METHODS as readonly Method[]).includes(name)
+
 /** Every protocol method, by the route it's served at. */
 export const METHODS: readonly Method[] = [
   'discovery', 'me', 'channels', 'createChannel', 'actors', 'channelMessages', 'threads', 'message', 'post', 'posted', 'edit', 'delete', 'react', 'label',
@@ -54,6 +59,7 @@ export const METHODS: readonly Method[] = [
   ...AGENT_OPS_METHODS,
   'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
   'requestTaskAttention', 'taskAttention', 'answerTaskAttention',
+  ...WORK_EVIDENCE_METHODS,
   'grants', 'createGrant', 'createGrants', 'updateGrant', 'explain', 'revokeGrant', 'schemas', 'schema', 'createSchema', 'upload', 'attachment', 'uploadStart', 'uploadFinish', 'watchers', 'register', 'matches', 'ack', 'events',
   ...INVITE_METHODS,
   'syncImport', 'syncReceipt', 'syncThread', 'syncFind', 'syncCopies', 'inboxPush', 'inboxNext', 'inboxAck', 'inbox',
@@ -94,6 +100,7 @@ export function createRouter(backendRoutes: readonly BackendRoute[], basePath?: 
     ...BOARD_ROUTES.map((name) => compile(routes[name].method, routes[name].path, { kind: 'board', name }, false)),
     ...METHODS.filter((name) => name !== 'discovery').map((name) => compile(routes[name].method, routes[name].path, { kind: 'protocol', name }, false)),
     ...boundTaskRoutes.map(({ name, definition }) => ({ ...compile(definition.method, definition.path, { kind: 'protocol', name }, false), requiresTaskBinding: true as const })),
+    { ...compile('POST', completeWithEvidencePath, { kind: 'protocol', name: 'completeTask' }, false), requiresWorkCommit: true as const },
     ...backendRoutes.map((route) => compile(route.method, route.path, { kind: 'backend', route }, true)),
   ].sort((a, b) => b.segments - a.segments || b.literals - a.literals || Number(b.own) - Number(a.own))
 
@@ -106,7 +113,11 @@ export function createRouter(backendRoutes: readonly BackendRoute[], basePath?: 
       return null
     }
     const first = candidate.names[0]
-    return { target: candidate.target, base, param: first === undefined ? null : params[first]!, params, ...(candidate.requiresTaskBinding && { requiresTaskBinding: true }) }
+    return {
+      target: candidate.target, base, param: first === undefined ? null : params[first]!, params,
+      ...(candidate.requiresTaskBinding && { requiresTaskBinding: true }),
+      ...(candidate.requiresWorkCommit && { requiresWorkCommit: true }),
+    }
   }
   const discovery = (base: string): Match => ({ target: { kind: 'protocol', name: 'discovery' }, base, param: null, params: {}, root: true })
 
@@ -177,17 +188,18 @@ export function openapi() {
   const definitions = [
     ...Object.entries(routes).map(([name, definition]) => ({ name, definition, bound: false })),
     ...boundTaskRoutes.map(({ name, definition }) => ({ name, definition, bound: true })),
+    { name: 'completeTaskWithEvidence', definition: { method: 'POST', path: completeWithEvidencePath, body: CompleteWithEvidenceBody }, bound: false },
   ]
   for (const { name, definition, bound } of definitions) {
     const path = definition.path.replace(/:(\w+)/g, '{$1}')
     const operation: Record<string, unknown> = { operationId: bound ? `${name}Bound` : name }
-    if (name === 'claimReadyTask') operation.description = 'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest.'
+    if (name === 'claimReadyTask') operation.description = 'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. A staged task must be scoped, and a stale evidence release grants no claim.'
     if ('query' in definition) operation['x-query-schema'] = z.toJSONSchema(definition.query, { io: 'input' })
     if ('body' in definition) {
       const schema = z.toJSONSchema(definition.body, { io: 'input' })
       if (bound) schema.required = [...(schema.required ?? []), 'binding', ...(name === 'createTask' ? ['claim'] : [])]
       operation.requestBody = {
-        ...(bound || ('bodyRequired' in definition && definition.bodyRequired) ? { required: true } : {}),
+        ...(bound || ('bodyRequired' in definition && definition.bodyRequired) || name === 'completeTaskWithEvidence' ? { required: true } : {}),
         ...('bodyDescription' in definition ? { description: definition.bodyDescription } : {}),
         content: { 'application/json': { schema } },
       }

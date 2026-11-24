@@ -24,7 +24,7 @@ import { politburo, type Made } from './politburo.ts'
  */
 
 /** What a check is about, for the report's headings. */
-export type CheckGroup = 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-lifecycle' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
+export type CheckGroup = 'core' | 'network-pause' | 'paging' | 'search' | 'schedules' | 'tasks' | 'work-evidence' | 'work-lifecycle' | 'grants' | 'invites' | 'schemas' | 'attachments' | 'watchers' | 'sync' | 'agents' | 'operational-inbox'
 
 export type CheckResult = {
   group: CheckGroup
@@ -46,6 +46,12 @@ export type ConformanceOptions = {
   channel?: string
   /** Also check network pause. Use an isolated, running board: a pause fences all existing claims. */
   networkPause?: boolean
+  /**
+   * A handle on the same board for a different principal that its policy lets record passing
+   * `tests` and `review` evidence and resolve edges. The run's principal submits and completes.
+   * The check skips if other attestation gates are advertised, since it cannot override them.
+   */
+  workEvidence?: { second: Board }
   /**
    * The same board, with this run's credential and an `x-board-can` header that narrows it to
    * `can` (`conformance=read`), as a proxy holding the credential sends it: the checks of a
@@ -184,9 +190,12 @@ export type Context = {
   principals: Principals
   /** The board's own Vercel team, as its discovery names it. */
   team: string | null
+  workEvidence?: Discovery['workEvidence']
+  workEvidenceSecond?: Board
   workLifecycle: boolean
   accessFence: boolean
   agentOps: boolean
+  agentIntents?: boolean
   taskClaimHold: boolean
 }
 
@@ -200,7 +209,13 @@ export type Check = {
   needsScope?: true
   /** Omit the check unless advertised. Once advertised, a 501 is a failure. */
   requires?: 'task_attention'
+  /** Omit the check when it does not apply to this configuration. */
+  applies?: (ctx: Context) => boolean
   run: (ctx: Context) => Promise<void | string>
+  /** This check needs to complete a task with only the run's own principal. */
+  needsUngatedCompletion?: true
+  /** This check expects completion alone to make a dependent ready. */
+  needsAutomaticRelease?: true
 }
 
 /**
@@ -211,7 +226,10 @@ export type Check = {
  * under a pattern at once: a board with no index for either, as Vercel's has none, answers
  * `not_supported`. A board that's meant to keep something and doesn't yet answers otherwise, and fails.
  */
+// Advertised work evidence is not optional, including a 501 from a release.
 const OPTIONAL = new Set<CheckGroup>(['search', 'schedules', 'tasks', 'grants', 'schemas', 'attachments'])
+
+const hasGatedReleases = (ctx: Context) => !!(ctx.workEvidence?.gates.length && ctx.workEvidence.releaseDependencies)
 
 const needRoot = (ctx: Context) => {
   check(ctx.root && ctx.reply, "posting failed, so there's nothing to read")
@@ -1382,6 +1400,7 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'gives a task to one of the claims that race for it, and takes its result',
+    needsUngatedCompletion: true,
     run: async (ctx) => {
       const { task: root } = await task(ctx, 'conformance: a task to race for')
       const racing = await Promise.allSettled([1, 2, 3].map(() => ctx.board.tasks.claim(root.id, { lease: 60 })))
@@ -1455,8 +1474,89 @@ const CHECKS: Check[] = [
     },
   },
   {
+    group: 'work-evidence',
+    name: 'refuses completion without commit evidence on a gated board',
+    async run(ctx) {
+      if (!ctx.workEvidence?.gates.length) return 'completion gates not enabled here'
+      const { task: root } = await task(ctx, 'conformance: evidence required')
+      const claim = await ctx.board.tasks.claim(root.id)
+      await rejects(claim.complete(), 409, 'evidence_required', 'completion without a submission')
+      const commit = 'a'.repeat(40)
+      await claim.submit(commit, 'conformance/submission')
+      const work = await ctx.board.tasks.evidence(root.id)
+      same(work.submission?.commit, commit, 'the submitted commit')
+      same(work.submission?.by.principal, ctx.me.principal, 'the verified submitter')
+      await rejects(claim.complete(undefined, { commit }), 409, 'evidence_required', 'completion with only a submission')
+      await claim.release()
+    },
+  },
+  {
+    group: 'work-evidence',
+    name: 'keeps a dependent waiting after completion and readies it on explicit release',
+    applies: (ctx) => !hasGatedReleases(ctx),
+    async run(ctx) {
+      if (!ctx.workEvidence?.releaseDependencies) return 'evidence releases not enabled here'
+      const { task: need } = await task(ctx, 'conformance: prerequisite with evidence')
+      const { task: dependent } = await task(ctx, 'conformance: explicit release', { needs: [need.id] })
+      const claim = await ctx.board.tasks.claim(need.id)
+      const commit = 'a'.repeat(40)
+      await claim.submit(commit, 'conformance/prerequisite')
+      await claim.complete(undefined, { commit })
+      await rejects(ctx.board.tasks.claim(dependent.id), 409, 'task_waiting', 'claiming an unresolved dependent')
+      same((await ctx.board.tasks.evidence(dependent.id)).releases.length, 0, 'releases after completion alone')
+      const { submission } = await ctx.board.tasks.evidence(need.id)
+      check(submission, 'the completed prerequisite should have its submission')
+      const { message: waiting } = await ctx.board.thread(dependent.id)
+      const release = { needId: need.id, evidenceId: submission.id }
+      const resolved = await ctx.board.tasks.resolve(dependent.id, { ...release, ifVersion: waiting.version })
+      same(resolved.task?.state, 'ready', 'the dependent after explicit release')
+      alike((await ctx.board.tasks.evidence(dependent.id)).releases, [release], 'the recorded release')
+    },
+  },
+  {
+    group: 'work-evidence',
+    name: 'releases a dependency explicitly after gated completion',
+    applies: hasGatedReleases,
+    async run(ctx) {
+      const second = ctx.workEvidenceSecond
+      if (!second) return 'pass workEvidence.second to check gated completion and explicit release'
+      const gates = ctx.workEvidence!.gates
+      if (gates.some((gate) => gate !== 'submission' && gate !== 'tests' && gate !== 'review'))
+        return 'this check cannot override additional attestation gates'
+      check((await second.me()).principal !== ctx.me.principal, 'workEvidence.second must use a different principal')
+      const { task: need } = await task(ctx, 'conformance: gated prerequisite')
+      const { task: dependent } = await task(ctx, 'conformance: explicit release after gates', { needs: [need.id] })
+      const claim = await ctx.board.tasks.claim(need.id)
+      let completed = false
+      try {
+        const commit = 'a'.repeat(40)
+        await claim.submit(commit, 'conformance/submission')
+        for (const gate of gates) {
+          if (gate === 'tests' || gate === 'review')
+            await second.tasks.recordEvidence(need.id, { commit, round: claim.epoch, gate, verdict: 'pass', artifactRef: `conformance/${gate}` })
+        }
+        same((await claim.complete(undefined, { commit })).task?.state, 'completed', 'the prerequisite after gated completion')
+        completed = true
+        const { message: waiting } = await ctx.board.thread(dependent.id)
+        same(waiting.task?.state, 'waiting', 'the dependent after gated completion alone')
+        same((await ctx.board.tasks.evidence(dependent.id)).releases.length, 0, 'releases after completion alone')
+        const { submission } = await ctx.board.tasks.evidence(need.id)
+        check(submission, 'the completed prerequisite should have its submission')
+        const release = { needId: need.id, evidenceId: submission.id }
+        const resolved = await second.tasks.resolve(dependent.id, { ...release, ifVersion: waiting.version })
+        same(resolved.task?.state, 'ready', 'the dependent after explicit release')
+        same((await ctx.board.thread(dependent.id)).message.task?.state, 'ready', 'the dependent re-read after explicit release')
+        alike((await ctx.board.tasks.evidence(dependent.id)).releases, [release], 'the recorded release')
+      } finally {
+        if (!completed) await claim.release().catch(() => {})
+      }
+    },
+  },
+  {
     group: 'tasks',
     name: 'holds a task until the tasks it needs complete, which a failed or canceled one never does',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: first } = await task(ctx, 'conformance: a prerequisite')
       const { task: second } = await task(ctx, 'conformance: a task that waits for it', { needs: [first.id] })
@@ -1551,6 +1651,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'says task.ready each time a task that needs others becomes ready: right after it is made or unblocked, once they have completed',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: first } = await task(ctx, 'conformance: a prerequisite that completes first')
       await (await ctx.board.tasks.claim(first.id, { lease: 60 })).complete()
@@ -1601,6 +1703,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'changes what a task needs: it waits for the new ones, is ready once they have completed, and at once with none',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: done } = await task(ctx, 'conformance: a prerequisite that has completed')
       await (await ctx.board.tasks.claim(done.id, { lease: 60 })).complete()
@@ -1682,6 +1786,7 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'changes what a task needs only while no one holds it and it has not finished',
+    needsUngatedCompletion: true,
     run: async (ctx) => {
       const { task: other } = await task(ctx, 'conformance: something to wait for')
       const { task: root } = await task(ctx, 'conformance: a task someone holds, whose needs stay')
@@ -1708,6 +1813,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'makes several tasks in one write, in the order given: each waits for the ones it names, of the batch or there already, and an id makes them once',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: done } = await task(ctx, 'conformance: a prerequisite that has completed')
       await (await ctx.board.tasks.claim(done.id, { lease: 60 })).complete()
@@ -1883,9 +1990,14 @@ const CHECKS: Check[] = [
       same(second.epoch, first.epoch + 1, 'the next generation')
       check(second.token === first.token && first.token === token, 'both generations should use the supplied token')
       await rejects(first.complete(), 409, 'claim_lost', 'settling a previous generation with the current token')
-      const settled = await second.complete()
-      if (ctx.workLifecycle) same(settled.task?.work?.stage, 'handoff', 'the stage after settling the current generation')
-      else same(settled.task?.state, 'completed', 'the result of settling the current generation')
+      if (ctx.workEvidence?.gates.length) {
+        await rejects(second.complete(), 409, 'evidence_required', 'completing a bound claim without evidence')
+        same((await second.release()).task?.state, 'ready', 'the result of releasing the current generation')
+      } else {
+        const settled = await second.complete()
+        if (ctx.workLifecycle) same(settled.task?.work?.stage, 'handoff', 'the stage after settling the current generation')
+        else same(settled.task?.state, 'completed', 'the result of settling the current generation')
+      }
     },
   },
   {
@@ -2110,7 +2222,9 @@ const CHECKS: Check[] = [
       for (const { message } of [urgent!, laterUrgent!, high!, first!, low!, lowest!]) {
         const claim = await ctx.board.tasks.claim({ channel: ctx.channel, label: labels })
         same(claim?.task.id, message.id, 'the next task by priority and age')
-        await claim!.complete()
+        // Take it out of the queue without requiring an independent attester on a gated board.
+        if (ctx.workEvidence?.gates.length) await claim!.fail('conformance: priority checked')
+        else await claim!.complete()
       }
     },
   },
@@ -2140,6 +2254,8 @@ const CHECKS: Check[] = [
   {
     group: 'tasks',
     name: 'shows a feed that filters on board.task=ready a task becoming ready and being claimed, and never a token',
+    needsUngatedCompletion: true,
+    needsAutomaticRelease: true,
     run: async (ctx) => {
       const { task: first } = await task(ctx, 'conformance: a prerequisite to watch')
       const { task: second } = await task(ctx, 'conformance: a task to watch become ready', { needs: [first.id] })
@@ -3258,6 +3374,9 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
     },
     team: info.team_id ?? null,
     agentOps: info.agent_ops === true,
+    workEvidence: info.workEvidence,
+    ...(options.workEvidence ? { workEvidenceSecond: options.workEvidence.second } : {}),
+    agentIntents: info.agent_intents === true,
     workLifecycle: info.workLifecycle === 1,
     accessFence: info.accessFence === 1,
     taskClaimHold: info.task_claim_hold === true,
@@ -3270,13 +3389,19 @@ export async function conformance(board: Board, options: ConformanceOptions = {}
     ] : CHECKS
     const selected = options.networkPause ? [NETWORK_PAUSE, ...compatible] : compatible
     for (const probe of selected) {
-      const { group: original, name, requires, taskAuthority, staged, needsScope, run } = probe
+      const { group: original, name, requires, applies, taskAuthority, staged, needsScope, run, needsUngatedCompletion, needsAutomaticRelease } = probe
       const group = ctx.workLifecycle && (taskAuthority || staged) ? 'work-lifecycle' : original
       if (requires && info[requires] !== true) continue
+      if (group === 'work-evidence' && !ctx.workEvidence) continue
+      if (applies && !applies(ctx)) continue
       ctx.running = `${group}/${name}`
       try {
         if (ctx.workLifecycle && !ctx.accessFence && (needsScope || (group === 'work-lifecycle' && probe !== NO_ACCESS_FENCE))) throw new Skip(NEEDS_ACCESS_FENCE)
-        const skipped = await run(ctx)
+        const skipped = needsUngatedCompletion && ctx.workEvidence?.gates.length
+          ? 'this check cannot satisfy completion gates with its one principal'
+          : needsAutomaticRelease && ctx.workEvidence?.releaseDependencies
+            ? 'this check requires completion alone to release dependencies'
+            : await run(ctx)
         checks.push(skipped ? { group, name, status: 'skipped', detail: skipped } : { group, name, status: 'passed' })
       } catch (error) {
         if (error instanceof Skip) checks.push({ group, name, status: 'skipped', detail: error.message })

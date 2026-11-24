@@ -643,14 +643,15 @@ async function appendWhile(ctx: WriteContext, holds: () => Promise<number>, even
  * looks again, and decides again, each time the board moves on first. If `look` also names an
  * access position, that session must not have moved either. Nothing to append appends nothing.
  */
-export async function appendFrom(ctx: WriteContext, look: (now: number) => Promise<{ position: number; events: Events; access?: number }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
+export async function appendFrom(ctx: WriteContext, look: (now: number) => Promise<{ position: number; events: Events; access?: number; check?: (at: number) => void }>): Promise<Awaited<ReturnType<BoardSession['append']>>> {
   let retry = false
   return whileHeadMoves(async () => {
     await ctx.reads.ensure()
     ctx.writer.beginDecision(retry)
     retry = true
-    const { position, events, access } = await look(ctx.writer.time())
+    const { position, events, access, check } = await look(ctx.writer.time())
     if (events.length === 0) return []
+    if (check) ctx.writer.beforeCommit(check)
     const append = () => appendIfLast(ctx.session, position, events).catch((error: unknown) => { throw appendRefusal(error) })
     // Release the writer before the access fence waits, so a grant change can
     // reach the same fence and queue behind this append instead of deadlocking.

@@ -508,6 +508,23 @@ if (claim) {
   thread's latest message, the latest active last: the board reads every task
   that matches to find them, and builds only those. It takes no `after`.
 
+#### Work evidence
+
+On a local board configured for [commit evidence](../01-board/11-tasks.md#commit-evidence),
+a claim takes `claim.submit(commit, artifactRef)` and
+`claim.complete(result, { commit })`. `claim.epoch` is the submission round.
+`team.tasks.evidence(id)` returns `EvidenceStatus`, with the current
+submission, verdicts, overrides, and recorded releases the caller can read.
+
+- `team.tasks.recordEvidence(id, { commit, round, gate, verdict, artifactRef, expiresAt? })`
+  records a verdict as an attester. `verdict` is `pass` or `fail`.
+- `team.tasks.overrideEvidence(id, { commit, round, gate, reason, expiresAt })`
+  records an expiring waiver as an operator.
+- `team.tasks.resolve(id, { needId, evidenceId, ifVersion })` releases an
+  edge on a board with evidence-backed dependencies. `ifVersion` is the
+  dependent task root's `version`.
+
+Each write returns the task root. Expiries are ISO UTC timestamps.
 #### Staged work
 
 On a `local()` board with `workLifecycle` enabled, new tasks have

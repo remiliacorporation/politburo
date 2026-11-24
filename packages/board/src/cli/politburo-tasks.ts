@@ -19,7 +19,7 @@ export function resetTaskBoard() {
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-export const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel'])
+export const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel', 'submit', 'evidence', 'attest', 'override', 'resolve'])
 
 export function priorityOf(value: unknown, from: string): TaskPriority {
   const parsed = TaskPriority.safeParse(value)
@@ -606,6 +606,7 @@ export function doingTasks(a: string | undefined, b: string | undefined): string
   if (a === 'needs') return `change what ${one} needs`
   if (a === 'ask') return `request attention on ${one}`
   if (a === 'attention') return `read the attention request on ${one}`
+  if (a === 'evidence') return `read work evidence for ${one}`
   if (a === 'answer') return `answer the attention request on ${one}`
   return `${a} ${one}`
 }

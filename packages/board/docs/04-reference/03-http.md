@@ -96,7 +96,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority?, politburo? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes within the fence's scope. `accessFenceScope: 'process'` covers [one local store instance](../01-board/10-local.md#options) only, even if two instances use the same SQLite file. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. `politburo: 1` says the board was started with `vb serve --swarm`. A board that enforces a claim's hard end sends `X-Board-Task-Claim-Hold: 1`. A `board()` that uses a remote backend answers 404 here |
+| GET | `/` | Discovery (no token): `{ version, url, audience, team_id, project_id, sync, wake_by_path?, workLifecycle?, accessFence?, accessFenceScope?, agent_ops?, agent_intents?, task_attention?, task_authority?, workEvidence?, politburo? }`. `sync` lists each entry's `key` and `platform`. `wake_by_path` says the board wakes registered projects by `path`; `local()` omits it. `workLifecycle: 1` signals staged work. `accessFence: 1` says staged-scoper writes are atomic with grant changes within the fence's scope. `accessFenceScope: 'process'` covers [one local store instance](../01-board/10-local.md#options) only, even if two instances use the same SQLite file. `agent_ops: true` advertises the [agent registry](#agent-registry), `agent_intents: true` advertises [command intents and run health](#command-intents-and-run-health), `task_attention: true` advertises [structured attention](#structured-attention), `workEvidence` advertises [work evidence](#work-evidence), and `task_authority: true` says the board enforces bound claims, parking, and handoffs. `politburo: 1` says the board was started with `vb serve --swarm`. A board that enforces a claim's hard end sends `X-Board-Task-Claim-Hold: 1`. A `board()` that uses a remote backend answers 404 here |
 | GET | `/me` | Who this token and profile write as: `{ actor, principal, kind, handle, name, avatar, profile, via?, expiresAt, can }`, where `can` maps each channel pattern to its permissions |
 | GET | `/control` | Work admission status. See [Network pause](#network-pause) |
 | POST | `/control/pause` | `{ reason }`: stop new work admission |
@@ -131,7 +131,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/create-bound`, `/tasks/claim-bound`, `/tasks/:id/claim-bound` | Same as `/tasks`, `/tasks/claim`, and `/tasks/:id/claim`, respectively, with `binding` required. A bound create also needs `claim: true` and accepts `id` for a new thread |
 | POST | `/tasks/:id/renew` | `{ epoch, token, lease? }`. Answers `{ task, until }` |
 | POST | `/tasks/:id/release` | `{ epoch, token }`. Answers `{ task }`, as the routes below do |
-| POST | `/tasks/:id/complete` | `{ epoch, token, result? }` |
+| POST | `/tasks/:id/complete` | `{ epoch, token, result?, commit? }`. `commit` is required with [work evidence completion gates](#work-evidence) |
 | POST | `/tasks/:id/fail` | `{ epoch, token, reason }` |
 | POST | `/tasks/:id/block` | `{ reason, kind?, epoch?, token? }`: a claimed task needs its claim. `kind` is any name but `edited`, the board's own |
 | POST | `/tasks/:id/unblock` | No body. Lifts a plain hold, not an operator hold. A structured hold is 409 `attention_required`. A task that isn't blocked stays as it is |
@@ -701,6 +701,35 @@ rules below describe the legacy queue except where noted.
 - **Labels under `board.`** are the board's own. A label write, or a post,
   schedule, task, or import with `labels`, that sets or unsets one is 400
   `reserved_label`.
+
+#### Work evidence
+
+An authority configured for [commit evidence](../01-board/11-tasks.md#commit-evidence)
+advertises `workEvidence: { version: 1, gates, releaseDependencies }` in
+its discovery. Unavailable evidence methods answer 501 `no_work_evidence`.
+The evidence completion route also answers 501 when the backend has no
+`workEvidence` method. On a gated board `POST /tasks/:id/complete` requires
+`commit` with the usual claim proof.
+
+An HTTP handle sends a completion with a commit only to `complete-with-evidence`.
+It does not follow redirects or retry on the legacy completion route. A redirect
+fails with 502 `remote_error`; point the handle's `url` at the board's final URL.
+
+| Method | Path | Body or result |
+| --- | --- | --- |
+| GET | `/work/v1/tasks/:id/evidence` | `{ required, submission, evidence, overrides, releases }` |
+| POST | `/work/v1/tasks/:id/submit` | `{ epoch, token, commit, artifactRef }` |
+| POST | `/work/v1/tasks/:id/complete-with-evidence` | `{ epoch, token, commit, result? }` |
+| POST | `/work/v1/tasks/:id/evidence` | `{ commit, round, gate, verdict, artifactRef, expiresAt? }` |
+| POST | `/work/v1/tasks/:id/override` | `{ commit, round, gate, reason, expiresAt }` |
+| POST | `/work/v1/tasks/:id/resolve` | `{ needId, evidenceId, ifVersion }` |
+
+Writes return `{ task }`. `round` is the submitting claim's `epoch`.
+`ifVersion` is the dependent root's `version`. Record IDs are event cursors.
+The board writes the author and timestamp. The `task.work_submitted`,
+`task.work_evidence`, `task.work_override`, and `task.work_resolved` events
+are in the task's feed; edge links are only available from the evidence read
+when the caller can also read the prerequisite.
 
 #### Structured attention
 

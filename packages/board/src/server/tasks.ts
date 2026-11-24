@@ -6,6 +6,7 @@ import { LEASE_DEFAULT_S, type MessageView, type TaskBinding, type TaskClaim, ty
 import type { Protocol } from '../api/protocol.ts'
 import type { AttentionAnswerBody, AttentionDraft, AttentionReceipt, AttentionResponders, AttentionView, RequestAttentionBody } from '../contract/attention.ts'
 import { LEASES_SESSION, leasesContract, type LeaseEvents } from '../contract/contract.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
 import { ALONG_MAX, type BoardEvent } from '../contract/events.ts'
 import { foldMessages, workCanClaim, workTerminal, type Message, type MessagesState, type Task } from '../contract/folds.ts'
 import { actorsReducer, channelsReducer, type WorkState } from '../contract/reducers.ts'
@@ -13,7 +14,8 @@ import { DEFAULT_TASK_PRIORITY, OPEN_TASK_STATES, priorityRank, TASK_BATCH_MAX, 
 import { batchPlan, type BatchNeed } from '../contract/task-batch.ts'
 import { authorize, type Access, type Permission } from './access.ts'
 import type { BoardBinding } from './backend.ts'
-import { badRequest, batchTooLarge, forbidden, HttpError, noAccessFence, notFound } from './errors.ts'
+import { badRequest, batchTooLarge, forbidden, HttpError, noAccessFence, noWorkEvidence, notFound } from './errors.ts'
+import { createEvidence, type UnreadableEdge } from './evidence.ts'
 import { indexOf, ref, toMessageFilter, view, whoIs } from './feed.ts'
 import type { MessageFilter, ThreadSummary } from '../store/types.ts'
 import { appendFrom, authorizeMessage, movedOn, ownedBy, seenFor, untilApplied, type Along, type AlongEach, type Events, type Identity, type WriteContext } from './writes.ts'
@@ -67,9 +69,16 @@ const PAGE = 500
 
 /** A task's root: the message that carries it. */
 type Root = Message & { task: Task }
-type Change = Events | { events: Events; access?: number }
+type Change = Events | { events: Events; access?: number; check?: (at: number) => void }
 
 type AttentionChange = { task: MessageView; attention: AttentionView }
+type EdgeOptions = { access?: Access; but?: number; unreadable?: UnreadableEdge }
+
+/** Re-run the verdict at append time and look again if the clock changed it. */
+function atAppend<T>(verdict: (now: number) => T, now: number) {
+  const decided = verdict(now)
+  return { now, decided, check: (at: number) => { if (!isDeepStrictEqual(verdict(at), decided)) throw movedOn() } }
+}
 
 /** What a claim's own writes show: the `epoch` and `token` its claim answered. */
 type Proof = { epoch: number; token: string }
@@ -171,9 +180,18 @@ function ownActor(owner: string, actor: string | null | undefined): string | nul
  * Tasks on a local board: a thread with a state, kept on its root. Every write here is one
  * conditional append: it reads the task as the tables have it, decides, and lands only while that
  * read is still the log's last word, so of writes that race, one lands and the rest look again.
- * A claim's lease is timed outside the board log, which holds only what came of it.
+ * The log only holds what came of a lease or evidence expiry. A write that requires one to still
+ * be current rechecks inside the append. A write that requires a lease to have already lapsed
+ * cannot be invalidated by more time passing.
  */
-export function createTasks(options: { store?: A2Store | undefined; scheduler?: A2Scheduler | undefined; workLifecycle?: WorkLifecycleOptions | undefined; attentionResponders?: AttentionResponders | undefined }) {
+export function createTasks(options: {
+  store?: A2Store | undefined
+  scheduler?: A2Scheduler | undefined
+  workLifecycle?: WorkLifecycleOptions | undefined
+  attentionResponders?: AttentionResponders | undefined
+  workEvidence?: EvidencePolicy | undefined
+}) {
+  const evidence = createEvidence(options.workEvidence)
   const scopers = options.workLifecycle && new Set(options.workLifecycle.scopers)
   const initialWork = scopers ? { work: 'proposed' as const } : {}
   const requireScope = () => { throw conflict('work_lifecycle_required', 'new work must be scoped before it can be claimed') }
@@ -304,8 +322,8 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       if (!found) throw notFound(`message not found: #${id}`, 'message_not_found')
       read.before = found
       const decision = await decide(found, position, now)
-      const { events, access } = Array.isArray(decision) ? { events: decision } : decision
-      return { position, access, events: events.length > 0 && seen ? [seen, ...events] : events }
+      const { events, access, check } = Array.isArray(decision) ? { events: decision, access: undefined, check: undefined } : decision
+      return { position, access, ...(check ? { check } : {}), events: events.length > 0 && seen ? [seen, ...events] : events }
     })
     await untilApplied(ctx, rows)
     return after(read.before!, rows)
@@ -362,10 +380,17 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   }
 
   /** Scoper writes recheck access inside each append look. Legacy writes keep their own checks. */
-  const changeScoperTask = (identity: Identity, id: number, decide: (root: Root, position: number, access: Access, now: number) => Events | Promise<Events>) =>
-    changeTask(identity, id, (root, position, now) => root.task.work
-      ? scoper(identity, root, (access) => decide(root, position, access, now))
-      : decide(root, position, identity.principal.access, now))
+  const changeScoperTask = (identity: Identity, id: number, decide: (root: Root, position: number, access: Access, now: number) => Change | Promise<Change>) =>
+    changeTask(identity, id, async (root, position, now) => {
+      if (!root.task.work) return decide(root, position, identity.principal.access, now)
+      let check: ((at: number) => void) | undefined
+      const scoped = await scoper(identity, root, async (access) => {
+        const decision = await decide(root, position, access, now)
+        if (!Array.isArray(decision)) check = decision.check
+        return Array.isArray(decision) ? decision : decision.events
+      })
+      return check ? { ...scoped, check } : scoped
+    })
 
   function atVersion(root: Root, ifVersion: number) {
     if ((root.version ?? root.id) !== ifVersion) throw conflict('task_version_conflict', `#${root.id} changed since version ${ifVersion}`)
@@ -419,6 +444,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     if (!(await claimedBy(root, identity))) throw claimLost(root.id)
     const until = Date.parse(task.claim!.until)
     writes().writer.beforeCommit((at) => { if (at >= until) throw claimLost(root.id) })
+    return status.pauseEpoch
   }
 
   /**
@@ -433,7 +459,10 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     const { task } = root
     if (task.work && !scopers) throw noLifecycle()
     if (task.work && !workCanClaim(task.work.stage)) throw invalidStage(root, 'claim')
-    if (task.state === 'waiting') throw waiting(root)
+    if (task.state === 'waiting') {
+      if (evidence.releaseDependencies) throw waitingForEvidence(root.id)
+      throw waiting(root)
+    }
     if (task.parked) throw parked(root.id)
     if (task.state === 'blocked') throw conflict('task_blocked', `#${root.id} is held for a person: ${task.blocked!.reason}`)
     if (finished(task)) throw conflict('task_finished', `#${root.id} is ${task.state}`)
@@ -502,12 +531,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   ): { ids: number[]; completed: boolean } {
     for (const [id, value] of named) {
       const need = found.get(id)
-      if (!need?.task || !access.readable(need.channel)) throw invalidNeed(value, "isn't a task")
+      if (!need?.task || !access.readable(need.channel) || (evidence.releaseDependencies && need.deleted)) throw invalidNeed(value, "isn't a task")
       if (need.task.state === 'canceled' || (need.task.work && need.deleted && !(kept?.includes(id) && completedNeed(need))))
         throw invalidNeed(value, 'was canceled or deleted: it can never complete')
     }
     const ids = [...named.keys()]
-    return { ids, completed: ids.every((id) => completedNeed(found.get(id))) }
+    return { ids, completed: ids.every((id) => !evidence.releaseDependencies && completedNeed(found.get(id))) }
   }
 
   /**
@@ -548,17 +577,53 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     }
   }
 
-  /** Whether every task `task` waits for has completed, as of `position`, leaving out `but`, which is completing now. */
-  async function satisfied(task: Task, position: number, but?: number): Promise<boolean> {
+  /** Reads the prerequisites once, leaving out `but` in the legacy completion path. */
+  async function edgesAt(task: Task, position: number, { access, but, unreadable = 'missing' }: EdgeOptions = {}): Promise<(now: number) => boolean> {
     const ids = task.needs.filter((id) => id !== but)
-    if (ids.length === 0) return true
+    if (ids.length === 0) return () => true
     const found = await writes().reads.tables.messagesAt(ids, position)
-    return ids.every((id) => completedNeed(found.get(id)))
+    if (evidence.releaseDependencies) return (at) => evidence.satisfied(task, found, access, at, unreadable)
+    // Gates without explicit releases still fail closed on a prerequisite the caller cannot read.
+    const completed = ids.every((id) => {
+      const need = found.get(id)
+      if (evidence.capability && access && need && !access.readable(need.channel)) return false
+      return completedNeed(need)
+    })
+    return () => completed
+  }
+
+  /** Prerequisite tasks have completed. Evidence freshness is a separate gate. */
+  async function prerequisitesCompleted(task: Task, position: number): Promise<boolean> {
+    if (task.needs.length === 0) return true
+    const found = await writes().reads.tables.messagesAt(task.needs, position)
+    return task.needs.every((id) => completedNeed(found.get(id)))
+  }
+
+  async function satisfied(task: Task, position: number, options?: EdgeOptions | number, now?: number): Promise<boolean> {
+    const edges = typeof options === 'number' ? { but: options } : options
+    return (await edgesAt(task, position, edges))(now ?? writes().writer.time())
+  }
+
+  const waitingForEvidence = (id: number) => conflict('task_waiting', `#${id} needs current evidence releases`)
+  const claimEdgesAt = (task: Task, position: number, access: Access) =>
+    evidence.releaseDependencies ? edgesAt(task, position, { access, unreadable: 'missing' }) : () => true
+  const routeEdgesAt = (task: Task, position: number, access: Access) => edgesAt(task, position, { access, unreadable: 'skip' })
+
+  async function evidenceWrite(identity: Identity, id: number, decide: (root: Root, position: number, now: number) => Change | Promise<Change>) {
+    evidence.checkEnabled()
+    const root = await change(identity, id, (found, position, now) => {
+      if (found.deleted || !identity.principal.access.readable(found.channel)) throw notFound(`message not found: #${id}`, 'message_not_found')
+      if (!found.task) throw notATask(id)
+      return decide(found as Root, position, now)
+    })
+    return { task: await shown(identity, root) }
   }
 
   /** Queue readiness, independent of who may read or claim the task. */
-  async function readyAt(task: Task, position: number, now: number, pauseEpoch: number): Promise<boolean> {
-    return !task.parked && stateNow(task, now, pauseEpoch) === 'ready' && canReady(task) && (!task.work || !!scopers) && (await satisfied(task, position))
+  async function readyAt(task: Task, now: number, pauseEpoch: number): Promise<boolean> {
+    // Evidence is checked on the winner after it is chosen. A stale release blocks that winner
+    // instead of letting the next task in the scan take its place.
+    return !task.parked && stateNow(task, now, pauseEpoch) === 'ready' && canReady(task) && (!task.work || !!scopers)
   }
 
   /** Every root that wears `board.task` as one of `states` and matches `filter`, oldest first, all as of `position`. */
@@ -580,7 +645,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
   async function readied(id: number, position: number): Promise<Events> {
     const events: Events = []
     for await (const root of rootsAt({}, ['waiting'], position))
-      if (canReady(root.task) && root.task.needs.includes(id) && (await satisfied(root.task, position, id))) events.push({ type: 'task.ready', payload: { id: root.id, thread: root.thread } })
+      if (canReady(root.task) && root.task.needs.includes(id) && (await satisfied(root.task, position, { but: id }))) events.push({ type: 'task.ready', payload: { id: root.id, thread: root.thread } })
     return events
   }
 
@@ -652,19 +717,22 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const assigned = assignedTo(task, identity)
         if (!assigned && !(task.for === null && owners.has(task.owner))) continue
         const rank = priorityRank(task.priority)
-        if (rank < best || (rank === best && (bestAssigned || !assigned)) || !(await readyAt(task, position, now, pauseEpoch))) continue
+        if (rank < best || (rank === best && (bestAssigned || !assigned)) || !(await readyAt(task, now, pauseEpoch))) continue
         root = candidate
         best = rank
         bestAssigned = assigned
         if (bestAssigned && best === TaskPriority.options.length - 1) break
       }
-      // Selection may have waited on a page from before a pause (including a pause and resume).
       await openAt(undefined, pauseEpoch)
-      // A caller that stopped waiting takes nothing: a task claimed for no one would sit out its lease.
       if (!root || signal.aborted) return { position, events: [] }
-      const { events, claim } = claiming(root, root.task, identity, input.lease, token, pauseEpoch, binding, now, input.hold)
+      const skipped = root
+      const edges = await claimEdgesAt(skipped.task, position, principal.access)
+      const { decided, check } = atAppend((at) => ({ edges: edges(at) }), now)
+      if (!decided.edges || !(await prerequisitesCompleted(skipped.task, position))) return { position, events: [] }
+      if (signal.aborted) return { position, events: [] }
+      const { events, claim } = claiming(skipped, skipped.task, identity, input.lease, token, pauseEpoch, binding, now, input.hold)
       read.taken = { root, claim }
-      return { position, events: seen ? [seen, ...events] : events }
+      return { position, events: seen ? [seen, ...events] : events, ...(evidence.releaseDependencies ? { check } : {}) }
     })
     if (read.taken === null) return null
     const { root, claim } = read.taken
@@ -870,7 +938,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         for (const thread of page.threads) {
           last = thread.root.id
           const { task } = thread.root
-          if (task && matches(task) && (wanted !== 'ready' || (await readyAt(task, position, now, pauseEpoch)))) found.push(thread)
+          if (task && matches(task) && (wanted !== 'ready' || ((await readyAt(task, now, pauseEpoch)) && (await satisfied(task, position, undefined, now))))) found.push(thread)
           if (!query.latest && found.length === limit) break scan
         }
       }
@@ -909,17 +977,22 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           if (stale(task, pauseEpoch)) throw claimLost(id)
           if (!lapsed(task, now, pauseEpoch) && (await claimedBy(found, identity))) {
             sameBinding(id, binding, current.binding)
-            made.claim = { epoch: task.epoch, token, until: current.until, pauseEpoch, ...(current.binding ? { binding: current.binding } : {}), ...(current.holdUntil ? { holdUntil: current.holdUntil } : {}) }
-            made.replay = true
-            return []
+            if (evidence.releaseDependencies && !(await satisfied(task, position, { access: principal.access }))) throw waitingForEvidence(id)
+            if (!lapsed(task, now, pauseEpoch)) {
+              made.claim = { epoch: task.epoch, token, until: current.until, pauseEpoch, ...(current.binding ? { binding: current.binding } : {}), ...(current.holdUntil ? { holdUntil: current.holdUntil } : {}) }
+              made.replay = true
+              return []
+            }
           }
         }
         claimable(found, identity, pauseEpoch, now)
-        const waits = !(await satisfied(task, position))
-        if (waits) throw waiting(found)
+        const waits = !(await satisfied(task, position, { access: principal.access }))
+        if (waits) throw evidence.releaseDependencies ? waitingForEvidence(id) : waiting(found)
         const claimed = claiming(found, task, identity, input.lease, token, pauseEpoch, binding, now, input.hold)
         made.claim = claimed.claim
-        return claimed.events
+        const edges = await claimEdgesAt(task, position, principal.access)
+        const { check } = atAppend((at) => ({ edges: edges(at) }), now)
+        return evidence.releaseDependencies ? { events: claimed.events, check } : claimed.events
       })
       const claim = made.claim!
       if (made.replay) await openAt(undefined, pauseEpoch)
@@ -956,8 +1029,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       const root = await changeTask(identity, id, async (found, position, now) => {
         await fenced(found, identity, proof, position, now)
         const { holdUntil } = found.task.claim!
+        const edges = await claimEdgesAt(found.task, position, identity.principal.access)
+        const { decided, check } = atAppend((at) => ({ edges: edges(at) }), now)
+        if (!decided.edges) throw waitingForEvidence(id)
         made.until = new Date(Math.min(now + leaseOf(lease), holdUntil === undefined ? Infinity : Date.parse(holdUntil))).toISOString()
-        return [{ type: 'task.renewed', payload: { id, thread: found.thread, epoch: proof.epoch, until: made.until, by: identity.author } }]
+        const events: Events = [{ type: 'task.renewed', payload: { id, thread: found.thread, epoch: proof.epoch, until: made.until, by: identity.author } }]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       await arm(id, proof.epoch, made.until)
       return { task: await shown(identity, root), until: made.until }
@@ -968,14 +1045,16 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
       identity: Identity,
       id: number,
       proof: Proof,
-      how: { type: 'task.released' } | { type: 'task.completed'; result: string | null } | { type: 'task.failed'; reason: string },
+      how: { type: 'task.released' } | { type: 'task.completed'; result: string | null; commit?: string | undefined } | { type: 'task.failed'; reason: string },
     ): Promise<{ task: MessageView }> {
       await taskOf(identity.principal.access, id)
       const root = await changeTask(identity, id, async (found, position, now) => {
         await fenced(found, identity, proof, position, now)
         const about = { id, thread: found.thread, epoch: proof.epoch, by: identity.author }
         if (how.type === 'task.released') {
-          const waits = !(await satisfied(found.task, position))
+          // A stale evidence release leaves the task ready, so it still blocks lower-priority work.
+          // Only a prerequisite that has not completed sends it back to waiting.
+          const waits = !(await prerequisitesCompleted(found.task, position))
           if (Date.parse(found.task.claim!.until) <= now) throw claimLost(id)
           return [{ type: 'task.released', payload: { ...about, ...(waits ? { waiting: true } : {}) } }]
         }
@@ -988,8 +1067,15 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           return [stageChanged(found, identity, 'handoff', how.result ?? 'implementation complete', how.result)]
         }
         if (how.type === 'task.failed') return [{ type: 'task.failed', payload: { ...about, reason: how.reason } }]
-        const ready = await readied(id, position)
-        return [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...ready]
+        const edges = await claimEdgesAt(found.task, position, identity.principal.access)
+        const ready = evidence.releaseDependencies ? [] : await readied(id, position)
+        const pauseEpoch = found.task.claim?.pauseEpoch ?? 0
+        const completion = (at: number) => evidence.completion(found, how.commit, pauseEpoch, at)
+        const { decided, check } = atAppend((at) => ({ edges: edges(at), completion: completion(at)?.code ?? null }), now)
+        if (!decided.edges) throw waitingForEvidence(id)
+        if (decided.completion !== null) throw completion(now)
+        const events: Events = [{ type: 'task.completed', payload: { ...about, result: how.result } }, ...ready]
+        return evidence.capability ? { events, check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1085,10 +1171,14 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
             !(await matchesAttention(found, attention, position)) || attentionExpired(attention, now)) throw staleAttention()
         const option = attention.options.find(({ id }) => id === input.option)
         if (!option) throw badRequest('option is not available on this attention request')
-        const routedTo = option.next === 'fail' ? 'failed' : canReady(task) && (await satisfied(task, position)) ? 'ready' : 'waiting'
+        const edges = option.next === 'fail' || !evidence.releaseDependencies ? () => false : await routeEdgesAt(task, position, principal.access)
+        const { decided, check } = atAppend((at) => edges(at), now)
+        if (attentionExpired(attention, now)) throw staleAttention()
         writes().writer.beforeCommit((at) => { if (attentionExpired(attention, at)) throw staleAttention() })
+        const routedTo = option.next === 'fail' ? 'failed' : evidence.releaseDependencies ? (decided ? 'ready' : 'waiting') : canReady(task) && (await satisfied(task, position, { access: principal.access })) ? 'ready' : 'waiting'
         const receipt: AttentionReceipt = { option: option.id, by: author, at: new Date(now).toISOString(), routedTo }
-        return [{ type: 'task.attention_answered', payload: { id, thread: found.thread, by: author, requestId, epoch: task.epoch, receipt } }]
+        const events: Events = [{ type: 'task.attention_answered', payload: { id, thread: found.thread, by: author, requestId, epoch: task.epoch, receipt } }]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root), attention: attentionView(root.task!.attention!) }
     },
@@ -1103,8 +1193,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (found.task.attention?.status === 'pending') throw conflict('attention_required', `#${id} is held by an attention request`)
         const about = { id, thread: found.thread }
         // The fold puts a task that needs any back to waiting: what it needs may have completed while it was held.
-        const ready = canReady(found.task) && found.task.needs.length > 0 && (await satisfied(found.task, position))
-        return [{ type: 'task.unblocked', payload: { ...about, by: identity.author } }, ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        const ready = canReady(found.task) && found.task.needs.length > 0 && (await satisfied(found.task, position, { access: identity.principal.access }))
+        const edges = evidence.releaseDependencies && found.task.needs.length > 0 ? await routeEdgesAt(found.task, position, identity.principal.access) : null
+        const checked = edges ? atAppend((at) => edges(at), now) : undefined
+        const go = checked ? checked.decided : ready
+        const events: Events = [{ type: 'task.unblocked', payload: { ...about, by: identity.author } }, ...(go ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        return checked ? { events, check: checked.check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1128,8 +1222,12 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
           return [...expired, { type: 'task.parked', payload: { ...about, reason, by, previous: expired.length ? 'ready' : task.state } }]
         }
         if (!task.parked) return []
-        const ready = !task.blocked && canReady(task) && task.needs.length > 0 && (await satisfied(task, position))
-        return [{ type: 'task.unparked', payload: { ...about, reason, by } }, ...(ready ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        const ready = !task.blocked && canReady(task) && task.needs.length > 0 && (await satisfied(task, position, { access: identity.principal.access }))
+        const edges = evidence.releaseDependencies && !task.blocked && task.needs.length > 0 ? await routeEdgesAt(task, position, identity.principal.access) : null
+        const checked = edges ? atAppend((at) => edges(at), now) : undefined
+        const go = checked ? checked.decided : ready
+        const events: Events = [{ type: 'task.unparked', payload: { ...about, reason, by } }, ...(go ? [{ type: 'task.ready' as const, payload: about }] : [])]
+        return checked ? { events, check: checked.check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1182,7 +1280,7 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
     async reopen(identity: Identity, id: number, reason?: string, ifVersion?: number): Promise<{ task: MessageView }> {
       const task = await taskOf(identity.principal.access, id)
       if (!task.task.work) owns(identity, task)
-      const root = await changeScoperTask(identity, id, async (found, position) => {
+      const root = await changeScoperTask(identity, id, async (found, position, access, now) => {
         if (found.task.work) {
           const from = found.task.work.stage
           if (from !== 'done' && from !== 'rejected') throw invalidStage(found, 'reopen')
@@ -1204,8 +1302,11 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         const { task } = found
         if (task.state === 'completed' || task.state === 'canceled') throw conflict('task_finished', `#${id} is ${task.state}`)
         if (task.state !== 'failed') return []
-        const waiting = !(await satisfied(task, position))
-        return [{ type: 'task.reopened', payload: { id, thread: found.thread, by: identity.author, ...(waiting ? { waiting: true as const } : {}) } }]
+        const evidenceEdges = evidence.releaseDependencies ? await routeEdgesAt(task, position, access) : () => true
+        const needsDone = await prerequisitesCompleted(task, position)
+        const { decided, check } = atAppend((at) => ({ evidence: evidenceEdges(at) }), now)
+        const events: Events = [{ type: 'task.reopened', payload: { id, thread: found.thread, by: identity.author, ...(!needsDone || !decided.evidence ? { waiting: true as const } : {}) } }]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root) }
     },
@@ -1248,13 +1349,68 @@ export function createTasks(options: { store?: A2Store | undefined; scheduler?: 
         if (needs.ids.length === task.needs.length && needs.ids.every((need) => task.needs.includes(need))) return []
         await acyclic(access, id, needs.ids.filter((need) => !task.needs.includes(need)), position)
         const about = { id, thread: found.thread }
-        return [
+        const edgeFn = needs.ids.length === 0 || task.state === 'blocked' ? () => false
+          : evidence.releaseDependencies ? await routeEdgesAt({ ...task, needs: needs.ids }, position, principal.access) : () => needs.completed && canReady(task)
+        const { decided, check } = atAppend((at) => edgeFn(at), now)
+        const events: Events = [
           ...expired,
           { type: 'task.needs_changed', payload: { ...about, needs: needs.ids, by: identity.author } },
-          ...(needs.ids.length > 0 && needs.completed && task.state !== 'blocked' && canReady(task) ? [{ type: 'task.ready' as const, payload: about }] : []),
+          ...(decided ? [{ type: 'task.ready' as const, payload: about }] : []),
         ]
+        return evidence.releaseDependencies ? { events, check } : events
       })
       return { task: await shown(identity, root) }
+    },
+
+    workCapability: evidence.capability,
+    async workEvidence(identity: Identity, id: number) {
+      evidence.checkEnabled()
+      const { reads } = writes()
+      const { access } = identity.principal
+      await reads.ensure(id)
+      const position = await reads.tables.position()
+      const root = (await reads.tables.messagesAt([id], position)).get(id)
+      if (!root || root.deleted || !access.readable(root.channel)) throw notFound(`message not found: #${id}`, 'message_not_found')
+      if (!root.task) throw notATask(id)
+      const released = root.task.needs.filter((need) => root.task?.releases?.[need] !== undefined)
+      const needs = released.length ? await reads.tables.messagesAt(released, position) : new Map<number, Message>()
+      return evidence.status(root as Root, needs, access, await epochAt(position))
+    },
+    submitWork(identity: Identity, id: number, input: Protocol['submitWork']['input']) {
+      return evidenceWrite(identity, id, async (root, position, now) => {
+        await fenced(root, identity, input, position, now)
+        const edges = await claimEdgesAt(root.task, position, identity.principal.access)
+        const { decided, check } = atAppend((at) => edges(at), now)
+        if (!decided) throw waitingForEvidence(id)
+        return { events: evidence.submit(root, identity, input), check }
+      })
+    },
+    recordEvidence(identity: Identity, id: number, input: Protocol['recordEvidence']['input']) {
+      return evidenceWrite(identity, id, async (root, position, now) => {
+        const pauseEpoch = await epochAt(position)
+        const { check } = atAppend((at) => evidence.attestation(root, pauseEpoch, input.expiresAt, at), now)
+        return { events: evidence.record(root, identity, input, pauseEpoch, now), check }
+      })
+    },
+    overrideEvidence(identity: Identity, id: number, input: Protocol['overrideEvidence']['input']) {
+      return evidenceWrite(identity, id, async (root, position, now) => {
+        const pauseEpoch = await epochAt(position)
+        const { check } = atAppend((at) => evidence.attestation(root, pauseEpoch, input.expiresAt, at), now)
+        return { events: evidence.override(root, identity, input, pauseEpoch, now), check }
+      })
+    },
+    resolveWorkEdge(identity: Identity, id: number, input: Protocol['resolveWorkEdge']['input']) {
+      if (!evidence.releaseDependencies) throw noWorkEvidence()
+      return evidenceWrite(identity, id, async (root, position, now) => {
+        const needs = await writes().reads.tables.messagesAt(root.task.needs, position)
+        const resolution = evidence.resolve(root, identity, input, needs)
+        const { decided, check } = atAppend(resolution.verdict, now)
+        const events = resolution.events(decided)
+        if (finished(root.task)) throw conflict('task_finished', `#${id} is ${root.task.state}`)
+        if (root.task.state !== 'claimed') return { events, check }
+        if (!lapsed(root.task, now, await epochAt(position))) throw conflict('task_claimed', 'release the claim before changing its evidence releases')
+        return { events: [{ type: 'task.expired', payload: { id, thread: root.thread, epoch: root.task.epoch } }, ...events], check }
+      })
     },
 
     /** Changes an open task's priority without changing its claim, state, or labels. */

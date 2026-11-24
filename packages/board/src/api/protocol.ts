@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import type { Actor } from '../contract/folds.ts'
+import type { EvidenceStatus } from '../contract/evidence.ts'
 import type { Mentioned } from '../contract/mentions.ts'
 import type { Attachment } from '../contract/schemas.ts'
 import type {
@@ -50,6 +51,10 @@ import type {
   ScopeTaskBody,
   StageTaskBody,
   TaskClaim,
+  SubmitWorkBody,
+  RecordEvidenceBody,
+  OverrideEvidenceBody,
+  ResolveWorkEdgeBody,
   TasksPage,
   TasksQuery,
   CreateChannelBody,
@@ -212,6 +217,11 @@ export type Protocol = {
   setTaskNeeds: { input: Id & Input<typeof TaskNeedsBody>; output: { task: MessageView } }
   setTaskPriority: { input: Id & Input<typeof TaskPriorityBody>; output: { task: MessageView } }
   cancelTask: { input: Id & Input<typeof CancelTaskBody>; output: { task: MessageView } }
+  workEvidence: { input: Id; output: EvidenceStatus }
+  submitWork: { input: Id & Input<typeof SubmitWorkBody>; output: { task: MessageView } }
+  recordEvidence: { input: Id & Input<typeof RecordEvidenceBody>; output: { task: MessageView } }
+  overrideEvidence: { input: Id & Input<typeof OverrideEvidenceBody>; output: { task: MessageView } }
+  resolveWorkEdge: { input: Id & Input<typeof ResolveWorkEdgeBody>; output: { task: MessageView } }
   /** The board's grants: needs `manage` at `*`, or a team owner. 501 `no_grants` where the board keeps none. */
   grants: { input: Nothing; output: { grants: GrantView[] } }
   /** Invite management needs board-wide admin access. A board not keeping invites answers 501 `no_invites`. */
