@@ -1,6 +1,8 @@
 status: proposed
 bonklek decides on this PR
 
+Unread keys in this proposal were removed from the shipped schema in WP-907 item 1.
+
 # Party config
 
 Each party (Party) keeps one versioned config tree on its party board (Standing Committee).

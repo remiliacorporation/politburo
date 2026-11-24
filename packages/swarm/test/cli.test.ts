@@ -41,15 +41,15 @@ test('config show does not let party overrides beat repo or lose party-only valu
   const defaults = defaultConfig()
   const partyHours = defaults.claims.hours + 1
   const repoHours = partyHours + 1
-  const spawners = defaults.names.spawners.slice().reverse()
-  writeFileSync(party, stringify({ claims: { hours: partyHours }, names: { spawners } }))
+  const boss = defaults.names.mob_species.boss.slice().reverse()
+  writeFileSync(party, stringify({ claims: { hours: partyHours }, names: { mob_species: { boss } } }))
   writeFileSync(repo, JSON.stringify({ claims: { hours: repoHours } }))
 
   const result = run('config', 'show', '--json', '--party', party, '--repo', repo)
   assert.equal(result.status, 0, result.stderr)
   const tree = JSON.parse(result.stdout)
   assert.equal(tree.claims.hours, repoHours)
-  assert.deepEqual(tree.names.spawners, spawners)
+  assert.deepEqual(tree.names.mob_species.boss, boss)
 })
 
 test('config validate rejects an unknown field and does not hide its dotted path', (t) => {
@@ -63,7 +63,7 @@ test('config validate rejects an unknown field and does not hide its dotted path
 
 test('config validate does not report a cyclic YAML alias as a config error', (t) => {
   const party = join(tempDir(t), 'party.yaml')
-  writeFileSync(party, 'claims: &self\n  dock: *self\n')
+  writeFileSync(party, 'claims: &self\n  hours: *self\n')
 
   const result = run('config', 'validate', '--json', '--party', party)
   assert.equal(result.status, 1)
