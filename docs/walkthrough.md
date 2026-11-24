@@ -10,9 +10,15 @@ Use a Mac or Linux laptop with Bash, Git, Node 22.18 or later, and pnpm
 install pnpm and have Corepack, use `corepack enable pnpm` to let it select
 that version in this checkout. Otherwise, install that pnpm version directly.
 
-Start at the root of a fresh checkout of the branch you want to test.
-If you already cloned and checked out that branch, use that checkout;
-there is no need to clone `main` or change directories again.
+Clone `main` into a new directory.
+
+```bash
+git clone --branch main https://github.com/remiliacorporation/politburo.git
+```
+
+```bash
+cd politburo
+```
 
 ```bash
 node --version
