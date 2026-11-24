@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readdirSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { stringify } from 'yaml'
 import { ConfigError, defaultConfig, loadConfig, parseConfigText, validateConfig } from '../src/index.ts'
@@ -40,6 +41,20 @@ test('a repo replacement hides an unknown field in the party layer', () => {
   const party = { score: { human_minutes: { typo: 1 } } }
   const repo = { score: { human_minutes: { per_point: 1, max_penalty: 1 } } }
   assert.throws(() => loadConfig({ party, repo }), { name: 'ConfigError', field: 'score.human_minutes.typo' })
+})
+
+test('every example config loads', () => {
+  const dir = new URL('../examples/', import.meta.url)
+  const names = readdirSync(dir).filter((name) => /\.(ya?ml|json)$/.test(name))
+  assert.ok(names.length > 0)
+  for (const name of names) {
+    try {
+      loadConfig({ party: parseConfigText(readFileSync(new URL(name, dir), 'utf8')) })
+    } catch (error) {
+      const field = error instanceof ConfigError ? ` (${error.field})` : ''
+      assert.fail(`${name}${field}: ${error instanceof Error ? error.message : error}`)
+    }
+  }
 })
 
 test('a config that sets a removed key fails validation', () => {

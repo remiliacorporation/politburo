@@ -52,9 +52,6 @@ party:
   id: humans
   name: Human contributors
   colour: "#245c3d"
-labels:
-  core: Chair
-  mob_view: Claim
 claims:
   hours: 4
   open_claims_per_repo: 1

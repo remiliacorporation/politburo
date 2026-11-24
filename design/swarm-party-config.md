@@ -21,41 +21,19 @@ Design choice: allow only repo-scoped policy keys in a repo override, so a share
 
 | Keys | Repo override |
 | --- | --- |
-| `claims`, `review`, `trackers`, `limits` | Yes. Tracker entries name only that repo. Limits apply only within that repo; they do not replace party-wide admission limits. |
-| `party`, `labels`, `names` | No. Identity, UI labels and name pools belong to the party. |
-| `tiers`, `mail`, `secretary`, `heartbeat_minutes`, `setup` | No. The party owns how its tiers run and receive policy. |
+| `claims`, `review`, `trackers` | Yes. Tracker entries name only that repo. |
+| `party`, `names` | No. Identity and name pools belong to the party. |
+| `tiers`, `mail`, `secretary`, `setup` | No. The party owns how its tiers run and receive policy. |
 
 ## The tree
 
-This is the default tree from plan 4. Ellipses mark data inputs the plan does not spell out; they are not shipped values. The first party's ID is `default` (plan 12 item 2). `party.id` stays stable and lowercase and is not a person's name. The labels are bonklek's defaults, not code constants.
+This is the default tree from plan 4. Ellipses mark data inputs the plan does not spell out; they are not shipped values. The first party's ID is `default` (plan 12 item 2). `party.id` stays stable and lowercase and is not a person's name. A key with no reader is not in the tree. Those keys are `labels`, `tiers.shares`, `tiers.models` other than `sprite`, `mail.urgency`, `secretary.questions.*.on_low_confidence`, `limits`, `heartbeat_minutes`, `setup.version`, and `setup.canary_environment`.
 
 ```yaml
 party:
   id: default            # stable, lowercase; not a person's name
   name: "The People's Party"
   colour: "#b3261e"
-labels:                  # shown in the UI; code uses plain names
-  product: Politburo
-  party: Party
-  jockey: jockey
-  core: Party Chairman
-  party_board: Standing Committee
-  repo_view: Presidium
-  repo_board: work board
-  mob_view: Cell
-  groups:                # work board groups, by plain key
-    needs_you: Needs you
-    repair: Repair or reconcile
-    ready_to_review: Ready to review
-    running: Running
-    ready_to_pull: Ready to pull
-    waiting: Waiting or parked
-    done: Done
-  home:                  # the four home sections
-    needs_you: Needs you
-    ready_to_review: Ready to review
-    running_now: Running now
-    health_and_spend: Health and spend
 names:                   # pools are ordered lists; first free name wins
   spawners: [ ... ]      # default: the current spawner pool
   secretaries: [Peggy, Joan, Dawn, Ida, ...]
@@ -66,21 +44,14 @@ names:                   # pools are ordered lists; first free name wins
     boss: [DRAGON, WITHER, WARDEN, ELDERG]
   sprite_items: {implement: [PICKAXE, AXE, ...], review: [SWORD, BOW, ...], ...}
 tiers:
-  shares: {core: 0.5, spawner: 4.5, mob: 15, sprite: 75}
   models:
-    core: ...            # model route, unspecified in the plan
-    spawner: ...
-    mob: ...
     sprite: {model: fallback/codex-cursor, thinking: medium}
-    adviser: openai-codex/gpt-5.6-terra
-    classifier: typesafe/jev-1.14
 mail:
   classes: [sec.push, sec.retry, sec.retire, sec.log, spawner.dispatch, spawner.decide, core.escalate, policy]
-  urgency: {p0: forward_now, p1: {forward_within_minutes: 10}, p2: digest, p3: digest_summary}
   digest_minutes: 30
 secretary:
   questions:             # one entry per Jev question (section 6.3)
-    can_wait: {enabled: false, prompt_version: 1, threshold: 0.97, on_low_confidence: wake,
+    can_wait: {enabled: false, prompt_version: 1, threshold: 0.97,
                late_p1_rate_limit: "1/500", state: shadow}
 claims:
   hours: 4
@@ -93,14 +64,8 @@ review:                  # the review policy and merge guardrail as rules
   docs_only: {model_review: false}
   code: {review_rounds: 1, fix_rounds: 1}
   merge_guardrail: {ci_on_exact_head: required, review_on_head: required, max_open_severity: minor}
-limits:
-  usage_stop_percent: 100
-  budgets: []            # {scope, dimension, window, warn, hard}
-heartbeat_minutes: 30
 setup:
   environment: politburo
-  version: {id: v11, sha256: ...}
-  canary_environment: politburo-canary
 trackers: {}             # per repo: sources and precedence (section 6.5)
                          # acme/web: {sources: [github, native], precedence: [github, native],
                          #            write: {comments: false, transitions: false}}
@@ -114,38 +79,28 @@ In the table, core edits each mutable field, and the jockey may pin any field. A
 | --- | --- | --- | --- | --- |
 | `party.id` | String | `default` for first party | Set at creation; stable thereafter | Registry and all record writers |
 | `party.name`, `party.colour` | Strings | `The People's Party`, `#b3261e` | Core | UI, registry |
-| `labels.product`, `.party`, `.jockey`, `.core`, `.party_board`, `.repo_view`, `.repo_board`, `.mob_view` | Strings | The vocabulary table of [the merger design](swarm-merger.md#vocabulary): Politburo, Party, jockey, Party Chairman, Standing Committee, Presidium, work board, Cell | Core | UI |
-| `labels.groups.*`, `labels.home.*` | Strings by plain key | The seven group names and four home section names of [work items](swarm-work-items.md#board-groups) | Core | UI; predicates, filters and keys use the plain keys, never the label |
 | `names.spawners`, `names.secretaries` | Ordered string arrays | Current pools, from the sources above | Core | Name allocator |
 | `names.mob_species.passive`, `.neutral`, `.hostile` | Job to ordered string array | Naming data by class and job | Core | Mob name allocator |
 | `names.mob_species.boss` | Ordered string array | Boss pool in naming data | Core | Mob name allocator |
 | `names.sprite_items` | Job to ordered string array | Sprite naming data | Core | Sprite name allocator |
-| `tiers.shares.core`, `.spawner`, `.mob`, `.sprite` | Numbers, percent | `0.5`, `4.5`, `15`, `75` | Core | Dispatch and tier policy |
-| `tiers.models.core`, `.spawner`, `.mob` | Model routes | Unspecified in the plan | Core | Tier launchers |
 | `tiers.models.sprite.model`, `.thinking` | Strings | `fallback/codex-cursor`, `medium` | Core | Sprite launcher |
-| `tiers.models.adviser`, `.classifier` | Strings | `openai-codex/gpt-5.6-terra`, `typesafe/jev-1.14` | Core | Secretary service |
 | `mail.classes` | Class array | The eight classes in the tree | Core | Mail admission and secretary service |
-| `mail.urgency.p0`, `.p2`, `.p3` | Action enums | `forward_now`, `digest`, `digest_summary` | Core within invariant | Secretary service |
-| `mail.urgency.p1.forward_within_minutes`, `mail.digest_minutes` | Integers, minutes | `10`, `30` | Core | Secretary service |
+| `mail.digest_minutes` | Integer, minutes | `30` | Core | Secretary service |
 | `secretary.questions.*.enabled`, `.state` | Boolean, enum | `false`, `shadow` in the sketch | Core sets policy; the service switches back on breach | Secretary service |
 | `secretary.questions.*.prompt_version`, `.threshold` | Integer, number | `1`, `0.97` in the sketch | Core | Jev call and audit |
-| `secretary.questions.*.on_low_confidence`, `.late_p1_rate_limit` | Enum, rate | `wake`, `1/500` starting bar | Core within D17 | Secretary service |
+| `secretary.questions.*.late_p1_rate_limit` | Rate | `1/500` starting bar | Core within D17 | Secretary service |
 | `secretary.questions.*.prompt`, `.labels`, `.actions`, `.costly_direction` | Prompt, label list, label to action, error direction | Per question, plan 6.3 | Core | Secretary service and review report |
 | `claims.hours`, `.pause_on_downtime`, `.reclaim_cooldown_minutes` | Integer hours, boolean, integer minutes | `4`, `false`, `15` | Core within claim policy | Claim admission and enforcement |
 | `claims.open_claims_per_repo`, `.uncommitted_claims_per_repo`, `.dock.missed_claim` | Integers | `2`, `1`, `1` | Core | Claim admission and scoring |
 | `review.docs_only.model_review`, `review.code.review_rounds`, `.fix_rounds` | Boolean, integers | `false`, `1`, `1` | Core | Review gate |
 | `review.merge_guardrail.ci_on_exact_head`, `.review_on_head`, `.max_open_severity` | Enums | `required`, `required`, `minor`: the guardrail of [swarm architecture](swarm-architecture.md#merge-guardrail) | Core | Review gate |
-| `limits.usage_stop_percent`, `.budgets` | Percent, budget array | `100`, `[]` | Core | Admission and ledger |
-| `limits.budgets[].scope`, `.dimension`, `.window`, `.warn`, `.hard` | Scope, meter name, window, numbers | No budget by default | Core | Admission and ledger |
-| `heartbeat_minutes` | Integer, minutes | `30` | Core | Watch and secretary service |
-| `setup.environment`, `.canary_environment` | Strings | `politburo`, `politburo-canary` | Core | Setup and launcher |
-| `setup.version.id`, `.sha256` | Strings | `v11`, built artifact's digest | Core | Setup, rollout ledger |
+| `setup.environment` | String | `politburo` | Core | Setup and launcher |
 | `trackers.<repo>.sources`, `.precedence` | Ordered lists | No sources by default | Core | Tracker adapters and work item reconciliation |
 | `trackers.<repo>.write.comments`, `.write.transitions` | Booleans | `false`, `false`: reads first, comments before state changes (plan 6.5) | Core, per repo | Tracker adapters |
 
 ## Validation
 
-Validate the resolved tree as draft 2020-12. The config service validates the whole tree with full JSON Schema. The board stores the tree as a block with a shallow registered schema (an object with a version and the tree), because the board's schema language is a subset without `$ref` or `pattern` (SPEC.md:1528-1537). Reject unknown keys at fixed levels; typed maps use data keys for jobs, labels in classifier answers and repo identifiers. Reject job keys not recognized by the allocator and mismatched classifier label/action keys in the config service. Validate repo override paths before merge. Numeric bounds validate the shape, not permission to change a fixed decision. Claims never pause on downtime (D20); p0 always forwards and is never classified (D17). The shares need no sum rule: do not enforce a total of 95 or less (plan 4). Bounds below use the plan defaults, including 4 hours with a schema range of 1 to 24, and a 15-minute reclaim cooldown.
+Validate the resolved tree as draft 2020-12. The config service validates the whole tree with full JSON Schema. The board stores the tree as a block with a shallow registered schema (an object with a version and the tree), because the board's schema language is a subset without `$ref` or `pattern` (SPEC.md:1528-1537). Reject unknown keys at fixed levels; typed maps use data keys for jobs, labels in classifier answers and repo identifiers. Reject job keys not recognized by the allocator and mismatched classifier label/action keys in the config service. Validate repo override paths before merge. Numeric bounds validate the shape, not permission to change a fixed decision. Claims never pause on downtime (D20); p0 always forwards and is never classified (D17). Bounds below use the plan defaults, including 4 hours with a schema range of 1 to 24, and a 15-minute reclaim cooldown.
 
 Design choice: use the named question keys below and give prompts, labels, actions and costly direction separate fields so audit can distinguish a prompt change from a routing change. Require those fields before a question can run. Model and tracker detail not fixed in plan 4 stays a schema sketch, not a provider contract.
 
@@ -154,19 +109,11 @@ Design choice: use the named question keys below and give prompts, labels, actio
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["party", "labels", "names", "tiers", "mail", "secretary", "claims", "review", "limits", "heartbeat_minutes", "setup", "trackers"],
+  "required": ["party", "names", "tiers", "mail", "secretary", "claims", "review", "setup", "trackers"],
   "properties": {
     "party": {
       "type": "object", "additionalProperties": false, "required": ["id", "name", "colour"],
       "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "default": "default"}, "name": {"$ref": "#/$defs/text"}, "colour": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}}
-    },
-    "labels": {
-      "type": "object", "additionalProperties": false, "required": ["product", "party", "jockey", "core", "party_board", "repo_view", "repo_board", "mob_view", "groups", "home"],
-      "properties": {
-        "product": {"$ref": "#/$defs/text"}, "party": {"$ref": "#/$defs/text"}, "jockey": {"$ref": "#/$defs/text"}, "core": {"$ref": "#/$defs/text"}, "party_board": {"$ref": "#/$defs/text"}, "repo_view": {"$ref": "#/$defs/text"}, "repo_board": {"$ref": "#/$defs/text"}, "mob_view": {"$ref": "#/$defs/text"},
-        "groups": {"type": "object", "additionalProperties": false, "required": ["needs_you", "repair", "ready_to_review", "running", "ready_to_pull", "waiting", "done"], "properties": {"needs_you": {"$ref": "#/$defs/text"}, "repair": {"$ref": "#/$defs/text"}, "ready_to_review": {"$ref": "#/$defs/text"}, "running": {"$ref": "#/$defs/text"}, "ready_to_pull": {"$ref": "#/$defs/text"}, "waiting": {"$ref": "#/$defs/text"}, "done": {"$ref": "#/$defs/text"}}},
-        "home": {"type": "object", "additionalProperties": false, "required": ["needs_you", "ready_to_review", "running_now", "health_and_spend"], "properties": {"needs_you": {"$ref": "#/$defs/text"}, "ready_to_review": {"$ref": "#/$defs/text"}, "running_now": {"$ref": "#/$defs/text"}, "health_and_spend": {"$ref": "#/$defs/text"}}}
-      }
     },
     "names": {
       "type": "object", "additionalProperties": false, "required": ["spawners", "secretaries", "mob_species", "sprite_items"],
@@ -176,17 +123,15 @@ Design choice: use the named question keys below and give prompts, labels, actio
       }
     },
     "tiers": {
-      "type": "object", "additionalProperties": false, "required": ["shares", "models"],
+      "type": "object", "additionalProperties": false, "required": ["models"],
       "properties": {
-        "shares": {"type": "object", "additionalProperties": false, "required": ["core", "spawner", "mob", "sprite"], "properties": {"core": {"$ref": "#/$defs/percent"}, "spawner": {"$ref": "#/$defs/percent"}, "mob": {"$ref": "#/$defs/percent"}, "sprite": {"$ref": "#/$defs/percent"}}},
-        "models": {"type": "object", "additionalProperties": false, "required": ["core", "spawner", "mob", "sprite", "adviser", "classifier"], "properties": {"core": {"$ref": "#/$defs/text"}, "spawner": {"$ref": "#/$defs/text"}, "mob": {"$ref": "#/$defs/text"}, "adviser": {"$ref": "#/$defs/text"}, "classifier": {"$ref": "#/$defs/text"}, "sprite": {"type": "object", "additionalProperties": false, "required": ["model", "thinking"], "properties": {"model": {"$ref": "#/$defs/text"}, "thinking": {"$ref": "#/$defs/text"}}}}}
+        "models": {"type": "object", "additionalProperties": false, "required": ["sprite"], "properties": {"sprite": {"type": "object", "additionalProperties": false, "required": ["model", "thinking"], "properties": {"model": {"$ref": "#/$defs/text"}, "thinking": {"$ref": "#/$defs/text"}}}}}
       }
     },
     "mail": {
-      "type": "object", "additionalProperties": false, "required": ["classes", "urgency", "digest_minutes"],
+      "type": "object", "additionalProperties": false, "required": ["classes", "digest_minutes"],
       "properties": {
         "classes": {"type": "array", "uniqueItems": true, "items": {"enum": ["sec.push", "sec.retry", "sec.retire", "sec.log", "spawner.dispatch", "spawner.decide", "core.escalate", "policy"]}},
-        "urgency": {"type": "object", "additionalProperties": false, "required": ["p0", "p1", "p2", "p3"], "properties": {"p0": {"const": "forward_now"}, "p1": {"type": "object", "additionalProperties": false, "required": ["forward_within_minutes"], "properties": {"forward_within_minutes": {"$ref": "#/$defs/positive", "default": 10}}}, "p2": {"const": "digest"}, "p3": {"const": "digest_summary"}}},
         "digest_minutes": {"$ref": "#/$defs/positive", "default": 30}
       }
     },
@@ -213,11 +158,9 @@ Design choice: use the named question keys below and give prompts, labels, actio
       "type": "object", "additionalProperties": false, "required": ["docs_only", "code"],
       "properties": {"docs_only": {"type": "object", "additionalProperties": false, "required": ["model_review"], "properties": {"model_review": {"type": "boolean"}}}, "code": {"type": "object", "additionalProperties": false, "required": ["review_rounds", "fix_rounds"], "properties": {"review_rounds": {"$ref": "#/$defs/count"}, "fix_rounds": {"$ref": "#/$defs/count"}}}, "merge_guardrail": {"type": "object", "additionalProperties": false, "required": ["ci_on_exact_head", "review_on_head", "max_open_severity"], "properties": {"ci_on_exact_head": {"enum": ["required"]}, "review_on_head": {"enum": ["required"]}, "max_open_severity": {"enum": ["none", "minor"]}}}}
     },
-    "limits": {"type": "object", "additionalProperties": false, "required": ["usage_stop_percent", "budgets"], "properties": {"usage_stop_percent": {"$ref": "#/$defs/percent"}, "budgets": {"type": "array", "items": {"$ref": "#/$defs/budget"}}}},
-    "heartbeat_minutes": {"$ref": "#/$defs/positive"},
     "setup": {
-      "type": "object", "additionalProperties": false, "required": ["environment", "version", "canary_environment"],
-      "properties": {"environment": {"$ref": "#/$defs/text"}, "canary_environment": {"$ref": "#/$defs/text"}, "version": {"type": "object", "additionalProperties": false, "required": ["id", "sha256"], "properties": {"id": {"$ref": "#/$defs/text"}, "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}}}}
+      "type": "object", "additionalProperties": false, "required": ["environment"],
+      "properties": {"environment": {"$ref": "#/$defs/text"}}
     },
     "trackers": {"type": "object", "propertyNames": {"pattern": "^[^/]+/[^/]+$"}, "additionalProperties": {"$ref": "#/$defs/tracker"}}
   },
@@ -227,21 +170,16 @@ Design choice: use the named question keys below and give prompts, labels, actio
     "pools": {"type": "object", "additionalProperties": {"$ref": "#/$defs/list"}},
     "count": {"type": "integer", "minimum": 0},
     "positive": {"type": "integer", "minimum": 1},
-    "percent": {"type": "number", "minimum": 0, "maximum": 100},
     "question": {
       "type": "object", "additionalProperties": false,
-      "required": ["enabled", "prompt_version", "threshold", "on_low_confidence", "late_p1_rate_limit", "state"],
+      "required": ["enabled", "prompt_version", "threshold", "late_p1_rate_limit", "state"],
       "properties": {
         "enabled": {"type": "boolean"}, "prompt_version": {"$ref": "#/$defs/positive"}, "threshold": {"type": "number", "minimum": 0, "maximum": 1},
-        "on_low_confidence": {"enum": ["wake"]}, "late_p1_rate_limit": {"type": "string", "pattern": "^[0-9]+/[1-9][0-9]*$"}, "state": {"enum": ["shadow", "live", "off"]},
+        "late_p1_rate_limit": {"type": "string", "pattern": "^[0-9]+/[1-9][0-9]*$"}, "state": {"enum": ["shadow", "live", "off"]},
         "prompt": {"$ref": "#/$defs/text"}, "labels": {"$ref": "#/$defs/list"}, "actions": {"type": "object", "additionalProperties": {"$ref": "#/$defs/text"}}, "costly_direction": {"$ref": "#/$defs/text"}
       },
       "if": {"properties": {"enabled": {"const": true}}},
       "then": {"required": ["prompt", "labels", "actions", "costly_direction"]}
-    },
-    "budget": {
-      "type": "object", "additionalProperties": false, "required": ["scope", "dimension", "window", "warn", "hard"],
-      "properties": {"scope": {"$ref": "#/$defs/text"}, "dimension": {"$ref": "#/$defs/text"}, "window": {"$ref": "#/$defs/text"}, "warn": {"type": "number", "minimum": 0}, "hard": {"type": "number", "minimum": 0}, "action": {"enum": ["refuse_launch", "warn", "stop"]}, "missing_data_policy": {"enum": ["reserve_worst_case", "reject", "admit_unknown"]}, "effective_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}}
     },
     "tracker": {
       "type": "object", "additionalProperties": false, "required": ["sources", "precedence"],
@@ -267,11 +205,11 @@ A pinned field refuses edits by anyone except the jockey; record the refusal wit
 
 | Reader | Reads from config |
 | --- | --- |
-| UI and naming | UI labels and all spawner, secretary, mob species and sprite item pools. |
-| Dispatch and launch | Tier shares and models, usage stop percent and budgets, setup version and environments. |
-| Mail and secretary | Mail classes, urgency rules, digest minutes, Jev prompt versions and thresholds. |
+| UI and naming | Party name and colour, and all spawner, secretary, mob species and sprite item pools. |
+| Dispatch and launch | The sprite model route and the setup environment. |
+| Mail and secretary | Mail classes, digest minutes, Jev prompt versions and thresholds. |
 | Claims and review | Claim hours, caps, cooldown, docks, review policy and merge guardrail. |
-| Watch and trackers | Heartbeat, repo sources and precedence. |
+| Watch and trackers | Repo sources and precedence. |
 
 Jev question keys in table order (plan 6.3): J1 `intake_route`, J2 `needs_spawner`, J3 `can_wait`, J4 `urgency_match`, J5 `mob_report`, J6 `already_handled`, J7 `still_relevant`, J8 `handler`, J9 `outcomes_complete`, J10 `review_invariant`. Read each question's state, prompt, fixed choices and actions from config. The D17 p0 bypass does not consult a model. The D17 automatic switch-back is a runtime safety stop, not an edit to a pinned field.
 
@@ -284,26 +222,26 @@ claims:
   open_claims_per_repo: 3
 ```
 
-This party edit renames the repo view label (Presidium). Other parties keep their labels.
+This party edit changes the party name. Other parties keep theirs.
 
 ```yaml
-labels:
-  repo_view: Repo desk
+party:
+  name: Desk party
 ```
 
 | Audit field | Repo override entry | Party entry |
 | --- | --- | --- |
 | Who | Verified core editor | Verified core editor |
-| What | `claims.open_claims_per_repo` set to `3` on `acme/web` | `labels.repo_view` set to `Repo desk` |
-| Why | Allow three concurrent claims on this repo. | Use the party's preferred UI wording. |
-| Previous value | No override; inherited `2` | `Presidium` |
+| What | `claims.open_claims_per_repo` set to `3` on `acme/web` | `party.name` set to `Desk party` |
+| Why | Allow three concurrent claims on this repo. | Use the party's preferred name. |
+| Previous value | No override; inherited `2` | `The People's Party` |
 | Version | Repo override version `1` | Party version `2` |
 | Time | `2026-11-22T14:00:00Z` | `2026-11-22T14:05:00Z` |
 
 ## Open
 
-- Found here: plan 4 leaves placeholders for the spawner pool, tier routes and setup digest. WP-102 must source real default data and WP-302 supplies the built digest. The plan sketch's `core: ...; spawner: ...; mob: ...` is one line; this tree writes it as three entries with placeholders.
-- Found here: plan 2 lists default labels that plan 4 does not put under `labels` (including party, jockey and repo board). WP-102 needs the complete label key set before calling the tree final. This design adds the complete label set, the merge guardrail and the tracker write switches as a Design choice; the tree above shows them.
+- Found here: plan 4 leaves placeholders for the spawner pool and the setup digest. WP-102 must source real default data and WP-302 supplies the built digest. Tier model routes other than `sprite` are not in the tree, because nothing reads them.
+- Found here: plan 2 lists UI labels. Nothing reads them, so `labels` is not in the tree. The merge guardrail and the tracker write switches stay as a Design choice; the tree above shows them.
 - Found here: plan 6.3 needs per-question prompts, actions and shadow evidence but plan 4 only sketches `can_wait`. WP-205 supplies the remaining question data. WP-405 needs to prove pin and override changes on separate boards cannot race into an effective pinned-field change.
 - Found here: `claims.pause_on_downtime` exists because plan 4 lists it, and the schema fixes it at `false` because D20 decides that claims never pause. The hours and the minutes are configuration (D22); the hard cutoff and the absence of a downtime pause are not.
-- Found here: the `budget` rule here carries `action`, `missing_data_policy` and the two times of [spend](swarm-spend.md#limits-and-admission). Its revision, actor and reason come from the audit of the config version that holds it, not from the rule payload. Score rules (WP-701) are not in the tree yet; WP-701 adds a `score` subtree.
+- Found here: `limits` is not in the tree, because nothing reads it. [Spend](swarm-spend.md#limits-and-admission) still describes the budget shape. Score rules (WP-701) are not in this design's tree yet; WP-701 adds a `score` subtree.
