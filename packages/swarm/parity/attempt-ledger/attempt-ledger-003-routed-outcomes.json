@@ -1,0 +1,382 @@
+{
+  "case_id": "attempt-ledger-003-routed-outcomes",
+  "description": "Merge routed and adapter evidence and preserve outcome tokens",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64: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",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 3, \"duplicates\": 0, \"observations_added\": 6, \"quarantined\": 0}\natt-9eecdf906d95772de3d79d316815beda9532dde4 operation reconciliation_required sources=2 observations=2\natt-b827902617b6089d69e4ac9bf71f3fdcd534d7ed operation exited sources=2 observations=2\natt-c7ebdb0bccad8a5c7e35939d55f14b1e71cfed90 operation unknown sources=2 observations=2\ntotal=3 shown=3 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 3, \"duplicates\": 0, \"observations_added\": 6, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-9eecdf906d95772de3d79d316815beda9532dde4 operation reconciliation_required sources=2 observations=2\natt-b827902617b6089d69e4ac9bf71f3fdcd534d7ed operation exited sources=2 observations=2\natt-c7ebdb0bccad8a5c7e35939d55f14b1e71cfed90 operation unknown sources=2 observations=2\ntotal=3 shown=3 quarantined=0\n"
+      },
+      [
+        {
+          "attempt_id": "att-9eecdf906d95772de3d79d316815beda9532dde4",
+          "counts_as_attempt": true,
+          "execution_state": "reconciliation_required",
+          "identity": {
+            "agent_id": "worker-01",
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "input_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+            "issue_key": "example-issue",
+            "route_id": "example-route",
+            "task_key": "example-task"
+          },
+          "missing": [
+            "agent_generation",
+            "assignment_generation",
+            "finished_at",
+            "lease_id",
+            "session_ref",
+            "usage"
+          ],
+          "namespace": "operation",
+          "native_id": "op-failure",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 2,
+          "outcome": "failure",
+          "parent": {
+            "attempt_id": "att-b827902617b6089d69e4ac9bf71f3fdcd534d7ed",
+            "namespace": "operation",
+            "resolved": true
+          },
+          "raw_state": "reconciliation_required",
+          "source_count": 2,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "failed",
+              "key": "routed_attempts:op-failure",
+              "kind": "routed",
+              "native_state": "stopped",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "routed-attempt/2",
+              "sha256": "d0918d42c56ce1887808cabb15074b1d062b6283717f35faf3cad3ee1615a58f"
+            },
+            {
+              "collected": false,
+              "execution_state": "exited",
+              "key": "runs/op-failure/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "exited",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "e2263572c295c282968b646a0c39aa2e335cbfa7adaabf0858adebb9c133a316"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-b827902617b6089d69e4ac9bf71f3fdcd534d7ed",
+          "counts_as_attempt": true,
+          "execution_state": "exited",
+          "identity": {
+            "agent_id": "worker-01",
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "input_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+            "issue_key": "example-issue",
+            "route_id": "example-route",
+            "session_ref": "sess-ca1032d1bd538da2",
+            "task_key": "example-task"
+          },
+          "missing": [
+            "agent_generation",
+            "assignment_generation",
+            "finished_at",
+            "lease_id",
+            "session_ref"
+          ],
+          "namespace": "operation",
+          "native_id": "op-success",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "reported"
+          },
+          "observation_count": 2,
+          "outcome": "success",
+          "parent": null,
+          "raw_state": "exited",
+          "source_count": 2,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "exited",
+              "key": "routed_attempts:op-success",
+              "kind": "routed",
+              "native_state": "verified",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "routed-attempt/2",
+              "sha256": "10218796ae43a9697a99fc2322f2b8da70ff167489200b9c6d5b417f5c1b6eb9"
+            },
+            {
+              "collected": false,
+              "execution_state": "exited",
+              "key": "runs/op-success/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "exited",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "98cab9c3dd8d0848f1547b9e66e4cf6ccb772b0a7283feb6bdef68163d61799f"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": {
+            "input_tokens": 7
+          },
+          "usage_status": "reported"
+        },
+        {
+          "attempt_id": "att-c7ebdb0bccad8a5c7e35939d55f14b1e71cfed90",
+          "counts_as_attempt": true,
+          "execution_state": "unknown",
+          "identity": {
+            "agent_id": "worker-01",
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "input_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+            "issue_key": "example-issue",
+            "route_id": "example-route",
+            "task_key": "example-task"
+          },
+          "missing": [
+            "agent_generation",
+            "assignment_generation",
+            "finished_at",
+            "lease_id",
+            "process_state",
+            "session_ref",
+            "terminal_state",
+            "usage"
+          ],
+          "namespace": "operation",
+          "native_id": "op-abandon",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 2,
+          "outcome": "abandoned",
+          "parent": null,
+          "raw_state": "unknown",
+          "source_count": 2,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "unknown",
+              "key": "routed_attempts:op-abandon",
+              "kind": "routed",
+              "native_state": "stopped",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "routed-attempt/2",
+              "sha256": "5c662d79d0d82e655137f88456f476b08ae54cf6ed5e3c374371ab5ec5ab94a1"
+            },
+            {
+              "collected": false,
+              "execution_state": "running",
+              "key": "runs/op-abandon/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "running",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "e77843d5cdc268e0f3f435e398c838739817e50ee09eaa5f527b2e86d9e2f2e9"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        }
+      ],
+      [
+        {
+          "attempt_id": "att-b827902617b6089d69e4ac9bf71f3fdcd534d7ed",
+          "counts_as_attempt": true,
+          "execution_state": "exited",
+          "identity": {
+            "agent_id": "worker-01",
+            "candidate_ref": "cand-7f3e1c81c516bca8",
+            "input_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+            "issue_key": "example-issue",
+            "route_id": "example-route",
+            "session_ref": "sess-ca1032d1bd538da2",
+            "task_key": "example-task"
+          },
+          "missing": [
+            "agent_generation",
+            "assignment_generation",
+            "finished_at",
+            "lease_id",
+            "session_ref"
+          ],
+          "namespace": "operation",
+          "native_id": "op-success",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "reported"
+          },
+          "observation_count": 2,
+          "outcome": "success",
+          "parent": null,
+          "raw_state": "exited",
+          "source_count": 2,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "exited",
+              "key": "routed_attempts:op-success",
+              "kind": "routed",
+              "native_state": "verified",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "routed-attempt/2",
+              "sha256": "10218796ae43a9697a99fc2322f2b8da70ff167489200b9c6d5b417f5c1b6eb9"
+            },
+            {
+              "collected": false,
+              "execution_state": "exited",
+              "key": "runs/op-success/receipt.json",
+              "kind": "adapter_receipt",
+              "native_state": "exited",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "adapter-receipt/2",
+              "sha256": "98cab9c3dd8d0848f1547b9e66e4cf6ccb772b0a7283feb6bdef68163d61799f"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00",
+            "started_at": "2026-01-01T00:00:00+00:00"
+          },
+          "usage": {
+            "input_tokens": 7
+          },
+          "usage_status": "reported"
+        }
+      ]
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "candidate": "example-candidate",
+        "filters": {
+          "issue_key": "example-issue"
+        },
+        "op": "project"
+      },
+      {
+        "filters": {
+          "session_ref": "example-session"
+        },
+        "op": "project"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Router owns usage and outcome; resume parent resolves. Abandoned is a routed outcome token, not an execution state. Conflicting terminal evidence requires reconciliation; finished unknown evidence blocks a running receipt. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "board": {
+      "routed_attempts": [
+        {
+          "finished_at": "2026-01-01T00:02:00+00:00",
+          "input_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "operation": "op-success",
+          "receipt_json": "{\"candidate_sha\": \"example-candidate\", \"note\": \"example-unlisted-field\", \"outcome\": \"success\", \"process_state\": \"collected\", \"session_ref\": \"example-session\", \"usage\": {\"input_tokens\": 7}}\n",
+          "route_id": "example-route",
+          "started_at": "2026-01-01T00:00:00+00:00",
+          "state": "verified",
+          "task_key": "example-task"
+        },
+        {
+          "finished_at": "2026-01-01T00:02:00+00:00",
+          "input_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "operation": "op-failure",
+          "receipt_json": "{\"candidate_sha\": \"example-candidate\", \"outcome\": \"failure\", \"process_state\": \"failed\", \"resume_from\": \"op-success\"}\n",
+          "route_id": "example-route",
+          "started_at": "2026-01-01T00:00:00+00:00",
+          "state": "stopped",
+          "task_key": "example-task"
+        },
+        {
+          "finished_at": "2026-01-01T00:02:00+00:00",
+          "input_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "operation": "op-abandon",
+          "receipt_json": "{\"candidate_sha\": \"example-candidate\", \"outcome\": \"abandoned\", \"process_state\": null}\n",
+          "route_id": "example-route",
+          "started_at": "2026-01-01T00:00:00+00:00",
+          "state": "stopped",
+          "task_key": "example-task"
+        }
+      ],
+      "routed_tasks": [
+        {
+          "issue_key": "example-issue",
+          "task_key": "example-task"
+        }
+      ]
+    },
+    "files": {
+      "runs/op-abandon/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-abandon\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"running\"}\n",
+      "runs/op-failure/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-failure\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n",
+      "runs/op-success/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-success\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\", \"usage\": {\"input_tokens\": 99}}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

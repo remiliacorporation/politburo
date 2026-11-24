@@ -1,0 +1,199 @@
+{
+  "case_id": "controllers-pause-resume-011-command-fence",
+  "description": "Run an explicit build and fence QA at a mid-command pause",
+  "expected": {
+    "db_rows": {
+      "agent_commands": [],
+      "agent_observations": [],
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "Controller",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "Worker",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "controller-01",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Synthetic QA pause\", \"state\": \"paused\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 3, \"reason\": \"Synthetic reactivation\", \"state\": \"active\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 4, \"reason\": \"Synthetic authority change\", \"state\": \"paused\"}"
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "4"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "runtime_resources": []
+    },
+    "details": {
+      "runner": [
+        {
+          "argv": [
+            "./check",
+            "--quick"
+          ],
+          "before": null,
+          "cwd": "<WORK>/example-project",
+          "reservations": [
+            {
+              "acquired_at": "<SQLITE-CLOCK>",
+              "owner": "builds:00000000000000000000000000000001",
+              "resource": "builds"
+            }
+          ],
+          "timeout": 3
+        },
+        {
+          "after_reactivation": "network authority changed",
+          "argv": [
+            "./check"
+          ],
+          "before": null,
+          "cwd": "<WORK>/example-project",
+          "during_pause": "network authority changed",
+          "pause": {
+            "exit_code": 0,
+            "returned": null,
+            "stderr": "",
+            "stdout": "{\n  \"generation\": 2,\n  \"ok\": true,\n  \"state\": \"paused\"\n}\n",
+            "step": "pause during QA"
+          },
+          "reactivate": {
+            "exit_code": 0,
+            "returned": null,
+            "stderr": "",
+            "stdout": "{\n  \"generation\": 3,\n  \"ok\": true,\n  \"state\": \"active\"\n}\n",
+            "step": "reactivate"
+          },
+          "reservations": [
+            {
+              "acquired_at": "<SQLITE-CLOCK>",
+              "owner": "qa:00000000000000000000000000000002",
+              "resource": "qa"
+            }
+          ],
+          "timeout": 3
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "example-project/check": "Synthetic command placeholder; never executed.\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "Synthetic build result\n{\n  \"generation\": 4,\n  \"ok\": true,\n  \"state\": \"paused\"\n}\n",
+    "steps": [
+      {
+        "exit_code": 7,
+        "returned": null,
+        "stderr": "",
+        "stdout": "Synthetic build result\n",
+        "step": "explicit build"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "error": "network authority changed",
+          "type": "ValueError"
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "QA fenced"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n  \"generation\": 4,\n  \"ok\": true,\n  \"state\": \"paused\"\n}\n",
+        "step": "paused"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "error": "network is paused",
+          "type": "ValueError"
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "paused QA refused"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "scenario": "command_fence"
+  },
+  "matrix_row": "M83",
+  "notes": "The fake check runner observes the real reservation and authority callback. A second QA call is refused before the runner, and reactivation does not rescue the old generation.",
+  "setup": {
+    "files": {
+      "example-project/check": "Synthetic command placeholder; never executed.\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/commands.py",
+      "supervisor/check_runner.py",
+      "supervisor/controllers.py",
+      "board/board.py"
+    ]
+  }
+}

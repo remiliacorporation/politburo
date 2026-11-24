@@ -1,0 +1,96 @@
+{
+  "case_id": "issue-refill-005-usage-above",
+  "description": "Usage exceeds the default stop threshold",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 2, \"usage\": {\"file\": \"<WORK>/usage.json\"}}\n",
+      "usage.json": "{\"percent_used\": 100.5, \"resets_at\": \"2026-01-01T15:00:00Z\"}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "",
+    "stdout": "refill: skipped (paused: 5-hour window at or above 100%)\n"
+  },
+  "inputs": {
+    "argv": [
+      "--dry-run",
+      "--force"
+    ],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "Even a forced dry run cannot launch researchers above the usage cap; no usage details are printed.",
+  "setup": {
+    "config": {
+      "slots": 2
+    },
+    "files": {
+      "usage.json": "{\"percent_used\": 100.5, \"resets_at\": \"2026-01-01T15:00:00Z\"}\n"
+    },
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z",
+    "proposals": {
+      "defects": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        }
+      ]
+    },
+    "source_files": {
+      "docs/queue.md": "Drain the queue after each batch.\n",
+      "src/cache.py": "def get(key):\n    return entries[key]\n",
+      "src/export.py": "def export_rows(rows):\n    return list(rows)\n",
+      "src/queue.py": "def drain(queue):\n    return queue.pop()\n"
+    },
+    "usage_file": "usage.json"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

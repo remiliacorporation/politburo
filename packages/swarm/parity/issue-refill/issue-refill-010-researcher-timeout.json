@@ -1,0 +1,173 @@
+{
+  "case_id": "issue-refill-010-researcher-timeout",
+  "description": "A researcher timeout fails closed",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": [
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 1,
+            "event_type": "refill_run",
+            "issue_key": null,
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "base_sha": "example-base",
+              "dropped": 0,
+              "envelope_version": 1,
+              "errors": [
+                "researcher-gaps: runner timed out after 1200s",
+                "a researcher failed"
+              ],
+              "issues": [],
+              "outcome": "failed",
+              "reason": "0 ready for 2 free slots",
+              "reason_code": "issue_refill",
+              "trigger": "0 ready for 2 free slots"
+            }
+          }
+        ]
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": [
+          {
+            "actionable": 1,
+            "archived_at": null,
+            "body": "refill failed: researcher-gaps: runner timed out after 1200s; a researcher failed",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "dedup_key": null,
+            "from_actor": "coordinator",
+            "issue_key": null,
+            "kind": "note",
+            "message_id": 1,
+            "payload_ref": null,
+            "priority": 100,
+            "status": "active",
+            "summary": "refill failed: researcher-gaps: runner timed out after 1200s; a researcher failed",
+            "supersedes_message_id": null,
+            "to_agent": null,
+            "to_role": "coordinator",
+            "topic_key": "issue-refill",
+            "valid_until": null
+          }
+        ]
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 1,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 2}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [
+      [
+        "researcher-defects",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-gaps",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-operability",
+        "example-project",
+        1200
+      ]
+    ],
+    "source_calls": [
+      [
+        "fetch_head",
+        "origin",
+        "main"
+      ],
+      [
+        "add_worktree",
+        "example-base"
+      ],
+      [
+        "pulls"
+      ],
+      [
+        "remove_worktree",
+        "example-project"
+      ]
+    ],
+    "stderr": "",
+    "stdout": "refill: failed (0 ready for 2 free slots)\ndefault branch at example-base\nerror: researcher-gaps: runner timed out after 1200s\nerror: a researcher failed\n"
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "bin",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "The real bin dispatch returns 1, cleans up the fake worktree and records an actionable failure. A valid proposal from another lens is not written.",
+  "setup": {
+    "config": {
+      "slots": 2
+    },
+    "files": {},
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z",
+    "proposals": {
+      "defects": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        }
+      ]
+    },
+    "responses": {
+      "researcher-gaps": {
+        "error": "researcher-gaps: runner timed out after 1200s"
+      }
+    },
+    "source_files": {
+      "docs/queue.md": "Drain the queue after each batch.\n",
+      "src/cache.py": "def get(key):\n    return entries[key]\n",
+      "src/export.py": "def export_rows(rows):\n    return list(rows)\n",
+      "src/queue.py": "def drain(queue):\n    return queue.pop()\n"
+    }
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

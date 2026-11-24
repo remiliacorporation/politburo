@@ -1,0 +1,398 @@
+{
+  "case_id": "board-cli-messages-014-attention-reconcile",
+  "description": "Refuse vague attention and reconcile an expired valid request",
+  "expected": {
+    "db": {
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "controller-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "board",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"requester\", \"actor_type\": \"agent\", \"envelope_version\": 1, \"kind\": \"blocker\", \"message_id\": 1, \"reason\": \"Operator routed a note to an agent\", \"reason_code\": \"operator_note\", \"to_agent\": \"controller-01\", \"to_role\": \"controller\", \"topic\": \"attention-rejected\"}"
+        },
+        {
+          "actor": "board",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "event_id": 9,
+          "event_type": "message",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"reconciler\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"kind\": \"blocker\", \"message_id\": 2, \"reason\": \"Operator routed a note to an agent\", \"reason_code\": \"operator_note\", \"to_agent\": \"controller-01\", \"to_role\": \"controller\", \"topic\": \"attention-invalid-6\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"controller\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"controller-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "event_id": 7,
+          "event_type": "attention_requirement",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"reconciler\", \"actor_type\": \"supervisor\", \"cleared_by_reconciliation\": 6, \"envelope_version\": 1, \"kind\": \"none\", \"reason\": \"Attention requirement recorded or cleared\", \"reason_code\": \"attention_requirement\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "event_id": 8,
+          "event_type": "attention_invalidated",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"supervisor\", \"code\": \"expired_request\", \"envelope_version\": 1, \"reason\": \"Human Attention request removed: expired_request\", \"reason_code\": \"attention_invalid\", \"request_id\": 6}"
+        },
+        {
+          "actor": "worker-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "attention_rejected",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"requester\", \"actor_type\": \"agent\", \"code\": \"incomplete_on_page_decision\", \"envelope_version\": 1, \"issue_version\": 1, \"kind\": \"user_decision\", \"reason\": \"Attention requirement rejected as agent-actionable\", \"reason_code\": \"attention_rejected\"}"
+        },
+        {
+          "actor": "worker-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "attention_requirement",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"requester\", \"actor_type\": \"agent\", \"envelope_version\": 1, \"kind\": \"user_decision\", \"reason\": \"Question: Which label should example-project display? Context: The layout is complete, but the product label is undecided. Options: A: keep Example; B: replace it with Sample. Evidence: both labels fit the displayed layout. Impact: label work waits; unrelated work continues. Actor: the human user. Why human: the agents lack authority to pick the product label; only the user can choose it. Channel: the user records the choice on this board issue page. Release: the chosen label unblocks implementation.\", \"reason_code\": \"attention_requirement\", \"request\": {\"allow_text\": \"optional\", \"candidate_sha\": null, \"choices\": [{\"confirm\": true, \"consequence\": \"The label stays unchanged.\", \"id\": \"keep\", \"label\": \"Keep Example\", \"next_action\": \"Continue with the current label.\", \"next_agent\": null, \"next_role\": \"controller\", \"next_state\": \"ready\", \"recommended\": false, \"satisfies_gate\": null}], \"controller\": \"controller-01\", \"created_at\": \"2026-01-01T00:00:00+00:00\", \"evidence\": [], \"expires_at\": \"2026-01-01T00:00:01+00:00\", \"requestor\": \"worker-01\", \"supersedes\": null, \"version\": 1, \"why_agents_cannot\": \"Only the user can choose the product label.\"}}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "The Human Attention request for this issue was refused (incomplete_on_page_decision). It is agent-actionable: repair it or ask only a precise user-only question.",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "attention-rejected:example-issue:1:incomplete_on_page_decision",
+          "from_actor": "board",
+          "issue_key": "example-issue",
+          "kind": "blocker",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 10,
+          "status": "active",
+          "summary": "Human Attention request refused (incomplete_on_page_decision)",
+          "supersedes_message_id": null,
+          "to_agent": "controller-01",
+          "to_role": null,
+          "topic_key": "attention-rejected",
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "The attention request was removed from Human Attention because it was invalid or expired (expired_request). Decide and record the next lawful agent action; ask the user again only with a valid, precise user-only request.",
+          "created_at": "2026-01-01T00:00:01+00:00",
+          "dedup_key": "attention-invalid:6",
+          "from_actor": "board",
+          "issue_key": "example-issue",
+          "kind": "blocker",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 10,
+          "status": "active",
+          "summary": "Human Attention request 6 was invalid (expired_request)",
+          "supersedes_message_id": null,
+          "to_agent": "controller-01",
+          "to_role": null,
+          "topic_key": "attention-invalid-6",
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "blocked",
+          "title": "Example decision",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/controller.md",
+          "personality": null,
+          "profile_key": "controller",
+          "title": "Controller",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "request.json": "{\"why_agents_cannot\": \"Only the user can choose the product label.\", \"choices\": [{\"id\": \"keep\", \"label\": \"Keep Example\", \"consequence\": \"The label stays unchanged.\", \"next_state\": \"ready\", \"next_action\": \"Continue with the current label.\", \"confirm\": true}], \"expires_at\": \"2026-01-01T00:00:01+00:00\"}"
+    },
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"controller\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"controller-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issues\": [\n    {\n      \"issue_key\": \"example-issue\",\n      \"version\": 1\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "the user actor is reserved for recorded user responses; agent paths may not use it\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"kind\": \"user_decision\",\n  \"ok\": false,\n  \"rejected\": \"incomplete_on_page_decision\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"kind\": \"user_decision\",\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": false,\n  \"invalid\": [],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": false,\n  \"invalid\": [\n    {\n      \"code\": \"expired_request\",\n      \"issue_key\": \"example-issue\",\n      \"request_id\": 6\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": true,\n  \"invalid\": [\n    {\n      \"code\": \"expired_request\",\n      \"issue_key\": \"example-issue\",\n      \"request_id\": 6\n    }\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"applied\": false,\n  \"invalid\": [],\n  \"ok\": true\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"The attention request was removed from Human Attention because it was invalid or expired (expired_request). Decide and record the next lawful agent action; ask the user again only with a valid, precise user-only request.\",\n    \"created_at\": \"2026-01-01T00:00:01+00:00\",\n    \"dedup_key\": \"attention-invalid:6\",\n    \"from_actor\": \"board\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"blocked\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"blocker\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 10,\n    \"status\": \"active\",\n    \"summary\": \"Human Attention request 6 was invalid (expired_request)\",\n    \"supersedes_message_id\": null,\n    \"to_agent\": \"controller-01\",\n    \"to_role\": null,\n    \"topic_key\": \"attention-invalid-6\",\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"The Human Attention request for this issue was refused (incomplete_on_page_decision). It is agent-actionable: repair it or ask only a precise user-only question.\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"attention-rejected:example-issue:1:incomplete_on_page_decision\",\n    \"from_actor\": \"board\",\n    \"issue_key\": \"example-issue\",\n    \"issue_state\": \"blocked\",\n    \"issue_title\": \"Example decision\",\n    \"kind\": \"blocker\",\n    \"message_id\": 1,\n    \"payload_ref\": null,\n    \"priority\": 10,\n    \"status\": \"active\",\n    \"summary\": \"Human Attention request refused (incomplete_on_page_decision)\",\n    \"supersedes_message_id\": null,\n    \"to_agent\": \"controller-01\",\n    \"to_role\": null,\n    \"topic_key\": \"attention-rejected\",\n    \"valid_until\": null\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/controller.md\", \"profile_key\": \"controller\", \"title\": \"Controller\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"controller-01\", \"display_name\": \"controller-01\", \"profile_key\": \"controller\", \"status\": \"idle\"}"
+      },
+      {
+        "argv": [
+          "upsert"
+        ],
+        "stdin": "{\"controller\": \"controller-01\", \"issue_key\": \"example-issue\", \"state\": \"blocked\", \"title\": \"Example decision\"}"
+      },
+      {
+        "actor": "user",
+        "argv": [
+          "attention",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--kind",
+          "user_decision",
+          "--reason",
+          "Question: Which label should example-project display? Context: The layout is complete, but the product label is undecided. Options: A: keep Example; B: replace it with Sample. Evidence: both labels fit the displayed layout. Impact: label work waits; unrelated work continues. Actor: the human user. Why human: the agents lack authority to pick the product label; only the user can choose it. Channel: the user records the choice on this board issue page. Release: the chosen label unblocks implementation."
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "attention",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--kind",
+          "user_decision",
+          "--reason",
+          "Choose a label."
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "attention",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--kind",
+          "user_decision",
+          "--reason",
+          "Question: Which label should example-project display? Context: The layout is complete, but the product label is undecided. Options: A: keep Example; B: replace it with Sample. Evidence: both labels fit the displayed layout. Impact: label work waits; unrelated work continues. Actor: the human user. Why human: the agents lack authority to pick the product label; only the user can choose it. Channel: the user records the choice on this board issue page. Release: the chosen label unblocks implementation.",
+          "--request-file",
+          "request.json"
+        ]
+      },
+      {
+        "argv": [
+          "attention-reconcile"
+        ]
+      },
+      {
+        "argv": [
+          "attention-reconcile"
+        ],
+        "at": "2026-01-01T00:00:01+00:00"
+      },
+      {
+        "argv": [
+          "attention-reconcile",
+          "--apply"
+        ]
+      },
+      {
+        "argv": [
+          "attention-reconcile"
+        ]
+      },
+      {
+        "argv": [
+          "inbox",
+          "--agent",
+          "controller-01",
+          "--kind",
+          "blocker"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "issues",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "Reserved user actors cannot set agent attention. A vague reason is refused and routed as a blocker; a previously valid request expires at the fake clock boundary. Apply clears the requirement, preserves history, and queues controller-owned follow-up.",
+  "setup": {
+    "files": {
+      "request.json": "{\"why_agents_cannot\": \"Only the user can choose the product label.\", \"choices\": [{\"id\": \"keep\", \"label\": \"Keep Example\", \"consequence\": \"The label stays unchanged.\", \"next_state\": \"ready\", \"next_action\": \"Continue with the current label.\", \"confirm\": true}], \"expires_at\": \"2026-01-01T00:00:01+00:00\"}"
+    },
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

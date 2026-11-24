@@ -1,0 +1,243 @@
+{
+  "case_id": "attempt-ledger-005-controller-turns",
+  "description": "Merge controller receipts, session and decisions",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64: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",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 3, \"duplicates\": 0, \"observations_added\": 5, \"quarantined\": 0}\natt-181b166fa68b9216d2826c9f7ab621f5d6e583b3 controller_turn failed sources=1 observations=1\natt-412c38e815df4dc7c99672c252c0eee7362091f8 controller_turn interrupted sources=1 observations=1\natt-edab8b2bea476b8d120ff1ff211b1575d3cf7c1f controller_turn exited sources=3 observations=3\ntotal=3 shown=3 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 3, \"duplicates\": 0, \"observations_added\": 5, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-181b166fa68b9216d2826c9f7ab621f5d6e583b3 controller_turn failed sources=1 observations=1\natt-412c38e815df4dc7c99672c252c0eee7362091f8 controller_turn interrupted sources=1 observations=1\natt-edab8b2bea476b8d120ff1ff211b1575d3cf7c1f controller_turn exited sources=3 observations=3\ntotal=3 shown=3 quarantined=0\n"
+      },
+      [
+        {
+          "attempt_id": "att-181b166fa68b9216d2826c9f7ab621f5d6e583b3",
+          "counts_as_attempt": true,
+          "execution_state": "failed",
+          "identity": {
+            "agent_id": "worker-02"
+          },
+          "missing": [
+            "usage"
+          ],
+          "namespace": "controller_turn",
+          "native_id": "turn-example-02",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": null,
+          "parent": null,
+          "raw_state": "failed",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "failed",
+              "key": "controller_sessions:worker-02",
+              "kind": "controller_session",
+              "native_state": "blocked",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "controller-session/2",
+              "sha256": "cf5875b7bfe26e9c591ce0f8945c11a7c7f150d0bf93923a9af627c3a8fd85c7"
+            }
+          ],
+          "timestamps": {},
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-412c38e815df4dc7c99672c252c0eee7362091f8",
+          "counts_as_attempt": true,
+          "execution_state": "interrupted",
+          "identity": {},
+          "missing": [
+            "usage"
+          ],
+          "namespace": "controller_turn",
+          "native_id": "turn-example-03",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 1,
+          "outcome": null,
+          "parent": null,
+          "raw_state": "interrupted",
+          "source_count": 1,
+          "sources": [
+            {
+              "collected": false,
+              "execution_state": "interrupted",
+              "key": "controllers/turn-example-03/receipt.json",
+              "kind": "controller_receipt",
+              "native_state": "interrupted",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "controller-receipt/2",
+              "sha256": "fc794305703eef4b401cc4d1934fbb244c6b2cc9d4331909c3f830f2ab2e635e"
+            }
+          ],
+          "timestamps": {},
+          "usage": null,
+          "usage_status": "unavailable"
+        },
+        {
+          "attempt_id": "att-edab8b2bea476b8d120ff1ff211b1575d3cf7c1f",
+          "counts_as_attempt": true,
+          "execution_state": "exited",
+          "identity": {
+            "agent_generation": 1,
+            "agent_id": "worker-01",
+            "config_revision": "cfg-53e7709fa2bfe204",
+            "disposition": "refill",
+            "session_ref": "sess-ca1032d1bd538da2"
+          },
+          "missing": [
+            "process_state",
+            "usage"
+          ],
+          "namespace": "controller_turn",
+          "native_id": "turn-example-01",
+          "observability": {
+            "gui_activity": "unavailable",
+            "liveness": "fresh_evidence_required",
+            "tokens": "unavailable"
+          },
+          "observation_count": 3,
+          "outcome": "refill",
+          "parent": null,
+          "raw_state": "exited",
+          "source_count": 3,
+          "sources": [
+            {
+              "collected": null,
+              "execution_state": "exited",
+              "key": "controller_decisions:turn-example-01",
+              "kind": "controller_decision",
+              "native_state": "exited",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "controller-decision/2",
+              "sha256": "7f10a62f5be1c56ba582de99600c2130ce597815e91898ca5dcc730a8d1863c6"
+            },
+            {
+              "collected": null,
+              "execution_state": "running",
+              "key": "controller_sessions:worker-01",
+              "kind": "controller_session",
+              "native_state": "running",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "controller-session/2",
+              "sha256": "9276d1b8b75c851c79135b242decbb534a485cd5800486a3d336eb188478e9a7"
+            },
+            {
+              "collected": false,
+              "execution_state": "running",
+              "key": "controllers/turn-example-01/receipt.json",
+              "kind": "controller_receipt",
+              "native_state": "running",
+              "observed_at": "2026-01-01T00:02:00+00:00",
+              "parser_version": "controller-receipt/2",
+              "sha256": "bd068bde94d09f5ada2c23ad7558494dbf8ec503510abf33872d6b9f89020914"
+            }
+          ],
+          "timestamps": {
+            "finished_at": "2026-01-01T00:02:00+00:00"
+          },
+          "usage": null,
+          "usage_status": "unavailable"
+        }
+      ]
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "project"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Session-only blocked turns fail, unattributed sessions are skipped, and interruption survives collection. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "board": {
+      "controller_decisions": [
+        {
+          "agent_id": "worker-01",
+          "created_at": "2026-01-01T00:02:00+00:00",
+          "disposition": "refill",
+          "operation": "turn-example-01"
+        }
+      ],
+      "controller_sessions": [
+        {
+          "agent_id": "worker-01",
+          "config_hash": "example-config",
+          "generation": 1,
+          "operation": "turn-example-01",
+          "session_ref": "example-session",
+          "state": "running"
+        },
+        {
+          "agent_id": "worker-02",
+          "operation": "turn-example-02",
+          "state": "blocked"
+        },
+        {
+          "agent_id": "worker-03",
+          "state": "idle"
+        }
+      ]
+    },
+    "files": {
+      "controllers/turn-example-01/receipt.json": "{\"operation\": \"turn-example-01\", \"state\": \"running\"}\n",
+      "controllers/turn-example-03/receipt.json": "{\"operation\": \"turn-example-03\", \"state\": \"interrupted\"}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

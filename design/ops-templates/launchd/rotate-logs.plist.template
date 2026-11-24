@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Daily log rotation. Runs as the owner of the logs (LOG_USER); no env file.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL_PREFIX}}.rotate-logs</string>
+  <key>UserName</key>
+  <string>{{LOG_USER}}</string>
+  <key>GroupName</key>
+  <string>{{SERVICE_GROUP}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>{{HOST_BIN}}/rotate-logs.mjs</string>
+    <string>--dir</string>
+    <string>{{LOG_ROOT}}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{LOG_ROOT}}</string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>{{LOG_ROOT}}/rotate-logs.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_ROOT}}/rotate-logs.log</string>
+</dict>
+</plist>

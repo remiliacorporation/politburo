@@ -1,0 +1,71 @@
+{
+  "case_id": "serial-counter-009-concurrent",
+  "description": "Allocate from eight concurrent threads",
+  "expected": {
+    "all_unique": true,
+    "allocation_count": 32,
+    "directories": [],
+    "exit_code": null,
+    "files": {
+      "mob-serial.txt": "32\n"
+    },
+    "log_lines": [],
+    "sorted_results": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "args": {
+      "poll": 0.005,
+      "timeout": 10
+    },
+    "calls_per_worker": 4,
+    "kind": "concurrent",
+    "workers": 8
+  },
+  "matrix_row": "M13",
+  "notes": "Release all threads from a start barrier; compare values without worker order.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/next_mob_serial.py"
+    ]
+  }
+}
