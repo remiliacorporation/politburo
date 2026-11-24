@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { helpText, usageText } from '../src/cli-usage.ts'
+import { loadCommands } from '../src/commands/load.ts'
 
 function swarm(...args: string[]) {
   const result = spawnSync(process.execPath, ['src/cli.ts', ...args], {
@@ -15,35 +17,47 @@ function swarm(...args: string[]) {
 
 const run = (...args: string[]) => swarm('work', ...args)
 
-const configUsage =
-  'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
-  '       swarm party <list|show|add|remove|member|jockey> ...\n' +
-  '       registry file: --registry FILE or SWARM_REGISTRY\n' +
-  '       swarm score <leaderboard|card|history|drill> ...\n' +
-  '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n' +
-  '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n' +
-  '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n' +
-  '       swarm capture <run|collect>\n' +
-  '       swarm mirror sync --repo owner/name [--json]\n' +
-  '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n' +
-  '       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n' +
-  '       swarm classifier report <dir> [--json]\n' +
-  '       swarm classifier clear <dir> <question> --why TEXT\n' +
-  '       swarm serve --help\n'
+async function assembledUsage() {
+  const commands = await loadCommands()
+  const config = commands.find((command) => command.name === 'config')
+  const work = commands.find((command) => command.name === 'work')
+  const configLine = config?.usage[0]
+  const workLine = work?.usage[0]
+  assert.ok(configLine, 'config must publish a usage line')
+  assert.ok(workLine, 'work must publish a usage line')
+  return {
+    catalog: `${usageText(commands)}\n`,
+    help: `${helpText(commands)}\n`,
+    configLine,
+    workLine,
+  }
+}
 
-test('config help must print the original config usage and not work usage', () => {
+test('config help must print each catalog command and not work usage', async () => {
+  const expected = await assembledUsage()
   const result = swarm('config', '--help')
   assert.equal(result.status, 0)
-  assert.equal(result.stdout, configUsage)
+  assert.equal(result.stdout, expected.catalog)
   assert.equal(result.stderr, '')
-  assert.doesNotMatch(result.stdout, /swarm work /)
+  assert.ok(result.stdout.includes(expected.configLine))
+  assert.equal(result.stdout.includes(expected.workLine), false)
 })
 
-test('config misuse must not append work usage to the original diagnostic', () => {
+test('config misuse must not append work usage to the catalog diagnostic', async () => {
+  const expected = await assembledUsage()
   const result = swarm('config', 'bogus')
   assert.equal(result.status, 2)
-  assert.equal(result.stderr, `error: unknown config command bogus\n${configUsage}`)
-  assert.doesNotMatch(result.stderr, /swarm work /)
+  assert.equal(result.stderr, `error: unknown config command bogus\n${expected.catalog}`)
+  assert.equal(result.stderr.includes(expected.workLine), false)
+})
+
+test('swarm --help must print the assembled catalog and each help-only command', async () => {
+  const expected = await assembledUsage()
+  const result = swarm('--help')
+  assert.equal(result.status, 0)
+  assert.equal(result.stdout, expected.help)
+  assert.ok(result.stdout.includes(expected.configLine))
+  assert.ok(result.stdout.includes(expected.workLine))
 })
 
 function description(t: TestContext, text: string) {

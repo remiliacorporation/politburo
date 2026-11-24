@@ -6,6 +6,8 @@ import { misuse, printError } from '../cli-usage.ts'
 
 export const name = 'config'
 export const summary = 'config <show|validate> [--json] [--party FILE] [--repo FILE]'
+export const usageOrder = 10
+export const usage = ['swarm config <show|validate> [--json] [--party FILE] [--repo FILE]']
 
 class ReadError extends Error {}
 
@@ -20,7 +22,7 @@ function readLayer(path: string | undefined): unknown {
   return parseConfigText(text)
 }
 
-export function run(args: string[]): number {
+export async function run(args: string[]): Promise<number> {
   const [action, ...flags] = args
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {

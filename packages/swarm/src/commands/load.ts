@@ -5,6 +5,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 export type Command = {
   name: string
   summary: string
+  usage: readonly string[]
+  usageOrder?: number
+  catalog: boolean
   run(argv: string[]): number | Promise<number>
 }
 
@@ -23,8 +26,26 @@ export function commandNames(): Set<string> {
 
 export async function loadCommand(name: string): Promise<Command> {
   const loaded = await import(pathToFileURL(join(directory, `${name}${extension}`)).href) as Partial<Command>
-  if (loaded.name !== name || typeof loaded.summary !== 'string' || typeof loaded.run !== 'function') {
-    throw new Error(`swarm command ${name} must export name, summary, and run`)
+  const usage = loaded.usage
+  if (loaded.name !== name || typeof loaded.summary !== 'string' || typeof loaded.run !== 'function' ||
+    !Array.isArray(usage) || usage.some((line) => typeof line !== 'string')) {
+    throw new Error(`swarm command ${name} must export name, summary, usage, and run`)
   }
-  return { name: loaded.name, summary: loaded.summary, run: loaded.run }
+  if (usage.length > 0 && typeof loaded.usageOrder !== 'number') {
+    throw new Error(`swarm command ${name} must export usageOrder with its usage lines`)
+  }
+  if (loaded.catalog !== undefined && typeof loaded.catalog !== 'boolean') {
+    throw new Error(`swarm command ${name} catalog must be a boolean`)
+  }
+  return {
+    name: loaded.name, summary: loaded.summary, usage, usageOrder: loaded.usageOrder,
+    catalog: loaded.catalog !== false, run: loaded.run,
+  }
+}
+
+export async function loadCommands(): Promise<Command[]> {
+  const names = [...commandNames()].sort()
+  const commands: Command[] = []
+  for (const name of names) commands.push(await loadCommand(name))
+  return commands
 }
