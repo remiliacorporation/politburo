@@ -6,7 +6,7 @@ import { syncSkills } from './sync.ts'
 
 const usage = 'usage: swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]'
 const planUsage = 'usage: swarm skills plan-mob --skills DIR --tag TAG --job JOB --serial N\n' +
-  '       [--live A,B] [--sprite JOB]... [--party FILE] [--repo FILE] [--json]'
+  '       [--live A,B] [--sprite JOB]... [--party FILE] [--repo FILE] [--registry FILE] [--json]'
 
 function escapeControls(text: string, controls = /[\x00-\x1f\x7f-\x9f]/g) {
   return text.replace(controls, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
@@ -51,7 +51,8 @@ function planMobMain(flags: string[]): number {
       options: {
         skills: { type: 'string' }, tag: { type: 'string' }, job: { type: 'string' },
         serial: { type: 'string' }, live: { type: 'string' }, sprite: { type: 'string', multiple: true },
-        party: { type: 'string' }, repo: { type: 'string' }, json: { type: 'boolean' },
+        party: { type: 'string' }, repo: { type: 'string' }, registry: { type: 'string' },
+        json: { type: 'boolean' },
       },
     }))
   } catch (error) {
@@ -68,7 +69,9 @@ function planMobMain(flags: string[]): number {
 
   try {
     const config = loadConfig({ party: readLayer(values.party), repo: readLayer(values.repo) })
-    const plan = planMob(config, { skills, tag, job, serial, live: values.live, sprite: values.sprite })
+    const plan = planMob(config, {
+      skills, tag, job, serial, live: values.live, sprite: values.sprite, registry: values.registry,
+    })
     if (values.json) console.log(escapeControls(JSON.stringify(plan)))
     else {
       console.log(`mob  ${escapeControls(plan.mob)}`)

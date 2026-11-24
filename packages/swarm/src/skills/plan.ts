@@ -5,7 +5,10 @@ import type { PartyConfig } from '../config/load.ts'
 import { tagProblems } from '../tags.ts'
 import { generatedMarker, hasBlockedReference } from './render.ts'
 
-type PlanOptions = { skills: string; tag: string; job: string; serial: string; live?: string; sprite?: string[] }
+type PlanOptions = {
+  skills: string; tag: string; job: string; serial: string
+  live?: string; sprite?: string[]; registry?: string
+}
 type Pools = Record<string, string[]>
 
 function firstFree(pool: string[], used: Set<string>) {
@@ -19,8 +22,13 @@ function firstFree(pool: string[], used: Set<string>) {
 
 const disallowedControls = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/
 
-export function planMob(config: PartyConfig, { skills, tag, job, serial, live, sprite }: PlanOptions) {
-  const registryText = readFileSync(new URL('../../registry/tags.json', import.meta.url), 'utf8')
+export function planMob(config: PartyConfig, { skills, tag, job, serial, live, sprite, registry: registryFile }: PlanOptions) {
+  let registryText: string
+  try {
+    registryText = readFileSync(registryFile ?? new URL('../../registry/tags.json', import.meta.url), 'utf8')
+  } catch {
+    throw new Error(registryFile ? `cannot read ${registryFile}` : 'cannot read tag registry')
+  }
   let registry
   try {
     registry = JSON.parse(registryText)

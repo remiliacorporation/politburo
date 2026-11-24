@@ -86,7 +86,7 @@ a party's and a repo's values over `src/config/defaults.json`. `swarm check` and
 | --- | --- | --- |
 | `src/config` | Schema, defaults, loader. `swarm config show`, `validate` | Works. Most keys are not yet read by other code. |
 | `src/skills`, `skills/` | Agent skills generated from the party config. `swarm skills sync` | Works. The one reader of party config. |
-| `src/tags.ts`, `registry/tags.json` | The repo tag registry | Works. The list is one jockey's repos and cannot yet be replaced. |
+| `src/tags.ts`, `registry/tags.json` | The repo tag registry. `swarm tags check`, `swarm work id`, and `swarm skills plan-mob` read it unless `--registry FILE` is set | Works. The shipped list is one jockey's repos. |
 | `src/trackers` | Read-only GitHub Issues and Linear adapters, work-item merge. `swarm trackers scan` | Works. No beads adapter. |
 | `src/mirror` | Every PR, branch and issue of a repo mirrored to its board | Library only. No CLI on main. |
 | `src/mail` | Message contract, inbox, relay between boards, send | Library only. Stricter than the file mail it replaces. |

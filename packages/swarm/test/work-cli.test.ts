@@ -25,6 +25,7 @@ const catalogLines = [
   '       swarm score <leaderboard|card|history|drill> ...',
   '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]',
   '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]',
+  '       swarm tags check [--registry FILE] [--json]',
   '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]',
   '       swarm sprite routes [--party FILE] [--repo FILE]',
   '       swarm capture <run|collect>',
@@ -166,4 +167,14 @@ test('work id must not allocate for an unregistered tag', () => {
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
   assert.match(result.stderr, /^error: unknown work tag\n$/)
+})
+
+test('work id must read the registry file given with --registry', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'swarm-work-registry-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = join(dir, 'tags.json')
+  writeFileSync(file, JSON.stringify({ tags: [{ tag: 'zzz', project: 'Temp' }] }))
+  const result = run('id', 'zzz', '--after', '1', '--registry', file)
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, 'zzz-2\n')
 })

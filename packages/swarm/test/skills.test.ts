@@ -400,6 +400,19 @@ test('plan-mob does not fall back when the installed brief template is missing o
   }
 })
 
+test('plan-mob reads the registry file given with --registry', (t) => {
+  const dir = tempDir(t)
+  install(dir)
+  const registry = join(dir, 'tags.json')
+  writeFileSync(registry, JSON.stringify({ tags: [{ tag: 'aaa', project: 'Temp' }] }))
+  const missing = plan(dir, { tag: 'aaa' })
+  assert.equal(missing.status, 1)
+  assert.match(missing.stderr, /^error: unknown tag aaa\n$/)
+  const found = plan(dir, { tag: 'aaa' }, '--registry', registry, '--json')
+  assert.equal(found.status, 0, found.stderr)
+  assert.match(JSON.parse(found.stdout).title, /^aaa /)
+})
+
 test('plan-mob refuses boss jobs and unknown tags without output or writes', (t) => {
   const root = tempDir(t)
   const dir = join(root, 'skills')

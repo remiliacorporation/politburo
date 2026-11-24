@@ -1,5 +1,6 @@
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
+import { parseArgs } from 'node:util'
 import { usageBlock } from '../cli-usage.ts'
 import { readRegistry, tagProblems } from '../tags.ts'
 import { parseOutcomesContract } from './contract.ts'
@@ -7,7 +8,7 @@ import { allocateWorkId } from './ids.ts'
 
 export const workUsageLines = [
   'swarm work check FILE [--json]',
-  'swarm work id TAG --after N',
+  'swarm work id TAG --after N [--registry FILE]',
 ]
 export const workUsage = usageBlock(workUsageLines)
 
@@ -70,15 +71,38 @@ export async function workCommand(args: string[]): Promise<number> {
     return result.valid ? 0 : 1
   }
   if (action === 'id') {
-    if (args.length !== 4 || !target || target.startsWith('-') || flag !== '--after' || !/^\d+$/.test(value ?? '')) {
+    let positionals: string[]
+    let after: string | undefined
+    let registryFile: string | undefined
+    try {
+      const parsed = parseArgs({
+        args: args.slice(1),
+        allowPositionals: true,
+        strict: true,
+        options: {
+          after: { type: 'string' },
+          registry: { type: 'string' },
+        },
+      })
+      positionals = parsed.positionals
+      after = parsed.values.after
+      registryFile = parsed.values.registry
+    } catch (err) {
+      if (!(err instanceof Error)) throw err
+      return error(phrase(err.message), 2)
+    }
+    const tag = positionals[0]
+    if (positionals.length !== 1 || !tag || tag.startsWith('-') || !/^\d+$/.test(after ?? '')) {
       return error('expected id TAG --after N', 2)
     }
     let registry: unknown
-    try { registry = await readRegistry() } catch { return error('cannot read tag registry') }
+    try { registry = await readRegistry(registryFile) } catch {
+      return error(registryFile ? `cannot read ${registryFile}` : 'cannot read tag registry')
+    }
     if (tagProblems(registry).length) return error('invalid tag registry')
     const tags = (registry as { tags: { tag: string }[] }).tags.map(entry => entry.tag)
     try {
-      console.log(allocateWorkId(tags, target, Number(value)).id)
+      console.log(allocateWorkId(tags, tag, Number(after)).id)
       return 0
     } catch (err) {
       if (!(err instanceof RangeError)) throw err
