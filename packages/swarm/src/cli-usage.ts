@@ -1,9 +1,31 @@
-import { workUsage } from './work/cli.ts'
+import type { Command } from './commands/load.ts'
 
-export const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm party <list|show|add|remove|member|jockey> ...\n       registry file: --registry FILE or SWARM_REGISTRY\n       swarm score <leaderboard|card|history|drill> ...\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm classifier report <dir> [--json]\n       swarm classifier clear <dir> <question> --why TEXT\n       swarm serve --help'
+let catalogText: Promise<string> | undefined
 
-export function helpText(): string {
-  return `${usage}\n${workUsage}`
+export function usageBlock(lines: readonly string[]): string {
+  return lines.map((line, index) => `${index === 0 ? 'usage: ' : '       '}${line}`).join('\n')
+}
+
+function byOrder(left: Command, right: Command): number {
+  return (left.usageOrder ?? 0) - (right.usageOrder ?? 0) || left.name.localeCompare(right.name)
+}
+
+function linesOf(commands: readonly Command[], catalog: boolean): Command[] {
+  return commands.filter((command) => command.usage.length > 0 && command.catalog === catalog).sort(byOrder)
+}
+
+export function usageText(commands: readonly Command[]): string {
+  return usageBlock(linesOf(commands, true).flatMap((command) => command.usage))
+}
+
+export function helpText(commands: readonly Command[]): string {
+  const blocks = [usageText(commands), ...linesOf(commands, false).map((command) => usageBlock(command.usage))]
+  return blocks.filter((block) => block !== '').join('\n')
+}
+
+export function bindUsage(commands: readonly Command[]) {
+  const text = usageText(commands)
+  catalogText = Promise.resolve(text)
 }
 
 export function printError(headline: string) {
@@ -13,8 +35,12 @@ export function printError(headline: string) {
   console.error(`error: ${safe}`)
 }
 
-export function misuse(message: string): number {
+export async function misuse(message: string): Promise<number> {
   printError(message)
-  console.error(usage)
+  if (catalogText === undefined) {
+    const { loadCommands } = await import('./commands/load.ts')
+    catalogText = loadCommands().then(usageText)
+  }
+  console.error(await catalogText)
   return 2
 }
