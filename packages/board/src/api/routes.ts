@@ -442,13 +442,17 @@ const Environments = z.array(z.string().min(1).max(100)).min(1).max(16)
 
 /**
  * Who a grant names, as people write it: a user by email (or, where the board can't look one up,
- * by ID), a project by name or ID, a repository by `owner/name`. The board resolves names and keeps
- * IDs; a board that verifies tokens itself takes IDs only. A `user` names `email` or `userId`.
- * Nothing else: a key it doesn't know (a misspelled `workflows`, say) is a 400, never dropped,
- * since dropping it would name more than was meant.
+ * by ID), a project by name or ID, a repository by `owner/name`, an invitee by the id `join`
+ * returned. The board resolves names and keeps IDs; a board that verifies tokens itself takes IDs
+ * only. A `user` names `email` or `userId`. Nothing else: a key it doesn't know (a misspelled
+ * `workflows`, say) is a 400, never dropped, since dropping it would name more than was meant.
  */
 export const PrincipalInput = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('user'), email: z.string().min(3).max(320).optional(), userId: z.string().min(1).max(200).optional() }),
+  z.strictObject({
+    kind: z.literal('invitee'),
+    id: z.string().regex(/^joined:user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'an invitee is the id join returned'),
+  }),
   // Its environments are where its deployments get in; a principal to remove leaves them out.
   z.strictObject({ kind: z.literal('project'), project: z.string().min(1).max(200), environments: Environments.optional() }),
   z.strictObject({

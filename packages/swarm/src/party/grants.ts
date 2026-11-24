@@ -190,7 +190,7 @@ function inputOf(principal: GrantView['principals'][number]): PrincipalInput {
     case 'oidc':
       return { kind: 'oidc', issuer: principal.issuer, claims: principal.claims }
     case 'invitee':
-      throw new Error(`cannot restore an invitee grant principal: ${principal.id}`)
+      return { kind: 'invitee', id: principal.id }
     default: {
       const unexpected: never = principal
       return unexpected
@@ -220,7 +220,11 @@ async function restoreGrants(handle: Board, before: readonly GrantView[]): Promi
   const current = await handle.grants()
   const prior = new Map(before.map((grant) => [grant.id, grant]))
   const live = new Map(current.map((grant) => [grant.id, grant]))
+  const extras = current.filter((grant) => !prior.has(grant.id)).sort((a, b) => Number(managesAll(a)) - Number(managesAll(b)))
   const missing = before.filter((grant) => !live.has(grant.id)).sort((a, b) => Number(managesAll(b)) - Number(managesAll(a)))
+  // Drop a grant this pass added before putting the old ones back. One principal
+  // we cannot write must not leave that grant as the next apply's baseline.
+  for (const grant of extras) if (!managesAll(grant)) await revokeGrant(handle, grant)
   for (const grant of missing) {
     const body = { principals: grant.principals.map(inputOf), can: grant.can }
     await allowingLockout((lockMeOut) => handle.createGrant(body, lockMeOut ? { lockMeOut } : {}).then(() => undefined))
@@ -239,8 +243,7 @@ async function restoreGrants(handle: Board, before: readonly GrantView[]): Promi
       ...(can ? { can } : {}),
     }, lockMeOut ? { lockMeOut } : {}).then(() => undefined))
   }
-  const extras = current.filter((grant) => !prior.has(grant.id)).sort((a, b) => Number(managesAll(a)) - Number(managesAll(b)))
-  for (const grant of extras) await revokeGrant(handle, grant)
+  for (const grant of extras) if (managesAll(grant)) await revokeGrant(handle, grant)
 }
 
 function covers(ceiling: string, pattern: string): boolean {
@@ -299,7 +302,8 @@ export async function auditGrants(handle: Board, registry: Registry, { kind, par
     }
   }
   // A dropped deny is wider access even when every remaining user is inside the registry ceiling.
-  // A gained permission counts only when the desired grants do not give it.
+  // A gained permission is one the baseline plus the desired grants did not already give. A broader
+  // member grant does not excuse losing a more specific deny.
   if (before && violations.size === 0) for (const entry of widened(before, current, registry, { kind, party })) violations.add(entry)
   return { ok: violations.size === 0, violations: [...violations] }
 }
@@ -406,7 +410,8 @@ function widened(before: readonly GrantView[], after: readonly GrantView[], regi
   for (const probe of probes(before, after, registry)) {
     const earlier = held(before, probe, channels)
     const later = held(after, probe, channels)
-    const asked = held(requested, probe, channels)
+    // Desired grants sit on the baseline, so a deny there still beats a broader allow.
+    const allowed = held([...before, ...requested], probe, channels)
     for (const spot of new Set([...earlier.keys(), ...later.keys()])) {
       const had = earlier.get(spot) ?? new Set<string>()
       const has = later.get(spot) ?? new Set<string>()
@@ -414,7 +419,7 @@ function widened(before: readonly GrantView[], after: readonly GrantView[], regi
       // wider: wider is a permission added while every permission already held is still held.
       if ([...had].some((permission) => !has.has(permission))) continue
       for (const permission of [...has].filter((permission) => !had.has(permission)).sort()) {
-        if (asked.get(spot)?.has(permission)) continue
+        if (allowed.get(spot)?.has(permission)) continue
         violations.push(`${probe.who} gained ${permission} at ${spot}`)
       }
     }

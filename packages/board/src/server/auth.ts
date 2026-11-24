@@ -257,6 +257,11 @@ export const workflowPath = (workflow: string) => (workflow.includes('/') ? work
  */
 export function checkPrincipal(input: PrincipalInput, trusted: readonly string[], removal = false, team: string | null = null, logins = false): GrantPrincipal {
   switch (input.kind) {
+    case 'invitee':
+      if (!/^joined:user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.id)) {
+        throw invalidGrant('an invitee is the id join returned, like joined:user:…')
+      }
+      return { kind: 'invitee', id: input.id }
     case 'user': {
       if (input.email !== undefined && input.userId !== undefined) throw invalidGrant('a user is its email or its userId, not both')
       if (input.email !== undefined && !logins) throw invalidGrant(`this board can't look up ${input.email}: it verifies tokens itself, so name the user by ID, { kind: 'user', userId }`)
