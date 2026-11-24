@@ -364,3 +364,12 @@ test('CLI serve logs the address it actually bound', async (t) => {
   ])
   assert.match(line, /^listening\s+http:\/\/0\.0\.0\.0:[1-9]\d*$/)
 })
+
+// Catches help that still hides the stdin session and the logs bearer.
+test('CLI help says bind reads the session id from stdin and logs require a bearer', () => {
+  const result = spawnSync(process.execPath, ['src/cli.ts', '--help'], { cwd, encoding: 'utf8', timeout: 10_000 })
+  if (result.error) throw result.error
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /swarm capture-cloud bind reads the session id from stdin/)
+  assert.match(result.stdout, /requires Authorization: Bearer on POST \/v1\/logs/)
+})
