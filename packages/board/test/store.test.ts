@@ -5,7 +5,7 @@ import * as attentionStore from '../src/inspect/app/attention-store.ts'
 import { needsAction } from '../src/inspect/app/needs.ts'
 import * as store from '../src/inspect/app/store.ts'
 import { continues } from '../src/inspect/app/store.ts'
-import { boardWords, cadence, clock, laterFields, localInput, principalName, refusal, span, timingWords, until } from '../src/inspect/app/words.ts'
+import { boardWords, cadence, laterFields, localInput, principalName, refusal, span, timingWords, until } from '../src/inspect/app/words.ts'
 
 const ME = 'vercel:user:u_julian'
 
@@ -370,11 +370,7 @@ describe('the inspector store', () => {
     expect(store.taskCounts(state, NOW + 5 * 60_000)).toEqual({ ...counts, ready: 2, claimed: 0 })
   })
 
-  it('says what is left of a lease, and what a refusal means', () => {
-    expect(clock(15 * 60_000)).toBe('15:00')
-    expect(clock(59_400)).toBe('1:00') // rounds up, so it reads 0:00 only once it's over
-    expect(clock(3_725_000)).toBe('1h 02m')
-    expect(clock(-5)).toBe('0:00')
+  it('says what a refusal means', () => {
     const board = (code: string) => Object.assign(new Error('the board said so'), { code })
     // A refusal the page knows is said in its words; any other in the board's.
     expect(refusal(board('claim_lost'))).not.toContain('the board said so')
