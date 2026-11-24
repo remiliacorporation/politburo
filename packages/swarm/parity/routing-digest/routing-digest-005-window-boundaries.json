@@ -1,0 +1,129 @@
+{
+  "case_id": "routing-digest-005-window-boundaries",
+  "description": "Age a stale header out of the digest and admit a future header.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/example/digest.yaml": "batch: \"example-2026-11-20T21:14:01Z\"\nrepo: \"example\"\nwindow: {\"from\": \"2026-11-20T21:04:01Z\", \"to\": \"2026-11-20T21:14:01Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 1}\nact_on: []\nitems:\n  - {\"at\": \"2026-11-20T21:14:01Z\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"summary\": \"Example spawner.decide at p3\", \"urgency\": \"p3\"}\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:04Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"example\", \"urgency\": \"p2\"}\n- {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"ex-inbox/ex-0027.yaml\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.decide at p3\", \"to\": \"example\", \"urgency\": \"p3\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:04Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"to\": \"example\", \"urgency\": \"p2\"}",
+      "- {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"ex-inbox/ex-0027.yaml\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.decide at p3\", \"to\": \"example\", \"urgency\": \"p3\"}"
+    ],
+    "stderr": "",
+    "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=1 p3=0 new=2 invalid=0\ndigest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=0 invalid=0\n",
+    "timeline": [
+      {
+        "at": "2026-11-20T21:14:00Z",
+        "digest": {
+          "act_on": [
+            "ex-0019"
+          ],
+          "batch": "example-2026-11-20T21:14:00Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 1,
+            "p3": 0
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:04Z",
+              "body": "ex-inbox/ex-0019.yaml",
+              "class": "spawner.dispatch",
+              "from": "ex 120-BEE",
+              "id": "ex-0019",
+              "ref": {
+                "bead": "example-01",
+                "pr": 42
+              },
+              "summary": "Example spawner.dispatch at p2",
+              "urgency": "p2"
+            }
+          ],
+          "repo": "example",
+          "window": {
+            "from": "2026-11-20T21:04:00Z",
+            "to": "2026-11-20T21:14:00Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 2,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=1 p3=0 new=2 invalid=0\n"
+      },
+      {
+        "at": "2026-11-20T21:14:01Z",
+        "digest": {
+          "act_on": [],
+          "batch": "example-2026-11-20T21:14:01Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 1
+          },
+          "items": [
+            {
+              "at": "2026-11-20T21:14:01Z",
+              "class": "spawner.decide",
+              "from": "ex 120-BEE",
+              "id": "ex-0027",
+              "summary": "Example spawner.decide at p3",
+              "urgency": "p3"
+            }
+          ],
+          "repo": "example",
+          "window": {
+            "from": "2026-11-20T21:04:01Z",
+            "to": "2026-11-20T21:14:01Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 2,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=0 p3=1 new=0 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/example/digest.yaml",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "after_seconds": 0,
+        "args": [
+          "--window-from=2026-11-20T21:04:00Z",
+          "--window-to=2026-11-20T21:14:00Z"
+        ]
+      },
+      {
+        "after_seconds": 1,
+        "args": [
+          "--window-from=2026-11-20T21:04:01Z",
+          "--window-to=2026-11-20T21:14:01Z"
+        ]
+      }
+    ],
+    "tag": "example"
+  },
+  "matrix_row": "M06",
+  "notes": "The digest window moves by one second with both headers unchanged.",
+  "setup": {
+    "files": {
+      "mail/example/ex-0019.header.json": "{\"at\": \"2026-11-20T21:04Z\", \"body\": \"ex-inbox/ex-0019.yaml\", \"class\": \"spawner.dispatch\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0019\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.dispatch at p2\", \"urgency\": \"p2\"}\n",
+      "mail/example/ex-0027.header.json": "{\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"ex-inbox/ex-0027.yaml\", \"class\": \"spawner.decide\", \"from\": \"ex 120-BEE\", \"id\": \"ex-0027\", \"ref\": {\"bead\": \"example-01\", \"pr\": 42}, \"summary\": \"Example spawner.decide at p3\", \"urgency\": \"p3\"}\n"
+    },
+    "now": "2026-11-20T21:14:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

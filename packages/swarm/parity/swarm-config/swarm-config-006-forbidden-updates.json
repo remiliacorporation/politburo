@@ -1,0 +1,93 @@
+{
+  "case_id": "swarm-config-006-forbidden-updates",
+  "description": "Reject unknown and managed update fields with notification requested.",
+  "expected": {
+    "exit_code": 2,
+    "files": {
+      "mail/ex/ex-0001.yaml": null,
+      "mail/ex/id-counter.txt": null,
+      "mail/log.yaml": null,
+      "swarm-config.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n",
+      "swarm-config.json.lock": ""
+    },
+    "log_lines": [],
+    "stderr": "swarm-config: unknown field: 'extra'\nswarm-config: version: managed automatically; cannot be set\nswarm-config: updated_at: managed automatically; cannot be set\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: unknown field: 'extra'\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: version: managed automatically; cannot be set\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: updated_at: managed automatically; cannot be set\n",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "swarm-config.json",
+      "swarm-config.json.lock",
+      "mail/ex/ex-0001.yaml",
+      "mail/ex/id-counter.txt",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "extra=example"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "version=7"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "updated_at=2026-02-03T04:05:06Z"
+        ],
+        "kind": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "",
+  "setup": {
+    "files": {
+      "mail/ex/.keep": "",
+      "swarm-config.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n"
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
