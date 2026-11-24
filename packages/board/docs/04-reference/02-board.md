@@ -736,8 +736,10 @@ revokeGrant(id: string, options?: { lockMeOut?: boolean }): Promise<{ revoked: b
 to `'all'`, `'none'`, or a list of permissions, which the handle sends as the
 protocol has it (`'none'` as `[]`). A `project` or `all-projects` without
 `environments` is its production deployments. The same principals again are
-another grant. `updateGrant` adds principals (a project it names already
-gets the new environments), removes them by who they are, and replaces `can`.
+another grant. An `invitee` is `{ kind: 'invitee', id }`, the id `join`
+returned, and only when that member has already joined. `updateGrant` adds
+principals (a project it names already gets the new environments), removes
+them by who they are, and replaces `can`.
 Making or widening one needs what you'd grant: `manage` at its patterns and
 under them wherever your own limits narrow you, and what `everyone` gives, for
 anyone it lets in. Revoking one, or removing from it, needs the same but what

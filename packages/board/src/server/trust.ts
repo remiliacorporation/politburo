@@ -339,6 +339,14 @@ async function mayGrant(
 
 /** An oidc principal: naming one makes the board fetch its issuer's keys, so it takes manage everywhere. */
 const namesIssuer = (principals: readonly GrantPrincipal[]) => principals.some((principal) => principal.kind === 'oidc')
+
+/** An invitee grant names someone who already joined: the id is not a new member. */
+function requireJoined(state: AccessState, principals: readonly GrantPrincipal[]) {
+  const ids = new Set(Object.values(state.joined).map((entry) => entry.id))
+  for (const principal of principals) {
+    if (principal.kind === 'invitee' && !ids.has(principal.id)) throw badRequest(`no joined member is ${principal.id}`, 'invalid_grant')
+  }
+}
 const ISSUER: Named = { what: 'naming an oidc issuer', doing: 'naming an oidc issuer' }
 
 /**
@@ -375,6 +383,7 @@ async function updated(identity: Identity, state: AccessState, { id, add, remove
     else principals[at] = joined(added, principals[at]!)!
   }
   if (principals.length === 0) throw badRequest(`that leaves ${id} naming no one: revoke it instead`, 'grant_empty')
+  requireJoined(state, principals)
   if (principals.length > 32) throw badRequest('a grant names at most 32 principals', 'invalid_grant')
   const next = can === undefined ? row.can : checkCan(can)
   // As it was, it's lifted, so it's judged by reach; adding principals or setting `can` widens it too.
@@ -438,7 +447,11 @@ export function createTrust(options: {
       const before = Object.values(state.grants).map(storedGrant)
       const made: StoredGrant[] = []
       // Each against the issuers of the grants before it in the write too: two that name the same principals can't sit side by side.
-      for (const body of bodies) made.push({ id: grantId(state.nextGrant + made.length), ...checkGrant(body, grantIssuers([...before, ...made]), team, logins()) })
+      for (const body of bodies) {
+        const grant = { id: grantId(state.nextGrant + made.length), ...checkGrant(body, grantIssuers([...before, ...made]), team, logins()) }
+        requireJoined(state, grant.principals)
+        made.push(grant)
+      }
       const after = [...before, ...made]
       const standing = await standingOf(identity, before, accessIn, lockMeOut ? undefined : after)
       made.forEach((grant, at) => {

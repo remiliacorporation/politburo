@@ -9,20 +9,25 @@ import { homedir } from "node:os";
 import { basename, dirname, join, parse, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-const CODEX_MODEL = process.env.PI_FALLBACK_PRIMARY_MODEL ?? "gpt-6.2-sol";
-const CURSOR_MODEL = process.env.PI_FALLBACK_CURSOR_MODEL ?? "composer-2.5";
+type Tier = { label: string; provider: string; model: string };
+
+function isTier(value: unknown): value is Tier {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const route = value as Record<string, unknown>;
+  return Object.keys(route).length === 3 && ["label", "provider", "model"].every(
+    (key) => Object.hasOwn(route, key) && typeof route[key] === "string" && route[key].length > 0,
+  );
+}
+
+function readTiers(raw: string | undefined): readonly Tier[] {
+  let parsed: unknown;
+  try { if (raw !== undefined) parsed = JSON.parse(raw); } catch { /* Report the expected shape below. */ }
+  if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isTier)) return parsed;
+  throw new Error("PI_FALLBACK_TIERS must be a non-empty JSON array of routes with string label, provider, and model fields; use swarm sprite routes");
+}
+
+export const TIERS = readTiers(process.env.PI_FALLBACK_TIERS);
 const COOLDOWN_MS = Number(process.env.PI_FALLBACK_COOLDOWN_MINUTES ?? "30") * 60_000;
-
-export const PERSONAL_PROVIDER = "openai-codex-personal";
-export const TIERS = [
-  { label: "work Codex", provider: "openai-codex", model: CODEX_MODEL },
-  { label: "Cursor", provider: "cursor", model: CURSOR_MODEL },
-  { label: "personal Codex", provider: PERSONAL_PROVIDER, model: CODEX_MODEL },
-] as const;
-
-const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 
 const QUOTA_OR_AUTH_FAILURE =
   /usage limit|rate.?limit|quota|too many requests|\b429\b|\b401\b|\b403\b|unauthori[sz]ed|forbidden|insufficient (?:credits|balance|quota)|(?:limit|quota) exceeded|overloaded|credential|log ?in required|not logged in|no api key|authentication failed|(?:expired|invalid|malformed) token|failed to (?:decode|extract accountId from) (?:the )?token/i;
@@ -206,56 +211,6 @@ export async function saveCooldowns(entries: Cooldowns, now: number, timing = lo
   }
 }
 
-function codexModelDefinition(): Record<string, unknown> {
-  try {
-    const store = JSON.parse(readFileSync(join(homedir(), ".pi/agent/models-store.json"), "utf8"));
-    const found = (store?.["openai-codex"]?.models ?? []).find((model: { id?: string }) => model.id === CODEX_MODEL);
-    if (found) return found;
-  } catch {}
-  return {
-    id: CODEX_MODEL,
-    name: "Codex 6.2 Sol",
-    api: "openai-codex-responses",
-    baseUrl: CODEX_BASE_URL,
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
-    contextWindow: 500000,
-    maxTokens: 128000,
-    thinkingLevelMap: { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
-    type: "chat",
-  };
-}
-
-function accountIdFromToken(token: string): string | undefined {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-    const id = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
-    return typeof id === "string" && id ? id : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function refreshPersonalCodexToken(credentials: { refresh: string }) {
-  const response = await fetch(CODEX_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: credentials.refresh, client_id: CODEX_CLIENT_ID }),
-  });
-  if (!response.ok) throw new Error(`personal Codex token refresh failed (${response.status})`);
-  const json = (await response.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
-  if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
-    throw new Error("personal Codex token refresh response missing fields");
-  }
-  return {
-    access: json.access_token,
-    refresh: json.refresh_token,
-    expires: Date.now() + json.expires_in * 1000,
-    accountId: accountIdFromToken(json.access_token),
-  };
-}
-
 export function chooseRoute(
   request: {
     reason?: string;
@@ -294,9 +249,9 @@ export function chooseRoute(
   const state = changed ? { cooldownUntil } : undefined;
 
   if (request.reason !== "user" && request.reason !== "retry" && request.previous) {
-    const previousTier = tierOf(request.previous.model.provider);
-    if (previousTier >= 0 && ready.some((entry) => entry.tier.provider === request.previous!.model.provider)) {
-      return { model: request.previous.model, thinkingLevel: request.previous.thinkingLevel ?? level, state };
+    const { model, thinkingLevel } = request.previous;
+    if (ready.some(({ tier }) => tier.provider === model.provider && tier.model === model.id)) {
+      return { model, thinkingLevel: thinkingLevel ?? level, state };
     }
   }
 
@@ -493,11 +448,10 @@ export function installRouter<Timer>(pi: ExtensionAPI, clock: Clock<Timer>) {
   };
   const candidates = (entries: Cooldowns, tried: ReadonlySet<string>) =>
     (provider: string, id: string) => !(provider in entries) && !tried.has(provider) ? find(provider, id) : undefined;
-  const dispatch = (provider: string): Model<Api> => {
-    const tier = TIERS[tierOf(provider)];
+  const dispatch = (tier: Tier, index: number): Model<Api> => {
     const model = registry?.find(tier.provider, tier.model);
     return {
-      provider: "fallback", id: provider, api: DISPATCH_API, name: `Fallback dispatch (${tier.label})`, baseUrl: "",
+      provider: "fallback", id: String(index), api: DISPATCH_API, name: `Fallback dispatch (${tier.label})`, baseUrl: "",
       input: model?.input ?? ["text"], reasoning: true,
       cost: model?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: model?.contextWindow ?? 500_000, maxTokens: model?.maxTokens ?? 128_000,
@@ -537,13 +491,12 @@ export function installRouter<Timer>(pi: ExtensionAPI, clock: Clock<Timer>) {
       const idleMs = streamIdleMs();
       let failover = tried.size > 0;
       let started = false;
-      const nextReady = (preferred?: string) => {
+      const nextReady = (first?: Tier) => {
         const now = clock.now();
         const ready = candidates(mergeCooldowns(now, inMemory, loadCooldowns(now)), tried);
-        const first = TIERS[tierOf(preferred)];
         return (first && ready(first.provider, first.model)) ?? TIERS.map((tier) => ready(tier.provider, tier.model)).find(Boolean);
       };
-      let next = nextReady(model.id);
+      let next = nextReady(TIERS[Number(model.id)]);
       let failed: AssistantMessage | undefined;
       if (options.signal?.aborted) return finish(errorMessage(model, "Request aborted", "aborted"));
       while (next) {
@@ -578,32 +531,18 @@ export function installRouter<Timer>(pi: ExtensionAPI, clock: Clock<Timer>) {
   pi.registerProvider({
     id: "fallback", name: "Fallback dispatch",
     auth: { apiKey: { name: "Local router", resolve: async () => ({ auth: {}, source: "local router" }) } },
-    getModels: () => TIERS.map(({ provider }) => dispatch(provider)),
+    getModels: () => TIERS.map(dispatch),
     filterModels: () => [], // Only the virtual selection is intended to appear in the model picker.
     stream(model, context, options) {
       return openStream(model, context, options as SimpleStreamOptions);
     },
     streamSimple: openStream,
   });
-  pi.registerProvider(PERSONAL_PROVIDER, {
-    name: "OpenAI Codex (personal account)",
-    api: "openai-codex-responses",
-    baseUrl: CODEX_BASE_URL,
-    models: [{ ...codexModelDefinition(), provider: PERSONAL_PROVIDER }],
-    oauth: {
-      name: "OpenAI Codex (personal account)",
-      getApiKey: (credentials: { access: string }) => credentials.access,
-      refreshToken: refreshPersonalCodexToken,
-      async login() {
-        throw new Error("Set PI_CODEX_PERSONAL_AUTH, or copy a signed-in openai-codex entry to openai-codex-personal in auth.json.");
-      },
-    },
-  } as never);
 
   pi.registerVirtualModel<FallbackState>({
     provider: "fallback",
     id: "codex-cursor",
-    name: "Work Codex, then Cursor, then personal Codex",
+    name: "Sprite fallback router",
     thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
     async route(request: ModelRouteRequest<FallbackState>, ctx) {
       request.signal?.throwIfAborted();
@@ -639,8 +578,9 @@ export function installRouter<Timer>(pi: ExtensionAPI, clock: Clock<Timer>) {
       const old = request.state?.cooldownUntil;
       const unchanged = old && Object.keys(old).length === Object.keys(entries).length &&
         Object.entries(entries).every(([provider, until]) => old[provider] === until);
+      const index = TIERS.findIndex((tier) => tier.provider === pick.model.provider && tier.model === pick.model.id);
       return {
-        model: dispatch(pick.model.provider), thinkingLevel: pick.thinkingLevel as typeof request.thinkingLevel,
+        model: dispatch(TIERS[index], index), thinkingLevel: pick.thinkingLevel as typeof request.thinkingLevel,
         state: unchanged ? request.state : { cooldownUntil: entries },
       };
     },

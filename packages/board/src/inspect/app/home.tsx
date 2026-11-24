@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import * as board from './board.ts'
+import { claimFirst } from './claim-order.ts'
 import { here, Link, RelativeTime } from './nav.tsx'
-import { isTask, nameOf, stateNow, tasks, type State, type TaskFilter, type TaskRoot } from './store.ts'
+import { isTask, nameOf, stateNow, taskScope, tasks, type State, type TaskFilter, type TaskRoot } from './store.ts'
 import { StateMark } from './task.tsx'
 import { Header } from './ui.tsx'
 import { ago, firstLine, left } from './words.ts'
@@ -28,20 +29,13 @@ function Outcome({ root }: { root: TaskRoot }) {
 }
 
 function Prerequisite({ id, state, now }: { id: string; state: State; now: number }) {
-  const root = state.messages[id]
-  const [checked, setChecked] = useState(false)
-  useEffect(() => {
-    if (root) return
-    let active = true
-    void board.loadThread(id).then(() => { if (active) setChecked(true) })
-    return () => { active = false }
-  }, [id, root])
+  const root = state.openTaskRoots[id]
   const task = root && !root.deleted && isTask(root) ? root : undefined
   return (
     <li>
       <div className="handoff-line">
         <Link to={here({ thread: id })}>{task ? titleOf(task) : `Task #${id}`}</Link>
-        {task ? <StateMark state={stateNow(task.task, now)} /> : <small>{root || checked ? 'Prerequisite unavailable' : 'Loading prerequisite…'}</small>}
+        {task ? <StateMark state={stateNow(task.task, now)} /> : <small>Prerequisite unavailable</small>}
       </div>
       {task && <Outcome root={task} />}
     </li>
@@ -82,14 +76,11 @@ function Handoff({ root, state, now }: { root: TaskRoot; state: State; now: numb
 }
 
 export function Home({ state, now, lead }: { state: State; now: number; lead: ReactNode }) {
-  const [listed, setListed] = useState<Awaited<ReturnType<typeof board.loadTasks>>>()
-  const [loadingMore, setLoadingMore] = useState(false)
-  useEffect(() => {
-    let active = true
-    void board.loadTasks(filter).then((page) => { if (active) setListed(page) })
-    return () => { active = false }
-  }, [])
-  const rows = tasks(state, filter, now)
+  const [reading, setReading] = useState<string[] | null>(null)
+  const hovered = useRef(false)
+  const inScope = state.taskScope === taskScope()
+  const viewer = inScope && state.openTaskMe ? board.viewerOf(state.openTaskMe) : null
+  const rows = viewer ? tasks(state, filter, now) : []
   // Keep each task in the lane where it first appeared on this visit. Its badge and
   // details still read the latest state; leaving Handoffs (or reloading) resets placement.
   const [placement, setPlacement] = useState(() => new Map<string, string>())
@@ -102,9 +93,9 @@ export function Home({ state, now, lead }: { state: State; now: number; lead: Re
     }
     setPlacement(next)
   }
-  const status = !listed ? 'Loading tasks…'
-    : 'refused' in listed ? `Task list unavailable: ${listed.refused} Showing only tasks already known here.`
-    : listed.more ? 'Partial list · More tasks are available.'
+  const more = (state.tasksLoading ?? 0) > 0
+  const status = inScope && state.tasksRefused ? `Task list unavailable: ${state.tasksRefused}`
+    : !viewer ? (more ? null : 'Loading tasks…')
     : rows.length === 0 ? 'No tasks known to this view.'
     : null
   return (
@@ -113,25 +104,35 @@ export function Home({ state, now, lead }: { state: State; now: number; lead: Re
       <div className="page home-view handoffs-view">
         {status && <div className="home-intro"><p role="status">{status}</p></div>}
         {lanes.map(({ title }, index) => {
-          const items = rows.filter(({ id }) => placement.get(id) === title)
-          if (items.length === 0) return null
+          let items = rows.filter(({ id }) => placement.get(id) === title)
+          const runnable = title === 'Runnable'
+          if (runnable && viewer) {
+            items = claimFirst(items, state.status?.paused ? { ...viewer, may: () => false } : viewer, now)
+            if (reading) {
+              const place = new Map(reading.map((id, i) => [id, i]))
+              items.sort((a, b) => (place.get(a.id) ?? reading.length) - (place.get(b.id) ?? reading.length))
+            }
+          }
+          if (items.length === 0 && !(runnable && more)) return null
+          const holdOrder = () => setReading((held) => held ?? items.map(({ id }) => id))
           return (
-            <section key={title} className="home-queue" aria-labelledby={`handoff-lane-${index}`}>
+            <section key={title} className="home-queue" aria-labelledby={`handoff-lane-${index}`}
+              onFocusCapture={runnable ? holdOrder : undefined}
+              onBlurCapture={runnable ? (event) => {
+                if (!hovered.current && !event.currentTarget.contains(event.relatedTarget)) setReading(null)
+              } : undefined}
+              onMouseEnter={runnable ? () => { hovered.current = true; holdOrder() } : undefined}
+              onMouseLeave={runnable ? (event) => {
+                hovered.current = false
+                if (!event.currentTarget.contains(document.activeElement)) setReading(null)
+              } : undefined}
+            >
               <h2 id={`handoff-lane-${index}`}>{title}</h2>
+              {runnable && more && <p role="status">more loading</p>}
               <ul className="handoff-list" role="list">{items.map((root) => <Handoff key={root.id} root={root} state={state} now={now} />)}</ul>
             </section>
           )
         })}
-        {listed && 'cursor' in listed && listed.more && (
-          <div className="home-intro">
-            <button type="button" disabled={loadingMore} onClick={async () => {
-              setLoadingMore(true)
-              const page = await board.loadTasks(filter, listed.cursor)
-              if (page) setListed(page)
-              setLoadingMore(false)
-            }}>{loadingMore ? 'Loading…' : 'Load more tasks'}</button>
-          </div>
-        )}
       </div>
     </>
   )
