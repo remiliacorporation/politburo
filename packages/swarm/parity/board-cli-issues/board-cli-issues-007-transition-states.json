@@ -1,0 +1,557 @@
+{
+  "case_id": "board-cli-issues-007-transition-states",
+  "description": "Move through ungated states and reconcile a lease",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Enable claims on the isolated board\", \"state\": \"active\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"ready\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"proposed\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"proposed\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"scoped\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"scoped\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"authorized\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "claimed",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"controller\": \"controller-01\", \"envelope_version\": 1, \"expires_at\": \"2026-01-01T00:15:00+00:00\", \"owner\": \"worker-01\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"claimed\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"working\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": \"Example input unavailable\", \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"working\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"blocked\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:15:00+00:00",
+          "event_id": 9,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"blocked\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"paused\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:15:00+00:00",
+          "event_id": 10,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"paused\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"ready\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:15:00+00:00",
+          "event_id": 11,
+          "event_type": "operator_blocked_set",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"user\", \"actor_type\": \"user\", \"authority_ref\": \"example-direction\", \"dispatch\": \"none\", \"envelope_version\": 1, \"from\": \"ready\", \"operator_reason\": \"Park the example issue\", \"prior_blocker\": \"Example input unavailable\", \"prior_state\": \"ready\", \"reason\": \"Operator parked this work: Park the example issue\", \"reason_code\": \"operator_blocked_set\", \"recorded_at\": \"2026-01-01T00:15:00+00:00\", \"to\": \"paused\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:15:00+00:00",
+          "event_id": 12,
+          "event_type": "operator_blocked_cleared",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_role\": \"user\", \"actor_type\": \"user\", \"authority_ref\": \"example-release\", \"dispatch\": \"none\", \"envelope_version\": 1, \"from\": \"paused\", \"operator_reason\": \"Restore the example issue\", \"reason\": \"Operator released parked work: Restore the example issue\", \"reason_code\": \"operator_blocked_cleared\", \"recorded_at\": \"2026-01-01T00:15:00+00:00\", \"restored_blocker\": \"Example input unavailable\", \"set_event_id\": 11, \"to\": \"ready\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:15:00+00:00",
+          "event_id": 13,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"ready\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"rejected\"}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "2"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 2,
+          "base_sha": null,
+          "blocker": "Example input unavailable",
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:15:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "rejected",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:15:00+00:00",
+          "version": 12,
+          "worktree": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"proposed\",\n  \"version\": 2\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"scoped\",\n  \"version\": 3\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"authorized\",\n  \"version\": 4\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"assignment_generation\": 2,\n  \"issue_key\": \"example-issue\",\n  \"lease_expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"lease_token\": \"000000000000000000000000000000000001\",\n  \"ok\": true,\n  \"version\": 5\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "lease token mismatch\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"working\",\n  \"version\": 6\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"approved_scope\": null,\n  \"assignment_generation\": 2,\n  \"base_sha\": null,\n  \"blocker\": null,\n  \"branch\": null,\n  \"controller\": \"controller-01\",\n  \"created_at\": \"2026-01-01T00:00:00+00:00\",\n  \"dependencies\": [],\n  \"execution_attempts\": [],\n  \"execution_status\": {\n    \"expires_at\": null,\n    \"key\": \"none\",\n    \"note\": \"No accepted supervisor receipt names this issue.\",\n    \"observed_at\": null,\n    \"operation_id\": null,\n    \"source\": null,\n    \"text\": \"No current execution evidence\",\n    \"tone\": \"neutral\"\n  },\n  \"head_sha\": null,\n  \"issue_key\": \"example-issue\",\n  \"issue_priority\": 3,\n  \"lane\": \"unassigned\",\n  \"last_activity_at\": \"2026-01-01T00:00:00+00:00\",\n  \"lease_expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"lease_token\": \"000000000000000000000000000000000001\",\n  \"messages\": [],\n  \"model\": \"example-model\",\n  \"owner\": \"worker-01\",\n  \"packet_path\": null,\n  \"packet_sha256\": null,\n  \"pipeline_stages\": [],\n  \"priority\": 100,\n  \"priority_label\": \"3 Normal\",\n  \"provider\": \"example-provider\",\n  \"qa_runs\": [],\n  \"review_marks\": [],\n  \"session_id\": null,\n  \"state\": \"working\",\n  \"title\": \"Example issue\",\n  \"updated_at\": \"2026-01-01T00:00:00+00:00\",\n  \"version\": 6,\n  \"worktree\": null\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"blocked\",\n  \"version\": 7\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "lease has expired or has no expiry; reconcile ownership before transitioning\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"paused\",\n  \"version\": 8\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"ready\",\n  \"version\": 9\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dispatched\": false,\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"operator_blocked\": true,\n  \"state\": \"paused\",\n  \"version\": 10\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "issue is operator blocked; clear the designation with operator-block clear before any transition\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dispatched\": false,\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"operator_blocked\": false,\n  \"state\": \"ready\",\n  \"version\": 11\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"rejected\",\n  \"version\": 12\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "proposed",
+          "--expected-version",
+          "1",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "scoped",
+          "--expected-version",
+          "2",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "authorized",
+          "--expected-version",
+          "3",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "claim",
+          "example-issue",
+          "--expected-version",
+          "4",
+          "--controller",
+          "controller-01",
+          "--owner",
+          "worker-01",
+          "--provider",
+          "example-provider",
+          "--model",
+          "example-model",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "working",
+          "--expected-version",
+          "5",
+          "--lease-token",
+          "example-mismatch",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "working",
+          "--expected-version",
+          "5",
+          "--lease-token",
+          "000000000000000000000000000000000001",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "show",
+          "example-issue"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "blocked",
+          "--expected-version",
+          "6",
+          "--blocker",
+          "Example input unavailable",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "paused",
+          "--expected-version",
+          "7",
+          "--lease-token",
+          "000000000000000000000000000000000001",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ],
+        "now": "2026-01-01T00:15:00Z"
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "paused",
+          "--expected-version",
+          "7",
+          "--release",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "ready",
+          "--expected-version",
+          "8",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "operator-block",
+          "set",
+          "example-issue",
+          "--expected-version",
+          "9",
+          "--actor-type",
+          "user",
+          "--authority-ref",
+          "example-direction",
+          "--reason",
+          "Park the example issue"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "rejected",
+          "--expected-version",
+          "10",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "operator-block",
+          "clear",
+          "example-issue",
+          "--expected-version",
+          "10",
+          "--actor-type",
+          "user",
+          "--authority-ref",
+          "example-release",
+          "--reason",
+          "Restore the example issue"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "rejected",
+          "--expected-version",
+          "11",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "Move from ready back to proposed, then scope, authorize and claim the issue. Show working without a supervisor receipt. A token mismatch and an exact-expiry lease check refuse writes; release clears the lease. A parked issue cannot transition until cleared.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "issue_key": "example-issue",
+          "state": "ready",
+          "title": "Example issue"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "network",
+          "active",
+          "--reason",
+          "Enable claims on the isolated board"
+        ]
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py",
+      "board/operator_block.py",
+      "board/projection.py"
+    ]
+  }
+}

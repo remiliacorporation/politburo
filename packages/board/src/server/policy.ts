@@ -211,9 +211,9 @@ export function createPolicy(options: PolicyOptions, keeps: boolean, serving: ((
     },
     explain,
     /** What a stored principal (a schedule's creator, a watcher's registrant) may do now: null once nothing, or once it was made with a board token. */
-    async accessNow(principal: Known, grants?: readonly StoredGrant[]): Promise<Access | null> {
+    async accessNow(principal: Known, grants?: readonly StoredGrant[], now?: number): Promise<Access | null> {
       if (principal.token !== undefined) return null
-      return authority.accessNow(principal, grants)
+      return authority.accessNow(principal, grants, now)
     },
   }
 }

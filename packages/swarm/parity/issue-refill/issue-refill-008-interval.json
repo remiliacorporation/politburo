@@ -1,0 +1,334 @@
+{
+  "case_id": "issue-refill-008-interval",
+  "description": "Skip inside the interval, run at equality, then force",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 2}\n"
+    },
+    "followups": [
+      {
+        "board_changes": {
+          "board_events": {
+            "deleted": [],
+            "upserted": [
+              {
+                "actor": "coordinator",
+                "archived_at": null,
+                "created_at": "2026-01-01T12:00:01+00:00",
+                "event_id": 2,
+                "event_type": "refill_run",
+                "issue_key": null,
+                "payload_json": {
+                  "actor_role": "coordinator",
+                  "actor_type": "agent",
+                  "base_sha": "example-base",
+                  "dropped": 0,
+                  "envelope_version": 1,
+                  "errors": [],
+                  "issues": [],
+                  "outcome": "nothing",
+                  "reason": "refill found nothing",
+                  "reason_code": "issue_refill",
+                  "trigger": "0 ready for 2 free slots"
+                }
+              }
+            ]
+          },
+          "board_messages": {
+            "deleted": [],
+            "upserted": [
+              {
+                "actionable": 0,
+                "archived_at": null,
+                "body": "Earlier refill found nothing",
+                "created_at": "2026-01-01T12:00:00+00:00",
+                "dedup_key": null,
+                "from_actor": "coordinator",
+                "issue_key": null,
+                "kind": "note",
+                "message_id": 1,
+                "payload_ref": null,
+                "priority": 100,
+                "status": "superseded",
+                "summary": "Earlier refill found nothing",
+                "supersedes_message_id": null,
+                "to_agent": null,
+                "to_role": "coordinator",
+                "topic_key": "issue-refill",
+                "valid_until": null
+              },
+              {
+                "actionable": 0,
+                "archived_at": null,
+                "body": "refill found nothing",
+                "created_at": "2026-01-01T12:00:01+00:00",
+                "dedup_key": null,
+                "from_actor": "coordinator",
+                "issue_key": null,
+                "kind": "note",
+                "message_id": 3,
+                "payload_ref": null,
+                "priority": 100,
+                "status": "active",
+                "summary": "refill found nothing",
+                "supersedes_message_id": null,
+                "to_agent": null,
+                "to_role": "coordinator",
+                "topic_key": "issue-refill",
+                "valid_until": null
+              }
+            ]
+          },
+          "board_meta": {
+            "deleted": [],
+            "upserted": []
+          },
+          "dependencies": {
+            "deleted": [],
+            "upserted": []
+          },
+          "issues": {
+            "deleted": [],
+            "upserted": []
+          }
+        },
+        "exit_code": 0,
+        "runner_calls": [
+          [
+            "researcher-defects",
+            "example-project",
+            1200
+          ],
+          [
+            "researcher-gaps",
+            "example-project",
+            1200
+          ],
+          [
+            "researcher-operability",
+            "example-project",
+            1200
+          ]
+        ],
+        "source_calls": [
+          [
+            "fetch_head",
+            "origin",
+            "main"
+          ],
+          [
+            "add_worktree",
+            "example-base"
+          ],
+          [
+            "pulls"
+          ],
+          [
+            "remove_worktree",
+            "example-project"
+          ]
+        ],
+        "stderr": "",
+        "stdout": "refill: nothing (refill found nothing)\ndefault branch at example-base\n"
+      },
+      {
+        "board_changes": {
+          "board_events": {
+            "deleted": [],
+            "upserted": [
+              {
+                "actor": "coordinator",
+                "archived_at": null,
+                "created_at": "2026-01-01T12:00:01+00:00",
+                "event_id": 3,
+                "event_type": "refill_run",
+                "issue_key": null,
+                "payload_json": {
+                  "actor_role": "coordinator",
+                  "actor_type": "agent",
+                  "base_sha": "example-base",
+                  "dropped": 0,
+                  "envelope_version": 1,
+                  "errors": [],
+                  "issues": [],
+                  "outcome": "nothing",
+                  "reason": "refill found nothing",
+                  "reason_code": "issue_refill",
+                  "trigger": "forced (interval not elapsed: next refill in 3600s)"
+                }
+              }
+            ]
+          },
+          "board_messages": {
+            "deleted": [],
+            "upserted": [
+              {
+                "actionable": 0,
+                "archived_at": null,
+                "body": "refill found nothing",
+                "created_at": "2026-01-01T12:00:01+00:00",
+                "dedup_key": null,
+                "from_actor": "coordinator",
+                "issue_key": null,
+                "kind": "note",
+                "message_id": 3,
+                "payload_ref": null,
+                "priority": 100,
+                "status": "superseded",
+                "summary": "refill found nothing",
+                "supersedes_message_id": null,
+                "to_agent": null,
+                "to_role": "coordinator",
+                "topic_key": "issue-refill",
+                "valid_until": null
+              },
+              {
+                "actionable": 0,
+                "archived_at": null,
+                "body": "refill found nothing",
+                "created_at": "2026-01-01T12:00:01+00:00",
+                "dedup_key": null,
+                "from_actor": "coordinator",
+                "issue_key": null,
+                "kind": "note",
+                "message_id": 4,
+                "payload_ref": null,
+                "priority": 100,
+                "status": "active",
+                "summary": "refill found nothing",
+                "supersedes_message_id": null,
+                "to_agent": null,
+                "to_role": "coordinator",
+                "topic_key": "issue-refill",
+                "valid_until": null
+              }
+            ]
+          },
+          "board_meta": {
+            "deleted": [],
+            "upserted": []
+          },
+          "dependencies": {
+            "deleted": [],
+            "upserted": []
+          },
+          "issues": {
+            "deleted": [],
+            "upserted": []
+          }
+        },
+        "exit_code": 0,
+        "runner_calls": [
+          [
+            "researcher-defects",
+            "example-project",
+            1200
+          ],
+          [
+            "researcher-gaps",
+            "example-project",
+            1200
+          ],
+          [
+            "researcher-operability",
+            "example-project",
+            1200
+          ]
+        ],
+        "source_calls": [
+          [
+            "fetch_head",
+            "origin",
+            "main"
+          ],
+          [
+            "add_worktree",
+            "example-base"
+          ],
+          [
+            "pulls"
+          ],
+          [
+            "remove_worktree",
+            "example-project"
+          ]
+        ],
+        "stderr": "",
+        "stdout": "{\n  \"outcome\": \"nothing\",\n  \"reason\": \"refill found nothing\",\n  \"base_sha\": \"example-base\",\n  \"issues\": [],\n  \"dropped\": [],\n  \"errors\": []\n}\n"
+      }
+    ],
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "",
+    "stdout": "refill: skipped (interval not elapsed: next refill in 1s)\n"
+  },
+  "inputs": {
+    "argv": [],
+    "followups": [
+      {
+        "advance_seconds": 1,
+        "argv": [],
+        "kind": "cli",
+        "with_config": true
+      },
+      {
+        "argv": [
+          "--force",
+          "--json"
+        ],
+        "kind": "cli",
+        "with_config": true
+      }
+    ],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "With no survivors, an elapsed or forced run records nothing found. Prior informational notes are superseded but the actionable notice remains active.",
+  "setup": {
+    "config": {
+      "slots": 2
+    },
+    "files": {},
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z",
+    "prior_notes": true,
+    "prior_run_age_seconds": 3599
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

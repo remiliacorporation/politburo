@@ -1,0 +1,239 @@
+{
+  "case_id": "mail-delivery-004-dedupe-and-repeat",
+  "description": "Match a different incoming ID by its dedupe key, replay the update, then vary each key field.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "mail/ex/bodies/ex-0002.txt": "Example revised body\n",
+      "mail/ex/ex-0002.yaml": "id: \"ex-0002\"\nclass: \"spawner.dispatch\"\nurgency: \"p0\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {check: 2, report: \"example-two\"}\nsummary: \"Example revised dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14:01Z\"\n",
+      "mail/ex/ex-0011.yaml": "id: \"ex-0011\"\nclass: \"spawner.dispatch\"\nurgency: \"p0\"\nfrom: \"ex3 secretary\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {check: 2, report: \"example-two\"}\nsummary: \"Example revised dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14:01Z\"\n",
+      "mail/ex/ex-0012.yaml": "id: \"ex-0012\"\nclass: \"spawner.dispatch\"\nurgency: \"p0\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {report: \"example-other\"}\nsummary: \"Example revised dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14:01Z\"\n",
+      "mail/ex/ex-0013.yaml": "id: \"ex-0013\"\nclass: \"spawner.decide\"\nurgency: \"p0\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {check: 2, report: \"example-two\"}\nsummary: \"Example revised dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14:01Z\"\n",
+      "mail/ex/id-counter.txt": "13\n",
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"b4565e9516699ddbcc4cede9fd280ecd1798e7265eee6181e7f61751763f0bcc\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"updated\", \"hash\": \"bcb58b25200838e425ce2eca22863ca2a1d7607779f239eff98c249ad7cb2f15\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"770acd01f0fa9875fa49595d6144e1c8f503bbc3961a12d994b4fe862836b0f3\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex3 secretary\", \"id\": \"ex-0011\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0011\", \"key\": [\"ex3 secretary\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"af7fdb3f047965f328dd14fb86d965c3b0b3e464114cef41fb758ee8ed26fb5d\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"report\": \"example-other\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0012\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-other\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"da2ba5d80e9a0234f10af2b76d1a1423e94a85e9fed1aa014868286399740ad3\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.decide\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0013\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0013\", \"key\": [\"ex2 120-BEE\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.decide\"], \"to\": \"ex\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"b4565e9516699ddbcc4cede9fd280ecd1798e7265eee6181e7f61751763f0bcc\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"updated\", \"hash\": \"bcb58b25200838e425ce2eca22863ca2a1d7607779f239eff98c249ad7cb2f15\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"770acd01f0fa9875fa49595d6144e1c8f503bbc3961a12d994b4fe862836b0f3\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex3 secretary\", \"id\": \"ex-0011\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0011\", \"key\": [\"ex3 secretary\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"af7fdb3f047965f328dd14fb86d965c3b0b3e464114cef41fb758ee8ed26fb5d\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0012\", \"ref\": {\"report\": \"example-other\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0012\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-other\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"da2ba5d80e9a0234f10af2b76d1a1423e94a85e9fed1aa014868286399740ad3\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.decide\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0013\", \"ref\": {\"check\": 2, \"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example revised dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0013\", \"key\": [\"ex2 120-BEE\", {\"check\": 2, \"report\": \"example-two\"}, \"spawner.decide\"], \"to\": \"ex\"}"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0002",
+          "notice": null,
+          "path": "mail/ex/ex-0002.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": {
+          "action": "updated",
+          "id": "ex-0002",
+          "notice": null,
+          "path": "mail/ex/ex-0002.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": {
+          "action": "unchanged",
+          "id": "ex-0002",
+          "notice": null,
+          "path": "mail/ex/ex-0002.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0011",
+          "notice": null,
+          "path": "mail/ex/ex-0011.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0012",
+          "notice": null,
+          "path": "mail/ex/ex-0012.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0013",
+          "notice": null,
+          "path": "mail/ex/ex-0013.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "args": {
+          "body": "Example first body\n",
+          "header": {
+            "at": "2026-11-20T21:14Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0002",
+            "ref": {
+              "check": 2,
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example batch dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p1"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "body": "Example revised body\n",
+          "header": {
+            "at": "2026-11-20T21:14:01Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0010",
+            "ref": {
+              "check": 2,
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example revised dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p0"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "body": "Example revised body\n",
+          "header": {
+            "at": "2026-11-20T21:14:01Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0010",
+            "ref": {
+              "check": 2,
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example revised dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p0"
+          },
+          "now": "2026-11-20T21:21:00Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-20T21:14:01Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex3 secretary",
+            "id": "ex-0011",
+            "ref": {
+              "check": 2,
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example revised dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p0"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-20T21:14:01Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0012",
+            "ref": {
+              "report": "example-other"
+            },
+            "reply_to": "ex2",
+            "summary": "Example revised dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p0"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-20T21:14:01Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.decide",
+            "from": "ex2 120-BEE",
+            "id": "ex-0013",
+            "ref": {
+              "check": 2,
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example revised dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p0"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "The same dedupe key matches despite a different incoming ID. The repeat has the same body bytes.",
+  "setup": {
+    "files": {},
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}
