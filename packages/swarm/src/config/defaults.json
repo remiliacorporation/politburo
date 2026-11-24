@@ -1,12 +1,5 @@
 {
   "party": {"id": "default", "name": "The People's Party", "colour": "#b3261e"},
-  "labels": {
-    "product": "Politburo",
-    "core": "Party Chairman",
-    "party_board": "Standing Committee",
-    "repo_view": "Presidium",
-    "mob_view": "Cell"
-  },
   "names": {
     "spawners": [
       "ZAVOD", "FABRIKA", "KOMBINAT", "KOLKHOZ", "SOVKHOZ", "ARTEL", "SHAKHTA", "TSEKH", "DOMNA", "KOTLOVAN",
@@ -57,36 +50,29 @@
     }
   },
   "tiers": {
-    "shares": {"core": 0.5, "spawner": 4.5, "mob": 15, "sprite": 75},
     "models": {
-      "core": "inherit",
-      "spawner": "inherit",
-      "mob": "inherit",
       "sprite": {
         "routes": [{"label": "Cursor Grok", "provider": "cursor", "model": "cursor-grok-4.6-high"}],
         "thinking": "medium"
-      },
-      "adviser": "openai-codex/gpt-5.6-terra",
-      "classifier": "typesafe/jev-1.14"
+      }
     }
   },
   "mail": {
     "classes": ["sec.push", "sec.retry", "sec.retire", "sec.log", "spawner.dispatch", "spawner.decide", "core.escalate", "policy"],
-    "urgency": {"p0": "forward_now", "p1": {"forward_within_minutes": 10}, "p2": "digest", "p3": "digest_summary"},
     "digest_minutes": 30
   },
   "secretary": {
     "questions": {
-      "intake_route": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "needs_spawner": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "can_wait": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "urgency_match": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "report_clean": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "duplicate": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "still_relevant": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "handler": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "outcomes_complete": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
-      "finding_blocks_invariant": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"}
+      "intake_route": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "needs_spawner": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "can_wait": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "urgency_match": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "report_clean": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "duplicate": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "still_relevant": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "handler": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "outcomes_complete": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "finding_blocks_invariant": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "late_p1_rate_limit": "1/500", "state": "shadow"}
     }
   },
   "claims": {
@@ -116,12 +102,8 @@
       {"id": "first-fully-reported-merge", "metric": "fully_reported_merges", "at": 1}
     ]
   },
-  "limits": {"usage_stop_percent": 100, "budgets": []},
-  "heartbeat_minutes": 30,
   "setup": {
-    "environment": "politburo",
-    "version": {"id": "v11", "sha256": null},
-    "canary_environment": "politburo-canary"
+    "environment": "politburo"
   },
   "trackers": {}
 }

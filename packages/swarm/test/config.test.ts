@@ -30,16 +30,37 @@ test('unknown jobs are accepted in mob or sprite name pools', () => {
   assert.throws(() => loadConfig({ party }), { name: 'ConfigError', field: 'names.sprite_items.typo' })
 })
 
-test('a missing budget field hides an unknown field', () => {
+test('a missing required field hides an unknown field', () => {
   const tree = defaultConfig()
-  tree.limits.budgets = [{ typo: true }]
-  assert.throws(() => validateConfig(tree), { name: 'ConfigError', field: 'limits.budgets.0.typo' })
+  tree.score.human_minutes = { typo: true }
+  assert.throws(() => validateConfig(tree), { name: 'ConfigError', field: 'score.human_minutes.typo' })
 })
 
 test('a repo replacement hides an unknown field in the party layer', () => {
-  const party = { mail: { urgency: { p1: { typo: 1 } } } }
-  const repo = { mail: { urgency: { p1: 'digest' } } }
-  assert.throws(() => loadConfig({ party, repo }), { name: 'ConfigError', field: 'mail.urgency.p1.typo' })
+  const party = { score: { human_minutes: { typo: 1 } } }
+  const repo = { score: { human_minutes: { per_point: 1, max_penalty: 1 } } }
+  assert.throws(() => loadConfig({ party, repo }), { name: 'ConfigError', field: 'score.human_minutes.typo' })
+})
+
+test('a config that sets a removed key fails validation', () => {
+  const cases: [Record<string, unknown>, string][] = [
+    [{ labels: { product: 'Desk' } }, 'labels'],
+    [{ tiers: { shares: { core: 1 } } }, 'tiers.shares'],
+    [{ tiers: { models: { core: 'inherit' } } }, 'tiers.models.core'],
+    [{ tiers: { models: { spawner: 'inherit' } } }, 'tiers.models.spawner'],
+    [{ tiers: { models: { mob: 'inherit' } } }, 'tiers.models.mob'],
+    [{ tiers: { models: { adviser: 'model' } } }, 'tiers.models.adviser'],
+    [{ tiers: { models: { classifier: 'model' } } }, 'tiers.models.classifier'],
+    [{ mail: { urgency: { p0: 'forward_now' } } }, 'mail.urgency'],
+    [{ secretary: { questions: { can_wait: { on_low_confidence: 'wake' } } } }, 'secretary.questions.can_wait.on_low_confidence'],
+    [{ limits: { usage_stop_percent: 100 } }, 'limits'],
+    [{ heartbeat_minutes: 30 }, 'heartbeat_minutes'],
+    [{ setup: { version: { id: 'v11', sha256: null } } }, 'setup.version'],
+    [{ setup: { canary_environment: 'politburo-canary' } }, 'setup.canary_environment'],
+  ]
+  for (const [party, field] of cases) {
+    assert.throws(() => loadConfig({ party }), { name: 'ConfigError', field })
+  }
 })
 
 test('duplicate config keys are accepted or not diagnosed', () => {
@@ -75,7 +96,7 @@ test('layers apply out of order, append to an array, or drop untouched defaults'
   assert.equal(tree.claims.reclaim_cooldown_minutes, partyCooldown)
   assert.deepEqual(tree.names.spawners, ['custom'])
   assert.equal(tree.claims.pause_on_downtime, defaults.claims.pause_on_downtime)
-  assert.deepEqual(tree.labels, defaults.labels)
+  assert.deepEqual(tree.party, defaults.party)
 })
 
 test('a duplicate spawner name is accepted or reported outside its pool', () => {

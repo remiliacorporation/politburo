@@ -4,11 +4,11 @@ import { checkMailbox, InputError, type MailPort } from './mail-port.ts'
 
 // Reader groups from design/swarm-party-config.md, including the field table.
 const readerPaths = {
-  dispatch: [['tiers', 'shares'], ...['core', 'spawner', 'mob', 'sprite'].map((tier) => ['tiers', 'models', tier]), ['limits'], ['setup']],
-  mail: [['mail'], ['secretary'], ['heartbeat_minutes'], ['tiers', 'models', 'adviser'], ['tiers', 'models', 'classifier']],
+  dispatch: [['tiers', 'models', 'sprite'], ['setup']],
+  mail: [['mail'], ['secretary']],
   claims: [['claims'], ['review']],
-  watch: [['heartbeat_minutes'], ['trackers']],
-  ui: [['party', 'name'], ['party', 'colour'], ['labels'], ['names']],
+  watch: [['trackers']],
+  ui: [['party', 'name'], ['party', 'colour'], ['names']],
 } satisfies Record<string, string[][]>
 
 export function isConfigObject(value: unknown): value is Record<string, unknown> {

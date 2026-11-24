@@ -21,8 +21,8 @@ const clock = () => new Date(now)
 const mailboxes = { dispatch: 'shared-inbox', mail: 'shared-inbox', watch: 'watch-inbox' }
 const before = 'fixture-model-citrine'
 const after = 'fixture-model-ultramarine'
-const previous = { tiers: { models: { core: before, adviser: before } } }
-const next = { tiers: { models: { core: after, adviser: after } } }
+const previous = { tiers: { models: { sprite: { thinking: before } } } }
+const next = { tiers: { models: { sprite: { thinking: after } } } }
 
 test('notice crash retry: the port must report existing and keep one notice per mailbox', async () => {
   const mail = memoryMail(), id = 'policy:shared-inbox:party:v41'
@@ -45,7 +45,7 @@ test('notice crash retry: the port must report existing and keep one notice per 
 test('notice routing: heartbeat misses mail, a dotted key impersonates a path, or an unknown reader is accepted', async () => {
   const readers = { claims: 'claims-inbox', dispatch: 'dispatch-inbox', mail: 'mail-inbox', ui: 'ui-inbox', watch: 'watch-inbox' }
   for (const [next, boxes] of [
-    [{ heartbeat_minutes: 8 }, ['mail-inbox', 'watch-inbox']],
+    [{ heartbeat_minutes: 8 }, Object.values(readers)],
     [{ mail: { digest_minutes: 20 } }, ['mail-inbox']],
     [{ tiers: { models: { sprite: { thinking: 'medium' } } } }, ['dispatch-inbox']],
     [{ review: { code: { review_rounds: 2 } } }, ['claims-inbox']],
@@ -82,7 +82,7 @@ test('policy notice paths: values, unknown segments or dynamic keys leak in text
     ...next, trackers: { [tracker]: { sources: ['github'] } },
     mail: { [dataKey]: true, 'urgency.p1': true, urgency: { p1: { forward_within_minutes: 20 } } },
   } })
-  const paths = ['mail', 'mail.urgency.p1.forward_within_minutes', 'tiers.models.adviser', 'tiers.models.core', 'trackers']
+  const paths = ['mail', 'tiers.models.sprite.thinking', 'trackers']
   const boxes = ['shared-inbox', 'watch-inbox']
   assert.deepEqual(receipt, { sent: boxes.map((box) => `policy:${box}:party:v413`), skipped: [] })
   // Whitelist the complete notice, so no config values or private keys can appear even after the fetch instruction.
@@ -246,7 +246,9 @@ test('empty digest: an inbox receives a message with no exceptions', async () =>
 function noticeArgs(t: TestContext, readers = mailboxes) {
   const dir = tempDir(t)
   const argv = ['digest', 'notices', '--version', '41']
-  for (const [name, data] of Object.entries({ previous, next: { ...next, heartbeat_minutes: 8 }, mailboxes: readers })) {
+  for (const [name, data] of Object.entries({
+    previous, next: { ...next, trackers: { 'acme/example': { sources: ['github'] } } }, mailboxes: readers,
+  })) {
     const path = join(dir, `${name}.json`)
     writeFileSync(path, JSON.stringify(data))
     argv.push(`--${name}`, path)

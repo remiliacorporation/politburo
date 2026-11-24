@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["party", "labels", "names", "tiers", "mail", "secretary", "claims", "review", "score", "limits", "heartbeat_minutes", "setup", "trackers"],
+  "required": ["party", "names", "tiers", "mail", "secretary", "claims", "review", "score", "setup", "trackers"],
   "properties": {
     "party": {
       "type": "object",
@@ -12,18 +12,6 @@
         "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
         "name": {"type": "string"},
         "colour": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}
-      }
-    },
-    "labels": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["product", "core", "party_board", "repo_view", "mob_view"],
-      "properties": {
-        "product": {"type": "string"},
-        "core": {"type": "string"},
-        "party_board": {"type": "string"},
-        "repo_view": {"type": "string"},
-        "mob_view": {"type": "string"}
       }
     },
     "names": {
@@ -99,27 +87,13 @@
     "tiers": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["shares", "models"],
+      "required": ["models"],
       "properties": {
-        "shares": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["core", "spawner", "mob", "sprite"],
-          "properties": {
-            "core": {"$ref": "#/definitions/nonnegative"},
-            "spawner": {"$ref": "#/definitions/nonnegative"},
-            "mob": {"$ref": "#/definitions/nonnegative"},
-            "sprite": {"$ref": "#/definitions/nonnegative"}
-          }
-        },
         "models": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["core", "spawner", "mob", "sprite", "adviser", "classifier"],
+          "required": ["sprite"],
           "properties": {
-            "core": {"type": "string"},
-            "spawner": {"type": "string"},
-            "mob": {"type": "string"},
             "sprite": {
               "type": "object",
               "additionalProperties": false,
@@ -141,9 +115,7 @@
                 },
                 "thinking": {"type": "string"}
               }
-            },
-            "adviser": {"type": "string"},
-            "classifier": {"type": "string"}
+            }
           }
         }
       }
@@ -151,20 +123,9 @@
     "mail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["classes", "urgency", "digest_minutes"],
+      "required": ["classes", "digest_minutes"],
       "properties": {
         "classes": {"$ref": "#/definitions/strings"},
-        "urgency": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["p0", "p1", "p2", "p3"],
-          "properties": {
-            "p0": {"$ref": "#/definitions/urgency"},
-            "p1": {"$ref": "#/definitions/urgency"},
-            "p2": {"$ref": "#/definitions/urgency"},
-            "p3": {"$ref": "#/definitions/urgency"}
-          }
-        },
         "digest_minutes": {"$ref": "#/definitions/minutes"}
       }
     },
@@ -297,32 +258,12 @@
         }
       }
     },
-    "limits": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["usage_stop_percent", "budgets"],
-      "properties": {
-        "usage_stop_percent": {"$ref": "#/definitions/nonnegative"},
-        "budgets": {"type": "array", "items": {"$ref": "#/definitions/budget"}}
-      }
-    },
-    "heartbeat_minutes": {"$ref": "#/definitions/minutes"},
     "setup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["environment", "version", "canary_environment"],
+      "required": ["environment"],
       "properties": {
-        "environment": {"type": "string"},
-        "version": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["id", "sha256"],
-          "properties": {
-            "id": {"type": "string"},
-            "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
-          }
-        },
-        "canary_environment": {"type": "string"}
+        "environment": {"type": "string"}
       }
     },
     "trackers": {
@@ -336,40 +277,16 @@
     "pool": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "count": {"type": "integer", "minimum": 0},
     "minutes": {"type": "integer", "minimum": 1},
-    "nonnegative": {"type": "number", "minimum": 0},
-    "urgency": {
-      "if": {"type": "object"},
-      "then": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["forward_within_minutes"],
-        "properties": {"forward_within_minutes": {"$ref": "#/definitions/minutes"}}
-      },
-      "else": {"type": "string"}
-    },
     "question": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "prompt_version", "threshold", "on_low_confidence", "late_p1_rate_limit", "state"],
+      "required": ["enabled", "prompt_version", "threshold", "late_p1_rate_limit", "state"],
       "properties": {
         "enabled": {"type": "boolean"},
         "prompt_version": {"type": "integer", "minimum": 1},
         "threshold": {"type": "number", "minimum": 0, "maximum": 1},
-        "on_low_confidence": {"enum": ["wake"]},
         "late_p1_rate_limit": {"type": "string"},
         "state": {"enum": ["shadow", "live"]}
-      }
-    },
-    "budget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["scope", "dimension", "window", "warn", "hard"],
-      "properties": {
-        "scope": {"type": "string"},
-        "dimension": {"type": "string"},
-        "window": {"type": "string"},
-        "warn": {"$ref": "#/definitions/nonnegative"},
-        "hard": {"$ref": "#/definitions/nonnegative"}
       }
     },
     "tracker": {
