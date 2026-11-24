@@ -4,7 +4,10 @@ board is one npm package, `@vercel/board` (`packages/board`): `board()`, the han
 serves a board and acts on it, its backends, and the CLI (`board`, alias `vb`). This fork adds
 a private workspace package beside it, `@remilia/politburo-runtime` (`packages/runtime`), which
 runs one board task in a harness; its [README](./packages/runtime/README.md) is its guide, and
-nothing in `packages/board` imports it. [SPEC.md](./SPEC.md) is the design; read it before
+nothing in `packages/board` imports it. The swarm layer is `@remilia/politburo-swarm`
+(`packages/swarm`, CLI `swarm`), on the public `board()` handle and the runtime only;
+[design/swarm-overview.md](./design/swarm-overview.md) is its guide and its rulings bind
+every change there. [SPEC.md](./SPEC.md) is the design; read it before
 changing behavior. [LOCAL-DEVELOPMENT.md](./LOCAL-DEVELOPMENT.md) walks a task through a local
 board with this checkout's CLI.
 

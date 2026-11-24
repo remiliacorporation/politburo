@@ -2,8 +2,8 @@
 
 The swarm layer: party configuration, the tag registry and the `swarm` CLI.
 Private. It uses the public board handle and `@remilia/politburo-runtime`;
-nothing in `packages/board` imports it. The design is in the merger plan,
-sections 3 and 4.
+nothing in `packages/board` imports it. Start with
+[the swarm overview](../../design/swarm-overview.md).
 
 [`src/identity/`](src/identity/) verifies signed Cloudflare Access assertions
 and maps registered emails to board people. No Access domain is configured.
