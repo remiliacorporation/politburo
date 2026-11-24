@@ -20,7 +20,8 @@ function privateFile(stat: BigIntStats) {
     throw new BookError('unsafe book file')
   }
 }
-const versionOf = (stat: BigIntStats) => `${stat.dev}:${stat.ino}:${stat.ctimeNs}`
+const versionOf = (stat: BigIntStats) =>
+  `${stat.dev}:${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}:${stat.size}`
 const sleep = new Int32Array(new SharedArrayBuffer(4))
 const errno = (error: unknown) => (error as NodeJS.ErrnoException).code
 
@@ -89,7 +90,7 @@ export class Book {
     if (!this.#file) return
     const stat = lstatSync(this.#file, { bigint: true, throwIfNoEntry: false })
     if (stat) privateFile(stat)
-    if (!force && (stat && versionOf(stat)) === this.#version) return
+    if (!force && stat && versionOf(stat) === this.#version) return
     let text = '{}', version: string | undefined
     if (stat) {
       let fd: number
@@ -154,6 +155,7 @@ export class Book {
       } catch {
         throw new BookError('failed to sync book file')
       }
+      this.#version = versionOf(lstatSync(this.#file, { bigint: true }))
     }
     this.#entries.set(cap, entry)
     if (entry.session) this.#sessions.set(entry.session, cap)
