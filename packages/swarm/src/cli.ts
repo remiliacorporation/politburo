@@ -9,7 +9,7 @@ import { skillsMain } from './skills/cli.ts'
 import { runSetup } from './sprite/cli.ts'
 import { workCommand, workUsage } from './work/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm classifier report <dir> [--json]\n       swarm classifier clear <dir> <question> --why TEXT\n       swarm serve --help'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm classifier report <dir> [--json]\n       swarm classifier clear <dir> <question> --why TEXT\n       swarm serve --help'
 
 class ReadError extends Error {}
 
@@ -106,10 +106,16 @@ async function main(args: string[]): Promise<number> {
 
 // One line per area: the loader returns run(argv): Promise<number>.
 const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  digest: () => import('./digest/cli.ts'),
+  usage: () => import('./usage/cli.ts'),
   claims: () => import('./claims/cli.ts'),
   check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
-  trackers: () => import('./trackers/cli.ts'),
+  trackers: async () => {
+    const { run } = await import('./trackers/cli.ts')
+    const { runTrackers } = await import('./trackers/beads/cli.ts')
+    return { run: (argv) => argv[0] === 'scan' ? run(argv) : runTrackers(argv) }
+  },
   cutover: () => import('./cutover/cli.ts'),
   mail: async () => ({
     run: async (argv: string[]) => {

@@ -16,7 +16,7 @@ export function fixtureRunner(fixture: unknown): BdRunner {
   }
   return async (argv) => {
     const stdout = calls.get(JSON.stringify(argv))
-    if (stdout === undefined) throw new Error(`unrecorded call: ${argv.join(' ')}`)
+    if (stdout === undefined) throw new Error('unrecorded call')
     return stdout
   }
 }
