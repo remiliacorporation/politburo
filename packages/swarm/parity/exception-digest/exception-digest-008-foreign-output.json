@@ -1,0 +1,44 @@
+{
+  "case_id": "exception-digest-008-foreign-output",
+  "description": "Refuse to replace a foreign file at the default exception digest path.",
+  "expected": {
+    "exit_code": 2,
+    "files": {
+      "current.json": "{\n  \"candidates\": [\n    {\"candidate\": \"cand-alpha\", \"head\": \"head-new\", \"revision\": 2, \"next_owner\": \"owner-a\",\n     \"ref\": \"pr-101\", \"at\": \"2026-11-20T21:00Z\", \"reasons\": [\"conflict\"]}\n  ]\n}\n",
+      "mail/ex/exceptions.yaml": "Example foreign output\n"
+    },
+    "log_lines": [],
+    "stderr": "secretary_exceptions: <WORK>/mail/ex/exceptions.yaml: refusing to replace a file not owned by this digest\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 2,
+        "stderr": "secretary_exceptions: <WORK>/mail/ex/exceptions.yaml: refusing to replace a file not owned by this digest\n",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "kind": "digest"
+      }
+    ],
+    "tag": "ex"
+  },
+  "matrix_row": "M19",
+  "notes": "",
+  "setup": {
+    "files": {
+      "current.json": "{\n  \"candidates\": [\n    {\"candidate\": \"cand-alpha\", \"head\": \"head-new\", \"revision\": 2, \"next_owner\": \"owner-a\",\n     \"ref\": \"pr-101\", \"at\": \"2026-11-20T21:00Z\", \"reasons\": [\"conflict\"]}\n  ]\n}\n",
+      "mail/ex/exceptions.yaml": "Example foreign output\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/secretary_exceptions.py"
+    ]
+  }
+}

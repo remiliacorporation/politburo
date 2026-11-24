@@ -1,0 +1,58 @@
+{
+  "case_id": "review-marks-010-malformed-json",
+  "description": "Reject malformed verdict JSON",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [],
+      "pipeline_stages": [],
+      "review_marks": []
+    },
+    "exit_code": 1,
+    "files": {
+      "verdict.json": "{\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"valid\": false, \"errors\": [\"$: json\"]}\n",
+    "steps": [
+      {
+        "op": "validate",
+        "result": {
+          "exit_code": 1,
+          "stderr": "",
+          "stdout": "{\"valid\": false, \"errors\": [\"$: json\"]}\n"
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "op": "validate",
+        "raw": "{\n"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "Validation reports the JSON error and writes nothing to the board.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": []
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "supervisor/review.py",
+      "supervisor/review_verdict.py"
+    ]
+  }
+}

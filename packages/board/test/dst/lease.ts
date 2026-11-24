@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import type { ClaimedTask } from '../../src/client/client.ts'
 import { A2Error } from 'experimental-a2'
 import { memory } from '../../src/store/memory.ts'
+import { wallTime, writerFor } from '../../src/store/single-writer.ts'
 import { personToken } from '../harness.ts'
 import { jumpToBoundary, withClock } from './clock.ts'
 import { handle, hostBoard, outcome } from './fixture.ts'
@@ -9,7 +10,7 @@ import { recordAppends } from './history.ts'
 import { checkLeases, leasesIn } from './oracles.ts'
 import { Sim } from './sim.ts'
 
-export const hasAppendGuard = existsSync(new URL('../../src/store/append-guard.ts', import.meta.url))
+export const hasAppendGuard = existsSync(new URL('../../src/store/single-writer.ts', import.meta.url))
 const hasEvidence = existsSync(new URL('../../src/contract/evidence.ts', import.meta.url))
 const workEvidence = hasEvidence ? { gates: false, releaseDependencies: true } : undefined
 const refusals = ['claim_lost', 'task_claimed', 'task_finished']
@@ -17,10 +18,21 @@ const refusals = ['claim_lost', 'task_claimed', 'task_finished']
 export function leaseRace(seed: number, guard: 'product' | 'local' | 'ignore-clock' = 'product') {
   return withClock(async () => {
     const sim = new Sim(seed)
-    const store: ReturnType<typeof memory> & { guardAppend?: <T>(check: () => void, append: () => Promise<T>) => Promise<T> } = memory({ clock: { now: () => new Date() } })
+    const store = memory({ clock: { now: () => new Date() } })
     try {
-      // Compare two versions of the same test-only adapter, even on a checkout with the native guard.
-      if (guard !== 'product' && store.guardAppend) store.guardAppend = (_check, append) => append()
+      const writer = writerFor(store.log)
+      if (guard !== 'product') writer.guardAppend = (append) => append()
+      const run = writer.run
+      // The old test-only append guard asks the look to retry with a fresh clock.
+      if (guard === 'local') writer.time = wallTime
+      writer.run = async (write) => {
+        // A parked append may own the queue. Its waiters are not runnable.
+        sim.block()
+        return run((now) => {
+          sim.unblock()
+          return write(now)
+        })
+      }
       const history = recordAppends(store, sim, (facts, history) => {
         if (guard !== 'local' || !facts.some(({ type }) => ['task.renewed', 'task.work_submitted', 'task.completed', 'task.released'].includes(type))) return
         // This fixture has one task. The conditional append still checks the log head independently.
@@ -39,7 +51,9 @@ export function leaseRace(seed: number, guard: 'product' | 'local' | 'ignore-clo
         { name: submit ? 'submit' : 'complete', run: () => outcome(() => submit ? submit('a'.repeat(40), 'builds/42') : claim.complete(), refusals) },
         { name: 'release', run: () => outcome(() => claim.release(), refusals) },
         { name: 'takeover', run: () => outcome(() => successor!.tasks.claim(task.id), refusals) },
-      ], ({ label }, random) => { if (label.startsWith('append:')) return jumpToBoundary(history, random) })
+      ], ({ label }, random) => {
+        if (label.startsWith('append:')) return jumpToBoundary(history, random)
+      })
       return { violations: checkLeases(history), trace: sim.trace, history }
     } finally {
       await store.close()

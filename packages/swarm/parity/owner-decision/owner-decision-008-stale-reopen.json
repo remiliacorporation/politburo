@@ -1,0 +1,222 @@
+{
+  "case_id": "owner-decision-008-stale-reopen",
+  "description": "Ignore a stale explicit reopen and require explicit open on a current update.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/log.yaml": "- {\"at\": \"2026-11-21T10:29:59Z\", \"event\": \"created\", \"hash\": \"9a32abaa16542d04eb130da4a59b30f5f195eff21d4ffc6b7024b51228e75e5c\", \"header\": {\"at\": \"2026-11-21T10:29:59Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:30:00Z\", \"event\": \"answered\", \"hash\": \"7d9792422bc569793fb406e7de910d0731dec68fc9479807880a3ca99119d428\", \"header\": {\"answered_at\": \"2026-11-21T10:30:00Z\", \"at\": \"2026-11-21T10:29:59Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"answered\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:30:01Z\", \"event\": \"updated\", \"hash\": \"5fc0de2932ec6fe2b873cf3151a2671892286b227f108e902ec02a8724668a61\", \"header\": {\"answered_at\": \"2026-11-21T10:30:00Z\", \"at\": \"2026-11-21T10:30:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"answered\", \"summary\": \"Example revised choice\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:30:01Z\", \"event\": \"updated\", \"hash\": \"81323889c136b7fdc4e62ea5801cefb02a1b2910d6c4f731a4b6adf3b4e68ad1\", \"header\": {\"at\": \"2026-11-21T10:30:01Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}\n",
+      "mail/owner/ex-0001.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p1\"\nfrom: \"ex2 secretary\"\nto: \"owner\"\nreply_to: \"ex\"\nneeds: \"owner\"\nstatus: \"open\"\ndefault_if_unanswered: \"Keep the current gate\"\nreview_by: \"2026-11-21T10:30Z\"\nref: {report: \"example-one\"}\nsummary: \"Example choice 1\"\nat: \"2026-11-21T10:30:01Z\"\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-21T10:29:59Z\", \"event\": \"created\", \"hash\": \"9a32abaa16542d04eb130da4a59b30f5f195eff21d4ffc6b7024b51228e75e5c\", \"header\": {\"at\": \"2026-11-21T10:29:59Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:30:00Z\", \"event\": \"answered\", \"hash\": \"7d9792422bc569793fb406e7de910d0731dec68fc9479807880a3ca99119d428\", \"header\": {\"answered_at\": \"2026-11-21T10:30:00Z\", \"at\": \"2026-11-21T10:29:59Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"answered\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:30:01Z\", \"event\": \"updated\", \"hash\": \"5fc0de2932ec6fe2b873cf3151a2671892286b227f108e902ec02a8724668a61\", \"header\": {\"answered_at\": \"2026-11-21T10:30:00Z\", \"at\": \"2026-11-21T10:30:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"answered\", \"summary\": \"Example revised choice\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:30:01Z\", \"event\": \"updated\", \"hash\": \"81323889c136b7fdc4e62ea5801cefb02a1b2910d6c4f731a4b6adf3b4e68ad1\", \"header\": {\"at\": \"2026-11-21T10:30:01Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}"
+    ],
+    "stderr": "",
+    "stdout": "{\"answered_at\": \"2026-11-21T10:30:00Z\", \"at\": \"2026-11-21T10:29:59Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"answered\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n[]\n[]\n[{\"at\": \"2026-11-21T10:30:01Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}]\n",
+    "steps": [
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0001",
+          "notice": null,
+          "path": "mail/owner/ex-0001.yaml",
+          "reason": null,
+          "to": "owner"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"answered_at\": \"2026-11-21T10:30:00Z\", \"at\": \"2026-11-21T10:29:59Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"answered\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n"
+      },
+      {
+        "return": {
+          "action": "unchanged",
+          "id": "ex-0001",
+          "notice": null,
+          "path": "mail/owner/ex-0001.yaml",
+          "reason": null,
+          "to": "owner"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[]\n"
+      },
+      {
+        "return": {
+          "action": "updated",
+          "id": "ex-0001",
+          "notice": null,
+          "path": "mail/owner/ex-0001.yaml",
+          "reason": null,
+          "to": "owner"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[]\n"
+      },
+      {
+        "return": {
+          "action": "updated",
+          "id": "ex-0001",
+          "notice": null,
+          "path": "mail/owner/ex-0001.yaml",
+          "reason": null,
+          "to": "owner"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "[{\"at\": \"2026-11-21T10:30:01Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}]\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-21T10:29:59Z",
+            "class": "spawner.decide",
+            "default_if_unanswered": "Keep the current gate",
+            "from": "ex2 secretary",
+            "id": "ex-0001",
+            "needs": "owner",
+            "ref": {
+              "report": "example-one"
+            },
+            "review_by": "2026-11-21T10:30Z",
+            "summary": "Example choice 1",
+            "to": "ex",
+            "urgency": "p1"
+          },
+          "now": "2026-11-21T10:29:59Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "argv": [
+          "owner",
+          "answer",
+          "ex-0001"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-21T10:00:00Z",
+            "class": "spawner.decide",
+            "default_if_unanswered": "Keep the current gate",
+            "from": "ex2 secretary",
+            "id": "ex-0002",
+            "needs": "owner",
+            "ref": {
+              "report": "example-one"
+            },
+            "review_by": "2026-11-21T10:30Z",
+            "status": "open",
+            "summary": "Example choice 1",
+            "to": "ex",
+            "urgency": "p1"
+          },
+          "now": "2026-11-21T10:30:01Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "argv": [
+          "owner",
+          "list"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-21T10:30:00Z",
+            "class": "spawner.decide",
+            "default_if_unanswered": "Keep the current gate",
+            "from": "ex2 secretary",
+            "id": "ex-0003",
+            "needs": "owner",
+            "ref": {
+              "report": "example-one"
+            },
+            "review_by": "2026-11-21T10:30Z",
+            "summary": "Example revised choice",
+            "to": "ex",
+            "urgency": "p1"
+          },
+          "now": "2026-11-21T10:30:01Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "argv": [
+          "owner",
+          "list"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-21T10:30:01Z",
+            "class": "spawner.decide",
+            "default_if_unanswered": "Keep the current gate",
+            "from": "ex2 secretary",
+            "id": "ex-0004",
+            "needs": "owner",
+            "ref": {
+              "report": "example-one"
+            },
+            "review_by": "2026-11-21T10:30Z",
+            "status": "open",
+            "summary": "Example choice 1",
+            "to": "ex",
+            "urgency": "p1"
+          },
+          "now": "2026-11-21T10:30:01Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "argv": [
+          "owner",
+          "list"
+        ],
+        "kind": "cli",
+        "tool": "mailbox"
+      }
+    ]
+  },
+  "matrix_row": "M09",
+  "notes": "All deliveries share a dedupe key. The stale header's at precedes the stored header's at, even though delivery is later.",
+  "setup": {
+    "files": {},
+    "now": "2026-11-21T10:30:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

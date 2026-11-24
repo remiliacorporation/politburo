@@ -1,0 +1,95 @@
+{
+  "case_id": "review-marks-011-invalid-verdict",
+  "description": "Reject a clean verdict with a high finding",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [],
+      "pipeline_stages": [],
+      "review_marks": []
+    },
+    "exit_code": 1,
+    "files": {
+      "verdict.json": "{\"findings\": [{\"file\": \"example/view.py\", \"line\": 4, \"scenario\": \"An empty list shows the wrong count.\", \"severity\": \"high\"}], \"head\": \"bfb003c312c7625fdba81565a3166c5f96cf4aeb\", \"mac\": \"f5ab40b9ee38536086845640fa4247c4feff03c524b8f2527de93a67c641511c\", \"pr\": 1, \"schema\": \"tigeryard.review-verdict.v1\", \"session\": \"example-reviewer-session\", \"task\": \"example-project\", \"verdict\": \"clean\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"valid\": false, \"errors\": [\"$.verdict: clean_with_high_finding\"]}\n",
+    "steps": [
+      {
+        "op": "validate",
+        "result": {
+          "exit_code": 1,
+          "stderr": "",
+          "stdout": "{\"valid\": false, \"errors\": [\"$.verdict: clean_with_high_finding\"]}\n",
+          "watcher": {
+            "github_writes": [],
+            "outcome": "rejected",
+            "outcomes": [
+              {
+                "outcome": "review_registered",
+                "task": "example-project"
+              },
+              {
+                "outcome": "review_rejected",
+                "reason": "schema",
+                "task": "example-project"
+              }
+            ],
+            "pending_comments": [],
+            "pending_messages": [
+              {
+                "actionable": true,
+                "body": "Remote task example-project: review verdict 56b8afb49cbd72b5cdcf69b441e7f335bdf9079e rejected (schema): $.verdict: clean_with_high_finding. It does not count toward the merge gate.",
+                "kind": "system"
+              }
+            ],
+            "phase": "active",
+            "ready_after_verdict": false,
+            "ready_before_verdict": false,
+            "review": null
+          }
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "findings": [
+          {
+            "file": "example/view.py",
+            "line": 4,
+            "scenario": "An empty list shows the wrong count.",
+            "severity": "high"
+          }
+        ],
+        "op": "validate",
+        "verdict": "clean",
+        "watch": "current"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "Well-formed JSON fails verdict consistency validation and is not accepted by the watcher.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": []
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "supervisor/review.py",
+      "supervisor/review_verdict.py",
+      "supervisor/remote_watch.py"
+    ]
+  }
+}

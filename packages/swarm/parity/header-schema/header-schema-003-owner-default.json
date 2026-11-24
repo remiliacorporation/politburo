@@ -1,0 +1,77 @@
+{
+  "case_id": "header-schema-003-owner-default",
+  "description": "Check the conditional requirement for an owner-decision default.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "owner-empty-default.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex 120-BEE\"\nto: \"owner\"\nreply_to: \"ex\"\nthread: \"example.v2_01-owner\"\nneeds: \"owner\"\nstatus: \"answered\"\nref: {report: \"example-one\", count: 2}\nsummary: \"Example owner answer\"\nbody: \"bodies/ex-0001.txt\"\nat: \"2026-11-20T21:14Z\"\nexpires: \"2026-11-20T21:30Z\"\nanswered_at: \"2026-11-20T21:15:00Z\"\ndefault_if_unanswered: \"\"\n",
+      "owner-legacy.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex 120-BEE\"\nto: \"owner\"\nreply_to: \"ex\"\nthread: \"example.v2_01-owner\"\nneeds: \"owner\"\nstatus: \"answered\"\nref: {report: \"example-one\", count: 2}\nsummary: \"Example owner answer\"\nbody: \"bodies/ex-0001.txt\"\nat: \"2026-11-20T21:14Z\"\nexpires: \"2026-11-20T21:30Z\"\nanswered_at: \"2026-11-20T21:15:00Z\"\n",
+      "owner-with-default.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex 120-BEE\"\nto: \"owner\"\nreply_to: \"ex\"\nthread: \"example.v2_01-owner\"\nneeds: \"owner\"\nstatus: \"answered\"\nref: {report: \"example-one\", count: 2}\nsummary: \"Example owner answer\"\nbody: \"bodies/ex-0001.txt\"\nat: \"2026-11-20T21:14Z\"\nexpires: \"2026-11-20T21:30Z\"\nanswered_at: \"2026-11-20T21:15:00Z\"\ndefault_if_unanswered: \"park the item\"\n"
+    },
+    "log_lines": [],
+    "runs": [
+      [
+        {
+          "accepted": false,
+          "errors": [
+            "$.default_if_unanswered: required"
+          ],
+          "path": "owner-legacy.yaml",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": true,
+          "errors": [],
+          "path": "owner-with-default.yaml",
+          "phase": "schema",
+          "schema": "header"
+        },
+        {
+          "accepted": false,
+          "errors": [
+            "$.default_if_unanswered: minLength"
+          ],
+          "path": "owner-empty-default.yaml",
+          "phase": "schema",
+          "schema": "header"
+        }
+      ]
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "checks": [
+      {
+        "path": "owner-legacy.yaml",
+        "schema": "header"
+      },
+      {
+        "path": "owner-with-default.yaml",
+        "schema": "header"
+      },
+      {
+        "path": "owner-empty-default.yaml",
+        "schema": "header"
+      }
+    ]
+  },
+  "matrix_row": "M04",
+  "notes": "This calls the schema validator, not the stored-header compatibility wrapper.",
+  "setup": {
+    "files": {
+      "owner-empty-default.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex 120-BEE\"\nto: \"owner\"\nreply_to: \"ex\"\nthread: \"example.v2_01-owner\"\nneeds: \"owner\"\nstatus: \"answered\"\nref: {report: \"example-one\", count: 2}\nsummary: \"Example owner answer\"\nbody: \"bodies/ex-0001.txt\"\nat: \"2026-11-20T21:14Z\"\nexpires: \"2026-11-20T21:30Z\"\nanswered_at: \"2026-11-20T21:15:00Z\"\ndefault_if_unanswered: \"\"\n",
+      "owner-legacy.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex 120-BEE\"\nto: \"owner\"\nreply_to: \"ex\"\nthread: \"example.v2_01-owner\"\nneeds: \"owner\"\nstatus: \"answered\"\nref: {report: \"example-one\", count: 2}\nsummary: \"Example owner answer\"\nbody: \"bodies/ex-0001.txt\"\nat: \"2026-11-20T21:14Z\"\nexpires: \"2026-11-20T21:30Z\"\nanswered_at: \"2026-11-20T21:15:00Z\"\n",
+      "owner-with-default.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p2\"\nfrom: \"ex 120-BEE\"\nto: \"owner\"\nreply_to: \"ex\"\nthread: \"example.v2_01-owner\"\nneeds: \"owner\"\nstatus: \"answered\"\nref: {report: \"example-one\", count: 2}\nsummary: \"Example owner answer\"\nbody: \"bodies/ex-0001.txt\"\nat: \"2026-11-20T21:14Z\"\nexpires: \"2026-11-20T21:30Z\"\nanswered_at: \"2026-11-20T21:15:00Z\"\ndefault_if_unanswered: \"park the item\"\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}
