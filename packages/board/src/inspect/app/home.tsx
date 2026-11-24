@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import * as board from './board.ts'
-import { here, Link } from './nav.tsx'
+import { here, Link, RelativeTime } from './nav.tsx'
 import { isTask, nameOf, stateNow, tasks, type State, type TaskFilter, type TaskRoot } from './store.ts'
 import { StateMark } from './task.tsx'
 import { Header } from './ui.tsx'
-import { firstLine } from './words.ts'
+import { ago, firstLine, left } from './words.ts'
 
 const filter: TaskFilter = { state: 'all', label: [] }
 const lanes = [
@@ -66,8 +66,8 @@ function Handoff({ root, state, now }: { root: TaskRoot; state: State; now: numb
       {claim && (
         <p>
           {current === 'claimed' ? 'Held by' : 'Expired claim by'} <strong>{holder}</strong>{' '}
-          {holder !== claim.actor && <small>({claim.actor}) </small>}· {current === 'claimed' ? 'Lease until' : 'Lease ended'}{' '}
-          <time dateTime={claim.until}>{new Date(claim.until).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'long' })}</time>
+          {holder !== claim.actor && <small>({claim.actor}) </small>}· {current === 'claimed' ? 'lease' : 'lease ended'}{' '}
+          <RelativeTime iso={claim.until}>{current === 'claimed' ? left(claim.until, now) : `${ago(claim.until, now)} ago`}</RelativeTime>
         </p>
       )}
       <Outcome root={root} />

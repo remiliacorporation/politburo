@@ -1,14 +1,15 @@
 // Usage: node tools/host/board-backup.mjs --dir <board> --out <backups> [--keep N]
 // One --out directory per board. Backups serialize on its .publish.lock.
-// --keep N prunes older backups only when their token and directory identity
-// match the local .backup-index.json. An unreadable index disables pruning.
-// Prune never deletes in place: it renames a candidate to .pruning-<uuid>,
-// verifies that directory, and only then deletes it. A leftover .pruning-*
-// directory from a crash is never deleted by the tool (a person removes it).
+// --keep N prunes older backups only when their token, directory identity, and
+// MANIFEST.json digest match the local .backup-index.json. An unreadable index
+// disables pruning. Prune never deletes in place: it renames a candidate to
+// .pruning-<uuid>, verifies that directory, and deletes only the verified files
+// and directories. A leftover .pruning-* directory from a crash is never
+// deleted by the tool (a person removes it).
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
-  chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, unlink, writeFile,
+  chmod, copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, unlink, writeFile,
 } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -133,12 +134,12 @@ async function copyAttachments(source, dest, databases, prefix = '') {
   for (const entry of await readdir(source, { withFileTypes: true })) {
     if (skipped(entry.name) || (!prefix && databases.has(entry.name))) continue
     const from = join(source, entry.name)
-    const to = join(dest, entry.name)
     const path = prefix + entry.name
     if (entry.isDirectory()) {
-      await mkdir(to)
-      await copyAttachments(from, to, databases, `${path}/`)
+      await copyAttachments(from, dest, databases, `${path}/`)
     } else if (entry.isFile()) {
+      const to = join(dest, path)
+      await mkdir(dirname(to), { recursive: true })
       await privateCopy(from, to)
     } else {
       throw new Error(`not a regular file or directory: ${path}`)
@@ -197,10 +198,13 @@ async function readIndex(out) {
     const { version, backups } = JSON.parse(await readFile(path, 'utf8'))
     if (version !== 1 || !Array.isArray(backups)) throw new Error('invalid index')
     const index = new Map()
-    for (const { name, token, dev, ino } of backups) {
+    for (const { name, token, dev, ino, manifest } of backups) {
       if (typeof name !== 'string' || !BACKUP_NAME.test(name) ||
           typeof token !== 'string' || !token || index.has(name)) throw new Error('invalid entry')
-      index.set(name, { name, token, dev, ino })
+      if (manifest !== undefined && (typeof manifest !== 'string' || !/^[a-f0-9]{64}$/.test(manifest))) {
+        throw new Error('invalid manifest digest')
+      }
+      index.set(name, { name, token, dev, ino, manifest })
     }
     return index
   } catch {
@@ -270,6 +274,8 @@ async function filesMatchListed(root, listed) {
     const segments = path.split('/')
     for (let i = 1; i < segments.length; i++) parents.add(segments.slice(0, i).join('/'))
   }
+  const files = []
+  const dirs = []
   async function walk(dir, prefix) {
     for (const name of await readdir(dir)) {
       const rel = prefix + name
@@ -278,11 +284,13 @@ async function filesMatchListed(root, listed) {
       if (info.isDirectory()) {
         if (!parents.has(rel)) return false
         if (!await walk(path, `${rel}/`)) return false
+        dirs.push(rel) // Children must be removed before their parents.
       } else if (info.isFile()) {
         const entry = remaining.get(rel)
         if (!entry) return false
         const got = await digest(path)
         if (got.size !== entry.size || got.sha256 !== entry.sha256) return false
+        files.push(rel)
         remaining.delete(rel)
       } else {
         return false
@@ -290,10 +298,11 @@ async function filesMatchListed(root, listed) {
     }
     return true
   }
-  return await walk(root, '') && remaining.size === 0
+  if (!await walk(root, '') || remaining.size !== 0) return false
+  return { files, dirs }
 }
 
-async function quarantineVerified(dir, { token, dev, ino }) {
+async function quarantineVerified(dir, { token, dev, ino, manifest: expectedDigest }) {
   try {
     const stat = await lstat(dir, { bigint: true })
     if (!stat.isDirectory() || String(stat.dev) !== dev || String(stat.ino) !== ino) return false
@@ -301,7 +310,9 @@ async function quarantineVerified(dir, { token, dev, ino }) {
     if (names.length !== 2 || !names.includes('MANIFEST.json') || !names.includes('files')) return false
     const manifestPath = join(dir, 'MANIFEST.json')
     if (!(await lstat(manifestPath)).isFile()) return false
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const bytes = await readFile(manifestPath)
+    if (createHash('sha256').update(bytes).digest('hex') !== expectedDigest) return false
+    const manifest = JSON.parse(bytes.toString('utf8'))
     if (manifest.version !== 1 || manifest.token !== token || !Array.isArray(manifest.files)) return false
     const listed = new Map()
     for (const file of manifest.files) {
@@ -315,22 +326,31 @@ async function quarantineVerified(dir, { token, dev, ino }) {
     }
     const files = join(dir, 'files')
     if (!(await lstat(files)).isDirectory()) return false
-    return await filesMatchListed(files, listed)
+    const matched = await filesMatchListed(files, listed)
+    if (!matched) return false
+    return {
+      files: ['MANIFEST.json', ...matched.files.map((path) => `files/${path}`)],
+      dirs: [...matched.dirs.map((path) => `files/${path}`), 'files'],
+    }
   } catch {
     return false
   }
 }
 
-// The only prune deletion: a .pruning-* directory that already verified.
-async function rmVerifiedQuarantine(dir) {
-  await rm(dir, { recursive: true })
+// The only prune deletion: unlink verified files, then rmdir verified directories.
+async function rmVerifiedQuarantine(dir, verified) {
+  for (const path of verified.files) await unlink(join(dir, path))
+  for (const path of verified.dirs) await rmdir(join(dir, path))
+  await rmdir(dir)
 }
 
-async function prune(out, keep, source, index, current) {
+async function prune(out, keep, source, index, current, hooks) {
   const backups = [current]
   for (const [name, entry] of index) {
     const dir = join(out, name)
-    if (name !== current && !contains(dir, source) && await matchesBackup(dir, entry)) backups.push(name)
+    if (name !== current && entry.manifest && !contains(dir, source) && await matchesBackup(dir, entry)) {
+      backups.push(name)
+    }
   }
   // The next publish drops entries for deleted directories. All syncs precede deletion.
   for (const name of backups.sort().reverse().slice(keep)) {
@@ -345,31 +365,47 @@ async function prune(out, keep, source, index, current) {
     } catch {
       continue
     }
-    if (await quarantineVerified(holding, entry)) {
-      await rmVerifiedQuarantine(holding)
-      index.delete(name)
+    const verified = await quarantineVerified(holding, entry)
+    await hooks.afterQuarantine?.({ dir, holding })
+    if (verified) {
+      try {
+        await rmVerifiedQuarantine(holding, verified)
+        index.delete(name)
+      } catch (error) {
+        if (error.code !== 'ENOTEMPTY') throw error
+        console.error(`warning: backup ${name} changed during pruning; left at ${quarantined}`)
+      }
     } else {
       let left = quarantined
-      if (!await statIfPresent(dir)) {
-        try {
-          await rename(holding, dir)
-          left = undefined
-        } catch {}
-      }
+      try {
+        // Reserve the name exclusively so rename cannot replace a directory that appeared.
+        await mkdir(dir, { mode: 0o700 })
+        await rename(holding, dir)
+        left = undefined
+      } catch {}
       console.error(`warning: backup ${name} did not verify; not deleted${
-        left ? ` ; left at ${left}` : ''}`)
+        left ? `; left at ${left}` : ''}`)
     }
   }
 }
 
-async function assertSameBoard(source, identity) {
+async function assertSameBoard(source, identity, requested) {
   const now = await statIfPresent(source, { bigint: true })
   if (!now?.isDirectory() || now.dev !== identity.dev || now.ino !== identity.ino) {
     throw new Error('board directory changed during the backup; retry')
   }
+  let resolved
+  try {
+    resolved = await realpath(requested)
+  } catch {
+    throw new Error('board directory changed during the backup; retry')
+  }
+  if (resolved !== source) {
+    throw new Error('board directory changed during the backup; retry')
+  }
 }
 
-async function publishBackup(source, out, keep, identity, hooks) {
+async function publishBackup(source, out, keep, identity, hooks, requested) {
   const databases = new Set()
   for (const entry of await readdir(source, { withFileTypes: true })) {
     if (!skipped(entry.name) && entry.isFile() && await sqliteFile(join(source, entry.name))) {
@@ -399,6 +435,7 @@ async function publishBackup(source, out, keep, identity, hooks) {
   const partial = join(out, `.partial-${token}`)
   await mkdir(partial)
   let files
+  let manifest
   let synced
   try {
     const dest = join(partial, 'files')
@@ -413,18 +450,20 @@ async function publishBackup(source, out, keep, identity, hooks) {
       }
     }
     await hooks.afterSnapshots?.()
-    await assertSameBoard(source, identity)
+    await assertSameBoard(source, identity, requested)
     // The board writes attachments before committing a reference to them.
     await copyAttachments(source, dest, databases)
     files = []
     for await (const file of manifestFiles(dest)) files.push(file)
-    await writeFile(join(partial, 'MANIFEST.json'), JSON.stringify({
+    const manifestBytes = Buffer.from(JSON.stringify({
       version: 1, token, created: created.toISOString(), files,
       databases: [...databases].map((path) => ({ path, integrity: 'ok' })),
     }, null, 2) + '\n')
+    await writeFile(join(partial, 'MANIFEST.json'), manifestBytes)
+    manifest = createHash('sha256').update(manifestBytes).digest('hex')
     synced = await syncPath(partial, true)
     await hooks.beforePublish?.()
-    await assertSameBoard(source, identity)
+    await assertSameBoard(source, identity, requested)
     await rename(partial, complete)
   } catch (error) {
     await rm(partial, { recursive: true, force: true })
@@ -434,16 +473,19 @@ async function publishBackup(source, out, keep, identity, hooks) {
   if (synced && index) {
     // A crash between rename and indexing leaves a backup that cannot be pruned.
     const { dev, ino } = await lstat(complete, { bigint: true })
-    index.set(name, { name, token, dev: String(dev), ino: String(ino) })
+    index.set(name, { name, token, dev: String(dev), ino: String(ino), manifest })
     synced = await writeIndex(out, index)
   }
   if (synced) synced = await syncPath(out)
   if (!synced) console.error('warning: backup not synced; nothing pruned')
-  else if (index && keep !== undefined) await prune(out, keep, source, index, name)
+  else if (index && keep !== undefined) await prune(out, keep, source, index, name, hooks)
 }
 
 // Test seam: hooks.afterSnapshots and hooks.beforePublish are awaited at those
-// points so a test can swap the board directory. The CLI does not pass hooks.
+// points so a test can swap the board directory or retarget a --dir symlink.
+// hooks.afterQuarantine is awaited after checking a quarantined candidate,
+// before deletion or rollback, so a test can add a file or recreate
+// the original name. The CLI does not pass hooks.
 export async function makeBackup(dir, out, keep, hooks = {}) {
   const source = await realpath(dir)
   const identity = await lstat(source, { bigint: true })
@@ -452,7 +494,7 @@ export async function makeBackup(dir, out, keep, hooks = {}) {
   await mkdir(out, { recursive: true })
   const lock = await lockPublisher(out)
   try {
-    await publishBackup(source, out, keep, identity, hooks)
+    await publishBackup(source, out, keep, identity, hooks, dir)
   } finally {
     lock.close()
   }

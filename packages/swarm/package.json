@@ -10,7 +10,9 @@
   },
   "files": [
     "dist",
-    "registry"
+    "registry",
+    "skills",
+    "sprite"
   ],
   "bin": {
     "swarm": "./dist/cli.js"

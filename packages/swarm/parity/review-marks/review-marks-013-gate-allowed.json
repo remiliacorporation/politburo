@@ -1,0 +1,243 @@
+{
+  "case_id": "review-marks-013-gate-allowed",
+  "description": "Advance only after explicit passing review evidence",
+  "expected": {
+    "db_dump": {
+      "board_events": [
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 1,
+          "event_type": "evidence_gate",
+          "issue_key": "example-project",
+          "payload_json": {
+            "candidate_sha": "candidate-current",
+            "evidence_ref": "evidence/submission.txt",
+            "gate": "submission",
+            "note": "",
+            "result": "passed",
+            "valid_until": null
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 2,
+          "event_type": "evidence_gate",
+          "issue_key": "example-project",
+          "payload_json": {
+            "candidate_sha": "candidate-current",
+            "evidence_ref": "evidence/tests.txt",
+            "gate": "tests",
+            "note": "",
+            "result": "passed",
+            "valid_until": null
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 3,
+          "event_type": "evidence_gate",
+          "issue_key": "example-project",
+          "payload_json": {
+            "candidate_sha": "candidate-current",
+            "evidence_ref": "evidence/review.txt",
+            "gate": "review",
+            "note": "",
+            "result": "passed",
+            "valid_until": null
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 4,
+          "event_type": "transition",
+          "issue_key": "example-project",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "blocker": null,
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "from": "review_ready",
+            "reason": "Check candidate evidence.",
+            "reason_code": "gate_check",
+            "to": "qa_ready"
+          }
+        }
+      ],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-project",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T12:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "qa_ready",
+          "title": "example-project",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 2,
+          "worktree": null
+        }
+      ],
+      "pipeline_stages": [
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:59:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-project",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-current",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        }
+      ],
+      "review_marks": []
+    },
+    "exit_code": 1,
+    "files": {
+      "web.json": "{\"transition_gates\":{\"approved\":[\"user_acceptance\",\"publication\"]}}\n"
+    },
+    "log_lines": [],
+    "stderr": "transition to 'qa_ready' rejected for candidate candidate-current: unsatisfied evidence gates: review=missing. Record passing evidence with 'evidence example-project --candidate candidate-current --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\ntransition to 'approved' rejected for candidate candidate-current: unsatisfied evidence gates: publication=missing, user_acceptance=missing. Record passing evidence with 'evidence example-project --candidate candidate-current --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\n",
+    "stdout": "{\n  \"gate\": \"submission\",\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n{\n  \"gate\": \"tests\",\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n{\n  \"gate\": \"review\",\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n{\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"qa_ready\",\n  \"version\": 2\n}\n",
+    "steps": [
+      {
+        "op": "evidence",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\n  \"gate\": \"submission\",\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+        }
+      },
+      {
+        "op": "evidence",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\n  \"gate\": \"tests\",\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+        }
+      },
+      {
+        "op": "transition",
+        "result": {
+          "exit_code": 1,
+          "stderr": "transition to 'qa_ready' rejected for candidate candidate-current: unsatisfied evidence gates: review=missing. Record passing evidence with 'evidence example-project --candidate candidate-current --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\n",
+          "stdout": ""
+        }
+      },
+      {
+        "op": "evidence",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\n  \"gate\": \"review\",\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+        }
+      },
+      {
+        "op": "transition",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\n  \"issue_key\": \"example-project\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"qa_ready\",\n  \"version\": 2\n}\n"
+        }
+      },
+      {
+        "op": "transition",
+        "result": {
+          "exit_code": 1,
+          "stderr": "transition to 'approved' rejected for candidate candidate-current: unsatisfied evidence gates: publication=missing, user_acceptance=missing. Record passing evidence with 'evidence example-project --candidate candidate-current --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\n",
+          "stdout": ""
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "gate": "submission",
+        "op": "evidence",
+        "result": "passed"
+      },
+      {
+        "gate": "tests",
+        "op": "evidence",
+        "result": "passed"
+      },
+      {
+        "op": "transition",
+        "state": "qa_ready"
+      },
+      {
+        "gate": "review",
+        "op": "evidence",
+        "result": "passed"
+      },
+      {
+        "op": "transition",
+        "state": "qa_ready"
+      },
+      {
+        "op": "transition",
+        "state": "approved",
+        "version": 2
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "Submission and tests leave the candidate awaiting review. Clean board evidence permits QA; approval still requires the separately configured acceptance and publication gates.",
+  "setup": {
+    "attempts": [],
+    "files": {
+      "web.json": "{\"transition_gates\":{\"approved\":[\"user_acceptance\",\"publication\"]}}\n"
+    },
+    "issues": [
+      {
+        "head": "candidate-current"
+      }
+    ],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": [
+      {}
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "board/board.py",
+      "board/gates.py"
+    ]
+  }
+}

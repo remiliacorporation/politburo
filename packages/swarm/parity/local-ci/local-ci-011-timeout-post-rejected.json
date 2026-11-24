@@ -1,0 +1,158 @@
+{
+  "case_id": "local-ci-011-timeout-post-rejected",
+  "description": "A test timeout attempts an error status; a rejected POST exits 5.",
+  "expected": {
+    "exit_code": 5,
+    "files": {
+      "out/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-20260101T000000.000000Z.json": "{\n  \"command\": \"example-check --label 'example suite'\",\n  \"exit_code\": null,\n  \"elapsed_seconds\": 2.0,\n  \"state\": \"error\",\n  \"sha256\": \"0984e6d7e6b33fdbe1cb9350936220de994bcda8bc2a4dd33b074e4ec52fbc70\",\n  \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n  \"repo\": \"example-owner/example-repo\",\n  \"context\": \"local-ci/mac\",\n  \"start_time\": \"2026-01-01T00:00:00+00:00\"\n}\n",
+      "out/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-20260101T000000.000000Z.log": "Example check started\n",
+      "snapshots/example-first/.github/workflows/unittest.yml": "steps:\n  - name: Other\n    run: example-other\n  - name: Run unittest suite\n    run: |\n      example-check --label 'example suite'\n",
+      "snapshots/example-next/.github/workflows/unittest.yml": "steps:\n  - name: Run unittest suite\n    run: example-check --label next\n"
+    },
+    "log_lines": [
+      "local-ci-status: could not post GitHub status (gh api POST failed)"
+    ],
+    "runs": [
+      {
+        "api_calls": [
+          [
+            "api",
+            "-X",
+            "POST",
+            "repos/example-owner/example-repo/statuses/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "-f",
+            "state=error",
+            "-f",
+            "context=local-ci/mac",
+            "-f",
+            "description=n/a tests, timeout, 2s, out sha256:0984e6d7e6b3",
+            "-f",
+            "target_url="
+          ]
+        ],
+        "exit_code": 5,
+        "git_calls": [
+          [
+            "-C",
+            "repo",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          [
+            "-C",
+            "repo",
+            "cat-file",
+            "-e",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa^{commit}"
+          ],
+          [
+            "-C",
+            "repo",
+            "worktree",
+            "add",
+            "--detach",
+            "<WORK>/example-temp/checkout",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          [
+            "-C",
+            "repo",
+            "-C",
+            "<WORK>/example-temp/checkout",
+            "rev-parse",
+            "--verify",
+            "HEAD"
+          ],
+          [
+            "-C",
+            "repo",
+            "worktree",
+            "remove",
+            "--force",
+            "<WORK>/example-temp/checkout"
+          ],
+          [
+            "-C",
+            "repo",
+            "worktree",
+            "prune"
+          ]
+        ],
+        "lock_present": false,
+        "tempdir_left": false,
+        "test_calls": [
+          {
+            "argv": [
+              "example-check",
+              "--label",
+              "example suite"
+            ],
+            "cwd": "<WORK>/example-temp/checkout",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "start_new_session": true
+          },
+          {
+            "communicate_timeout": 2.0
+          },
+          {
+            "kill_group": 123
+          },
+          {
+            "communicate_timeout": 1
+          }
+        ]
+      }
+    ],
+    "stderr": "local-ci-status: could not post GitHub status (gh api POST failed)\n",
+    "stdout": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa state=error context=local-ci/mac exit=None elapsed=2.000s out=<WORK>/out/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-20260101T000000.000000Z.log sha256=0984e6d7e6b33fdbe1cb9350936220de994bcda8bc2a4dd33b074e4ec52fbc70\n"
+  },
+  "inputs": {
+    "kind": "cli",
+    "runs": [
+      {
+        "argv": [
+          "--repo-dir",
+          "repo",
+          "--repo",
+          "example-owner/example-repo",
+          "--sha",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "--mail-root",
+          "notes",
+          "--out-dir",
+          "out",
+          "--timeout",
+          "2"
+        ],
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "post": "reject",
+        "test": {
+          "elapsed": 2,
+          "mode": "timeout",
+          "output": "Example check started\n"
+        }
+      }
+    ]
+  },
+  "matrix_row": "M18",
+  "notes": "",
+  "setup": {
+    "commits": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "snapshots/example-first",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "snapshots/example-next"
+    },
+    "files": {
+      "snapshots/example-first/.github/workflows/unittest.yml": "steps:\n  - name: Other\n    run: example-other\n  - name: Run unittest suite\n    run: |\n      example-check --label 'example suite'\n",
+      "snapshots/example-next/.github/workflows/unittest.yml": "steps:\n  - name: Run unittest suite\n    run: example-check --label next\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/local_ci_status.py",
+      "supervisor/sec_push.py",
+      "supervisor/check_runner.py"
+    ]
+  }
+}
