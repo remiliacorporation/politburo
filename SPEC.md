@@ -412,7 +412,10 @@ The backend picks them; the protocol only says their shape:
   advertises `agent_ops: true`, command intents and run health advertise
   `agent_intents: true`, configured [task attention](#structured-task-attention)
   advertises `task_attention: true`, and a backend that enforces bound claims,
-  parking, and handoffs advertises `task_authority: true`.
+  parking, and handoffs advertises `task_authority: true`. A board that
+  enforces a claim's hard end advertises it with `X-Board-Task-Claim-Hold: 1`
+  on `GET /`, leaving the discovery JSON unchanged. A handle reports this as
+  `task_claim_hold: true` in `discovery()`.
   A backend may keep no schedules, tasks, or files, and says so with a 501
   (`no_scheduler`, `no_tasks`, `no_files`), which the kit reports as not kept
   here. A backend that keeps no schemas or invites answers 501 `no_schemas`
@@ -437,7 +440,8 @@ The backend picks them; the protocol only says their shape:
   never removed. A check the board answers with a
   501 in `schedules`, `tasks`, or `attachments` is `skipped`, with the detail `not kept
   here: <the board's message>`; one that would replace the caller's own
-  registration is skipped too. The kit skips the registry check without
+  registration is skipped too. After ordinary leases pass, the lease check
+  tests an advertised hard end and fails if the board cannot enforce it. The kit skips the registry check without
   `agent_ops`. The run health check needs a verified credential and reads
   health before writing. If the board lacks `agent_intents`, or the health
   route answers its own 404 `not_found` or discovery JSON (a legacy mount), it

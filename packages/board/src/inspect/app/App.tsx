@@ -10,7 +10,7 @@ import { Home } from './home.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { here, isTypingTarget, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
+import { here, isTypingTarget, Link, navigate, RelativeTime, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
@@ -220,7 +220,11 @@ export function App() {
     if (naming) return
     const read = () => void board.loadStatus()
     addEventListener('popstate', read)
-    return () => removeEventListener('popstate', read)
+    const stopTasks = board.watchTaskReads()
+    return () => {
+      stopTasks()
+      removeEventListener('popstate', read)
+    }
   }, [naming])
 
   // Old thread links open the thread pane.
@@ -338,7 +342,7 @@ export function App() {
             )}
             {isWorkRoute(current) && <Work key={`${identity}:${where.path}`} route={current} state={state} now={now} lead={expand} />}
             {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
-            {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} />}
+            {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} now={now} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
             {current.view === 'missing' && (
               <>
@@ -353,7 +357,7 @@ export function App() {
             <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
             <HeaderActions.Provider value={paneIsFront ? headerActions : null}>
               {cellPaneStatus === null ? (
-                <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known}
+                <ThreadPane key={`${identity}:${where.thread}`} id={where.thread} state={state} viewer={viewer} now={now} known={known}
                   lead={narrow ? headerLead : null} readOnly={current.view === 'cell'} />
               ) : (
                 <div className="view-body">
@@ -491,12 +495,13 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
 function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode; readOnly: boolean }) {
   const { id, state, readOnly } = props
   const viewer: Viewer = readOnly ? { ...props.viewer, may: (permission, channel) => permission === 'read' && props.viewer.may(permission, channel) } : props.viewer
+  const fileDraft = useState<File[]>([])
   useTypeToFocus('thread')
   const identity = board.getIdentity()
   useEffect(() => board.openThreadPane(id), [id, identity])
-  const read = state.paneThread?.id === id && state.paneThread.identity === identity ? state.paneThread.result : 'loading'
-  const refused = typeof read === 'object' ? read.refused : null
-  const t = useMemo(() => read === 'readable' ? threadOf(state, id) : null, [state.messages, state.ops, state.pending, state.actors, id, read])
+  const read = state.paneThread?.id === id && state.paneThread.identity === identity ? state.paneThread : null
+  const refused = typeof read?.result === 'object' ? read.result.refused : null
+  const t = read?.result === 'readable' ? threadOf({ ...state, messages: read.messages }, id) : null
   // Where the thread's copies are, on the platforms it syncs with.
   const [synced, setSynced] = useState<SyncedView['targets']>([])
   useEffect(() => {
@@ -554,7 +559,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
             <div key={schedule.id} className="fact">
               <dt>later</dt>
               <dd>
-                {schedule.next ? until(schedule.next, props.now) : ''} · {cadence(schedule)} · {firstLine(schedule.text)}{' '}
+                {schedule.next && <RelativeTime iso={schedule.next}>{until(schedule.next, props.now)}</RelativeTime>} · {cadence(schedule)} · {firstLine(schedule.text)}{' '}
                 {mayCancelSchedule(viewer, schedule) && (
                   <button className="clear" onClick={() => void board.cancelSchedule(schedule.id)}>
                     cancel
@@ -570,6 +575,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           <p className={refused === null ? 'empty' : 'error'}>{refused ?? 'loading…'}</p>
         ) : (
           <>
+            {read?.refreshError && <p className="error" role="status">could not refresh: {read.refreshError}</p>}
             <Messages messages={[t.root]} now={props.now} options={options} />
             <div className="divider">{t.replies.length === 1 ? '1 reply' : `${t.replies.length} replies`}</div>
             <Messages messages={t.replies} now={props.now} options={options} after={t.root} />
@@ -580,6 +586,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       {t && viewer.may('post', t.root.channel) && (
         <Composer
           scope={`thread:${id}`}
+          fileDraft={fileDraft}
           role="thread"
           placeholder="reply to thread…"
           known={props.known}

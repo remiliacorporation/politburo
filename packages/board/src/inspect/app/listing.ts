@@ -14,18 +14,20 @@ export type ListingClient = {
 
 const THREADS = 25
 
-export function listing(client: ListingClient, get: () => store.State, set: (next: (state: store.State) => store.State) => void, limit = THREADS) {
+export function listing(client: ListingClient, get: () => store.State, set: (next: (state: store.State) => store.State) => void, limit = THREADS, startRead = () => 0) {
   /** A first page being read again, per channel, and whether something asked for it once more since. */
   const refreshing = new Map<string, { again: boolean }>()
 
   async function messages(channel: string) {
+    const read = startRead()
     const page = await client.messages(channel)
-    set((s) => store.merge(s, page.messages))
+    set((s) => store.merge(s, page.messages, read))
   }
 
   /** The channel's first page of threads, or on a board from before `older`, its latest messages. */
   async function load(channel: string) {
     set((s) => store.listing(s, channel))
+    const read = startRead()
     const page = await client.threads({ channel, limit }).catch((error: unknown) => {
       set((s) => store.unlisted(s, channel))
       throw error
@@ -34,7 +36,7 @@ export function listing(client: ListingClient, get: () => store.State, set: (nex
       set((s) => store.unpaged(s, channel))
       return messages(channel)
     }
-    set((s) => store.mergeThreads(s, channel, page, 'first'))
+    set((s) => store.mergeThreads(s, channel, page, 'first', read))
   }
 
   /** The next older page, from where the last one said it starts. Whether there's more. */
@@ -44,8 +46,9 @@ export function listing(client: ListingClient, get: () => store.State, set: (nex
       // Its first page is still on its way: try again once it's in.
       if (!listed.loaded) return true
       if (listed.older === null) return false
+      const read = startRead()
       const page = await client.threads({ channel, before: listed.older, limit })
-      set((s) => store.mergeThreads(s, channel, page, 'older'))
+      set((s) => store.mergeThreads(s, channel, page, 'older', read))
       return (page.older ?? null) !== null
     }
     // A board that pages no threads back: its newest messages are all a channel's view has.
@@ -72,8 +75,9 @@ export function listing(client: ListingClient, get: () => store.State, set: (nex
         await Promise.resolve()
         while (entry.again) {
           entry.again = false
+          const read = startRead()
           const page = await client.threads({ channel, limit })
-          set((s) => store.mergeThreads(s, channel, page, 'first'))
+          set((s) => store.mergeThreads(s, channel, page, 'first', read))
         }
       } catch {
         // The next reply to a thread it doesn't have asks again.
@@ -84,8 +88,8 @@ export function listing(client: ListingClient, get: () => store.State, set: (nex
   }
 
   /** Folds live events in; a reply to a thread a channel's listing doesn't have reads its first page again. */
-  function apply(events: BoardEventView[]) {
-    set((s) => events.reduce(store.applyEvent, s))
+  function apply(events: BoardEventView[], reads?: readonly number[]) {
+    set((s) => events.reduce((next, event, i) => store.applyEvent(next, event, reads?.[i]), s))
     const state = get()
     for (const event of events) {
       const channel = store.unlistedReply(state, event)
