@@ -37,7 +37,7 @@ export const priorityOptions = {
 } as const
 
 export const authorityOptions = {
-  binding: { type: 'string', value: 'JSON', description: 'claim metadata: controller, owner, provider, model, session, branch, worktree, and baseCommit' },
+  binding: { type: 'string', value: 'JSON', description: 'claim metadata; owner and controller default to the claimant' },
   supersedes: { type: 'string', value: 'id', description: 'the current handoff ID when replacing one' },
 } as const
 

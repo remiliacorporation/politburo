@@ -604,7 +604,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
           option('for', 'only this profile of yours claims it', 'profile'),
           claimNow,
           option('lease', 'with --claim: how long to hold it'),
-          option('binding', 'with --claim: assignment metadata as JSON'),
+          option('binding', 'with --claim: assignment JSON; owner and controller default to the claimant'),
           option('file', 'a plan, from a JSON file (- reads stdin): an array of tasks, each { key?, text, labels?, needs?, for?, priority?, noSync?, attachments? }, all made, in as many writes as it takes'),
           option('no-sync'),
           option('idempotency-key', 'sending the same one again makes it once'),
