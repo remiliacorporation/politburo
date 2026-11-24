@@ -645,8 +645,10 @@ let needsVisit: symbol | undefined
 function taskQuery() {
   const view = route(currentPath()).view
   const channel = view === 'tasks' ? store.readFilter(new URLSearchParams(location.search)).channel : undefined
-  const all = view === 'tasks' || view === 'handoffs' || view === 'presidium' ||
-    (view !== 'needs' && state.taskScope === store.taskScope())
+  // Work scopes share one open-task read, so a later read can drop a task it omits.
+  // Tasks and Handoffs read every state.
+  const work = view === 'work' || view === 'presidium' || view === 'party' || view === 'cell' || view === 'needs'
+  const all = !work && (view === 'tasks' || view === 'handoffs' || state.taskScope === store.taskScope())
   const stateFilter = all ? 'all' : 'open'
   return { state: stateFilter, ...(channel ? { channel } : {}) } as const
 }
