@@ -20,6 +20,7 @@ const configUsage =
   '       swarm party <list|show|add|remove|member|jockey> ...\n' +
   '       registry file: --registry FILE or SWARM_REGISTRY\n' +
   '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n' +
+  '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n' +
   '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n' +
   '       swarm capture <run|collect>\n' +
   '       swarm mirror sync --repo owner/name [--json]\n' +
