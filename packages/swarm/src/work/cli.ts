@@ -1,10 +1,15 @@
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
+import { usageBlock } from '../cli-usage.ts'
 import { readRegistry, tagProblems } from '../tags.ts'
 import { parseOutcomesContract } from './contract.ts'
 import { allocateWorkId } from './ids.ts'
 
-export const workUsage = 'usage: swarm work check FILE [--json]\n       swarm work id TAG --after N'
+export const workUsageLines = [
+  'swarm work check FILE [--json]',
+  'swarm work id TAG --after N',
+]
+export const workUsage = usageBlock(workUsageLines)
 
 const phrase = (message: string) => message.replace(/^./, char => char.toLowerCase()).replace(/\.$/, '')
 

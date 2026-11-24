@@ -1,5 +1,6 @@
 export const name = 'mail'
 export const summary = 'mail'
+export const usage: string[] = []
 
 export async function run(argv: string[]): Promise<number> {
   if (argv[0] === 'bridge') return (await import('../mail/cli.ts')).runMail(argv)
