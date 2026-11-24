@@ -1,0 +1,125 @@
+{
+  "case_id": "swarm-config-007-invalid-update-values",
+  "description": "Reject wrong types, out-of-range values, and invalid enum and rule text.",
+  "expected": {
+    "exit_code": 2,
+    "files": {
+      "mail/ex/ex-0001.yaml": null,
+      "mail/ex/id-counter.txt": null,
+      "mail/log.yaml": null,
+      "swarm-config.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n",
+      "swarm-config.json.lock": ""
+    },
+    "log_lines": [],
+    "stderr": "swarm-config: heartbeat_minutes: must be an integer >= 1\nswarm-config: usage_stop_percent: must be a number > 0 and <= 100\nswarm-config: usage_stop_percent: must be a number > 0 and <= 100\nswarm-config: sprite_thinking_default: must be one of low, medium, high, max\nswarm-config: mob_limit_rule: must be one line\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: heartbeat_minutes: must be an integer >= 1\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: usage_stop_percent: must be a number > 0 and <= 100\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: usage_stop_percent: must be a number > 0 and <= 100\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: sprite_thinking_default: must be one of low, medium, high, max\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 2,
+        "log_line_count": 0,
+        "stderr": "swarm-config: mob_limit_rule: must be one line\n",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "swarm-config.json",
+      "swarm-config.json.lock",
+      "mail/ex/ex-0001.yaml",
+      "mail/ex/id-counter.txt",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "heartbeat_minutes=true"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "heartbeat_minutes=20",
+          "--set",
+          "usage_stop_percent=0"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "usage_stop_percent=100.01"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "sprite_thinking_default=highest"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "mob_limit_rule=Example rule\nSecond line"
+        ],
+        "kind": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "A valid heartbeat update is paired with an invalid percent to test all-or-nothing validation.",
+  "setup": {
+    "files": {
+      "mail/ex/.keep": "",
+      "swarm-config.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n"
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}

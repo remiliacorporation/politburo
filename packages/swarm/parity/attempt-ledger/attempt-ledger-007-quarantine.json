@@ -1,0 +1,148 @@
+{
+  "case_id": "attempt-ledger-007-quarantine",
+  "description": "Quarantine bad sources and continue collecting valid evidence",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64: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",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 2, \"duplicates\": 0, \"observations_added\": 2, \"quarantined\": 5}\n{\"attempts_created\": 0, \"duplicates\": 2, \"observations_added\": 0, \"quarantined\": 0}\natt-4cb8cad735525c1f759166c3a363b5317572bbc7 operation exited sources=1 observations=1\natt-c4cae494b768b62ff6b1af28fb45313f3e9e1ede operation exited sources=1 observations=1\ntotal=2 shown=2 quarantined=5\n",
+    "steps": [
+      null,
+      null,
+      null,
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 2, \"duplicates\": 0, \"observations_added\": 2, \"quarantined\": 5}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 0, \"duplicates\": 2, \"observations_added\": 0, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "att-4cb8cad735525c1f759166c3a363b5317572bbc7 operation exited sources=1 observations=1\natt-c4cae494b768b62ff6b1af28fb45313f3e9e1ede operation exited sources=1 observations=1\ntotal=2 shown=2 quarantined=5\n"
+      },
+      [
+        {
+          "code": "board_unreadable",
+          "observed_at": "2026-01-01T00:02:00+00:00",
+          "seq": 1,
+          "source_key": "board.sqlite",
+          "source_kind": "board",
+          "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "code": "malformed",
+          "observed_at": "2026-01-01T00:02:00+00:00",
+          "seq": 2,
+          "source_key": "runs/op-bad-json/receipt.json",
+          "source_kind": "adapter_receipt",
+          "source_sha256": "a6fb08fda1acb957b6116bd37811a1fe41a01611c0631edbf786d6889a27a55c"
+        },
+        {
+          "code": "identity_mismatch",
+          "observed_at": "2026-01-01T00:02:00+00:00",
+          "seq": 3,
+          "source_key": "runs/op-copy/receipt.json",
+          "source_kind": "adapter_receipt",
+          "source_sha256": "80030991fe29ad9dad19f100814f329e67d1eea08c69fd1bcba6db7d1fc342cb"
+        },
+        {
+          "code": "symlink_refused",
+          "observed_at": "2026-01-01T00:02:00+00:00",
+          "seq": 4,
+          "source_key": "runs/op-link/receipt.json",
+          "source_kind": "adapter_receipt",
+          "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "code": "too_large",
+          "observed_at": "2026-01-01T00:02:00+00:00",
+          "seq": 5,
+          "source_key": "runs/op-over-cap/receipt.json",
+          "source_kind": "adapter_receipt",
+          "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "op": "symlink",
+        "path": "runs/op-link/receipt.json",
+        "target": "runs/op-good/receipt.json"
+      },
+      {
+        "bytes": 1048576,
+        "op": "pad_receipt",
+        "path": "runs/op-at-cap/receipt.json"
+      },
+      {
+        "bytes": 1048577,
+        "op": "pad_receipt",
+        "path": "runs/op-over-cap/receipt.json"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "op": "quarantined"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Corrupt board, malformed JSON, copied receipt, symlink and a receipt one byte over 1 MiB are quarantined. A valid receipt at exactly 1 MiB is accepted. Reconcile deduplicates the quarantine too. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {
+      "board.sqlite": "not a database\n",
+      "runs/op-at-cap/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-at-cap\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n",
+      "runs/op-bad-json/receipt.json": "{\n",
+      "runs/op-copy/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-good\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n",
+      "runs/op-good/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-good\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n",
+      "runs/op-over-cap/receipt.json": "{\"agent_id\": \"worker-01\", \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"operation_id\": \"op-over-cap\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"exited\"}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

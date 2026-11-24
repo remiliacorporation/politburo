@@ -1,0 +1,268 @@
+{
+  "case_id": "controllers-pause-resume-007-worker-control",
+  "description": "Dispatch and confirm a bound stop; reject stale control",
+  "expected": {
+    "db_rows": {
+      "agent_commands": [
+        {
+          "args_json": "{\"force\": false, \"operation_id\": \"run-example\"}",
+          "command": "pause",
+          "command_id": 2,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "pause-run",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "completed",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "args_json": "{}",
+          "command": "inspect",
+          "command_id": 1,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "inspect-run",
+          "expected_generation": 1,
+          "expires_at": "2026-01-01T00:15:00+00:00",
+          "priority": 100,
+          "reason": null,
+          "requested_by": "operator",
+          "state": "pending",
+          "supersedes_command_id": null,
+          "target_agent_id": "worker-01",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "agent_observations": [
+        {
+          "active_issue": null,
+          "agent_generation": null,
+          "agent_id": "worker-01",
+          "assignment_generation": null,
+          "current_action": "Run stopped after pause request",
+          "dedup_key": null,
+          "evidence_ref": null,
+          "health": "unknown",
+          "last_call": null,
+          "lease_token": null,
+          "network_generation": null,
+          "observation_id": 1,
+          "observed_at": "2026-01-01T00:00:00+00:00",
+          "operation_id": null,
+          "process_state": "stopped",
+          "session_ref": null,
+          "source": "adapter"
+        }
+      ],
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "Controller",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "Worker",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": "2026-01-01T00:00:00+00:00",
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "controller-01",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "stopped",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "adapter",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "agent_control_completed",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"control_adapter\", \"actor_type\": \"adapter\", \"command_id\": 2, \"envelope_version\": 1, \"exit_code\": -15, \"operation_id\": \"run-example\", \"reason\": \"Adapter completed a requested control command\", \"reason_code\": \"control_completed\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"inspect\", \"command_id\": 1, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_command_requested",
+          "issue_key": null,
+          "payload_json": "{\"command\": \"pause\", \"command_id\": 2, \"generation\": 1, \"target_agent_id\": \"worker-01\"}"
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ]
+    },
+    "details": {
+      "dispatched": {
+        "agent_commands": [
+          {
+            "args_json": "{\"force\": false, \"operation_id\": \"run-example\"}",
+            "command": "pause",
+            "command_id": 2,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "dedup_key": "pause-run",
+            "expected_generation": 1,
+            "expires_at": "2026-01-01T00:15:00+00:00",
+            "priority": 100,
+            "reason": null,
+            "requested_by": "operator",
+            "state": "dispatched",
+            "supersedes_command_id": null,
+            "target_agent_id": "worker-01",
+            "updated_at": "2026-01-01T00:00:00+00:00"
+          },
+          {
+            "args_json": "{}",
+            "command": "inspect",
+            "command_id": 1,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "dedup_key": "inspect-run",
+            "expected_generation": 1,
+            "expires_at": "2026-01-01T00:15:00+00:00",
+            "priority": 100,
+            "reason": null,
+            "requested_by": "operator",
+            "state": "pending",
+            "supersedes_command_id": null,
+            "target_agent_id": "worker-01",
+            "updated_at": "2026-01-01T00:00:00+00:00"
+          }
+        ]
+      },
+      "signals": [
+        {
+          "force": false,
+          "pid": 1234
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "stop.json": "{\"operation_id\":\"run-example\",\"force\":false}\n"
+    },
+    "log_lines": [],
+    "stderr": "stale agent generation: expected 2, current 1\n",
+    "stdout": "{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n{\n  \"command_id\": 2,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"inspect\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"inspect-run\",\n    \"display_name\": \"Worker\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"pending\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 1,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n",
+        "step": "inspect-run"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "stale agent generation: expected 2, current 1\n",
+        "stdout": "",
+        "step": "stale-interrupt"
+      },
+      {
+        "exit_code": null,
+        "returned": null,
+        "stderr": "",
+        "stdout": "",
+        "step": "no stop for inspect"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\n  \"command_id\": 2,\n  \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n  \"network_state\": \"active\",\n  \"ok\": true,\n  \"state\": \"pending\"\n}\n",
+        "step": "pause-run"
+      },
+      {
+        "exit_code": null,
+        "returned": null,
+        "stderr": "",
+        "stdout": "",
+        "step": "wrong operation cannot dispatch"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "error": "user requested pause",
+          "type": "ValueError"
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "monitor dispatches pause"
+      },
+      {
+        "exit_code": null,
+        "returned": null,
+        "stderr": "",
+        "stdout": "",
+        "step": "confirm stopped"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "[\n  {\n    \"args_json\": \"{}\",\n    \"command\": \"inspect\",\n    \"command_id\": 1,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"inspect-run\",\n    \"display_name\": \"Worker\",\n    \"expected_generation\": 1,\n    \"expires_at\": \"2026-01-01T00:15:00+00:00\",\n    \"priority\": 100,\n    \"reason\": null,\n    \"requested_by\": \"operator\",\n    \"state\": \"pending\",\n    \"supersedes_command_id\": null,\n    \"target_agent_id\": \"worker-01\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n",
+        "step": "list inspect still pending"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "scenario": "worker_control"
+  },
+  "matrix_row": "M83",
+  "notes": "An inspect intent remains pending: the stop-only consumer cannot execute it. A stale-generation interrupt is refused; a matching pause dispatches before synthetic stop confirmation.",
+  "setup": {
+    "files": {
+      "stop.json": "{\"operation_id\":\"run-example\",\"force\":false}\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/board.py",
+      "board/runtime.py",
+      "adapters/codex_cli.py"
+    ]
+  }
+}

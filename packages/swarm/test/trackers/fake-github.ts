@@ -19,8 +19,9 @@ export const failures = {
   200: { reason: 'bad_response', status: 200, body: '{"id":91200', headers: {} },
 } as const
 
-export async function fakeGitHub(t: TestContext) {
+export async function fakeGitHub(t: TestContext, singleIssueLabels?: string[]) {
   const requests: { authorization?: string; elsewhere: string }[] = []
+  const rejected: string[] = []
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk)
@@ -31,6 +32,10 @@ export async function fakeGitHub(t: TestContext) {
       res.writeHead(status, { 'content-type': 'application/json', ...headers })
       res.end(typeof body === 'string' ? body : JSON.stringify(body))
     }
+    if (req.method !== 'GET') {
+      rejected.push(req.method ?? '')
+      return reply(405)
+    }
     const [, , , repo, , number] = url.pathname.split('/')
     if (number === '7') return reply(200, completed)
     if (number === '10') return reply(200, pr)
@@ -40,6 +45,7 @@ export async function fakeGitHub(t: TestContext) {
     if (number) return reply(404)
     const page = url.searchParams.get('page')
     if (page === '1') {
+      if (repo === 'web' && singleIssueLabels) return reply(200, [issue(7, 'completed', singleIssueLabels)])
       const malformed = /^(labels|assignees)-(missing|scalar)$/.exec(repo ?? '')
       if (malformed) return reply(200, [{ ...completed, [malformed[1]!]: malformed[2] === 'missing' ? undefined : 'invalid' }])
       if (repo === 'tie-forward' || repo === 'tie-reverse') {
@@ -62,5 +68,5 @@ export async function fakeGitHub(t: TestContext) {
   t.after(() => new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve())))
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('expected a TCP address')
-  return { baseUrl: `http://127.0.0.1:${address.port}`, requests }
+  return { baseUrl: `http://127.0.0.1:${address.port}`, requests, rejected }
 }
