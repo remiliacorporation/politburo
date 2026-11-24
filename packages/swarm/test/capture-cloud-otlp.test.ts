@@ -153,7 +153,7 @@ test('OTLP rejects rounded token counts and inexact or unsafe numeric timestamps
   assert.deepEqual(f.rows(), [])
 })
 
-test('an AnyValue with both intValue and doubleValue books the intValue', async (t) => {
+test('an AnyValue with both intValue and doubleValue is rejected', async (t) => {
   const f = fixture(t), post = await f.listen()
   const both = log('both', { input_tokens: { intValue: 10, doubleValue: 3 } })
   assert.deepEqual(await post(payload([both])), error(400, 'invalid'))
@@ -185,7 +185,7 @@ test('OTLP throttled batch makes progress on retry without charging replays', as
   assert.equal(f.rows().length, 25)
 })
 
-test('a late refund after the bucket refilled lets a second burst through', async (t) => {
+test('a late refund after the bucket refilled does not credit a second burst', async (t) => {
   const f = fixture(t)
   let post = await f.listen()
   assert.deepEqual(await post(payload(batch(0, 20))), ok)
