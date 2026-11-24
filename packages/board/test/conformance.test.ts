@@ -383,6 +383,7 @@ describe('the conformance kit', () => {
       [NARROWED[0], NO_CAN],
       ...HEADERS.map((name) => [name, NO_HEADERS]),
       OWN_PROFILES,
+      ['lets a named actor claim an unassigned task without naming its owner', NO_INVITE_TOKEN],
       [TASKS_OWNED, NO_HEADERS],
       [NARROWED[1], NO_CAN],
       [NARROWED[2], NO_CAN],
@@ -819,6 +820,7 @@ describe('the conformance kit', () => {
     expect(report.checks.filter((check) => check.status !== 'passed').map((check) => [check.group, check.status, check.detail])).toEqual([
       ['schedules', 'skipped', "not kept here: this board has no scheduler, so it can't send later"],
       ['schedules', 'skipped', "not kept here: this board has no scheduler, so it can't send later"],
+      ['tasks', 'skipped', NO_INVITE_TOKEN],
       ['grants', 'skipped', NO_ROLES[1]],
       ['grants', 'skipped', NO_APPS[1]],
       ['grants', 'skipped', LOCKED_OUT[1]],
