@@ -132,6 +132,9 @@ The board's HTTP handler, on any backend: what a route exports as `GET` and
 
 ## Work admission
 
+`board({ claimRule })` checks ID and next claims after access and before the
+backend. See [Claim rules](../01-board/08-middleware.md#claim-rules).
+
 ### status, pause, resume
 
 `status()` reads [network pause](../01-board/12-network-pause.md).
@@ -371,8 +374,8 @@ tasks.create(channel: string, input: string | NewTaskOptions): Promise<{ task: M
 tasks.create(thread: { re: string }, input?: TaskOptions): Promise<{ task: MessageView; claim?: ClaimedTask }>
 tasks.createMany(channel: string, tasks: TaskInBatch[], opts?: { id?: string }): Promise<MessageView[]>
 tasks.list(query?: { channel?: string; state?: string; label?: Record<string, string> | string[]; by?: string; owner?: string; for?: string; needs?: string; after?: string; limit?: number; latest?: boolean }): Promise<{ tasks: ThreadSummaryView[]; cursor: string }>
-tasks.claim(id: string, opts?: { lease?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
-tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
+tasks.claim(id: string, opts?: { lease?: number; hold?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
+tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; hold?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
 tasks.held(id: string, claim: { epoch: number; token: string }): HeldTask
 tasks.block(id: string, reason: string, opts?: { kind?: string }): Promise<MessageView>
 tasks.unblock(id: string): Promise<MessageView>
@@ -437,6 +440,10 @@ if (claim) {
   Claiming a task by ID that you hold with its token answers the claim as it
   is. A retry may omit the binding or repeat it unchanged. A different one
   is 409 `binding_mismatch`.
+- **`hold`** is a hard end, 1 to 86400 whole seconds from the claim. It
+  caps the initial lease and renewals. The claim and the task's claim view
+  show `holdUntil` as an ISO timestamp. Unsupported backends answer 501
+  `no_claim_hold`.
 - **`binding`** is optional [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work).
   The board checks `owner` against the exact verified claimant. A local
   board's in-process handle cannot make a bound claim. The board does not verify

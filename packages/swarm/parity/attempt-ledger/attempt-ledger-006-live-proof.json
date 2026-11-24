@@ -1,0 +1,208 @@
+{
+  "case_id": "attempt-ledger-006-live-proof",
+  "description": "Check fresh proof boundaries and identity matching",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64: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",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"attempts_created\": 2, \"duplicates\": 0, \"observations_added\": 2, \"quarantined\": 0}\ntotal=0 shown=0 quarantined=0\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\"attempts_created\": 2, \"duplicates\": 0, \"observations_added\": 2, \"quarantined\": 0}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "total=0 shown=0 quarantined=0\n"
+      },
+      {
+        "exact_cutoff": [
+          "active"
+        ],
+        "future": [
+          "stale"
+        ],
+        "now": [
+          "active"
+        ],
+        "other_operation": [
+          "stale"
+        ],
+        "too_old": [
+          "stale"
+        ],
+        "wrong_generation": [
+          "stale"
+        ],
+        "wrong_lease": [
+          "stale"
+        ],
+        "wrong_session": [
+          "stale"
+        ]
+      },
+      {
+        "fresh": [
+          "starting"
+        ],
+        "stale": [
+          "stale"
+        ]
+      }
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "list",
+          "--state",
+          "active"
+        ],
+        "op": "cli"
+      },
+      {
+        "namespace": "operation",
+        "op": "proof_states",
+        "proof": {
+          "agent_generation": 5,
+          "assignment_generation": 2,
+          "lease_id": "example-lease",
+          "operation": "op-live",
+          "session_ref": "example-session"
+        },
+        "variants": [
+          [
+            "exact_cutoff",
+            120,
+            {}
+          ],
+          [
+            "now",
+            0,
+            {}
+          ],
+          [
+            "too_old",
+            121,
+            {}
+          ],
+          [
+            "future",
+            -1,
+            {}
+          ],
+          [
+            "other_operation",
+            0,
+            {
+              "operation": "op-other"
+            }
+          ],
+          [
+            "wrong_lease",
+            0,
+            {
+              "lease_id": null
+            }
+          ],
+          [
+            "wrong_session",
+            0,
+            {
+              "session_ref": "example-other-session"
+            }
+          ],
+          [
+            "wrong_generation",
+            0,
+            {
+              "agent_generation": 4
+            }
+          ]
+        ]
+      },
+      {
+        "namespace": "board_attempt",
+        "op": "proof_states",
+        "proof": {
+          "agent_generation": 5,
+          "assignment_generation": 2,
+          "lease_id": "example-lease",
+          "operation": "attempt-reserved",
+          "session_ref": "example-session"
+        },
+        "variants": [
+          [
+            "fresh",
+            0,
+            {}
+          ],
+          [
+            "stale",
+            121,
+            {}
+          ]
+        ]
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Proof exactly 120 seconds old and proof at now can promote liveness; older, future and mismatched proof cannot. A matching proof for a board reservation yields starting, but CLI has no proof input. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "board": {
+      "execution_attempts": [
+        {
+          "adapter": "example-adapter",
+          "agent_generation": 5,
+          "agent_id": "worker-01",
+          "assignment_generation": 2,
+          "attempt_id": "attempt-reserved",
+          "finished_at": null,
+          "issue_key": "example-issue",
+          "launched_at": "2026-01-01T00:00:00+00:00",
+          "lease_token": "example-lease",
+          "model": "example-model",
+          "provider": "example-provider",
+          "session_ref": "example-session",
+          "state": "reserved"
+        }
+      ]
+    },
+    "files": {
+      "runs/op-live/receipt.json": "{\"agent_generation\": 5, \"agent_id\": \"worker-01\", \"assignment_generation\": 2, \"fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\", \"issue_key\": \"example-issue\", \"lease_token\": \"example-lease\", \"operation_id\": \"op-live\", \"session_ref\": \"example-session\", \"started_at\": \"2026-01-01T00:00:00+00:00\", \"state\": \"running\"}\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}
