@@ -17,8 +17,9 @@ the package layout and the PR rules.
 [LOCAL-DEVELOPMENT.md](../LOCAL-DEVELOPMENT.md) is a longer local task
 handoff. This page is the shorter path for a human claim.
 
-These pages are not on `main` yet: `docs/walkthrough.md`,
-`docs/extension-points.md`.
+[The walkthrough](./walkthrough.md) runs a local board end to end.
+[Extension points](./extension-points.md) says how to add a tracker, a
+classifier question or a relay target.
 
 ## Install this checkout
 
