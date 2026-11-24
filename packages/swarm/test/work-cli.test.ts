@@ -18,6 +18,7 @@ const run = (...args: string[]) => swarm('work', ...args)
 const configUsage =
   'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
   '       swarm ledger <dispatch|append|rollup> --db FILE [options]\n' +
+  '       swarm score <leaderboard|card|history|drill> ...\n' +
   '       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n' +
   '       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n' +
   '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n' +
@@ -25,6 +26,8 @@ const configUsage =
   '       swarm mirror sync --repo owner/name [--json]\n' +
   '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n' +
   '       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n' +
+  '       swarm classifier report <dir> [--json]\n' +
+  '       swarm classifier clear <dir> <question> --why TEXT\n' +
   '       swarm serve --help\n'
 
 test('config help must print the original config usage and not work usage', () => {

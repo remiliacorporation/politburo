@@ -2,14 +2,16 @@
 import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
+import { runClassifierCli } from './classifier/cli.ts'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { ledgerCommand } from './ledger/cli.ts'
 import { rolloutMain } from './rollout/rollout-cli.ts'
+import { runScore } from './scoring/cli.ts'
 import { skillsMain } from './skills/cli.ts'
 import { runSetup } from './sprite/cli.ts'
 import { workCommand, workUsage } from './work/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm ledger <dispatch|append|rollup> --db FILE [options]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm serve --help'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm ledger <dispatch|append|rollup> --db FILE [options]\n       swarm score <leaderboard|card|history|drill> ...\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm classifier report <dir> [--json]\n       swarm classifier clear <dir> <question> --why TEXT\n       swarm serve --help'
 const configUsage = usage
 
 class ReadError extends Error {}
@@ -53,7 +55,9 @@ async function main(args: string[]): Promise<number> {
   }
   if (command === 'skills') return skillsMain(args.slice(1))
   if (command === undefined) return misuse('missing command', usage)
+  if (command === 'score') return runScore(args.slice(1))
   if (command === 'rollout') return rolloutMain(args.slice(1))
+  if (command === 'classifier') return runClassifierCli(args.slice(1))
   if (command !== 'config') return misuse(`unknown command ${command}`, usage)
   if (action === undefined) return misuse('missing config command')
   if (action !== 'show' && action !== 'validate') {
