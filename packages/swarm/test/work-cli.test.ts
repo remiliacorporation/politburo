@@ -28,6 +28,7 @@ const catalogLines = [
   '       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]',
   '       swarm sprite routes [--party FILE] [--repo FILE]',
   '       swarm capture <run|collect>',
+  '       swarm capture-cloud <serve|issue|bind>',
   '       swarm mirror sync --repo owner/name [--json]',
   '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]',
   '       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]',
