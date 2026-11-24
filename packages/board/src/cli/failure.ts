@@ -77,8 +77,9 @@ export function failureLines(failure: Failure): string[] {
 }
 
 /** How board's own CLI prints it: `error: ` and the headline, the rest two spaces in. */
-export function formatFailure(failure: Failure): string {
+export function formatFailure(failure: Failure, showLine: (line: string) => string = (line) => line): string {
   return failureLines(failure)
+    .map(showLine)
     .map((line, index) => (index === 0 ? `error: ${line}` : line ? `  ${line}` : ''))
     .join('\n')
 }

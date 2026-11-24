@@ -1,3 +1,4 @@
+import type { Protocol } from '../api/protocol.ts'
 import type {
   ActorView,
   AgentHealth,
@@ -70,7 +71,6 @@ import type {
 } from '../api/routes.ts'
 import { ACTORS_BY_ID_MAX, readDiscovery } from '../api/routes.ts'
 import { boundTaskPaths } from '../api/task-authority.ts'
-import type { Protocol } from '../api/protocol.ts'
 import type { Actor } from '../contract/folds.ts'
 import type { Mentioned } from '../contract/mentions.ts'
 import { ATTACHMENT_BYTES_MAX, DIRECT_UPLOAD_BYTES_MAX, typeOf } from '../contract/files.ts'
@@ -235,7 +235,9 @@ export type HeldTask = {
   renew(lease?: number): Promise<ClaimedTask>
   /** Gives the task back: it's ready again. */
   release(): Promise<MessageView>
-  complete(result?: string): Promise<MessageView>
+  /** Records the exact commit and artifact for this claim's round. */
+  submit(commit: string, artifactRef: string): Promise<MessageView>
+  complete(result?: string, options?: { commit?: string }): Promise<MessageView>
   fail(reason: string): Promise<MessageView>
   /** Lowers the priority without ending the claim. A claim cannot raise it. */
   priority(priority: TaskPriority): Promise<MessageView>
@@ -436,6 +438,7 @@ export function createBoardClient(options: ClientOptions) {
   /** One write to task `id`, which answers its root. */
   const taskWrite = async (id: string, verb: string, body: object = {}, claim = false) =>
     (await call<{ task: MessageView }>('POST', `/tasks/${path(id)}/${verb}`, { body, claim })).task
+  const workWrite = async (id: string, verb: string, body: object) => (await call<{ task: MessageView }>('POST', `/work/v1/tasks/${path(id)}/${verb}`, { body })).task
   const taskVersion = async (id: string, sent: number | undefined) => sent ?? (await call<ThreadView>('GET', `/messages/${path(id)}?limit=1`)).message.version
 
   /** What a claim on task `id` does, with the `epoch` and `token` the claim answered. */
@@ -449,7 +452,8 @@ export function createBoardClient(options: ClientOptions) {
         return claimed(task, { epoch, token, until, ...(holdUntil ? { holdUntil } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }), ...(binding ? { binding } : {}) })
       },
       release: () => taskWrite(id, 'release', { epoch, token }, true),
-      complete: (result) => taskWrite(id, 'complete', { epoch, token, ...(result !== undefined ? { result } : {}) }, true),
+      submit: (commit, artifactRef) => workWrite(id, 'submit', { epoch, token, commit, artifactRef }),
+      complete: (result, options) => taskWrite(id, 'complete', { epoch, token, ...(result !== undefined ? { result } : {}), commit: options?.commit }, true),
       fail: (reason) => taskWrite(id, 'fail', { epoch, token, reason }, true),
       priority: (priority) => taskWrite(id, 'priority', { epoch, token, priority }, true),
       block: (reason, opts = {}) => taskWrite(id, 'block', { epoch, token, reason, ...opts }, true),
@@ -551,6 +555,7 @@ export function createBoardClient(options: ClientOptions) {
         body?: Uint8Array<ArrayBuffer>
         headers?: Record<string, string>
         signal?: AbortSignal
+        redirect?: RequestRedirect
         /** Act as this profile (`null` for yourself) instead of the client's. */
         as?: ProfileOption
         /** The request carries a claim's token or proof: it goes to this board's URL and nowhere else, and a redirect is refused (`redirect_refused`), never followed. */
@@ -562,6 +567,7 @@ export function createBoardClient(options: ClientOptions) {
         headers: { ...init.headers, ...(await headers(true, init.as)) },
         ...(init.body ? { body: init.body } : {}),
         ...(init.signal ? { signal: init.signal } : {}),
+        ...(init.redirect ? { redirect: init.redirect } : {}),
       }),
     discovery: async () => readDiscovery(await raw('GET', '/', { auth: false })),
     me: () => call<Me>('GET', '/me'),
@@ -771,6 +777,10 @@ export function createBoardClient(options: ClientOptions) {
       list: (query: Omit<TasksQueryInput, 'label' | 'latest'> & { label?: Record<string, string> | string[]; latest?: boolean } = {}) => call<TasksPage>('GET', `/tasks${queryString(query)}`),
       create: createTask,
       createMany: createTasks,
+      evidence: (id: string) => call<Protocol['workEvidence']['output']>('GET', `/work/v1/tasks/${path(id)}/evidence`),
+      recordEvidence: (id: string, input: Omit<Protocol['recordEvidence']['input'], 'id'>) => workWrite(id, 'evidence', input),
+      overrideEvidence: (id: string, input: Omit<Protocol['overrideEvidence']['input'], 'id'>) => workWrite(id, 'override', input),
+      resolve: (id: string, input: Omit<Protocol['resolveWorkEdge']['input'], 'id'>) => workWrite(id, 'resolve', input),
       claim: claimTask,
       /** What a claim you hold does, from the `epoch` and `token` it answered: for a process that kept them, as `vb` does between commands. */
       held,
@@ -1075,6 +1085,8 @@ export type { ActorView, BoardEventView, ChannelView, Discovery, EventsPage, Me,
 function claimFetch(doFetch: typeof fetch, url: string): typeof fetch {
   return async (input, init) => {
     const response = await doFetch(input, { ...init, redirect: 'manual' })
+    // A caller that asked for the redirect handles it. Evidence completion does, so its error can name the write.
+    if (init?.redirect === 'manual') return response
     // A browser's manual redirect is opaque (status 0); 304 sends nowhere.
     if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
       await response.body?.cancel().catch(() => {})

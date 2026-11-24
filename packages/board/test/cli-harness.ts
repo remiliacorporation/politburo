@@ -26,10 +26,10 @@ export const CLI_TIMEOUT = 20_000
 vi.setConfig({ testTimeout: CLI_TIMEOUT })
 
 /** Serves the calling file's board before its tests, and stops it after. */
-export function useBoard() {
+export function useBoard(make = () => localBoard({ url: undefined })) {
   beforeAll(async () => {
     // No fixed URL: the board infers its own from requests, as when mounted.
-    const team = localBoard({ url: undefined })
+    const team = make()
     // Open the store before a command captures stdout and stderr in this process. Node 22
     // warns on SQLite's first load, even for an in-memory store.
     await team.discovery()

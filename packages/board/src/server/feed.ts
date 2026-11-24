@@ -116,7 +116,7 @@ export const indexOf = (value: string): number | null => (/^(0|[1-9]\d{0,15})$/.
 
 /** A task as every reader sees it: the tasks it waits for as refs, and its claim without the token, hashed or not. */
 export function taskView(task: Task): TaskView {
-  const { needs, claim, attention, handoff, parked, ...shown } = task
+  const { needs, claim, attention, handoff, parked, evidence: _evidence, releases: _releases, ...shown } = task
   return {
     ...shown,
     priority: task.priority ?? DEFAULT_TASK_PRIORITY,
@@ -369,7 +369,8 @@ function payloadView(event: BoardEvent, links: LinkView[] | undefined): Record<s
   // Only `task.claimed` carries a `token`: its hash is the board's to check claims against, and no reader's.
   // A post or an edit from before mentions were text alone carries the actor IDs they resolved to.
   // A post's `along` is the board's own count of what its append carried.
-  const { token: _token, mentions: _mentions, along: _along, ...shown }: Record<string, unknown> = payload
+  // Cross-channel release pointers are available only from the evidence read, after checking access.
+  const { token: _token, mentions: _mentions, along: _along, needId: _needId, evidenceId: _evidenceId, ...shown }: Record<string, unknown> = payload
   for (const key of ['id', 're', 'replyTo'] as const) if (typeof shown[key] === 'number') shown[key] = ref(shown[key])
   if (Array.isArray(shown.needs)) shown.needs = (shown.needs as number[]).map(ref)
   if (typeof shown.by === 'object' && shown.by !== null) shown.by = authorView(shown.by as Author)
@@ -448,6 +449,17 @@ export class FeedProjection {
     const { id, before, after } = foldEvent(this.messages, this.actors, event)
     const message = after ?? before
     const readable = id === null ? this.access.readsAll : message !== undefined && this.access.readable(message.channel)
+    if (event.type === 'task.work_resolved' && readable && !this.access.readsAll) {
+      const needId = event.payload.needId
+      let need = this.messages.byId[needId]
+      if (!need && !this.loaded.has(needId)) {
+        const found = await this.reads.messagesAt([needId], event.index, signal)
+        need = found.get(needId)
+        this.loaded.add(needId)
+        if (need) this.messages.byId[needId] = need
+      }
+      if (!need || !this.access.readable(need.channel)) return { index: event.index, view: null }
+    }
     const hidden = HIDDEN.has(event.type) && !this.all
     const visible = readable && !hidden && (this.criteria ? this.match(before) || this.match(after) : id !== null || this.all)
     if (!visible) return { index: event.index, view: null }

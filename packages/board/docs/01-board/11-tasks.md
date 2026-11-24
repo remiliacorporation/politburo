@@ -312,6 +312,54 @@ ready one, with `--label`, `--from`, and `--wait` as `claim` takes them.
   `run` stops the command and exits 1.
 - **A command that can't start** releases the task, and `run` exits 1.
 
+## Commit evidence
+
+A board hosted with `local({ workEvidence: ... })` can gate task completion.
+It requires a submission, passing tests, and an independent review on the
+exact commit. The host can also require browser QA, acceptance, or publication.
+An unconfigured board keeps the usual task behavior.
+
+```ts
+import { board } from '@vercel/board'
+import { local } from '@vercel/board/backend-local'
+
+export const team = board({
+  backend: local({
+    workEvidence: {
+      attesters: {
+        tests: ['vercel:project:prj_ci:production'],
+        review: ['vercel:user:u_reviewer'],
+      },
+      operators: ['vercel:user:u_operator'],
+    },
+  }),
+})
+```
+
+Use the IDs from `vb whoami --json` (`principal`), not handles. Attesters also
+need `read` and `post` on the task. Operators need `manage`. A reviewer must
+be a different principal from the submitter; another profile does not count.
+
+- The claimant runs `vb tasks submit <id> --commit <sha> --artifact <ref>`
+  once per claim. Use the full Git commit ID. The claim stays open for attestations.
+- `vb tasks evidence <id>` shows the commit, round, gate records, and their
+  IDs. An attester runs `vb tasks attest <id> <gate> pass --commit <sha>
+  --round <n> --artifact <ref>`. A `fail` supersedes a pass for that gate.
+- Attestations can take `--expires-at <utc>`, an ISO UTC timestamp. An operator
+  can `vb tasks override <id> <gate> "<reason>" --commit <sha> --round <n>
+  --expires-at <utc>`. The override is an event, visible with `vb tail`.
+  It cannot replace a submission.
+- The claimant runs `vb tasks complete <id> --commit <sha>` while the gates
+  pass. Use `claim`, `submit`, and `complete` instead of `tasks run` on a gated
+  board. To submit again after an edit or a new commit, take a new claim.
+  If the HTTP board does not support completion with evidence, upgrade it.
+  The command does not fall back to completion without evidence.
+
+Artifact references are attestations from the named callers. The board does
+not run tests, inspect artifacts, or check Git history. Submissions, verdicts,
+overrides, and dependency resolutions appear in `vb tail` and wake matching
+watchers.
+
 ## Dependencies
 
 `--needs <id>`, repeated for several, makes a task wait until each of them has
@@ -320,7 +368,8 @@ completed.
 - **A prerequisite is any task you can read,** in any channel, whoever owns
   it. Anything else fails with `invalid_needs`.
 - **Finishing a prerequisite readies what waited only for it.** For staged
-  work this happens at `done`, not `handoff`.
+  work this happens at `done`, not `handoff`. With commit evidence and no
+  explicit releases, an unreadable prerequisite does not count as done.
 - **A failed or canceled prerequisite readies nothing.** `vb tasks reopen
   <id>` retries a failed task in place, and its dependents keep waiting for
   it.
@@ -335,6 +384,37 @@ $ vb tasks needs 814 812 813
 $ vb tasks needs 814 --none
 814 needs nothing
 ```
+
+### Release by evidence
+
+A host can set `releaseDependencies: true` in `local({ workEvidence: ... })`.
+Now completion leaves the dependent waiting. A principal in `resolvers` with
+`manage` on the dependent and `read` on the prerequisite resolves each edge:
+
+```text
+vb tasks resolve <dependent> <prerequisite> <evidence-id> --if-version <version>
+```
+
+Read the dependent's `version` with `vb read <id> --json`. Get the evidence
+ID from `vb tasks evidence <prerequisite>`. It must name the completed
+prerequisite's current submission or a current passing verdict, not an
+override. An expired or superseded release cannot be used to claim or
+finish a dependent, even if its recorded label still says `ready`. A worker
+also needs `read` on each prerequisite to use its release. If
+`vb tasks claim --ready` picks a task with a stale release, it grants no claim
+rather than taking a lower-priority task. Release any live claim before
+replacing its edge releases.
+
+The board decides each of these at the moment it records the write, not before.
+A lease or a release that runs out while a claim, renewal, submission, or
+completion waits to land makes that write fail with the answer it would have
+had a moment later. An unblock, unpark, reopen, or resolution then leaves the
+dependent waiting instead of ready. These writes test only the prerequisites
+their caller can read, so their answer never shows a hidden prerequisite's
+verdict. A claim still needs read on every prerequisite.
+
+This switch is off by default. Set `gates: false` alongside it to keep
+ordinary completion rules while requiring evidence to release dependents.
 
 ## A plan of tasks
 

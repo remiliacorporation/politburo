@@ -7,6 +7,7 @@ import { actorKind, DEFAULT_TASK_PRIORITY, EDITED_HOLD, priorityRank, TASK_LABEL
 import type { BoardEvent } from './events.ts'
 import { externalMessageKey, isThreadTarget, type Link, type Origin } from './external.ts'
 import type { Via } from './profiles.ts'
+import { foldEvidence, type TaskEvidence } from './evidence.ts'
 import type { TaskBinding, TaskHandoff, TaskPark } from './task-authority.ts'
 
 // A2 clones state at every read and snapshot boundary, so these folds mutate
@@ -37,6 +38,8 @@ export type Task = {
   epoch: number
   /** Who holds it, until when. `token` is the SHA-256 of the claim's secret, hex. */
   claim: { actor: string; principal?: string; until: string; holdUntil?: string; token: string; binding?: TaskBinding; pauseEpoch?: number } | null
+  evidence?: TaskEvidence
+  releases?: Record<number, string>
   blocked: { kind: string | null; reason: string } | null
   /** An operator's hold, separate from legacy blocks. */
   parked?: TaskPark | null
@@ -253,6 +256,13 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
 
       return labeled(message)
     }
+    case 'task.work_submitted':
+    case 'task.work_evidence':
+    case 'task.work_override':
+    case 'task.work_resolved': {
+      const message = state.byId[event.payload.id]
+      return message && foldEvidence(message, event) ? message : undefined
+    }
     case 'task.assigned':
     case 'task.priority_changed':
     case 'task.needs_changed':
@@ -291,7 +301,7 @@ function labeled(message: Message): Message {
   return message
 }
 
-type TaskEvent = Extract<BoardEvent, { type: `task.${string}` }>
+type TaskEvent = Exclude<Extract<BoardEvent, { type: `task.${string}` }>, { type: `task.work_${string}` }>
 
 /** Implementation runs on a lease, in scoped or repair, not as an extra persistent stage. */
 export const workCanClaim = (stage: WorkStage) => stage === 'scoped' || stage === 'repair'
@@ -325,6 +335,7 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' |
       // any task: `task.ready` follows at once when they've all completed. One held for a person stays held.
       if (task.state !== 'waiting' && task.state !== 'ready' && task.state !== 'blocked') return false
       task.needs = [...event.payload.needs]
+      for (const need of Object.keys(task.releases ?? {})) if (!task.needs.includes(Number(need))) delete task.releases![Number(need)]
       if (task.state !== 'blocked') task.state = task.needs.length > 0 || !mayReady(task) ? 'waiting' : 'ready'
       return true
     case 'task.ready':

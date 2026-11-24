@@ -30,6 +30,7 @@ import { createReads, tablesConsumer } from './reads.ts'
 import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
 import { createTasks, taskLimits, type WorkLifecycleOptions } from './tasks.ts'
+import type { EvidencePolicy } from '../contract/evidence.ts'
 import { createOperationalInbox } from './operational-inbox.ts'
 import { AccessMoved, appendRefusal, wallTime, writerFor } from '../store/single-writer.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
@@ -63,6 +64,7 @@ export type A2Options = {
    */
   blob?: BlobStore
   workLifecycle?: WorkLifecycleOptions
+  workEvidence?: EvidencePolicy | undefined
   /** Enables structured attention with a responder allowlist. */
   attentionResponders?: AttentionResponders
   agentOps?: boolean
@@ -276,7 +278,7 @@ function build(options: A2Options, binding: BoardBinding) {
   })
   const schedules = createSchedules({ store: log, scheduler: options.scheduler })
   const attentionEnabled = options.attentionResponders !== undefined
-  const tasks = createTasks({ store: log, scheduler: options.scheduler, workLifecycle: options.workLifecycle, attentionResponders: options.attentionResponders })
+  const tasks = createTasks({ store: log, scheduler: options.scheduler, workLifecycle: options.workLifecycle, attentionResponders: options.attentionResponders, workEvidence: options.workEvidence })
   const attentionAt = (id: string) => {
     if (!attentionEnabled) throw new HttpError(501, 'no_task_attention', 'this board does not keep task attention requests')
     return messageAt(id)
@@ -547,6 +549,7 @@ function build(options: A2Options, binding: BoardBinding) {
         sync: await syncEntries(),
         ...(options.workLifecycle ? { workLifecycle: 1, ...(store.fence ? { accessFence: 1, accessFenceScope: 'process' } : {}) } : {}),
         task_authority: true,
+        ...(tasks.workCapability ? { workEvidence: tasks.workCapability } : {}),
         ...(agents ? { agent_ops: true } : {}),
         ...(intents ? { agent_intents: true } : {}),
         ...(options.politburo === 1 ? { politburo: 1 } : {}),
@@ -829,9 +832,9 @@ function build(options: A2Options, binding: BoardBinding) {
       return tasks.renew(await identityOf(caller), messageAt(id), { epoch, token }, lease)
     },
     releaseTask: async (caller, { id, epoch, token }) => tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.released' }),
-    async completeTask(caller, { id, epoch, token, result }) {
+    async completeTask(caller, { id, epoch, token, result, commit }) {
       taskLimits.note('result', result)
-      return tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.completed', result: result ?? null })
+      return tasks.settle(await identityOf(caller), messageAt(id), { epoch, token }, { type: 'task.completed', result: result ?? null, commit })
     },
     async failTask(caller, { id, epoch, token, reason }) {
       taskLimits.note('reason', reason)
@@ -869,6 +872,11 @@ function build(options: A2Options, binding: BoardBinding) {
       taskLimits.note('reason', reason)
       return tasks.cancel(await identityOf(caller), messageAt(id), reason)
     },
+    workEvidence: async (caller, { id }) => tasks.workEvidence(await identityOf(caller), messageAt(id)),
+    submitWork: async (caller, input) => tasks.submitWork(await identityOf(caller), messageAt(input.id), input),
+    recordEvidence: async (caller, input) => tasks.recordEvidence(await identityOf(caller), messageAt(input.id), input),
+    overrideEvidence: async (caller, input) => tasks.overrideEvidence(await identityOf(caller), messageAt(input.id), input),
+    resolveWorkEdge: async (caller, input) => tasks.resolveWorkEdge(await identityOf(caller), messageAt(input.id), input),
     grants: async (caller) => access.grants(await identityOf(caller)),
     createGrant: async (caller, body) => access.createGrant(await identityOf(caller), body),
     createGrants: async (caller, body) => access.createGrants(await identityOf(caller), body),
@@ -1525,6 +1533,7 @@ function build(options: A2Options, binding: BoardBinding) {
     schedules,
     work,
     trust: access.trust,
+    workCapability: tasks.workCapability,
     /** The scheduler's callback, for every A2 server behind the board. */
     scheduler: options.scheduler
       ? options.scheduler.handler(...servers)
@@ -1549,6 +1558,7 @@ const serialized: ReadonlySet<Method> = new Set([
   'createTask', 'createTasks', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask',
   'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask',
   'setTaskNeeds', 'setTaskPriority', 'cancelTask', 'requestTaskAttention', 'answerTaskAttention',
+  'submitWork', 'recordEvidence', 'overrideEvidence', 'resolveWorkEdge',
   'createGrant', 'createGrants', 'updateGrant', 'revokeGrant', 'createInvite', 'revokeInvite', 'redeemInvite',
   'createSchema', 'register', 'ack', 'syncImport', 'syncReceipt', 'inboxPush', 'inboxNext', 'inboxAck',
   'sendOperationalMessage', 'ackOperationalMessage', 'archiveOperationalMessage',
@@ -1593,6 +1603,8 @@ export function a2(options: A2Options) {
     // The board lives here: board() lets its people and own deployments in by default.
     keeps: true,
     supportsTaskAuthority: true,
+    // Gates or explicit releases both check a commit against the current submission.
+    enforcesCommitEvidence: () => now().workCapability !== undefined,
     // Its grants, in its log: board() checks requests against them.
     trust: {
       grants: async () => (await ready()).trust.grants(),

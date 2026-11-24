@@ -55,11 +55,12 @@ export type MountOptions = Partial<A2Options> & Omit<BoardOptions, 'backend' | '
 
 /** A board on the local board's engine: each option to the one that takes it. It has the engine's extras, for tests to look inside. */
 export function mount(options: MountOptions) {
-  const { store, scheduler, blob, auth, attentionResponders, agentOps, agentHealthFreshnessSeconds, ...rest } = options
+  const { store, scheduler, blob, auth, attentionResponders, agentOps, agentHealthFreshnessSeconds, workEvidence, ...rest } = options
   const backend = a2({
     store: store ?? memory(), ...(scheduler ? { scheduler } : {}), ...(blob ? { blob } : {}),
     ...(attentionResponders === undefined ? {} : { attentionResponders }),
     ...(agentOps === undefined ? {} : { agentOps }),
+    workEvidence,
     ...(agentHealthFreshnessSeconds === undefined ? {} : { agentHealthFreshnessSeconds }),
   })
   const { url, ...given } = rest
@@ -118,9 +119,9 @@ export function testBoard(options: MountOptions = {}) {
  * A board as `local({ memory: true })` keeps one, with its scheduler in this process, whose tokens
  * come from a local test issuer: what a test that needs only a board, end to end, runs against.
  */
-export function localBoard(options: Omit<BoardOptions, 'backend' | 'fetch'> & { auth?: OidcTokensOptions; agentOps?: boolean; attentionResponders?: A2Options['attentionResponders'] } = {}) {
-  const { auth, url, agentOps, attentionResponders, ...rest } = options
-  const backend = local({ memory: true, ...(agentOps === undefined ? {} : { agentOps }), ...(attentionResponders === undefined ? {} : { attentionResponders }) })
+export function localBoard(options: Omit<BoardOptions, 'backend' | 'fetch'> & { auth?: OidcTokensOptions; agentOps?: boolean; attentionResponders?: A2Options['attentionResponders']; workEvidence?: A2Options['workEvidence'] } = {}) {
+  const { auth, url, agentOps, attentionResponders, workEvidence, ...rest } = options
+  const backend = local({ memory: true, ...(agentOps === undefined ? {} : { agentOps }), ...(attentionResponders === undefined ? {} : { attentionResponders }), ...(workEvidence ? { workEvidence } : {}) })
   const created = board({
     ...rest,
     backend,

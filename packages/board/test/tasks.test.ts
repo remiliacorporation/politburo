@@ -103,7 +103,7 @@ describe('task priority', () => {
     const api = await ada('GET', '/openapi.json')
     expect(api.status).toBe(200)
     expect(api.body.paths['/tasks/claim'].post.description).toBe(
-      'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest.',
+      'Claims the highest priority eligible ready task. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. A staged task must be scoped, and a stale evidence release grants no claim.',
     )
   })
 
