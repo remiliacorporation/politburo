@@ -421,9 +421,17 @@ export function createTrust(options: {
   /** The grants as they are now, and the index a conditional write holds them at. */
   const latest = () => session.state(accessReducer, { through: 'latest' })
   // Every access append shares the lock with staged writes. Reads stay outside it.
-  const append = (index: number, ...events: Parameters<typeof session.append>) => {
+  // Releasing the writer to take that lock can move the access log; the caller looks again.
+  const append = async (index: number, ...events: Parameters<typeof session.append>) => {
     const write = () => session.append.ifLastIndex(index, ...events)
-    return options.fence ? options.fence.access(write) : write()
+    try {
+      return options.fence ? await options.fence.access(write) : await write()
+    } catch (error) {
+      for (let cause = error; cause instanceof Error; cause = cause.cause) {
+        if (cause instanceof AccessMoved) throw movedOn()
+      }
+      throw error
+    }
   }
 
   const trust = {
@@ -526,16 +534,7 @@ export function createTrust(options: {
         const row = id === undefined ? undefined : state.invites[id]
         if (!row || inviteState(row, options.clock()) !== 'pending') throw invalidInvite()
         // A loser of a concurrent redemption or revocation must look again, not issue a second credential.
-        try {
-          await append(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
-        } catch (error) {
-          let accessMoved = false
-          for (let cause = error; cause instanceof Error; cause = cause.cause) {
-            if (cause instanceof AccessMoved) accessMoved = true
-          }
-          if (accessMoved) throw movedOn()
-          throw error
-        }
+        await append(index, { type: 'invite.redeemed', payload: { id: row.id, principal, digest, audience } })
       })
       return { principal, token }
     },
