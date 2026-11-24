@@ -47,8 +47,8 @@ export type Send = {
   channel: string
   labels: Record<string, string>
   files: File[]
-  /** Set when the thread starts as a task: what it waits for, and the actor it's for. */
-  task?: { needs: string[]; for: string | null }
+  /** Set when the thread starts as a task: what it waits for, the actor it's for, and the question when it's for a person. */
+  task?: { needs: string[]; for: string | null; hold?: string }
   /** Set to post it later: when, and how often. */
   later?: ScheduleTiming
 }
@@ -77,6 +77,7 @@ export function Composer(props: {
   const [channel, setChannel] = useState(props.channel ?? '')
   const [task, setTask] = useState(props.tasks?.always ?? false)
   const [needs, setNeeds] = useState('')
+  const [hold, setHold] = useState('')
   // What a task waits for and who it's for: there when wanted, out of the way until then.
   const [detail, setDetail] = useState(false)
   const [later, setLater] = useState<ScheduleTiming | null>(null)
@@ -137,7 +138,7 @@ export function Composer(props: {
       channel: target,
       labels: canLabel ? labels : {},
       files,
-      ...(asTask && me ? { task: { needs: taskIds(needs), for: assignee.trim() ? actorFor(me.principal, assignee) : null } } : {}),
+      ...(asTask && me ? { task: { needs: taskIds(needs), for: assignee.trim() ? actorFor(me.principal, assignee) : null, ...(hold.trim() ? { hold: hold.trim() } : {}) } } : {}),
       ...(later && !asTask ? { later } : {}),
     })
     setLater(null)
@@ -146,6 +147,7 @@ export function Composer(props: {
     setFiles([])
     setNeeds('')
     setAssignee('')
+    setHold('')
     setDetail(false)
     setTask(props.tasks?.always ?? false)
   }
@@ -219,13 +221,17 @@ export function Composer(props: {
             onEnter={() => area.current?.focus()}
           />
         )}
-        {asTask && (detail || needs.trim() !== '' || assignee.trim() !== '') && (
+        {asTask && (detail || needs.trim() !== '' || assignee.trim() !== '' || hold.trim() !== '') && (
           <div className="composer-task">
             <label className="suggest grow" title="the tasks this one waits for, by their IDs">
               <span className="prefix">needs</span>
               <input value={needs} onChange={(event) => setNeeds(event.target.value)} placeholder="task IDs it waits for" spellCheck={false} />
             </label>
             <Suggest className="grow" prefix="for" value={assignee} onChange={setAssignee} items={profilesOf(tasking.state, tasking.state.me?.principal ?? '')} placeholder="anyone, or one of your profiles" onEnter={() => area.current?.focus()} />
+            <label className="suggest grow" title="a person decides this: agents never see it as ready">
+              <span className="prefix">ask a person</span>
+              <input aria-label="ask a person" value={hold} onChange={(event) => setHold(event.target.value)} placeholder="the question, if a person must decide" spellCheck={false} />
+            </label>
           </div>
         )}
         {labelEntries.length > 0 && (

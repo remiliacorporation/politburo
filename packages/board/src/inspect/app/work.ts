@@ -1,6 +1,7 @@
 import { DEFAULT_TASK_PRIORITY, priorityRank, type TaskPriority } from '../../contract/schemas.ts'
 import { needsAttentionAnswer } from './attention-store.ts'
 import { byClaim, claimable, lapsed } from './claim-order.ts'
+import { listedRepos, repoOfChannel, repoOfTask } from './repos.ts'
 import { byWritten, initialState, isTask, type State, type TaskRoot, type Viewer } from './store.ts'
 import { ago, firstLine, until } from './words.ts'
 
@@ -51,6 +52,8 @@ export type WorkRow = {
   workId: string
   title: string
   priority: TaskPriority
+  /** The repo's tag: its work id's, else its channel's first segment. */
+  repo: string | null
   party: { id: string; name: string; colour: string } | null
   claimant: string | null
   group: WorkGroup
@@ -151,8 +154,24 @@ export function labelsOf(records: SwarmRecords | null, partyId: string | null, b
   }
 }
 
+/** Tags the board already shows as repos: a channel prefix, or a name in `config/repos`. */
+function knownRepoTags(state: State): Set<string> {
+  const tags = new Set<string>()
+  const add = (path: string | undefined) => {
+    if (!path) return
+    const tag = repoOfChannel(path)
+    if (tag) tags.add(tag)
+  }
+  for (const channel of Object.values(state.channels)) add(channel.path)
+  for (const root of Object.values(state.openTaskRoots)) add(root.channel)
+  for (const message of Object.values(state.messages)) add(message.channel)
+  for (const repo of listedRepos(state.messages) ?? []) tags.add(repo.tag)
+  return tags
+}
+
 export function projectWork(state: State, records: SwarmRecords | null, viewer: Viewer | null, now: number) {
   const buckets = new Map<WorkGroup, WorkRow[]>(GROUPS.map(([group]) => [group, []]))
+  const repos = knownRepoTags(state)
   for (const root of Object.values(state.openTaskRoots)) {
     if (!isTask(root) || root.deleted) continue
     const id = workIdOf(root)
@@ -165,6 +184,7 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
       root, group, reason,
       workId: id ?? `#${root.id}`,
       title: firstLine(root.text),
+      repo: repoOfTask(root, repos),
       priority: root.task.priority ?? DEFAULT_TASK_PRIORITY,
       party: partyId ? { id: partyId, name: party?.name ?? partyId, colour: party?.colour ?? '' } : null,
       claimant: root.task.claim?.actor ?? null,
@@ -239,7 +259,7 @@ export function homeOf(rows: WorkRow[], records: SwarmRecords | null, now: numbe
     const id = row.party?.id ?? null
     let bucket = parties.get(id)
     if (!bucket) {
-      bucket = { party: row.party ?? { id: null, name: 'external', colour: '' }, rows: [] }
+      bucket = { party: row.party ?? { id: null, name: 'no party', colour: '' }, rows: [] }
       parties.set(id, bucket)
     }
     bucket.rows.push(row)
@@ -260,13 +280,17 @@ export function homeOf(rows: WorkRow[], records: SwarmRecords | null, now: numbe
     party,
     cells: [...cells].sort(([a], [b]) => (a ?? '').localeCompare(b ?? '')).map(([claimant, rows]) => ({ claimant, rows })),
   }))
+  const byRepo = new Map<string | null, WorkRow[]>()
+  for (const row of rows) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row])
+  const perRepo = [...byRepo].sort(([a], [b]) => Number(a === null) - Number(b === null) || (a ?? '').localeCompare(b ?? ''))
+    .map(([repo, rows]) => ({ repo, ...healthOf(rows, now) }))
   const total = healthOf(rows, now)
   const perParty = [...parties.values()].sort((a, b) => byParty(a.party, b.party)).map(({ party, rows }) => ({
     party, ...healthOf(rows, now),
   }))
   const openClaimLimit = perParty.length > 0 && perParty.every(({ party }) => party.openClaimLimit !== undefined)
     ? perParty.reduce((sum, { party }) => sum + party.openClaimLimit!, 0) : undefined
-  const health = { perParty, total: { ...total, openClaimLimit } }
+  const health = { perRepo, perParty, total: { ...total, openClaimLimit } }
   const counts = { needs: needs.length, review: review.length, running: runningCount, expiring: total.expiring }
   return { counts, needs, review, running, health }
 }

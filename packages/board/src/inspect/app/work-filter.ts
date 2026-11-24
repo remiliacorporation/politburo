@@ -2,6 +2,7 @@ import { OPEN_WORK_GROUPS, type WorkGroup, type WorkRow } from './work.ts'
 
 export type WorkFilter = {
   text: string
+  repo?: string
   party?: string
   group?: WorkGroup
   claimant?: string
@@ -16,6 +17,7 @@ function choice<T extends string>(value: string | null, choices: readonly T[]): 
 }
 
 export function readFilter(params: URLSearchParams): WorkFilter {
+  const repo = params.get('repo')
   const party = params.get('party')
   const group = choice(params.get('group'), [...OPEN_WORK_GROUPS, 'done'])
   const claimant = params.get('claimant')
@@ -25,6 +27,7 @@ export function readFilter(params: URLSearchParams): WorkFilter {
   const spend = choice(params.get('spend'), ['unknown', 'partial', 'complete', 'stale'] as const)
   return {
     text: params.get('q') ?? '',
+    ...(repo ? { repo: repo.toLowerCase() } : {}),
     ...(party !== null ? { party } : {}),
     ...(group ? { group } : {}),
     ...(claimant !== null ? { claimant } : {}),
@@ -47,6 +50,7 @@ export function filterParams({ text, ...facets }: WorkFilter): URLSearchParams {
 export function filterWork(rows: readonly WorkRow[], filter: WorkFilter): WorkRow[] {
   const terms = filter.text.toLowerCase().split(/\s+/).filter(Boolean)
   return rows.filter((row) => {
+    if (filter.repo !== undefined && row.repo !== filter.repo) return false
     if (filter.party !== undefined && row.party?.id !== filter.party) return false
     if (filter.group !== undefined && row.group !== filter.group) return false
     if (filter.claimant !== undefined && row.claimant !== filter.claimant) return false
@@ -56,7 +60,7 @@ export function filterWork(rows: readonly WorkRow[], filter: WorkFilter): WorkRo
     if (filter.overlap !== undefined && Boolean(row.overlapText) !== filter.overlap) return false
     if (filter.spend !== undefined && (row.spend?.coverage ?? 'unknown') !== filter.spend) return false
     if (!terms.length) return true
-    const fields = [row.workId, row.title, row.party?.name, row.claimant, row.reason, row.prText,
+    const fields = [row.repo, row.workId, row.title, row.party?.name, row.claimant, row.reason, row.prText,
       ...row.trackers.map(({ id }) => id)].join('\n').toLowerCase()
     return terms.every((term) => fields.includes(term))
   })

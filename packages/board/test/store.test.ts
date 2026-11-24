@@ -172,6 +172,29 @@ describe('the inspector store', () => {
     expect(state.pending.map((p) => p.key)).toEqual(['k2'])
   })
 
+  it('keeps an ask-a-person post until the task is held for that reason', () => {
+    const task = {
+      state: 'ready' as const, priority: 'normal' as const, owner: 'vercel:user:u_julian', by: ME, for: null,
+      needs: [] as string[], epoch: 0, claim: null, blocked: null, result: null, reason: null,
+    }
+    const post: store.Pending = {
+      key: 'k', channel: 'ops', re: null, text: 'decide', noSync: false, labels: {}, createdAt: '', error: null,
+      task: { needs: [], for: null, hold: 'which rule?' },
+    }
+    let state: store.State = { ...start, pending: [post] }
+    // The create lands first, still unheld. The post stays, so a later refusal has a row to land on.
+    state = store.applyEvent(state, postedEvent(message(17, { text: 'decide', task })))
+    expect(state.pending.map((p) => p.key)).toEqual(['k'])
+    state = { ...state, pending: state.pending.map((p) => ({ ...p, error: 'someone holds this task now, until their lease ends' })) }
+    expect(state.pending[0]?.error).toContain('someone holds')
+    const other = message(17, { text: 'decide', task: { ...task, state: 'blocked', blocked: { kind: 'needs_input', reason: 'a different question' } } })
+    state = store.applyEvent({ ...start, pending: [post] }, postedEvent(other))
+    expect(state.pending.map((p) => p.key)).toEqual(['k'])
+    const held = message(17, { text: 'decide', version: 18, task: { ...task, state: 'blocked', blocked: { kind: 'needs_input', reason: 'which rule?' } } })
+    state = store.applyEvent({ ...start, pending: [post] }, postedEvent(held))
+    expect(state.pending).toEqual([])
+  })
+
   it('filters like the board: source, text, and labels on the message or its root', () => {
     const state = store.merge(
       start,
