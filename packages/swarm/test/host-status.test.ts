@@ -47,13 +47,14 @@ function tcp(local: string, state: string, inode: number): string {
   return `   0: ${local} 00000000:0000 ${state} 00000000:00000000 00:00000000 00000000 1000 0 ${inode} 1 0000000000000000 100 0 0 10 0\n`
 }
 
-function procFile(dir: string, pid: string, comm: string, args: string[], sockets: number[]) {
+function procFile(dir: string, pid: string, comm: string, args: string[], sockets: number[], exe?: string) {
   const pidDir = join(dir, pid)
   mkdirSync(join(pidDir, 'fd'), { recursive: true })
   writeFileSync(join(pidDir, 'comm'), `${comm}\n`)
   writeFileSync(join(pidDir, 'cmdline'), `${args.join('\0')}\0`)
   writeFileSync(join(pidDir, 'environ'), `${envSecret}\0`)
   chmodSync(join(pidDir, 'environ'), 0)
+  if (exe !== undefined) symlinkSync(exe, join(pidDir, 'exe'))
   sockets.forEach((inode, index) => symlinkSync(`socket:[${inode}]`, join(pidDir, 'fd', String(index + 3))))
 }
 
@@ -110,13 +111,17 @@ function fixture(t: TestContext) {
     + tcp(ipv4('127.0.0.1', 5999), '0A', 200)
     + tcp(ipv4('127.0.0.1', 7844), '0A', 300)
     + tcp(ipv4('127.0.0.1', 4101), '01', 400)
-    + tcp(ipv4('127.0.0.1', 7000), '0A', 500))
+    + tcp(ipv4('127.0.0.1', 7000), '0A', 500)
+    + tcp(ipv4('127.0.0.1', 4103), '0A', 600)
+    + tcp(ipv4('127.0.0.1', 4104), '0A', 700))
   writeFileSync(join(proc, 'net', 'tcp6'), header + tcp('00000000000000000000000001000000:1006', '0A', 101))
   procFile(proc, '42', 'node', ['/opt/node', '--token', flagSecret, 'serve'], [100, 101, 400])
   procFile(proc, '7', 'python', ['python', 'serve'], [200])
   procFile(proc, '9', 'cloudflared', ['/usr/bin/cloudflared', 'tunnel'], [300])
   procFile(proc, '8', 'nodemon', ['nodemon', 'serve'], [500])
   procFile(proc, '99', 'node', ['/opt/node', '--token', quietSecret], [])
+  procFile(proc, '15', 'MainThread', ['/usr/local/bin/node', '--token', flagSecret, 'serve'], [600], '/usr/local/bin/node')
+  procFile(proc, '16', 'MainThread', ['/usr/bin/python', 'serve'], [700], '/usr/bin/python')
   return { dir, root, daemons, agents, proc }
 }
 
@@ -130,6 +135,7 @@ function rowsOf(fixtureDir: ReturnType<typeof fixture>) {
     ['agent', 'com.cloudflare.cloudflared', '/usr/local/bin/cloudflared tunnel'],
     ['port', '127.0.0.1:4101', 'pid 42  /opt/node --token <redacted> serve'],
     ['port', '[::1]:4102', 'pid 42  /opt/node --token <redacted> serve'],
+    ['port', '127.0.0.1:4103', 'pid 15  /usr/local/bin/node --token <redacted> serve'],
     ['port', '127.0.0.1:7844', 'pid 9  /usr/bin/cloudflared tunnel'],
     ['board', board, 'party.db'],
     ['board', team, 'local.db'],

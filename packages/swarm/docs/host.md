@@ -5,7 +5,7 @@
 The table has one row for each of these:
 
 - a LaunchDaemon or LaunchAgent whose label or program mentions `board`, `politburo`, or `cloudflared`
-- a listening TCP port held by `node` or `cloudflared`
+- a listening TCP port held by `node` or `cloudflared`, including when the thread name is not the program
 - a board directory under `--root`, which is a directory that contains a `.db` file
 
 A mention is a case-insensitive name on its own, so `board-party` matches and `dashboard` does not.

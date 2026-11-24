@@ -11,6 +11,12 @@ export type Row = { kind: 'daemon' | 'agent' | 'port' | 'board' | 'skipped'; nam
 
 const MENTION = /(?:^|[^a-z0-9])(?:board|politburo|cloudflared)(?=$|[^a-z0-9])/i
 const HOLDERS = new Set(['node', 'cloudflared'])
+
+/** `node` or `cloudflared`, from a thread name or an executable path. Node 24 names its main thread `MainThread`. */
+function holderName(name: string): string | null {
+  const base = name.split(/[/\\]/).pop()?.replace(/\.exe$/i, '') ?? ''
+  return HOLDERS.has(base) ? base : null
+}
 const SECRET = /(token|secret|password|api[-_]?key|authorization)/i
 
 function safe(text: string): string {
@@ -258,7 +264,11 @@ function procPorts(root: string): Row[] {
     } catch {
       continue
     }
-    if (!HOLDERS.has(comm)) continue
+    let executable = ''
+    try {
+      executable = readlinkSync(join(root, pid, 'exe'))
+    } catch { /* the thread name decides */ }
+    if (holderName(comm) === null && holderName(executable) === null) continue
     let fds: string[]
     try {
       fds = readdirSync(join(root, pid, 'fd'))
@@ -309,7 +319,7 @@ function parseLsof(text: string): { pid: string; command: string; address: strin
     const value = line.slice(1)
     if (id === 'p') { pid = value; command = '' }
     else if (id === 'c') command = value
-    else if (id === 'n' && HOLDERS.has(command)) {
+    else if (id === 'n') {
       const match = /^(.*):(\d+)$/.exec(value)
       if (!match) continue
       let address = match[1]!
@@ -336,11 +346,15 @@ function lsofPorts(): Row[] {
       }
     }
   }
-  return found.map((row) => ({
-    kind: 'port' as const,
-    name: endpoint(row.address, row.port),
-    detail: `pid ${row.pid}  ${redact(argsOf.get(row.pid) ?? [row.command]).map(showArg).join(' ')}`,
-  })).sort((a, b) => {
+  return found.flatMap((row) => {
+    const args = argsOf.get(row.pid) ?? [row.command]
+    if (holderName(row.command) === null && holderName(args[0] ?? '') === null) return []
+    return [{
+      kind: 'port' as const,
+      name: endpoint(row.address, row.port),
+      detail: `pid ${row.pid}  ${redact(args).map(showArg).join(' ')}`,
+    }]
+  }).sort((a, b) => {
     const port = (name: string) => Number(name.slice(name.lastIndexOf(':') + 1))
     return port(a.name) - port(b.name) || a.name.localeCompare(b.name) || a.detail.localeCompare(b.detail)
   })
