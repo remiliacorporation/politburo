@@ -59,10 +59,11 @@ export function releaseQuarantine({ records, registry, ledger, actor, reason, no
       const original = ledger.existing(record.dedupe_key)
       if (original) {
         const parent = ledger.head(original.record_id)
-        const successor = conflictSuccessor(parent, {
-          ...record, record_id: id, envelope, actor, reason,
+        const disagreed: SpendRecord = {
+          ...record, record_id: id, revises: record.record_id, envelope, actor, reason,
           received: (typeof now === 'function' ? now() : now).toISOString(),
-        }, actor)
+        }
+        const successor = conflictSuccessor(parent, disagreed, actor)
         if (ledger.append(successor) === 'written') released++
       }
       continue
