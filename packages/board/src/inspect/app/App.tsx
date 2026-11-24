@@ -10,8 +10,7 @@ import { Home } from './home.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
-import { here, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
-import { Presidium } from './presidium.tsx'
+import { here, isTypingTarget, Link, navigate, route, useLocation, useNow, useTypeToFocus } from './nav.tsx'
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
@@ -20,6 +19,8 @@ import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
+import { cellHasThread, isWorkRoute, workScope } from './work-scope.ts'
+import { Work } from './work-view.tsx'
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
 
@@ -200,12 +201,13 @@ export function App() {
       if (element && element.isConnected && element.getClientRects().length && !element.closest('[inert]')) element.focus({ preventScroll: true })
       else focus(fallback)
     }
+    const mainFocus = isWorkRoute(route(where.path)) ? '.main .work-list' : '.main [data-view-title]'
     if (nav) focus('.sidebar')
     else if (old?.nav && old.path === where.path && old.thread === where.thread && narrow) {
       restore(navOpener.current, `${where.thread === null ? '.main' : '.pane'} .header [aria-label="Show sidebar"]`)
     } else if (where.thread !== null && (old?.thread !== where.thread || old.nav || (narrow && !root.querySelector('.pane')?.contains(document.activeElement)))) focus('.pane [data-view-title]')
-    else if (old?.path !== where.path || old.nav) focus('.main [data-view-title]')
-    else if (old.thread !== null && where.thread === null) restore(threadOpener.current, '.main [data-view-title]')
+    else if (old?.path !== where.path || old.nav) focus(mainFocus)
+    else if (old.thread !== null && where.thread === null) restore(threadOpener.current, mainFocus)
   }, [where.path, where.thread, nav, narrow, ready])
 
   // Served from an app, the page reads nothing until you've named who you post as.
@@ -230,8 +232,9 @@ export function App() {
 
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if ((event.target as HTMLElement).closest('textarea, input, [role="menu"], [role="dialog"]')) return
+      if (event.key !== 'Escape' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
+      const target = event.target instanceof Element ? event.target : document.activeElement
+      if (isTypingTarget(target) || target?.closest('[role="menu"], [role="dialog"]')) return
       if (nav) setNav(false)
       else if (where.thread !== null) navigate(here({ thread: null }))
     }
@@ -242,16 +245,14 @@ export function App() {
   const current = route(where.path)
   // The tab says which board too, so two inspectors side by side tell apart.
   const named = boardWords(state.discovery).name
-  useEffect(() => {
-    const title = current.view === 'channel' ? `#${current.channel}`
-      : current.view === 'settings' ? `${current.section} · settings`
-      : current.view === 'missing' ? 'nothing here'
-      : current.view === 'needs' ? 'Needs action'
-      : current.view === 'handoffs' ? 'HANDOFFS'
-      : current.view === 'presidium' ? 'PRESIDIUM'
-      : current.view
-    document.title = `${title} · ${named}`
-  }, [where.path, named])
+  const title = isWorkRoute(current) ? workScope(current, where.params, board.swarmRecords(), named).title
+    : current.view === 'channel' ? `#${current.channel}`
+    : current.view === 'settings' ? `${current.section} · settings`
+    : current.view === 'missing' ? 'nothing here'
+    : current.view === 'needs' ? 'Needs action'
+    : current.view === 'handoffs' ? 'HANDOFFS'
+    : current.view
+  useEffect(() => { document.title = `${title} · ${named}` }, [title, named])
 
   const known = useMemo(() => knownLabels(state), [state.messages])
   const viewer = useMemo(() => (state.me ? board.viewerOf(state.me) : null), [state.me])
@@ -291,10 +292,13 @@ export function App() {
     </>
   ) : null
   const identity = board.getIdentity()
+  const cellPaneStatus = current.view === 'cell' && where.thread !== null
+    ? state.tasksRefused ?? (!state.tasksCounted ? 'loading…' : cellHasThread(state, current.cell, where.thread) ? null : 'not in this cell')
+    : null
   const paneIsFront = narrow && where.thread !== null
   const expand = paneIsFront ? null : headerLead
   const banner = pauseBanner(state, now)
-  const control = viewer.manages && viewer.person && viewer.profile === null && state.status
+  const control = current.view !== 'cell' && viewer.manages && viewer.person && viewer.profile === null && state.status
     ? <PauseControl key={viewer.actor} paused={state.status.paused} /> : null
   const headerActions = <>
     {(narrow ? !nav : sidebar.collapsed) && <span className="meta" title={state.me.actor}>acting as {shownName(state.me)}</span>}
@@ -329,10 +333,10 @@ export function App() {
           <HeaderActions.Provider value={paneIsFront ? null : headerActions}>
             {current.view === 'needs' && <NeedsAction key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'handoffs' && <Home key={identity} state={state} now={now} lead={expand} />}
-            {current.view === 'presidium' && <Presidium key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'channel' && (
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
+            {isWorkRoute(current) && <Work key={`${identity}:${where.path}`} route={current} state={state} now={now} lead={expand} />}
             {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
             {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
@@ -348,7 +352,16 @@ export function App() {
           <aside className="pane" aria-label="Thread" inert={nav}>
             <ResizeHandle side="left" label="resize the thread" onDrag={pane.drag} onDone={pane.done} onStep={pane.step} />
             <HeaderActions.Provider value={paneIsFront ? headerActions : null}>
-              <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known} lead={narrow ? headerLead : null} />
+              {cellPaneStatus === null ? (
+                <ThreadPane key={where.thread} id={where.thread} state={state} viewer={viewer} now={now} known={known}
+                  lead={narrow ? headerLead : null} readOnly={current.view === 'cell'} />
+              ) : (
+                <div className="view-body">
+                  <p className="empty" role="status" data-view-title tabIndex={-1}>{cellPaneStatus}{' '}
+                    <Link className="text-link" to={here({ thread: null })}>close</Link>
+                  </p>
+                </div>
+              )}
             </HeaderActions.Provider>
           </aside>
         )}
@@ -475,8 +488,9 @@ function Channel(props: { channel: string; state: State; options: RowOptions; kn
   )
 }
 
-function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode }) {
-  const { id, state, viewer } = props
+function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: number; known: KnownLabels; lead: ReactNode; readOnly: boolean }) {
+  const { id, state, readOnly } = props
+  const viewer: Viewer = readOnly ? { ...props.viewer, may: (permission, channel) => permission === 'read' && props.viewer.may(permission, channel) } : props.viewer
   useTypeToFocus('thread')
   const identity = board.getIdentity()
   useEffect(() => board.openThreadPane(id), [id, identity])
@@ -514,7 +528,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
         </button>
       </Header>
       <div className="view-body">
-      {t && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
+      {t && !readOnly && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
       {t && (synced.length > 0 || scheduled.length > 0) && (
         <dl className="facts thread-facts" {...nativeMenu}>
           {synced.length > 0 && (
@@ -559,7 +573,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
             <Messages messages={[t.root]} now={props.now} options={options} />
             <div className="divider">{t.replies.length === 1 ? '1 reply' : `${t.replies.length} replies`}</div>
             <Messages messages={t.replies} now={props.now} options={options} after={t.root} />
-            <Pendings posts={t.pending} me={state.me!} after={t.replies.at(-1)} />
+            {!readOnly && <Pendings posts={t.pending} me={state.me!} after={t.replies.at(-1)} />}
           </>
         )}
       </Feed>
