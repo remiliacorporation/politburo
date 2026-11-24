@@ -1,0 +1,112 @@
+{
+  "case_id": "controllers-pause-resume-012-heartbeat-boundaries",
+  "description": "Decide liveness and alert cooldown at exact boundaries",
+  "expected": {
+    "db_rows": {},
+    "details": {},
+    "exit_code": 0,
+    "files": {
+      "notes/alive/.alerts.json": "{}\n",
+      "notes/alive/example.001-FOX": "{\"at\": 1767225642.0, \"pid\": 1234, \"cycle\": 1, \"interval\": 10}\n",
+      "notes/mail/core/core-0001.yaml": "id: \"core-0001\"\nclass: \"core.escalate\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"core\"\nsummary: \"stale liveness: example.001-FOX age=31s interval=10s\"\nat: \"2026-01-01T00:00:31Z\"\n",
+      "notes/mail/core/core-0002.yaml": "id: \"core-0002\"\nclass: \"core.escalate\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"core\"\nsummary: \"stale liveness: example.001-FOX age=41s interval=10s\"\nat: \"2026-01-01T00:00:41Z\"\n",
+      "notes/mail/core/id-counter.txt": "2\n",
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"spawner.decide\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"example\"\nsummary: \"stale liveness: example.001-FOX age=31s interval=10s\"\nat: \"2026-01-01T00:00:31Z\"\n",
+      "notes/mail/example/example-0002.yaml": "id: \"example-0002\"\nclass: \"spawner.decide\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"example\"\nsummary: \"stale liveness: example.001-FOX age=41s interval=10s\"\nat: \"2026-01-01T00:00:41Z\"\n",
+      "notes/mail/example/id-counter.txt": "2\n",
+      "notes/mail/log.yaml": "- {\"at\": \"2026-01-01T00:00:31Z\", \"event\": \"created\", \"hash\": \"312f1bd8ae3d776b2f404fc725963e7dc3e57faabc2419344977d6c319e709c2\", \"header\": {\"at\": \"2026-01-01T00:00:31Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0001\", \"summary\": \"stale liveness: example.001-FOX age=31s interval=10s\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0001\", \"to\": \"example\"}\n- {\"at\": \"2026-01-01T00:00:31Z\", \"event\": \"created\", \"hash\": \"999863c6feed0136fef1d3254e81f5d6d6e857523dd7652eb544e4f74e40b148\", \"header\": {\"at\": \"2026-01-01T00:00:31Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0001\", \"summary\": \"stale liveness: example.001-FOX age=31s interval=10s\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0001\", \"to\": \"core\"}\n- {\"at\": \"2026-01-01T00:00:41Z\", \"event\": \"created\", \"hash\": \"6faf7cef53a0bd0d51043f1fcfe13bd6b317a14502b17d0036e266b5ca8b2f25\", \"header\": {\"at\": \"2026-01-01T00:00:41Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0002\", \"summary\": \"stale liveness: example.001-FOX age=41s interval=10s\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0002\", \"to\": \"example\"}\n- {\"at\": \"2026-01-01T00:00:41Z\", \"event\": \"created\", \"hash\": \"1ce61ab8b5badccebcbb234e2f47e4ba39cbe88a2db570c9941fbd967a174efc\", \"header\": {\"at\": \"2026-01-01T00:00:41Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0002\", \"summary\": \"stale liveness: example.001-FOX age=41s interval=10s\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0002\", \"to\": \"core\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "stale liveness: example.001-FOX age=31s interval=10s\nstale liveness: example.001-FOX age=40s interval=10s\nstale liveness: example.001-FOX age=41s interval=10s\n",
+    "steps": [
+      {
+        "exit_code": null,
+        "returned": "<WORK>/notes/alive/example.001-FOX",
+        "stderr": "",
+        "stdout": "",
+        "step": "publish"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "at": 1767225600.0,
+          "cycle": 1,
+          "interval": 10,
+          "pid": 1234
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "read"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "",
+        "step": "scan at +30s"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "",
+        "stdout": "stale liveness: example.001-FOX age=31s interval=10s\n",
+        "step": "scan at +31s"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "",
+        "stdout": "stale liveness: example.001-FOX age=40s interval=10s\n",
+        "step": "scan at +40s"
+      },
+      {
+        "exit_code": 1,
+        "returned": null,
+        "stderr": "",
+        "stdout": "stale liveness: example.001-FOX age=41s interval=10s\n",
+        "step": "scan at +41s"
+      },
+      {
+        "exit_code": null,
+        "returned": "<WORK>/notes/alive/example.001-FOX",
+        "stderr": "",
+        "stdout": "",
+        "step": "publish fresh"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "",
+        "step": "scan at +42s"
+      }
+    ]
+  },
+  "inputs": {
+    "interval": 10,
+    "kind": "scenario",
+    "offsets": [
+      30,
+      31,
+      40,
+      41,
+      42
+    ],
+    "scenario": "heartbeat"
+  },
+  "matrix_row": "M83",
+  "notes": "Age 3× interval is live; one second later is stale. An alert is suppressed before the cooldown, emitted exactly at it, and a fresh heartbeat clears alert state.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py",
+      "supervisor/liveness_check.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

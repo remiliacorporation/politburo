@@ -1,0 +1,121 @@
+{
+  "case_id": "review-marks-008-clean",
+  "description": "Validate and ingest a clean verdict",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [],
+      "pipeline_stages": [],
+      "review_marks": []
+    },
+    "exit_code": 0,
+    "files": {
+      "verdict.json": "{\"findings\": [], \"head\": \"bfb003c312c7625fdba81565a3166c5f96cf4aeb\", \"mac\": \"c55edfdd6da5d2fdf9cfa8a0bf59671fd5164951130e77c48609ad106d446d74\", \"pr\": 1, \"schema\": \"tigeryard.review-verdict.v1\", \"session\": \"example-reviewer-session\", \"task\": \"example-project\", \"verdict\": \"clean\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"valid\": true, \"errors\": []}\n",
+    "steps": [
+      {
+        "op": "validate",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\"valid\": true, \"errors\": []}\n",
+          "watcher": {
+            "github_writes": [
+              {
+                "body": "Synthetic check passed.",
+                "op": "body",
+                "pr": 1
+              },
+              {
+                "op": "ready",
+                "pr": 1
+              }
+            ],
+            "outcome": "accepted",
+            "outcomes": [
+              {
+                "outcome": "review_registered",
+                "task": "example-project"
+              },
+              {
+                "outcome": "review_accepted",
+                "task": "example-project",
+                "verdict": "clean"
+              },
+              {
+                "outcome": "pr_ready",
+                "pr": 1,
+                "task": "example-project"
+              }
+            ],
+            "pending_comments": [
+              {
+                "body": "Tigeryard remote watcher: Review verdict for bfb003c312c7625fdba81565a3166c5f96cf4aeb: **clean**.\nNo findings.",
+                "key": "review:56b8afb49cbd72b5cdcf69b441e7f335bdf9079e",
+                "pr": 1,
+                "task": "example-project"
+              }
+            ],
+            "pending_messages": [
+              {
+                "actionable": false,
+                "body": "Remote task example-project: reviewer verdict clean on bfb003c312c7625fdba81565a3166c5f96cf4aeb (0 findings).",
+                "kind": "qa_result"
+              },
+              {
+                "actionable": true,
+                "body": "Remote task example-project: local check passed on bfb003c312c7625fdba81565a3166c5f96cf4aeb and the reviewer's verdict there is clean; pull request #1 is marked ready for review. The watcher does not merge it; the repository's required reviews decide.",
+                "kind": "review_request"
+              }
+            ],
+            "phase": "awaiting-merge",
+            "ready_after_verdict": true,
+            "ready_before_verdict": false,
+            "review": {
+              "findings": 0,
+              "head": "bfb003c312c7625fdba81565a3166c5f96cf4aeb",
+              "high": 0,
+              "session": "example-reviewer-session",
+              "sha": "56b8afb49cbd72b5cdcf69b441e7f335bdf9079e",
+              "verdict": "clean"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "op": "validate",
+        "verdict": "clean",
+        "watch": "current"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "The CLI only validates; a registered watcher records the verdict and permits PR readiness after the same-head check passes.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": []
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "supervisor/review.py",
+      "supervisor/review_verdict.py",
+      "supervisor/remote_watch.py"
+    ]
+  }
+}

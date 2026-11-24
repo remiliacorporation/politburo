@@ -1,0 +1,175 @@
+{
+  "case_id": "owner-decision-004-reminder-revision",
+  "description": "Emit one router receipt per header version, not per poll.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/log.yaml": "- {\"at\": \"2026-11-21T10:00:00Z\", \"event\": \"created\", \"hash\": \"fff26ac43fb607bd0ca9ed14f8cac93d116a094ed384f4325a2f1dfd62e3b97d\", \"header\": {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:00:00Z\", \"event\": \"routed\", \"hash\": \"fff26ac43fb607bd0ca9ed14f8cac93d116a094ed384f4325a2f1dfd62e3b97d\", \"id\": \"ex-0001\", \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:02:00Z\", \"event\": \"updated\", \"hash\": \"a1d2daa13e275b56826a74be80d23c1722af6cb4cff96620a9cd66892aff3676\", \"header\": {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Park the example item\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}\n- {\"at\": \"2026-11-21T10:02:00Z\", \"event\": \"routed\", \"hash\": \"a1d2daa13e275b56826a74be80d23c1722af6cb4cff96620a9cd66892aff3676\", \"id\": \"ex-0001\", \"to\": \"owner\"}\n",
+      "mail/owner/ex-0001.yaml": "id: \"ex-0001\"\nclass: \"spawner.decide\"\nurgency: \"p1\"\nfrom: \"ex2 secretary\"\nto: \"owner\"\nreply_to: \"ex\"\nneeds: \"owner\"\nstatus: \"open\"\ndefault_if_unanswered: \"Park the example item\"\nreview_by: \"2026-11-21T10:30Z\"\nref: {report: \"example-one\"}\nsummary: \"Example choice 1\"\nat: \"2026-11-21T10:00:00Z\"\n",
+      "snapshots/first.yaml": "batch: \"owner-2026-11-21T10:00:00Z\"\nrepo: \"owner\"\nwindow: {\"from\": \"2026-11-21T10:00:00Z\", \"to\": \"2026-11-21T10:00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 1, \"p2\": 0, \"p3\": 0}\nact_on: [ex-0001]\nitems:\n  - {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n",
+      "snapshots/repeat.yaml": "batch: \"owner-2026-11-21T10:00:00Z\"\nrepo: \"owner\"\nwindow: {\"from\": \"2026-11-21T10:00:00Z\", \"to\": \"2026-11-21T10:00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 0}\nact_on: []\nitems: []\n",
+      "snapshots/revised-repeat.yaml": "batch: \"owner-2026-11-21T10:00:00Z\"\nrepo: \"owner\"\nwindow: {\"from\": \"2026-11-21T10:00:00Z\", \"to\": \"2026-11-21T10:00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 0}\nact_on: []\nitems: []\n",
+      "snapshots/revised.yaml": "batch: \"owner-2026-11-21T10:00:00Z\"\nrepo: \"owner\"\nwindow: {\"from\": \"2026-11-21T10:00:00Z\", \"to\": \"2026-11-21T10:00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 1, \"p2\": 0, \"p3\": 0}\nact_on: [ex-0001]\nitems:\n  - {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Park the example item\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-21T10:00:00Z\", \"event\": \"created\", \"hash\": \"fff26ac43fb607bd0ca9ed14f8cac93d116a094ed384f4325a2f1dfd62e3b97d\", \"header\": {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Keep the current gate\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:00:00Z\", \"event\": \"routed\", \"hash\": \"fff26ac43fb607bd0ca9ed14f8cac93d116a094ed384f4325a2f1dfd62e3b97d\", \"id\": \"ex-0001\", \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:02:00Z\", \"event\": \"updated\", \"hash\": \"a1d2daa13e275b56826a74be80d23c1722af6cb4cff96620a9cd66892aff3676\", \"header\": {\"at\": \"2026-11-21T10:00:00Z\", \"class\": \"spawner.decide\", \"default_if_unanswered\": \"Park the example item\", \"from\": \"ex2 secretary\", \"id\": \"ex-0001\", \"needs\": \"owner\", \"ref\": {\"report\": \"example-one\"}, \"reply_to\": \"ex\", \"review_by\": \"2026-11-21T10:30Z\", \"status\": \"open\", \"summary\": \"Example choice 1\", \"to\": \"owner\", \"urgency\": \"p1\"}, \"id\": \"ex-0001\", \"key\": [\"ex2 secretary\", {\"report\": \"example-one\"}, \"spawner.decide\"], \"to\": \"owner\"}",
+      "- {\"at\": \"2026-11-21T10:02:00Z\", \"event\": \"routed\", \"hash\": \"a1d2daa13e275b56826a74be80d23c1722af6cb4cff96620a9cd66892aff3676\", \"id\": \"ex-0001\", \"to\": \"owner\"}"
+    ],
+    "stderr": "",
+    "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0001 p1 spawner.decide ex2 secretary: Example choice 1\n\ndigest: <WORK>/snapshots/first.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\ndigest: <WORK>/snapshots/repeat.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\nFORWARD BATCH (p1, within 10 minutes)\nex-0001 p1 spawner.decide ex2 secretary: Example choice 1\n\ndigest: <WORK>/snapshots/revised.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\ndigest: <WORK>/snapshots/revised-repeat.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\n",
+    "steps": [
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0001",
+          "notice": null,
+          "path": "mail/owner/ex-0001.yaml",
+          "reason": null,
+          "to": "owner"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0001 p1 spawner.decide ex2 secretary: Example choice 1\n\ndigest: <WORK>/snapshots/first.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "digest: <WORK>/snapshots/repeat.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\n"
+      },
+      {
+        "return": {
+          "action": "updated",
+          "id": "ex-0001",
+          "notice": null,
+          "path": "mail/owner/ex-0001.yaml",
+          "reason": null,
+          "to": "owner"
+        }
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "FORWARD BATCH (p1, within 10 minutes)\nex-0001 p1 spawner.decide ex2 secretary: Example choice 1\n\ndigest: <WORK>/snapshots/revised.yaml counts p0=0 p1=1 p2=0 p3=0 new=1 invalid=0\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "digest: <WORK>/snapshots/revised-repeat.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-21T10:00:00Z",
+            "class": "spawner.decide",
+            "default_if_unanswered": "Keep the current gate",
+            "from": "ex2 secretary",
+            "id": "ex-0001",
+            "needs": "owner",
+            "ref": {
+              "report": "example-one"
+            },
+            "review_by": "2026-11-21T10:30Z",
+            "summary": "Example choice 1",
+            "to": "ex",
+            "urgency": "p1"
+          },
+          "now": "2026-11-21T10:00:00Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "argv": [
+          "--repo",
+          "owner",
+          "--now",
+          "2026-11-21T10:00:00Z",
+          "--digest",
+          "snapshots/first.yaml"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      },
+      {
+        "argv": [
+          "--repo",
+          "owner",
+          "--now",
+          "2026-11-21T10:01:00Z",
+          "--digest",
+          "snapshots/repeat.yaml"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      },
+      {
+        "args": {
+          "header": {
+            "at": "2026-11-21T10:00:00Z",
+            "class": "spawner.decide",
+            "default_if_unanswered": "Park the example item",
+            "from": "ex2 secretary",
+            "id": "ex-0001",
+            "needs": "owner",
+            "ref": {
+              "report": "example-one"
+            },
+            "review_by": "2026-11-21T10:30Z",
+            "summary": "Example choice 1",
+            "to": "ex",
+            "urgency": "p1"
+          },
+          "now": "2026-11-21T10:02:00Z"
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "argv": [
+          "--repo",
+          "owner",
+          "--now",
+          "2026-11-21T10:02:00Z",
+          "--digest",
+          "snapshots/revised.yaml"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      },
+      {
+        "argv": [
+          "--repo",
+          "owner",
+          "--now",
+          "2026-11-21T10:03:00Z",
+          "--digest",
+          "snapshots/revised-repeat.yaml"
+        ],
+        "kind": "cli",
+        "tool": "router"
+      }
+    ]
+  },
+  "matrix_row": "M09",
+  "notes": "Only the fallback text changes in the delivered header; its ID and review time are unchanged.",
+  "setup": {
+    "files": {},
+    "now": "2026-11-21T10:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

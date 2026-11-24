@@ -518,7 +518,7 @@ export function createAuthority(options: {
    * `byGrants` says. A host's principal is what its kind is, until it expires. A 401 or 403 when
    * it may do nothing.
    */
-  async function resolve(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Resolved> {
+  async function resolve(principal: Known, snapshot?: readonly StoredGrant[], now?: number): Promise<Resolved> {
     if (principal.facts?.issuer === 'joined') {
       const { facts } = await factsFor(principal, principal.facts, null, snapshot)
       if (facts && admits(facts)) return { facts }
@@ -531,7 +531,7 @@ export function createAuthority(options: {
       // One a host's verifier made, on a board whose verifier is now the built-in one alone, is from before it switched.
       if (!options.hosts) throw forbidden("this token can't use this board: its board no longer takes a host's principals")
       const { exp } = principal.facts!.claims
-      if (typeof exp === 'number' && exp * 1000 <= Date.now()) throw unauthorized('token expired')
+      if (typeof exp === 'number' && exp * 1000 <= (now ?? Date.now())) throw unauthorized('token expired')
     }
     if (principal.kind === 'person') {
       if (!options.grants) return { fixed: FULL_ACCESS }
@@ -546,8 +546,8 @@ export function createAuthority(options: {
    * What a principal may do now, narrowed by its scope, or under `snapshot`, grants as a write is
    * about to change them. A 401 or 403 when it may do nothing.
    */
-  async function grant(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Access> {
-    const resolved = await resolve(principal, snapshot)
+  async function grant(principal: Known, snapshot?: readonly StoredGrant[], now?: number): Promise<Access> {
+    const resolved = await resolve(principal, snapshot, now)
     const scope = principal.scope === undefined ? undefined : parseCan(principal.scope)
     if ('fixed' in resolved) return scope === undefined ? resolved.fixed : resolved.fixed.narrow(scope)
     const decided = grantAccess({ ...resolved.facts, ...(scope !== undefined ? { can: scope } : {}) })
@@ -556,9 +556,9 @@ export function createAuthority(options: {
   }
 
   /** What a stored principal (a schedule's creator, a watcher's registrant) may do now: null once nothing. */
-  async function accessNow(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Access | null> {
+  async function accessNow(principal: Known, snapshot?: readonly StoredGrant[], now?: number): Promise<Access | null> {
     try {
-      return await grant(principal, snapshot)
+      return await grant(principal, snapshot, now)
     } catch (error) {
       const status = (error as { status?: number }).status
       if (status === 401 || status === 403) return null

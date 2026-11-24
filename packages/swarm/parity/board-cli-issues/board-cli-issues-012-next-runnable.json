@@ -1,0 +1,581 @@
+{
+  "case_id": "board-cli-issues-012-next-runnable",
+  "description": "Rank runnable work below a blocked critical issue",
+  "expected": {
+    "database": {
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "controller-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": 4,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "planned",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": "example-harness",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "controller-01",
+          "profile_key": "worker",
+          "session_ref": null,
+          "status": "planned",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "network_state",
+          "issue_key": null,
+          "payload_json": "{\"generation\": 2, \"reason\": \"Enable claims on the isolated board\", \"state\": \"active\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"controller\", \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "harness_upserted",
+          "issue_key": null,
+          "payload_json": "{\"harness_key\": \"example-harness\"}"
+        },
+        {
+          "actor": "registrar-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"controller-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"planned\"}"
+        },
+        {
+          "actor": "registrar-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": \"controller-01\", \"status\": \"planned\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 5, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "issue_imported",
+          "issue_key": "example-batch-b",
+          "payload_json": "{\"priority\": 4, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 9,
+          "event_type": "issue_imported",
+          "issue_key": "example-batch-a",
+          "payload_json": "{\"priority\": 4, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 10,
+          "event_type": "issue_imported",
+          "issue_key": "example-normal",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 11,
+          "event_type": "issue_imported",
+          "issue_key": "example-prerequisite",
+          "payload_json": "{\"priority\": 5, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 12,
+          "event_type": "dependency_added",
+          "issue_key": "example-issue",
+          "payload_json": "{\"contract\": null, \"depends_on\": \"example-prerequisite\", \"kind\": \"outcome\"}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "2"
+        },
+        {
+          "key": "network_state",
+          "value": "active"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [
+        {
+          "contract": null,
+          "depends_on": "example-prerequisite",
+          "issue_key": "example-issue",
+          "kind": "outcome",
+          "resolved_at": null
+        }
+      ],
+      "harnesses": [
+        {
+          "active": 1,
+          "adapter": "example-adapter",
+          "capabilities_json": "{}",
+          "config_json": "{}",
+          "harness_key": "example-harness",
+          "title": "Example harness",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": "example-scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-batch-a",
+          "issue_priority": 4,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": "packets/example-batch-a.json",
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "authorized",
+          "title": "Example batch-a",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": "worktrees/example-batch-a"
+        },
+        {
+          "approved_scope": "example-scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-batch-b",
+          "issue_priority": 4,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": "packets/example-batch-b.json",
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "authorized",
+          "title": "Example batch-b",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": "worktrees/example-batch-b"
+        },
+        {
+          "approved_scope": "example-scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 5,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": "packets/example-issue.json",
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "authorized",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 2,
+          "worktree": "worktrees/example-issue"
+        },
+        {
+          "approved_scope": "example-scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-normal",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": "packets/example-normal.json",
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "authorized",
+          "title": "Example normal",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": "worktrees/example-normal"
+        },
+        {
+          "approved_scope": "example-scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-prerequisite",
+          "issue_priority": 5,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": "example-model",
+          "owner": "worker-01",
+          "packet_path": "packets/example-prerequisite.json",
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": "example-provider",
+          "session_id": null,
+          "state": "ready",
+          "title": "Example prerequisite",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": "worktrees/example-prerequisite"
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/controller.md",
+          "personality": null,
+          "profile_key": "controller",
+          "title": "controller",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        },
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/worker.md",
+          "personality": null,
+          "profile_key": "worker",
+          "title": "worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "controllers.json": "{\"limits\": {\"qa\": 1, \"reviews\": 1, \"workers\": 4, \"workers_per_controller\": 4}, \"pipeline\": {\"repairs_per_issue\": 2}, \"poll_seconds\": 1, \"scheduler\": {\"lease_seconds\": 900, \"reservation_ttl_seconds\": 60}}\n"
+    },
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"highest_priority\": 5,\n  \"highest_priority_label\": \"5 Critical\",\n  \"not_runnable_ahead\": [\n    {\n      \"blockers\": [\n        {\n          \"category\": \"dependency\",\n          \"code\": \"dependency_unresolved\",\n          \"expires_at\": null,\n          \"message\": \"Depends on example-prerequisite (outcome), which has no recorded resolution.\",\n          \"next_action\": \"Resolve the dependency edge with its recorded contract; reaching done is not enough.\",\n          \"observed_at\": \"2026-01-01T00:00:00+00:00\",\n          \"records\": [\n            \"dependency:example-issue->example-prerequisite:outcome\",\n            \"issue:example-issue\"\n          ],\n          \"responsible_role\": \"controller\",\n          \"severity\": \"hard\"\n        }\n      ],\n      \"issue_key\": \"example-issue\",\n      \"priority\": 5,\n      \"priority_label\": \"5 Critical\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"tie_break_position\": 1\n    }\n  ],\n  \"not_runnable_count\": 1,\n  \"observed_at\": \"2026-01-01T00:00:00+00:00\",\n  \"operator_blocked_count\": 0,\n  \"order\": \"priority descending (5 Critical first), then readiness time, then issue key\",\n  \"runnable\": [\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-batch-a\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 2,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    },\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-batch-b\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 3,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"highest_priority\": 5,\n  \"highest_priority_label\": \"5 Critical\",\n  \"not_runnable_ahead\": [\n    {\n      \"blockers\": [\n        {\n          \"category\": \"dependency\",\n          \"code\": \"dependency_unresolved\",\n          \"expires_at\": null,\n          \"message\": \"Depends on example-prerequisite (outcome), which has no recorded resolution.\",\n          \"next_action\": \"Resolve the dependency edge with its recorded contract; reaching done is not enough.\",\n          \"observed_at\": \"2026-01-01T00:00:00+00:00\",\n          \"records\": [\n            \"dependency:example-issue->example-prerequisite:outcome\",\n            \"issue:example-issue\"\n          ],\n          \"responsible_role\": \"controller\",\n          \"severity\": \"hard\"\n        }\n      ],\n      \"issue_key\": \"example-issue\",\n      \"priority\": 5,\n      \"priority_label\": \"5 Critical\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"tie_break_position\": 1\n    }\n  ],\n  \"not_runnable_count\": 1,\n  \"observed_at\": \"2026-01-01T00:00:00+00:00\",\n  \"operator_blocked_count\": 0,\n  \"order\": \"priority descending (5 Critical first), then readiness time, then issue key\",\n  \"runnable\": [\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-batch-a\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 2,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    },\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-batch-b\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 3,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    },\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-normal\",\n      \"priority\": 3,\n      \"priority_label\": \"3 Normal\",\n      \"readiness_time\": \"2026-01-01T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 4,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    }\n  ]\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"blockers\": [\n    {\n      \"category\": \"dependency\",\n      \"code\": \"dependency_unresolved\",\n      \"expires_at\": null,\n      \"message\": \"Depends on example-prerequisite (outcome), which has no recorded resolution.\",\n      \"next_action\": \"Resolve the dependency edge with its recorded contract; reaching done is not enough.\",\n      \"observed_at\": \"2026-01-01T00:00:00+00:00\",\n      \"records\": [\n        \"dependency:example-issue->example-prerequisite:outcome\",\n        \"issue:example-issue\"\n      ],\n      \"responsible_role\": \"controller\",\n      \"severity\": \"hard\"\n    }\n  ],\n  \"issue_key\": \"example-issue\",\n  \"network_generation\": 2,\n  \"network_state\": \"active\",\n  \"observed_at\": \"2026-01-01T00:00:00+00:00\",\n  \"priority\": 5,\n  \"priority_label\": \"5 Critical\",\n  \"runnable\": false\n}\n"
+  },
+  "inputs": {
+    "collect": [
+      "controllers.json"
+    ],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "next",
+          "--limit",
+          "2"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "next"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "explain",
+          "--issue",
+          "example-issue"
+        ],
+        "entrypoint": "blockers"
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "An unresolved dependency keeps the critical issue ahead but not runnable. Authorized high-priority work outranks normal work, with ties broken by issue key. A ready issue is not a scheduler candidate. Also exercise the standalone blocker explanation.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "network",
+          "active",
+          "--reason",
+          "Enable claims on the isolated board"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": {
+          "instructions_path": "roles/controller.md",
+          "profile_key": "controller",
+          "title": "controller"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": {
+          "instructions_path": "roles/worker.md",
+          "profile_key": "worker",
+          "title": "worker"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "harness-upsert"
+        ],
+        "stdin": {
+          "adapter": "example-adapter",
+          "harness_key": "example-harness",
+          "title": "Example harness"
+        }
+      },
+      {
+        "actor": "registrar-01",
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": {
+          "agent_id": "controller-01",
+          "display_name": "controller-01",
+          "max_children": 4,
+          "profile_key": "controller"
+        }
+      },
+      {
+        "actor": "registrar-01",
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "harness_key": "example-harness",
+          "parent_agent_id": "controller-01",
+          "profile_key": "worker"
+        }
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": [
+          {
+            "approved_scope": "example-scope",
+            "controller": "controller-01",
+            "issue_key": "example-issue",
+            "model": "example-model",
+            "owner": "worker-01",
+            "packet_path": "packets/example-issue.json",
+            "priority": 5,
+            "provider": "example-provider",
+            "state": "authorized",
+            "title": "Example issue",
+            "worktree": "worktrees/example-issue"
+          },
+          {
+            "approved_scope": "example-scope",
+            "controller": "controller-01",
+            "issue_key": "example-batch-b",
+            "model": "example-model",
+            "owner": "worker-01",
+            "packet_path": "packets/example-batch-b.json",
+            "priority": 4,
+            "provider": "example-provider",
+            "state": "authorized",
+            "title": "Example batch-b",
+            "worktree": "worktrees/example-batch-b"
+          },
+          {
+            "approved_scope": "example-scope",
+            "controller": "controller-01",
+            "issue_key": "example-batch-a",
+            "model": "example-model",
+            "owner": "worker-01",
+            "packet_path": "packets/example-batch-a.json",
+            "priority": 4,
+            "provider": "example-provider",
+            "state": "authorized",
+            "title": "Example batch-a",
+            "worktree": "worktrees/example-batch-a"
+          },
+          {
+            "approved_scope": "example-scope",
+            "controller": "controller-01",
+            "issue_key": "example-normal",
+            "model": "example-model",
+            "owner": "worker-01",
+            "packet_path": "packets/example-normal.json",
+            "priority": 3,
+            "provider": "example-provider",
+            "state": "authorized",
+            "title": "Example normal",
+            "worktree": "worktrees/example-normal"
+          },
+          {
+            "approved_scope": "example-scope",
+            "controller": "controller-01",
+            "issue_key": "example-prerequisite",
+            "model": "example-model",
+            "owner": "worker-01",
+            "packet_path": "packets/example-prerequisite.json",
+            "priority": 5,
+            "provider": "example-provider",
+            "state": "ready",
+            "title": "Example prerequisite",
+            "worktree": "worktrees/example-prerequisite"
+          }
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "dependency",
+          "add",
+          "example-issue",
+          "example-prerequisite",
+          "--expected-version",
+          "1"
+        ]
+      }
+    ],
+    "files": {
+      "controllers.json": "{\"limits\": {\"qa\": 1, \"reviews\": 1, \"workers\": 4, \"workers_per_controller\": 4}, \"pipeline\": {\"repairs_per_issue\": 2}, \"poll_seconds\": 1, \"scheduler\": {\"lease_seconds\": 900, \"reservation_ttl_seconds\": 60}}\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py",
+      "board/execution_schema.py",
+      "board/priority.py",
+      "board/projection.py"
+    ]
+  }
+}

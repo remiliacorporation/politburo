@@ -1,0 +1,47 @@
+{
+  "case_id": "exception-digest-007-invalid-state",
+  "description": "Reject an otherwise valid exception digest with an unknown item state.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "example.yaml": "tag: \"ex\"\ngenerated_at: \"2026-11-20T21:20:00Z\"\nitems:\n  - {\"candidate\":\"example-one\",\"reason\":\"conflict\",\"next_owner\":\"ex2\",\"ref\":\"example-two\",\"evidence_age_seconds\":0,\"state\":\"example\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "accepted": false,
+        "errors": [
+          "$.items[0].state: enum"
+        ],
+        "stderr": "",
+        "stdout": ""
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "kind": "validate",
+        "path": "example.yaml"
+      }
+    ],
+    "tag": "ex"
+  },
+  "matrix_row": "M19",
+  "notes": "",
+  "setup": {
+    "files": {
+      "example.yaml": "tag: \"ex\"\ngenerated_at: \"2026-11-20T21:20:00Z\"\nitems:\n  - {\"candidate\":\"example-one\",\"reason\":\"conflict\",\"next_owner\":\"ex2\",\"ref\":\"example-two\",\"evidence_age_seconds\":0,\"state\":\"example\"}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-exception.v1.json"
+    ]
+  }
+}

@@ -157,6 +157,9 @@ not use it on a shared board. The default run never pauses the board.
 The `tasks` group also checks structured attention on boards that advertise
 `task_attention: true`. It opens and reads a request using a live claim, and
 checks that neither the old claim nor legacy `unblock` can settle the task.
+The `tasks` lease check also tests claim holds when discovery advertises them.
+After checking ordinary leases, it checks that renewals stop at the hard end
+and expiry reports `reason: 'hold'`.
 The check does not need a responder credential. Without that capability, it
 has no row in the report. If the board advertises it but does not serve the
 routes, the check fails.

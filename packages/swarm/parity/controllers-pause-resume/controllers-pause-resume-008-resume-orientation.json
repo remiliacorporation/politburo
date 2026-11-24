@@ -1,0 +1,296 @@
+{
+  "case_id": "controllers-pause-resume-008-resume-orientation",
+  "description": "Reuse an immutable resume manifest at the lease boundary",
+  "expected": {
+    "db_rows": {
+      "agent_commands": [],
+      "agent_observations": [],
+      "agents": [
+        {
+          "agent_id": "controller-01",
+          "display_name": "Controller",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "controller",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "agent_id": "worker-01",
+          "display_name": "Worker",
+          "generation": 1,
+          "harness_key": "codex-cli",
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": "controller-01",
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "execution_attempts": [],
+      "issues": [
+        {
+          "approved_scope": "Review the documented scope",
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": "controller-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-work",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": "2026-01-01T00:00:00+00:00",
+          "lease_token": null,
+          "model": null,
+          "owner": "worker-01",
+          "packet_path": "packets/scope.md",
+          "packet_sha256": "1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428",
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "paused",
+          "title": "Synthetic work",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 4,
+          "worktree": null
+        }
+      ],
+      "message_receipts": []
+    },
+    "details": {
+      "board_unchanged": true
+    },
+    "exit_code": 0,
+    "files": {
+      "instance/packets/scope.md": "Review the synthetic scope.\n",
+      "instance/resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/manifest.json": "{\"access_scope\":\"resume-orientation\",\"agent\":{\"agent_id\":\"worker-01\",\"display_name\":\"Worker\",\"generation\":1,\"parent\":{\"agent_id\":\"controller-01\",\"display_name\":\"Controller\",\"generation\":1,\"status\":\"idle\"},\"profile_key\":\"implementation-worker\",\"role_title\":\"Worker\",\"status\":\"idle\"},\"attempt\":null,\"coverage\":[{\"field\":\"policy_and_role_documents\",\"reason\":\"referenced, never read by this command\",\"status\":\"refs_only\"},{\"field\":\"receipt\",\"reason\":\"no receipt pointer is recorded for the selected attempt; nothing is inferred\",\"status\":\"unknown\"},{\"field\":\"dirty_work\",\"reason\":\"no authoritative local record on the board\",\"status\":\"unknown\"},{\"field\":\"observation\",\"reason\":\"latest agent observation; its age is in the observation sidecar\",\"status\":\"absent\"},{\"field\":\"evidence\",\"reason\":\"evidence for other candidates is excluded\",\"status\":\"no_candidate_sha\"},{\"field\":\"packet_file\",\"reason\":\"verified against its recorded hash\",\"status\":\"verified\"}],\"dependencies\":{\"items\":[],\"omitted\":0,\"total\":0},\"dirty_work\":{\"reason\":\"the board stores no authoritative local dirty-work record\",\"status\":\"unknown\"},\"evidence\":{\"candidate_sha\":null,\"qa_run\":null,\"review_mark\":null,\"stages\":{}},\"identity\":{\"agent_id\":\"worker-01\",\"matches_owner\":true},\"instance\":{\"instance_ref\":\"inst-a26182e027f1\",\"limits_source\":\"controllers.json\"},\"issue\":{\"approved_scope\":\"Review the documented scope\",\"assignment_generation\":1,\"base_sha\":null,\"controller\":\"controller-01\",\"head_sha\":null,\"issue_key\":\"example-work\",\"lease_expires_at\":\"2026-01-01T00:00:00+00:00\",\"owner\":\"worker-01\",\"packet_sha256\":\"1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428\",\"state\":\"paused\",\"version\":4},\"kind\":\"resume-orientation\",\"mandatory_reads\":[{\"kind\":\"policy\",\"read_by_this_command\":false,\"ref\":\"AGENTS.md\"},{\"kind\":\"policy\",\"read_by_this_command\":false,\"ref\":\"README.md\"},{\"kind\":\"policy\",\"read_by_this_command\":false,\"ref\":\"docs/protocol.md\"},{\"kind\":\"role\",\"read_by_this_command\":false,\"ref\":\"roles/implementation-worker.md\",\"version\":1}],\"observation\":null,\"packet\":{\"observed_sha256\":\"1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428\",\"path\":\"packets/scope.md\",\"recorded_sha256\":\"1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428\",\"status\":\"verified\"},\"policy_version\":\"context-policy/1\",\"receipt\":{\"reason\":\"no receipt pointer is recorded for the selected attempt; nothing is inferred\",\"ref\":null,\"status\":\"unknown\"},\"schema\":\"tigeryard.resume.manifest/1\",\"snapshot\":{\"basis\":\"single_read_transaction\",\"board_schema_version\":\"15\",\"network_generation\":1,\"network_state\":\"paused\",\"read_statements\":23},\"sources\":[],\"staleness\":{\"authoritative\":false,\"reasons\":[\"network_not_active\",\"receipt_unknown\",\"observation_not_exact\"],\"revalidate_before_action\":[\"issue version\",\"assignment generation\",\"network state and generation\",\"lease expiry\",\"blockers\",\"packet hash\"],\"statement\":\"single-snapshot orientation; never an execution grant\",\"time_dependent_reasons\":\"see the observation sidecar\"}}\n",
+      "instance/resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/observations/0b95a87bda3a727a6388ad55d01da1db52a1a63ea2cc20d33cba04ff7d306fe8.json": "{\"blockers\":{\"items\":[{\"code\":\"assignment_incomplete\",\"next_action\":\"Complete the assignment record through a claim at the current version.\",\"records\":[\"issue:example-work\"],\"responsible_role\":\"controller\",\"severity\":\"hard\"},{\"code\":\"controller_no_child_capacity\",\"next_action\":\"Set the controller's max_children to at least 1.\",\"records\":[\"agent:controller-01\"],\"responsible_role\":\"coordinator\",\"severity\":\"hard\"},{\"code\":\"state_not_authorized\",\"next_action\":\"Authorize the issue at its current version through the board.\",\"records\":[\"issue:example-work\"],\"responsible_role\":\"coordinator\",\"severity\":\"hard\"},{\"code\":\"network_paused\",\"next_action\":\"Resume the board network through the operator path.\",\"records\":[\"board_meta:network_state\"],\"responsible_role\":\"coordinator\",\"severity\":\"temporary\"},{\"code\":\"lease_expired\",\"next_action\":null,\"records\":[\"issue:example-work\"],\"responsible_role\":\"controller\",\"severity\":\"info\"}],\"omitted\":0,\"runnable\":false},\"lease\":{\"authority_problem\":\"the agent network is paused or in an unknown state, so no new live authority is established; this view does not stop or change the process\",\"expires_at\":\"2026-01-01T00:00:00+00:00\",\"status\":\"expired\"},\"manifest_sha256\":\"d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15\",\"next_lawful_action\":{\"action\":\"Complete the assignment record through a claim at the current version.\",\"role\":\"controller\",\"source\":\"blocker:assignment_incomplete\"},\"observation_age_seconds\":null,\"observed_at\":\"2026-01-01T00:00:00+00:00\",\"schema\":\"tigeryard.resume.observation/1\",\"staleness_time_reasons\":[\"lease_expired\",\"blockers_present\"]}\n",
+      "instance/resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/observations/dbd96a66e6282f8dd9dd3b89fa6a679bfb31d6bbac03223a7186630cd1336664.json": "{\"blockers\":{\"items\":[{\"code\":\"assignment_incomplete\",\"next_action\":\"Complete the assignment record through a claim at the current version.\",\"records\":[\"issue:example-work\"],\"responsible_role\":\"controller\",\"severity\":\"hard\"},{\"code\":\"controller_no_child_capacity\",\"next_action\":\"Set the controller's max_children to at least 1.\",\"records\":[\"agent:controller-01\"],\"responsible_role\":\"coordinator\",\"severity\":\"hard\"},{\"code\":\"state_not_authorized\",\"next_action\":\"Authorize the issue at its current version through the board.\",\"records\":[\"issue:example-work\"],\"responsible_role\":\"coordinator\",\"severity\":\"hard\"},{\"code\":\"lease_active\",\"next_action\":\"Wait for the lease to expire or for the controller to release it.\",\"records\":[\"issue:example-work\"],\"responsible_role\":\"controller\",\"severity\":\"temporary\"},{\"code\":\"network_paused\",\"next_action\":\"Resume the board network through the operator path.\",\"records\":[\"board_meta:network_state\"],\"responsible_role\":\"coordinator\",\"severity\":\"temporary\"}],\"omitted\":0,\"runnable\":false},\"lease\":{\"authority_problem\":\"the agent network is paused or in an unknown state, so no new live authority is established; this view does not stop or change the process\",\"expires_at\":\"2026-01-01T00:00:00+00:00\",\"status\":\"current\"},\"manifest_sha256\":\"d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15\",\"next_lawful_action\":{\"action\":\"Complete the assignment record through a claim at the current version.\",\"role\":\"controller\",\"source\":\"blocker:assignment_incomplete\"},\"observation_age_seconds\":null,\"observed_at\":\"2025-12-31T23:59:59+00:00\",\"schema\":\"tigeryard.resume.observation/1\",\"staleness_time_reasons\":[\"blockers_present\"]}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"bytes\": 3002, \"manifest_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/manifest.json\", \"manifest_sha256\": \"d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15\", \"observation_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/observations/dbd96a66e6282f8dd9dd3b89fa6a679bfb31d6bbac03223a7186630cd1336664.json\"}\n{\"bytes\": 3002, \"manifest_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/manifest.json\", \"manifest_sha256\": \"d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15\", \"observation_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/observations/0b95a87bda3a727a6388ad55d01da1db52a1a63ea2cc20d33cba04ff7d306fe8.json\"}\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"bytes\": 3002, \"manifest_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/manifest.json\", \"manifest_sha256\": \"d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15\", \"observation_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/observations/dbd96a66e6282f8dd9dd3b89fa6a679bfb31d6bbac03223a7186630cd1336664.json\"}\n",
+        "step": "build orientation"
+      },
+      {
+        "exit_code": 0,
+        "returned": null,
+        "stderr": "",
+        "stdout": "{\"bytes\": 3002, \"manifest_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/manifest.json\", \"manifest_sha256\": \"d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15\", \"observation_ref\": \"resume/d86a01ecd9b742de65236cb33605879945701d6ebca24049fa1e2a3692667e15/observations/0b95a87bda3a727a6388ad55d01da1db52a1a63ea2cc20d33cba04ff7d306fe8.json\"}\n",
+        "step": "build orientation"
+      },
+      {
+        "exit_code": null,
+        "returned": {
+          "access_scope": "resume-orientation",
+          "agent": {
+            "agent_id": "worker-01",
+            "display_name": "Worker",
+            "generation": 1,
+            "parent": {
+              "agent_id": "controller-01",
+              "display_name": "Controller",
+              "generation": 1,
+              "status": "idle"
+            },
+            "profile_key": "implementation-worker",
+            "role_title": "Worker",
+            "status": "idle"
+          },
+          "attempt": null,
+          "coverage": [
+            {
+              "field": "policy_and_role_documents",
+              "reason": "referenced, never read by this command",
+              "status": "refs_only"
+            },
+            {
+              "field": "receipt",
+              "reason": "no receipt pointer is recorded for the selected attempt; nothing is inferred",
+              "status": "unknown"
+            },
+            {
+              "field": "dirty_work",
+              "reason": "no authoritative local record on the board",
+              "status": "unknown"
+            },
+            {
+              "field": "observation",
+              "reason": "latest agent observation; its age is in the observation sidecar",
+              "status": "absent"
+            },
+            {
+              "field": "evidence",
+              "reason": "evidence for other candidates is excluded",
+              "status": "no_candidate_sha"
+            },
+            {
+              "field": "packet_file",
+              "reason": "verified against its recorded hash",
+              "status": "verified"
+            }
+          ],
+          "dependencies": {
+            "items": [],
+            "omitted": 0,
+            "total": 0
+          },
+          "dirty_work": {
+            "reason": "the board stores no authoritative local dirty-work record",
+            "status": "unknown"
+          },
+          "evidence": {
+            "candidate_sha": null,
+            "qa_run": null,
+            "review_mark": null,
+            "stages": {}
+          },
+          "identity": {
+            "agent_id": "worker-01",
+            "matches_owner": true
+          },
+          "instance": {
+            "instance_ref": "inst-a26182e027f1",
+            "limits_source": "controllers.json"
+          },
+          "issue": {
+            "approved_scope": "Review the documented scope",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "controller": "controller-01",
+            "head_sha": null,
+            "issue_key": "example-work",
+            "lease_expires_at": "2026-01-01T00:00:00+00:00",
+            "owner": "worker-01",
+            "packet_sha256": "1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428",
+            "state": "paused",
+            "version": 4
+          },
+          "kind": "resume-orientation",
+          "mandatory_reads": [
+            {
+              "kind": "policy",
+              "read_by_this_command": false,
+              "ref": "AGENTS.md"
+            },
+            {
+              "kind": "policy",
+              "read_by_this_command": false,
+              "ref": "README.md"
+            },
+            {
+              "kind": "policy",
+              "read_by_this_command": false,
+              "ref": "docs/protocol.md"
+            },
+            {
+              "kind": "role",
+              "read_by_this_command": false,
+              "ref": "roles/implementation-worker.md",
+              "version": 1
+            }
+          ],
+          "observation": null,
+          "packet": {
+            "observed_sha256": "1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428",
+            "path": "packets/scope.md",
+            "recorded_sha256": "1e37b4dd53bd7bccb02232d6854a31f5674fd391574f4ef432ccdfe4e8092428",
+            "status": "verified"
+          },
+          "policy_version": "context-policy/1",
+          "receipt": {
+            "reason": "no receipt pointer is recorded for the selected attempt; nothing is inferred",
+            "ref": null,
+            "status": "unknown"
+          },
+          "schema": "tigeryard.resume.manifest/1",
+          "snapshot": {
+            "basis": "single_read_transaction",
+            "board_schema_version": "15",
+            "network_generation": 1,
+            "network_state": "paused",
+            "read_statements": 23
+          },
+          "sources": [],
+          "staleness": {
+            "authoritative": false,
+            "reasons": [
+              "network_not_active",
+              "receipt_unknown",
+              "observation_not_exact"
+            ],
+            "revalidate_before_action": [
+              "issue version",
+              "assignment generation",
+              "network state and generation",
+              "lease expiry",
+              "blockers",
+              "packet hash"
+            ],
+            "statement": "single-snapshot orientation; never an execution grant",
+            "time_dependent_reasons": "see the observation sidecar"
+          }
+        },
+        "stderr": "",
+        "stdout": "",
+        "step": "load manifest"
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "scenario",
+    "observation_offsets": [
+      -1,
+      0
+    ],
+    "scenario": "orientation"
+  },
+  "matrix_row": "M83",
+  "notes": "Read a paused assignment with a verified scope packet twice; the lease crosses from current to expired only in the sidecar. Load the immutable manifest and compare the board before and after.",
+  "setup": {
+    "files": {
+      "instance/packets/scope.md": "Review the synthetic scope.\n"
+    },
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/resume.py",
+      "board/blockers.py",
+      "board/projection.py"
+    ]
+  }
+}

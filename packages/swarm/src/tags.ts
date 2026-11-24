@@ -5,7 +5,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function tagProblems(registry: unknown): string[] {
+export function tagProblems(registry: unknown, { indexOnly = false } = {}): string[] {
   if (!isObject(registry) || !Array.isArray(registry.tags)) {
     return ['The registry must be an object with a tags array.']
   }
@@ -14,20 +14,21 @@ export function tagProblems(registry: unknown): string[] {
   const tags = new Set<string>()
   const projects = new Set<string>()
   for (const [index, entry] of registry.tags.entries()) {
+    const report = (detail: string) => problems.push(indexOnly ? `Entry ${index}.` : `Entry ${index} ${detail}.`)
     if (!isObject(entry)) {
-      problems.push(`Entry ${index} must be an object.`)
+      report('must be an object')
       continue
     }
     const { tag, project } = entry
     if (typeof tag !== 'string' || !/^[a-z]{3}$/.test(tag)) {
-      problems.push(`Entry ${index} must have a tag of exactly three lowercase ASCII letters.`)
+      report('must have a tag of exactly three lowercase ASCII letters')
     }
     if (typeof tag === 'string') {
-      if (tags.has(tag)) problems.push(`Entry ${index} repeats tag ${JSON.stringify(tag)}.`)
+      if (tags.has(tag)) report(`repeats tag ${JSON.stringify(tag)}`)
       tags.add(tag)
     }
     if (typeof project === 'string') {
-      if (projects.has(project)) problems.push(`Entry ${index} repeats project ${JSON.stringify(project)}.`)
+      if (projects.has(project)) report(`repeats project ${JSON.stringify(project)}`)
       projects.add(project)
     }
   }

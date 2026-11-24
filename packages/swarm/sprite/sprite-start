@@ -1,0 +1,9 @@
+#!/bin/bash
+set -u
+if [ $# -lt 2 ] || [ ! -s "$2" ]; then echo "usage: sprite-start <name> <task-file> [max-seconds]" >&2; exit 2; fi
+n=$1; d=/tmp/sprites; mkdir -p "$d/$n"; rm -f "$d/$n.rc" "$d/$n.out" "$d/$n.watch" "$d/$n.jsonl" "$d/$n.jsonl.pid"
+PI_TASK_LOG="$d/$n.jsonl" PI_SESSION_DIR="$d/$n" setsid nohup bash -c 'pi-task "$1" "$2" > "$3.out" 2>&1; echo $? > "$3.rc"' _ "$2" "${3:-2400}" "$d/$n" </dev/null >/dev/null 2>&1 &
+echo "$!" > "$d/$n.pid"
+echo "sprite $n started in $(pwd)"
+echo "  live log: $d/$n.jsonl   session: $d/$n/   result: $d/$n.out   exit code: $d/$n.rc"
+echo "  watch: sprite-watch $n   stop: sprite-stop $n"
