@@ -24,6 +24,8 @@ const configUsage =
   '       swarm mirror sync --repo owner/name [--json]\n' +
   '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n' +
   '       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n' +
+  '       swarm classifier report <dir> [--json]\n' +
+  '       swarm classifier clear <dir> <question> --why TEXT\n' +
   '       swarm serve --help\n'
 
 test('config help must print the original config usage and not work usage', () => {
