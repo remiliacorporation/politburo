@@ -127,31 +127,24 @@ describe('grants', () => {
     expect((await carol('POST', '/grants', { principals: [run], can: { 'dev/': ['post'] } })).status).toBe(403)
   })
 
-  it('judges a grant on the grants it lands on, so a change that narrows its maker in between counts', async () => {
-    // Just before Bob's grant first lands, the owner closes security/ to him: his write finds the log moved on, and looks again.
+  it('judges a grant on the grants it lands on, so a change that narrows its maker in between counts', async ({ onTestFinished }) => {
     const base = memory()
-    let between: (() => Promise<unknown>) | null = null
-    const log = new Proxy(base.log, {
-      get(target, key) {
-        if (key !== 'append') {
-          const value = Reflect.get(target, key)
-          return typeof value === 'function' ? value.bind(target) : value
-        }
-        return async (...args: Parameters<typeof base.log.append>) => {
-          const hook = between
-          if (hook && /grant\.created.*u_bob/.test(JSON.stringify(args[1]))) {
-            between = null
-            await hook()
-          }
-          return target.append(...args)
-        }
+    onTestFinished(() => base.close())
+    let between: (() => Promise<unknown>) | undefined
+    const fence = base.fence!
+    const { owner, as } = await setUp({ store: { ...base, fence: {
+      ...fence,
+      async access(write) {
+        const hook = between
+        between = undefined
+        // Let the owner's grant land before Bob's append takes the lock, not while it holds it.
+        await hook?.()
+        return fence.access(write)
       },
-    })
-    const { owner, as } = await setUp({ store: { ...base, log, close: () => base.close() } })
+    } } })
     const bob = await as(personToken('u_bob'))
     between = () => owner('POST', '/grants', { principals: [user('u_bob')], can: { 'security/': [] } })
     const made = await bob('POST', '/grants', { principals: [{ kind: 'github', repository: 'acme/web' }], can: { '*': 'all' } })
-    expect(between).toBeNull()
     expect([made.status, made.body.error?.message]).toEqual([403, "this grant reaches security/, where you can't manage grants"])
   })
 

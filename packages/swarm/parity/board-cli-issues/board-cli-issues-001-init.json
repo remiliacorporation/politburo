@@ -1,0 +1,80 @@
+{
+  "case_id": "board-cli-issues-001-init",
+  "description": "Initialize an empty board twice",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "Both calls report the schema version; bootstrap leaves the network paused without duplicating metadata.",
+  "setup": {
+    "commands": [],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py"
+    ]
+  }
+}

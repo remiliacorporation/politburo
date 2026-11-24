@@ -5,7 +5,7 @@ import { commandLine, type Recovery } from './failure.ts'
 import { lineText } from './format.ts'
 import { cli, client, current, flags, named, onSameBoard, ordered, out, ref, rerunWithout, seconds, specOf, taskId, result, usage } from './main.ts'
 
-function formatAgent(agent: AgentView): string {
+export function formatAgent(agent: AgentView): string {
   const { id, channel, role, harness, binding, generation, parent, status, heartbeatAt } = agent
   return [
     `${lineText(id)}  ${role}`,

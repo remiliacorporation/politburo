@@ -5,7 +5,7 @@ import * as attentionStore from '../src/inspect/app/attention-store.ts'
 import { needsAction } from '../src/inspect/app/needs.ts'
 import * as store from '../src/inspect/app/store.ts'
 import { continues } from '../src/inspect/app/store.ts'
-import { boardWords, cadence, clock, laterFields, localInput, principalName, refusal, span, timingWords, until } from '../src/inspect/app/words.ts'
+import { boardWords, cadence, laterFields, localInput, principalName, refusal, span, timingWords, until } from '../src/inspect/app/words.ts'
 
 const ME = 'vercel:user:u_julian'
 
@@ -270,36 +270,60 @@ describe('the inspector store', () => {
     expect(store.stateNow(task(2, { state: 'blocked' }).task, NOW)).toBe('blocked')
   })
 
+  it("keeps this tab's claim while the board shows it, and drops it once the task moves on", () => {
+    const claim = { epoch: 1 }
+    const mine = task(1, claimedBy(ME, at(15)), { version: 10 })
+    let state = store.claimed(start, mine, claim)
+    expect(store.holding(state, mine, NOW)).toEqual(claim)
+    const renewed = task(1, claimedBy(ME, at(30)), { version: 11 })
+    state = store.merge(state, [renewed])
+    expect(store.holding(state, renewed, NOW + 20 * 60_000)).toEqual(claim)
+    expect(store.holding(state, renewed, NOW + 31 * 60_000)).toBeUndefined()
+    state = store.merge(state, [task(1, {}, { version: 5 })])
+    expect(state.claims['1']).toEqual(claim)
+    const taken = task(1, claimedBy('vercel:user:u_ada', at(40), 2), { version: 12 })
+    state = store.merge(state, [taken])
+    expect(state.claims['1']).toBeUndefined()
+    expect(store.holding(state, taken, NOW)).toBeUndefined()
+    for (const next of ['ready', 'completed', 'blocked', 'canceled'] as const) {
+      const after = store.merge(store.claimed(start, mine, claim), [task(1, { state: next, epoch: 1 }, { version: 11 })])
+      expect(after.claims['1'], next).toBeUndefined()
+    }
+    const late = store.claimed(store.merge(start, [taken]), mine, claim)
+    expect(late.claims['1']).toBeUndefined()
+    expect(store.unclaimed(store.claimed(start, mine, claim), '1').claims).toEqual({})
+  })
+
   it('offers what the viewer can do to a task now, and nothing else', () => {
-    const can = (root: store.TaskRoot, who: store.Viewer) =>
-      Object.entries(store.moves(store.initialState, root, who, NOW)).flatMap(([move, yes]) => yes ? [move] : [])
+    const can = (root: store.TaskRoot, who: store.Viewer, state: store.State = store.initialState) =>
+      Object.entries(store.moves(state, root, who, NOW)).flatMap(([move, yes]) => yes ? [move] : [])
     const owner = viewer(['post', 'label'])
     const teammate = viewer(['post', 'label'], { actor: 'vercel:user:u_ada', principal: 'vercel:user:u_ada' })
     const manager = viewer(['post', 'label', 'manage'], { actor: 'vercel:user:u_ada', principal: 'vercel:user:u_ada' })
     const reader = viewer([], { actor: 'vercel:user:u_ada', principal: 'vercel:user:u_ada' })
 
-    // Ready: the owner can change it, and a manager can also park it.
-    expect(can(task(1), owner)).toEqual(['priority', 'hold', 'assign', 'cancel'])
-    expect(can(task(1), teammate)).toEqual([])
-    expect(can(task(1), manager)).toEqual(['park', 'priority', 'hold', 'assign', 'cancel'])
+    // Ready: anyone with label claims it; its owner changes it, and a manager can also park it.
+    expect(can(task(1), owner)).toEqual(['claim', 'priority', 'hold', 'assign', 'cancel'])
+    expect(can(task(1), teammate)).toEqual(['claim'])
+    expect(can(task(1), manager)).toEqual(['claim', 'park', 'priority', 'hold', 'assign', 'cancel'])
     expect(can(task(1), reader)).toEqual([])
-    // An owner narrowed to reading doesn't change its principal's tasks.
     expect(can(task(1), viewer([]))).toEqual([])
 
-    // Of its owner's actors, the one that made it a task changes it, and the owner itself, as no profile, changes any.
     const made = task(1, { by: `${PRINCIPAL}+fixer` })
-    expect(can(made, viewer(['post', 'label'], { actor: `${PRINCIPAL}+fixer`, profile: 'fixer' }))).toEqual(['priority', 'hold', 'assign', 'cancel'])
-    expect(can(made, viewer(['post', 'label'], { actor: `${PRINCIPAL}+other`, profile: 'other' }))).toEqual([])
-    expect(can(made, owner)).toEqual(['priority', 'hold', 'assign', 'cancel'])
-    // Another principal whose own ID reads the same as `by` isn't its owner.
-    expect(can(made, viewer(['post', 'label'], { actor: `${PRINCIPAL}+fixer`, principal: `${PRINCIPAL}+fixer` }))).toEqual([])
+    expect(can(made, viewer(['post', 'label'], { actor: `${PRINCIPAL}+fixer`, profile: 'fixer' }))).toEqual(['claim', 'priority', 'hold', 'assign', 'cancel'])
+    expect(can(made, viewer(['post', 'label'], { actor: `${PRINCIPAL}+other`, profile: 'other' }))).toEqual(['claim'])
+    expect(can(made, owner)).toEqual(['claim', 'priority', 'hold', 'assign', 'cancel'])
+    expect(can(made, viewer(['post', 'label'], { actor: `${PRINCIPAL}+fixer`, principal: `${PRINCIPAL}+fixer` }))).toEqual(['claim'])
 
-    // A live claim can't be operated by its holder from the inspector.
     const theirs = task(1, claimedBy('vercel:user:u_ada', at(10)))
     expect(can(theirs, owner)).toEqual(['priority', 'assign', 'cancel'])
-    expect(can(theirs, teammate)).toEqual([])
-    expect(can(task(1, claimedBy(ME, at(10))), owner)).toEqual(['assign', 'cancel'])
-    expect(can(task(1, claimedBy('vercel:user:u_ada', at(-1))), owner)).toEqual(['priority', 'hold', 'assign', 'cancel'])
+    expect(can(theirs, teammate)).toEqual(['elsewhere'])
+    expect(can(task(1, claimedBy(ME, at(10))), owner)).toEqual(['elsewhere', 'assign', 'cancel'])
+    expect(can(task(1, claimedBy('vercel:user:u_ada', at(-1))), owner)).toEqual(['claim', 'priority', 'hold', 'assign', 'cancel'])
+
+    const mine = task(1, claimedBy(ME, at(10)))
+    expect(can(mine, owner, store.claimed(start, mine, { epoch: 1 }))).toEqual(['held', 'settle', 'assign', 'cancel'])
+    expect(can(mine, owner)).toEqual(['elsewhere', 'assign', 'cancel'])
 
     expect(can(task(1, { state: 'waiting', needs: ['9'] }), owner)).toEqual(['priority', 'hold', 'assign', 'cancel'])
     expect(can(task(1, { state: 'blocked', blocked: { kind: null, reason: 'why?' } }), owner)).toEqual(['priority', 'unblock', 'assign', 'cancel'])
@@ -320,7 +344,7 @@ describe('the inspector store', () => {
     const changed = { cursor: '9', type: 'task.needs_changed', createdAt: '', payload: { id: '1', needs: ['6', '7'] }, message: task(1, { state: 'waiting', needs: ['6', '7'] }, { version: 9 }) }
     state = store.applyEvent(state, changed as unknown as BoardEventView)
     expect((store.shown(state, '1') as store.TaskRoot).task.needs).toEqual(['6', '7'])
-    expect(store.tasks(state, { state: 'waiting', label: [] }, NOW).map((t) => t.task.needs)).toEqual([['6', '7']])
+    expect(store.tasks({ ...state, openTaskRoots: state.messages }, { state: 'waiting', label: [] }, NOW).map((t) => t.task.needs)).toEqual([['6', '7']])
   })
 
   it('lists tasks like the board: oldest first, by state, place, labels, owner, and who they are for', () => {
@@ -333,7 +357,8 @@ describe('the inspector store', () => {
       task(6, {}, { createdAt: at(5), deleted: true }),
       message(7, { channel: 'work' }), // a thread that isn't a task
     ])
-    const ids = (filter: Partial<store.TaskFilter>, through?: MessageView) => store.tasks(state, { state: 'open', label: [], ...filter }, NOW, through).map((t) => t.id)
+    const accepted = { ...state, openTaskRoots: state.messages }
+    const ids = (filter: Partial<store.TaskFilter>, through?: MessageView) => store.tasks(accepted, { state: 'open', label: [], ...filter }, NOW, through).map((t) => t.id)
     expect(ids({})).toEqual(['5', '1', '2', '3'])
     expect(ids({ state: 'all' })).toEqual(['5', '1', '2', '3', '4'])
     // A lapsed claim lists as ready, and not as claimed.
@@ -350,7 +375,7 @@ describe('the inspector store', () => {
     expect(ids({}, state.messages['1'])).toEqual(['5', '1'])
     // They're counted only once every open one is here.
     expect(store.openTasks(state)).toBeNull()
-    expect(store.openTasks({ ...state, tasksCounted: true })).toBe(4)
+    expect(store.openTasks({ ...accepted, tasksCounted: true })).toBe(4)
   })
 
   it('counts tasks by their current state, moving a lapsed claim back to ready', () => {
@@ -366,15 +391,12 @@ describe('the inspector store', () => {
       message(9),
     ])
     const counts = { ready: 1, claimed: 1, waiting: 1, blocked: 1, failed: 1, completed: 1, canceled: 1 }
-    expect(store.taskCounts(state, NOW)).toEqual(counts)
-    expect(store.taskCounts(state, NOW + 5 * 60_000)).toEqual({ ...counts, ready: 2, claimed: 0 })
+    const accepted = { ...state, openTaskRoots: state.messages }
+    expect(store.taskCounts(accepted, NOW)).toEqual(counts)
+    expect(store.taskCounts(accepted, NOW + 5 * 60_000)).toEqual({ ...counts, ready: 2, claimed: 0 })
   })
 
-  it('says what is left of a lease, and what a refusal means', () => {
-    expect(clock(15 * 60_000)).toBe('15:00')
-    expect(clock(59_400)).toBe('1:00') // rounds up, so it reads 0:00 only once it's over
-    expect(clock(3_725_000)).toBe('1h 02m')
-    expect(clock(-5)).toBe('0:00')
+  it('says what a refusal means', () => {
     const board = (code: string) => Object.assign(new Error('the board said so'), { code })
     // A refusal the page knows is said in its words; any other in the board's.
     expect(refusal(board('claim_lost'))).not.toContain('the board said so')

@@ -1,0 +1,80 @@
+{
+  "case_id": "check-and-push-002-check-fails",
+  "description": "A nonzero check result stops publication and restores the branch.",
+  "expected": {
+    "before": {
+      "am_in_progress": false,
+      "head_branch": "example-main",
+      "local_heads": {
+        "example-main": "<SHA1>"
+      },
+      "lock_present": false,
+      "origin_heads": {
+        "example-main": "<SHA1>"
+      },
+      "status": ""
+    },
+    "checked_commits": [
+      "<SHA2>"
+    ],
+    "exit_code": 1,
+    "files": {
+      "notes/mail/example/bodies/example-0001.txt": "command exited 1",
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"spawner.decide\"\nurgency: \"p1\"\nfrom: \"example secretary\"\nto: \"example\"\nref: {patch: \"example.patch\", submission: \"3c52c517361c\"}\nsummary: \"push failed: check: command exited 1\"\nbody: \"bodies/example-0001.txt\"\nat: \"2026-01-01T00:00:00Z\"\n",
+      "notes/mail/example/example-0002.yaml": null,
+      "repo/example.txt": "Example base\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-01-01T00:00:00Z\", \"event\": \"created\", \"hash\": \"901c13944ddb92cbbd261b1da030ccfe0621a82a9502b4aa230000cca57c73c7\", \"header\": {\"at\": \"2026-01-01T00:00:00Z\", \"body\": \"bodies/example-0001.txt\", \"class\": \"spawner.decide\", \"from\": \"example secretary\", \"id\": \"example-0001\", \"ref\": {\"patch\": \"example.patch\", \"submission\": \"3c52c517361c\"}, \"summary\": \"push failed: check: command exited 1\", \"to\": \"example\", \"urgency\": \"p1\"}, \"id\": \"example-0001\", \"key\": [\"example secretary\", {\"patch\": \"example.patch\", \"submission\": \"3c52c517361c\"}, \"spawner.decide\"], \"to\": \"example\"}"
+    ],
+    "runs": [
+      {
+        "am_in_progress": false,
+        "exit_code": 1,
+        "head_branch": "example-main",
+        "local_heads": {
+          "example-main": "<SHA1>"
+        },
+        "lock_present": false,
+        "origin_heads": {
+          "example-main": "<SHA1>"
+        },
+        "status": ""
+      }
+    ],
+    "stderr": "sec_push: push failed: check: command exited 1\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argvs": [
+      [
+        "--check-cmd",
+        "sh ../check.sh false"
+      ]
+    ],
+    "collect": [
+      "repo/example.txt",
+      "notes/mail/example/example-0001.yaml",
+      "notes/mail/example/bodies/example-0001.txt",
+      "notes/mail/example/example-0002.yaml"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M10",
+  "notes": "The check sees the patched commit, but the tracked text and both branch tips return to base.",
+  "setup": {
+    "files": {
+      "check.sh": "git rev-parse HEAD >> ../checked.log || exit 9\ntest -f ../notes/mac-check.lock/owner.json || exit 9\nexec \"$@\"\n",
+      "repo/example.txt": "Example base\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "patch_text": "Example patched text\n"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

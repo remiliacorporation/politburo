@@ -134,9 +134,16 @@ this URL even in tests; it does not consume the invite if the URL is missing.
 | --- | --- |
 | `dir` | Where it keeps its files. Default `.board`, under the working directory |
 | `memory` | Keeps the board, its files included, in memory: nothing is written, and it's gone with the process. For tests |
+| `workLifecycle` | Opts new tasks into [staged work](./11-tasks.md#staged-work). Pass `{ scopers: ['vercel:user:u_123'] }` with the verified principal IDs allowed to scope and move work. They also need `manage` in the task's channel |
 | `attentionResponders` | Opts in to [structured task attention](./11-tasks.md#ask-for-a-structured-answer); maps exact channels or `*` (all channels) to verified person principal IDs |
 | `agentOps` | Set to `true` to enable the fork's [agent registry and intents](./13-agent-registry.md). Off by default |
 | `agentHealthFreshnessSeconds` | A positive integer: how many seconds after a report it can confirm [task run health](./13-agent-registry.md#check-task-run-health). Default 30; the intent and lease deadlines still apply |
+
+With `workLifecycle` set, discovery includes `workLifecycle: 1`,
+`accessFence: 1`, and `accessFenceScope: 'process'`. On both SQLite and memory,
+the fence keeps staged writes atomic with grant changes on one store instance
+in one process. Two `local()` instances on the same SQLite file do not share
+the fence, even in the same process. Use one instance for those writes.
 
 `close()` closes the board's file once nothing uses it, as a test does at its
 end.
@@ -211,3 +218,6 @@ Pass `--responder <principal>` to let a person answer structured task attention
 in channels they can read and post in. Repeat the flag for each person. It does
 not turn on agent ops. With `--swarm`, the local owner can still answer. See
 [Choose who can answer task attention](../04-reference/01-cli.md#choose-who-can-answer-task-attention).
+
+`vb serve` does not enable staged work. To use the staged task commands,
+point the CLI at a hosted `local()` board that opts in.

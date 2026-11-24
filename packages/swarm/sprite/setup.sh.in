@@ -1,0 +1,32 @@
+#!/bin/bash
+command -v bun >/dev/null || (curl -fsSL https://bun.sh/install | bash)
+command -v pi >/dev/null || npm install -g @earendil-works/pi-coding-agent@1.4.0
+pi install npm:@ifi/pi-provider-cursor@0.5.1 >/dev/null 2>&1 || true
+D="$(dirname "$(command -v pi)")"
+cat > "$D/pi-auth-ensure" <<'TOOLEOF' && chmod 755 "$D/pi-auth-ensure"
+@@file:pi-auth-ensure@@
+TOOLEOF
+cat > "$D/pi-task" <<'TOOLEOF' && chmod 755 "$D/pi-task"
+@@file:pi-task@@
+TOOLEOF
+cat > "$D/sprite-start" <<'TOOLEOF' && chmod 755 "$D/sprite-start"
+@@file:sprite-start@@
+TOOLEOF
+cat > "$D/sprite-watch" <<'TOOLEOF' && chmod 755 "$D/sprite-watch"
+@@file:sprite-watch@@
+TOOLEOF
+cat > "$D/sprite-stop" <<'TOOLEOF' && chmod 755 "$D/sprite-stop"
+@@file:sprite-stop@@
+TOOLEOF
+P="$(command -v pi)" && C="$(npm root -g)/@earendil-works/pi-coding-agent/dist/bundle/cli.js" && [ -f "$C" ] && rm -f "$P" && { printf '#!/bin/sh\nPI_CLI="%s"\n' "$C"; cat <<'EOF'; } > "$P" && chmod 755 "$P"
+"$(dirname "$0")/pi-auth-ensure" 2>/dev/null
+exec node "$PI_CLI" "$@"
+EOF
+for f in ~/.bashrc ~/.profile; do grep -q pi-auth-ensure "$f" 2>/dev/null || echo 'command -v pi-auth-ensure >/dev/null 2>&1 && pi-auth-ensure >/dev/null 2>&1' >> "$f"; done
+mkdir -p ~/.pi/agent/extensions
+echo '@@gz:codex-cursor-fallback.ts@@' | base64 -d | gunzip > ~/.pi/agent/extensions/codex-cursor-fallback.ts
+CP="$(find ~/.pi/agent -path "*@ifi/pi-provider-cursor/provider.ts" 2>/dev/null | head -n 1)"; [ -n "$CP" ] && [ "$(md5sum < "$CP" | cut -c1-32)" = "018877a6b1e7e93d26dab08c02f786e7" ] && echo '@@gz:cursor-provider.patched.ts@@' | base64 -d | gunzip > "$CP.new" && mv "$CP.new" "$CP" || true
+[ -s ~/.pi/agent/models-store.json ] || echo '@@gz:models-store.json@@' | base64 -d | gunzip > ~/.pi/agent/models-store.json
+node -e 'const o={};for(const v of ["PI_CODEX_AUTH","PI_CURSOR"]){const s=process.env[v];if(s)Object.assign(o,JSON.parse(Buffer.from(s,"base64").toString()))}if(Object.keys(o).length)require("fs").writeFileSync(require("os").homedir()+"/.pi/agent/auth.json",JSON.stringify(o),{mode:0o600})' || true
+true
+node -e 'const fs=require("fs"),os=require("os"),d=os.homedir()+"/.pi/agent",p=d+"/settings.json";let j={};try{j=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){}j.defaultProvider="fallback";j.defaultModel="codex-cursor";fs.mkdirSync(d,{recursive:true});fs.writeFileSync(p,JSON.stringify(j,null,2),{mode:0o600})' || true

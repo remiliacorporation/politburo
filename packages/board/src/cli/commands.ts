@@ -624,7 +624,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
       },
       {
         name: 'run',
-        description: 'claim a task and run a command on it: renew while it runs, complete on exit 0, fail otherwise',
+        description: 'claim a task and run a command: complete on exit 0, otherwise fail a legacy task or release staged work',
         arguments: [
           { name: 'id|channel', required: true, description: "a task's ID, or with --ready a channel or a path prefix" },
           { name: 'cmd', required: true, multiple: true, description: 'the command, after --: it gets BOARD_TASK, the task\'s ID' },
@@ -651,14 +651,14 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
       },
       {
         name: 'complete',
-        description: 'finish a task you hold: what waits only for it is ready',
+        description: 'finish a legacy task or hand off staged work, with the claim you hold',
         arguments: [task(), { name: 'result', required: false, description: 'what it came to, in a line' }],
         options: [],
         examples: [{ name: 'complete a task', value: 'tasks complete 812 "fixed in a1b2c3, tests pass"' }],
       },
       {
         name: 'fail',
-        description: "give up on a task you hold: what waits for it keeps waiting, until it's reopened",
+        description: 'give up on a legacy task you hold: what waits for it keeps waiting',
         arguments: [task(), { name: 'reason', required: true, description: 'why, in a line' }],
         options: [],
         examples: [{ name: 'fail a task', value: 'tasks fail 812 "the tests need a database"' }],
@@ -680,15 +680,36 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
       },
       ...fork.taskAuthorityCommands(task, option),
       {
-        name: 'reopen',
-        description: 'make a failed task ready again, as its owner',
-        arguments: [task()],
+        name: 'scope',
+        description: 'authorize a proposed task at its current revision, as a scoper',
+        arguments: [task(), { name: 'reason', required: true, description: 'why the work is ready to claim, in a line' }],
         options: [],
-        examples: [{ name: 'retry a failed task', value: 'tasks reopen 812' }],
+        examples: [{ name: 'scope proposed work', value: 'tasks scope 812 "reproduction and acceptance criteria are clear"' }],
+      },
+      {
+        name: 'stage',
+        description: 'move staged work, as a scoper',
+        arguments: [
+          task(),
+          { name: 'stage', required: true, description: 'review, qa, repair, approved, done, or rejected' },
+          { name: 'reason', required: true, description: 'why, in a line' },
+        ],
+        options: [],
+        examples: [{ name: 'start review after handoff', value: 'tasks stage 812 review "ready to review the patch"' }],
+      },
+      {
+        name: 'reopen',
+        description: 'return done or rejected work to proposed as a scoper, or retry a failed legacy task',
+        arguments: [task(), { name: 'reason', required: false, description: 'why, required for staged work' }],
+        options: [],
+        examples: [
+          { name: 'retry a failed legacy task', value: 'tasks reopen 812' },
+          { name: 'reopen staged work, as a scoper', value: 'tasks reopen 812 "the issue came back"' },
+        ],
       },
       {
         name: 'assign',
-        description: "keep a task for one of its owner's profiles, or with --pool, for anyone who may claim it",
+        description: "keep a task for one of its owner's profiles, or with --pool for anyone; staged work needs a scoper",
         arguments: [task(), { name: 'profile', required: false, description: "a profile of the task's owner, such as fixer" }],
         options: [option('pool')],
         examples: [
@@ -698,7 +719,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
       },
       {
         name: 'needs',
-        description: 'set what a task waits for, as its owner: the tasks named, in place of what it waited for',
+        description: 'replace what a task waits for; staged work needs a scoper',
         arguments: [task(), { name: 'needs', required: false, multiple: true, description: 'the tasks it waits for now, by ID' }],
         options: [option('none')],
         examples: [
@@ -708,7 +729,7 @@ export const commands: readonly (CliCommand & { readonly group: (typeof groups)[
       },
       {
         name: 'cancel',
-        description: 'cancel a task that has not completed, as its owner: any claim ends',
+        description: 'cancel a legacy task as its owner, or open staged work as a scoper: any claim ends',
         arguments: [task(), { name: 'reason', required: true, description: 'why, in a line' }],
         options: [],
         examples: [{ name: 'cancel a task', value: 'tasks cancel 812 "superseded by #820"' }],

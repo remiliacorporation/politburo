@@ -1,0 +1,59 @@
+{
+  "case_id": "liveness-010-one-second-over-stall",
+  "description": "A heartbeat one second past three intervals is stale.",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "notes/alive/.alerts.json": "{\"example.wake\": {\"core\": 1767225631.0, \"example\": 1767225631.0}}\n",
+      "notes/alive/example.wake": "{\"at\": 1767225600.0, \"pid\": 123, \"cycle\": 1, \"interval\": 10}\n",
+      "notes/mail/core/core-0001.yaml": "id: \"core-0001\"\nclass: \"core.escalate\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"core\"\nsummary: \"stale liveness: example.wake age=31s interval=10s\"\nat: \"2026-01-01T00:00:31Z\"\n",
+      "notes/mail/core/id-counter.txt": "1\n",
+      "notes/mail/example/example-0001.yaml": "id: \"example-0001\"\nclass: \"spawner.decide\"\nurgency: \"p0\"\nfrom: \"liveness checker\"\nto: \"example\"\nsummary: \"stale liveness: example.wake age=31s interval=10s\"\nat: \"2026-01-01T00:00:31Z\"\n",
+      "notes/mail/example/id-counter.txt": "1\n",
+      "notes/mail/log.yaml": "- {\"at\": \"2026-01-01T00:00:31Z\", \"event\": \"created\", \"hash\": \"3c401bba9650e388536c7ccee074b0e95286e7275238d59c775a10e2a3c71789\", \"header\": {\"at\": \"2026-01-01T00:00:31Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0001\", \"summary\": \"stale liveness: example.wake age=31s interval=10s\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0001\", \"to\": \"example\"}\n- {\"at\": \"2026-01-01T00:00:31Z\", \"event\": \"created\", \"hash\": \"0ff68bca005887c44126e17baf8db3137a276b66468df8969ebcff4c22c3b445\", \"header\": {\"at\": \"2026-01-01T00:00:31Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0001\", \"summary\": \"stale liveness: example.wake age=31s interval=10s\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0001\", \"to\": \"core\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-01-01T00:00:31Z\", \"event\": \"created\", \"hash\": \"3c401bba9650e388536c7ccee074b0e95286e7275238d59c775a10e2a3c71789\", \"header\": {\"at\": \"2026-01-01T00:00:31Z\", \"class\": \"spawner.decide\", \"from\": \"liveness checker\", \"id\": \"example-0001\", \"summary\": \"stale liveness: example.wake age=31s interval=10s\", \"to\": \"example\", \"urgency\": \"p0\"}, \"id\": \"example-0001\", \"to\": \"example\"}",
+      "- {\"at\": \"2026-01-01T00:00:31Z\", \"event\": \"created\", \"hash\": \"0ff68bca005887c44126e17baf8db3137a276b66468df8969ebcff4c22c3b445\", \"header\": {\"at\": \"2026-01-01T00:00:31Z\", \"class\": \"core.escalate\", \"from\": \"liveness checker\", \"id\": \"core-0001\", \"summary\": \"stale liveness: example.wake age=31s interval=10s\", \"to\": \"core\", \"urgency\": \"p0\"}, \"id\": \"core-0001\", \"to\": \"core\"}"
+    ],
+    "runs": [
+      {
+        "exit_code": 1,
+        "stderr": "",
+        "stdout": "stale liveness: example.wake age=31s interval=10s\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "stale liveness: example.wake age=31s interval=10s\n"
+  },
+  "inputs": {
+    "kind": "cli",
+    "steps": [
+      {
+        "after": 31,
+        "argv": [
+          "--notes-dir",
+          "notes"
+        ],
+        "function": "check"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {
+      "notes/alive/example.wake": "{\"at\": 1767225600.0, \"pid\": 123, \"cycle\": 1, \"interval\": 10}\n"
+    },
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py",
+      "supervisor/liveness_check.py",
+      "supervisor/secretary_mailbox.py"
+    ]
+  }
+}

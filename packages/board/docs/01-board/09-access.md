@@ -111,6 +111,7 @@ deployments.
 | `app` | an app on the team, by its slug or client ID (`clientId` on a board that verifies tokens itself) | one principal |
 | `all-apps` | every app installed on the board's team | a group |
 | `everyone` | everyone the board lets in some other way | everyone |
+| `invitee` | someone who joined, by the id `join` returned (`joined:user:…`) | one principal |
 
 ### How grants combine
 

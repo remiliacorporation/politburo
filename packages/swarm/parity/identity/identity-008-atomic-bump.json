@@ -1,0 +1,239 @@
+{
+  "case_id": "identity-008-atomic-bump",
+  "description": "Rename atomically and bump generation",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "issue_priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": {
+        "board_events": [
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 1,
+            "event_type": "project_identity_reconciled",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"from_generation\": 0, \"reason\": \"Project identity generation reconciled\", \"reason_code\": \"identity_reconciled\", \"to_generation\": 1}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 2,
+            "event_type": "project_identity_valid",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"generation\": 1, \"reason\": \"Project identity status recorded\", \"reason_code\": \"identity_valid\", \"status\": \"valid\"}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 3,
+            "event_type": "project_identity_configured",
+            "issue_key": null,
+            "payload_json": "{\"framework_repository\": false, \"generation\": 2}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 4,
+            "event_type": "project_identity_reconciled",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"from_generation\": 1, \"reason\": \"Project identity generation reconciled\", \"reason_code\": \"identity_reconciled\", \"to_generation\": 2}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 5,
+            "event_type": "project_identity_valid",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"identity\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"generation\": 2, \"reason\": \"Project identity status recorded\", \"reason_code\": \"identity_valid\", \"status\": \"valid\"}"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "identity_generation",
+            "value": "2"
+          },
+          {
+            "key": "identity_reason",
+            "value": ""
+          },
+          {
+            "key": "identity_status",
+            "value": "valid"
+          },
+          {
+            "key": "identity_updated_at",
+            "value": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "project_display_name",
+            "value": "Example Annex"
+          },
+          {
+            "key": "project_id",
+            "value": "example-project"
+          },
+          {
+            "key": "repository_fingerprint",
+            "value": "e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "sqlite_sequence": [
+          {
+            "name": "board_events",
+            "seq": 5
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "project-identity.json": "{\n  \"display_name\": \"Example Annex\",\n  \"framework_repository\": false,\n  \"generation\": 2,\n  \"project_id\": \"example-project\",\n  \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"\n}\n"
+    },
+    "log_lines": [],
+    "replacements": [
+      {
+        "destination_is_temp": true,
+        "old_content": "{\"display_name\": \"Example Workshop\", \"generation\": 1, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n",
+        "old_descriptor_unchanged": true,
+        "sibling_temp": true,
+        "temp_content": "{\n  \"display_name\": \"Example Annex\",\n  \"framework_repository\": false,\n  \"generation\": 2,\n  \"project_id\": \"example-project\",\n  \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"\n}\n",
+        "temp_mode": "0600"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"generation\": 1,\n  \"ok\": true,\n  \"reason\": \"\",\n  \"status\": \"valid\"\n}\n{\n  \"generation\": 2,\n  \"next\": \"identity-check\",\n  \"ok\": true\n}\n{\n  \"generation\": 2,\n  \"ok\": true,\n  \"reason\": \"\",\n  \"status\": \"valid\"\n}\n",
+    "steps": [
+      {
+        "db_changed": true,
+        "exit_code": 0,
+        "profile_modes": {
+          "project-identity.json": "0644"
+        }
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0,
+        "profile_modes": {
+          "project-identity.json": "0600"
+        }
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0,
+        "profile_modes": {
+          "project-identity.json": "0600"
+        }
+      }
+    ],
+    "temp_files_remaining": 0
+  },
+  "inputs": {
+    "collect": [
+      "project-identity.json"
+    ],
+    "commands": [
+      [
+        "identity-check"
+      ],
+      [
+        "identity-set",
+        "--actor",
+        "operator-01",
+        "--display-name",
+        "Example Annex"
+      ],
+      [
+        "identity-check"
+      ]
+    ],
+    "kind": "cli",
+    "observe_replace": "observe"
+  },
+  "matrix_row": "M88",
+  "notes": "Start with a 0644 profile. Set inherits the stable fields, writes a complete 0600 sibling, and atomically replaces the path while an open descriptor retains the old bytes.",
+  "setup": {
+    "files": {
+      "project-identity.json": "{\"display_name\": \"Example Workshop\", \"generation\": 1, \"project_id\": \"example-project\", \"repository_fingerprint\": \"e3a320b667460f6efd16626383746b3cbc62b88b84e58b5b28337bdd8c6d8169\"}\n"
+    },
+    "now": "2026-01-03T00:00:00Z",
+    "profile_modes": {
+      "project-identity.json": "0644"
+    }
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/identity.py",
+      "board/board.py",
+      "board/history.py",
+      "board/schema.sql"
+    ]
+  }
+}

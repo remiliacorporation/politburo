@@ -11,6 +11,7 @@ import { localScheduler, type LocalScheduler } from '../scheduler/local.ts'
 import { lockDirectory } from '../store/directory-lock.ts'
 import type { BoardStore } from '../store/types.ts'
 import type { AttentionResponders } from '../contract/attention.ts'
+import type { WorkLifecycleOptions } from './tasks.ts'
 
 export type LocalOptions = {
   /**
@@ -21,6 +22,8 @@ export type LocalOptions = {
   dir?: string
   /** Keeps the board in memory, attachments too, for tests: nothing is written, and it's gone with the process. */
   memory?: boolean
+  /** Opt in to staged work for new tasks on this board. */
+  workLifecycle?: WorkLifecycleOptions
   /** Enables structured attention. Lists verified responders by exact channel or `*` for all channels. */
   attentionResponders?: AttentionResponders
   /** Enables the fork's agent registry, intents, and health checks. Off by default. */
@@ -92,6 +95,7 @@ export function lockLocalDirectory(dir: string, file = 'local'): () => void {
  */
 export function local(options: LocalOptions = {}): LocalBackend {
   const dir = resolve(options.dir ?? '.board')
+  const workLifecycle = options.workLifecycle && { scopers: [...options.workLifecycle.scopers] }
   let binding: BoardBinding | null = null
   let opening: Promise<{ backend: ReturnType<typeof a2>; close(): Promise<void> }> | null = null
 
@@ -129,6 +133,7 @@ export function local(options: LocalOptions = {}): LocalBackend {
       try {
         const backend = a2({
           store, scheduler, blob: options.memory ? memoryBlob() : fsBlob(join(dir, file)),
+          ...(workLifecycle ? { workLifecycle } : {}),
           ...(options.attentionResponders !== undefined ? { attentionResponders: options.attentionResponders } : {}),
           agentOps: options.agentOps === true,
           ...(options.politburo === 1 ? { politburo: 1 } : {}),

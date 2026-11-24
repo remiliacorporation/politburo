@@ -4,7 +4,7 @@ if [ $# -lt 1 ] || [ ! -s "$1" ]; then echo "usage: pi-task <task-file> [max-sec
 task=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); max=${2:-2400}; idle=${PI_IDLE_SECONDS:-180}
 log=${PI_TASK_LOG:-/tmp/pi-task-$(date +%s).jsonl}
 fingerprint() { printf '%s %s' "$(wc -c < "$log")" "$({ git diff; git ls-files -o --exclude-standard; } 2>/dev/null | cksum)"; }
-pi-auth-ensure 2>/dev/null; setsid pi -p --mode json ${PI_SESSION_DIR:+--session-dir "$PI_SESSION_DIR"} --model "${PI_MODEL:-fallback/codex-cursor}" --thinking "${PI_THINKING:-medium}" -- "$(cat "$task")" </dev/null >"$log" 2>"$log.err" &
+pi-auth-ensure 2>/dev/null; setsid pi -p --mode json ${PI_SESSION_DIR:+--session-dir "$PI_SESSION_DIR"} --model "${PI_MODEL:-cursor/cursor-grok-4.6-high}" --thinking "${PI_THINKING:-medium}" -- "$(cat "$task")" </dev/null >"$log" 2>"$log.err" &
 pid=$!; echo "$pid" > "$log.pid"; start=$(date +%s); last=$start; prev=""; why=""
 echo "pi-task: pid $pid, log $log, idle limit ${idle}s, max ${max}s" >&2
 while kill -0 "$pid" 2>/dev/null; do

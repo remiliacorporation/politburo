@@ -6,7 +6,7 @@ import { AttentionAnswerBody, AttentionAskFile } from '../contract/attention.ts'
 import { TaskPriority } from '../contract/schemas.ts'
 import { TaskBinding, TaskPacket } from '../contract/task-authority.ts'
 import type { Board } from '../server/index.ts'
-import { fileClaims, memoryClaims, tokenClaims, type Claims } from './claims.ts'
+import { fileClaims, memoryClaims, tokenClaims, type ClaimProof, type Claims } from './claims.ts'
 import { closest, commandLine, type Failure, type Recovery } from './failure.ts'
 import { claimLine, formatAttention, formatTasks } from './format.ts'
 import { cli, client, connection, current, doing, Failed, failureOf, flags, io, isMessageRef, labelPairs, messageId, messageRef, onSameBoard, onThisBoard, out, profileFlag, ref, rerun, rerunWithout, result, seconds, setSentLength, stateCommand, stopOn, taskId, typed, usage } from './main.ts'
@@ -19,7 +19,7 @@ export function resetTaskBoard() {
 }
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
-export const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel'])
+export const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel'])
 
 export function priorityOf(value: unknown, from: string): TaskPriority {
   const parsed = TaskPriority.safeParse(value)
@@ -176,7 +176,7 @@ async function planFrom(parsed: unknown, path: string, board: Board): Promise<Ta
 }
 
 /** A draft or replacement, never a claim. Don't repeat any part of an invalid JSON body. */
-async function attentionFrom(path: string) {
+export async function attentionFrom(path: string) {
   const where = path === '-' ? 'stdin' : path
   const text = await (path === '-' ? io.stdin() : io.readFile(path)).catch(() => null)
   if (text === null) throw usage(`Can't read ${where}.`, { reason: 'file_not_found' })
@@ -271,7 +271,7 @@ function unparkRecovery(id: string): Recovery {
  */
 export async function heldBy(board: Board, claims: Claims, id: string) {
   const stored = await claims.get(id)
-  if (stored) return board.tasks.held(id, stored)
+  if (stored) return { ...stored, ...board.tasks.held(id, stored) }
   const none = `You hold no claim on task ${ref(id)} as ${writesAs() ?? 'yourself'}.`
   const notHeld = (why: string, next: Recovery[]) =>
     new Failed({ class: 'conflict', reason: 'claim_not_held', message: why ? `${none} ${why}` : none, next })
@@ -305,11 +305,11 @@ export async function heldBy(board: Board, claims: Claims, id: string) {
 }
 
 /** A write a claim makes. One the board answers `claim_lost` is over: the CLI forgets it, and the failure says how to claim again. */
-export async function withClaim<T>(claims: Claims, id: string, write: () => Promise<T>): Promise<T> {
+export async function withClaim<T>(claims: Claims, id: string, proof: ClaimProof, write: () => Promise<T>): Promise<T> {
   try {
     return await write()
   } catch (error) {
-    if (error instanceof BoardError && error.code === 'claim_lost') await claims.drop(id)
+    if (error instanceof BoardError && error.code === 'claim_lost') await claims.drop(id, proof)
     throw error
   }
 }
@@ -319,7 +319,7 @@ export async function withClaim<T>(claims: Claims, id: string, write: () => Prom
  * matches. The list's `key=a|b` and bare `key` would match nothing, or the value `a|b`, and wait
  * out its `--wait` without a word: they're refused, with the claim of one value and the list.
  */
-function readyLabels(values: string[], target: string, verb: 'claim' | 'run'): Record<string, string> {
+export function readyLabels(values: string[], target: string, verb: 'claim' | 'run'): Record<string, string> {
   for (const value of values) {
     const at = value.indexOf('=')
     const options = at > 0 ? value.slice(at + 1).split('|') : []
@@ -425,7 +425,7 @@ export async function handoffTask(id: string, rest: string[]): Promise<number> {
   if (!packet.success) throw usage('Use a full commit ID, a repo-relative packet path, and a lowercase SHA-256 digest.')
   const { board, claims } = tasksOn()
   const held = await heldBy(board, claims, id)
-  const task = await withClaim(claims, id, () => held.handoff(packet.data))
+  const task = await withClaim(claims, id, held, () => held.handoff(packet.data))
   const handoff = task.task?.handoff
   if (flags.json) result({ task, outcome: 'handed_off' })
   else out(`handed off ${messageRef(task.id)}${handoff ? `  ${handoff.id}` : ''}`)
@@ -449,7 +449,7 @@ export async function taskCommand(verb: 'show' | 'priority' | 'ask' | 'attention
       const priority = priorityOf(rest[1], 'Priority')
       const stored = await claims.get(id)
       const task = stored
-        ? await withClaim(claims, id, () => board.tasks.held(id, stored).priority(priority))
+        ? await withClaim(claims, id, stored, () => board.tasks.held(id, stored).priority(priority))
         : await board.tasks.priority(id, priority)
       if (flags.json) result({ task, outcome: 'set' })
       else out(`${messageRef(id)}  priority ${task.task?.priority ?? priority}`)

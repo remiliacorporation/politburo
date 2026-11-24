@@ -1,0 +1,61 @@
+{
+  "case_id": "swarm-config-008-saved-with-rejection",
+  "description": "Save a bump despite a rejected recipient and limit a long notice summary.",
+  "expected": {
+    "exit_code": 3,
+    "files": {
+      "mail/bad target/.keep": "",
+      "mail/ex/.keep": "",
+      "mail/ex/ex-0001.yaml": "id: \"ex-0001\"\nclass: \"policy\"\nurgency: \"p2\"\nfrom: \"swarm-config\"\nto: \"ex\"\nref: {version: 1234567890}\nsummary: \"swarm-config v1234567890: sprite_default_model example-model -> example xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\nat: \"2026-02-03T04:05:06Z\"\n",
+      "mail/ex/id-counter.txt": "1\n",
+      "mail/log.yaml": "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"20384d6f002515c62eb9c3673fe67992f722e5b96f5748ed3c9ad14e6d3cbbdc\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0001\", \"ref\": {\"version\": 1234567890}, \"summary\": \"swarm-config v1234567890: sprite_default_model example-model -> example xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"swarm-config\", {\"version\": 1234567890}, \"policy\"], \"to\": \"ex\"}\n",
+      "swarm-config.json": "{\n  \"heartbeat_minutes\": 30,\n  \"mob_limit_rule\": \"Keep example limits\",\n  \"sprite_default_model\": \"example\\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n  \"sprite_thinking_default\": \"medium\",\n  \"updated_at\": \"2026-02-03T04:05:06Z\",\n  \"usage_stop_percent\": 95,\n  \"version\": 1234567890\n}\n",
+      "swarm-config.json.lock": ""
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"20384d6f002515c62eb9c3673fe67992f722e5b96f5748ed3c9ad14e6d3cbbdc\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0001\", \"ref\": {\"version\": 1234567890}, \"summary\": \"swarm-config v1234567890: sprite_default_model example-model -> example xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"swarm-config\", {\"version\": 1234567890}, \"policy\"], \"to\": \"ex\"}"
+    ],
+    "stderr": "swarm-config: bump saved, but policy notice to 'bad target' was rejected: invalid mailbox target\n",
+    "stdout": "swarm-config v1234567890: sprite_default_model example-model -> example xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...\n",
+    "steps": [
+      {
+        "exit_code": 3,
+        "log_line_count": 1,
+        "stderr": "swarm-config: bump saved, but policy notice to 'bad target' was rejected: invalid mailbox target\n",
+        "stdout": "swarm-config v1234567890: sprite_default_model example-model -> example xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "sprite_default_model=example\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ],
+        "kind": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "The valid mailbox sorts after the invalid target. The long version prefix also tests the notice's own limit.",
+  "setup": {
+    "files": {
+      "mail/bad target/.keep": "",
+      "mail/ex/.keep": "",
+      "swarm-config.json": "{\"version\": 1234567889, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n"
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}

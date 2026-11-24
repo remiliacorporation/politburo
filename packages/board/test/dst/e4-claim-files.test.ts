@@ -382,7 +382,7 @@ function claimRace(seed: number, sampleTime?: (now: number) => void) {
 it('replays a claims seed despite jumps in the host clock', async () => {
   const replay = async () => {
     const times: number[] = []
-    const result = await claimRace(20, (now) => times.push(now))
+    const result = await claimRace(46, (now) => times.push(now))
     return { ...result, times }
   }
   const baseline = await replay()
