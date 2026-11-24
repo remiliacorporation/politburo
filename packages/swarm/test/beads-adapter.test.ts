@@ -177,14 +177,18 @@ test('scan leaks credentials or keeps malformed external refs from list output',
     if (argv[0] !== 'list' || argv.at(-1) !== epic) return stdout
     const rows = JSON.parse(stdout) as { id: string; external_ref?: string }[]
     return JSON.stringify(rows.map((row) => {
-      if (row.id === 'rw-cn1.1') return { ...row, external_ref: 'https://user:pw@example.com/issue/9?access_token=SECRET#frag' }
+      if (row.id === 'rw-cn1.1') return {
+        ...row,
+        external_ref: 'https://user:pw@example.com/ada@example.invalid/SECRET?access_token=SECRET#frag',
+      }
       if (row.id === 'rw-cn1.2') return { ...row, external_ref: 'not a ref; DROP TABLE' }
       return row
     }))
   }
   const scan = await adapter(run).scan({ epic })
-  assert.doesNotMatch(JSON.stringify(scan), /SECRET|pw/)
-  assert.equal(scan.items.find(({ id }) => id === 'rw-cn1.1')?.externalRef, 'https://example.com/issue/9')
+  assert.doesNotMatch(JSON.stringify(scan), /SECRET|pw|ada@example\.invalid/)
+  assert.equal(scan.items.find(({ id }) => id === 'rw-cn1.1')?.externalRef, 'https://example.com')
+  assert.equal(scan.items.find(({ id }) => id === 'rw-cn1.8')?.externalRef, 'gh-925')
   const malformed = scan.items.find(({ id }) => id === 'rw-cn1.2')
   assert.ok(malformed)
   assert.equal(malformed.externalRef, undefined)

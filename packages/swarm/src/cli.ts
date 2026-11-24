@@ -6,6 +6,7 @@ import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { rolloutMain } from './rollout/rollout-cli.ts'
 import { skillsMain } from './skills/cli.ts'
 import { runSetup } from './sprite/cli.ts'
+import { workCommand, workUsage } from './work/cli.ts'
 
 const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm trackers beads queue --epic ID --store-name NAME (--dir DIR | --fixture FILE) [--bd PATH] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm serve --help'
 
@@ -35,13 +36,15 @@ function misuse(message: string): number {
   return 2
 }
 
-function main(args: string[]): number {
+async function main(args: string[]): Promise<number> {
   const [command, action, ...flags] = args
+  if (command === 'work') return workCommand(args.slice(1))
   if (command === 'setup') return runSetup(args.slice(1))
-  if (
-    (args.length === 1 && command === '--help') ||
-    (args.length === 2 && command === 'config' && action === '--help')
-  ) {
+  if (args.length === 1 && command === '--help') {
+    console.log(`${usage}\n${workUsage}`)
+    return 0
+  }
+  if (args.length === 2 && command === 'config' && action === '--help') {
     console.log(usage)
     return 0
   }
@@ -110,10 +113,13 @@ const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<n
     return { run: (argv) => argv[0] === 'scan' ? run(argv) : runTrackers(argv) }
   },
   cutover: () => import('./cutover/cli.ts'),
-  mail: async () => {
-    const { run } = await import('./cutover/cli.ts')
-    return { run: (argv) => run(argv, 'mail') }
-  },
+  mail: async () => ({
+    run: async (argv: string[]) => {
+      if (argv[0] === 'bridge') return (await import('./mail/cli.ts')).runMail(argv)
+      const { run } = await import('./cutover/cli.ts')
+      return run(argv, 'mail')
+    },
+  }),
   capture: async () => ({ run: (await import('./capture/cli.ts')).captureMain }),
   secretary: async () => ({ run: (await import('./secretary/cli.ts')).secretaryMain }),
   mirror: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['mirror', ...argv]) }),
@@ -125,4 +131,4 @@ const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
 process.exitCode = subcommand === 'serve'
   ? await (await import('./identity/serve.ts')).serveCommand(subargs)
-  : area ? await (await area()).run(subargs) : main(process.argv.slice(2))
+  : area ? await (await area()).run(subargs) : await main(process.argv.slice(2))

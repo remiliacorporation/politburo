@@ -36,7 +36,7 @@ function identifier(value: unknown, verb: string): string | undefined {
 function externalRef(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const url = URL.parse(value)
-  if (url?.protocol === 'http:' || url?.protocol === 'https:') return url.origin + url.pathname
+  if (url?.protocol === 'http:' || url?.protocol === 'https:') return url.origin
   return /^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}$/.test(value) ? value : undefined
 }
 

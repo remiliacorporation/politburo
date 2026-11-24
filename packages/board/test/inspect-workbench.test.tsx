@@ -120,6 +120,85 @@ function lane(title: string) {
 
 const mainText = () => document.querySelector('main')?.textContent
 
+it('shows a handoff lease relatively with its local deadline on hover', async () => {
+  const { client, as, open } = await workbench()
+  const { task } = await client.tasks.create('work', { text: 'Review the lease' })
+  const { until } = await as('worker').tasks.claim(task.id, { lease: 750 })
+  vi.setSystemTime(Date.parse(until) - 750_000)
+  await open(`/handoffs?thread=${task.id}`)
+  await vi.waitFor(() => {
+    const row = link('Review the lease', lane('In progress')).closest('li')!
+    for (const scope of [row, threadPane()]) {
+      const deadline = scope?.querySelector(`time[datetime="${until}"]`)
+      expect(deadline?.textContent).toBe('12m left')
+      expect(deadline?.getAttribute('title')).toBe(new Date(until).toLocaleString())
+    }
+  })
+})
+
+it('shows a scheduled reply time relatively with its local timestamp on hover', async () => {
+  const { client, open } = await workbench()
+  const { id } = await client.post('work', 'Scheduled discussion')
+  const { next } = await client.schedule({ re: id }, { text: 'Check the thread later', in: '2h' })
+  expect(next).not.toBeNull()
+  vi.setSystemTime(Date.parse(next!) - 7_200_000)
+  await open(`/c/work?thread=${id}`)
+  await vi.waitFor(() => {
+    const time = threadPane()?.querySelector(`.thread-facts time[datetime="${next}"]`)
+    expect(time?.textContent).toBe('in 2h')
+    expect(time?.getAttribute('title')).toBe(new Date(next!).toLocaleString())
+  })
+})
+
+it('shortens head and commit labels with the full hashes on hover', async () => {
+  const { client, open } = await workbench()
+  const head = 'abcdef0123456789abcd'.repeat(2)
+  const commit = '01234567'.repeat(8)
+  await client.post('work', { text: 'Review the head', labels: { head, commit, other: head } })
+  await open('/c/work')
+  await vi.waitFor(() => {
+    expect(mainText()).toContain('head=abcdef0')
+    expect(mainText()).toContain('commit=0123456')
+    expect(mainText()).toContain(`other=${head}`)
+    expect(document.querySelector(`main [title="${head}"]`)?.textContent).toBe('abcdef0')
+    expect(document.querySelector(`main [title="${commit}"]`)?.textContent).toBe('0123456')
+  })
+})
+
+it('shows a grouped message time relatively with its local timestamp on hover', async () => {
+  const { client, open } = await workbench()
+  await client.post('work', 'First update')
+  const grouped = await client.post('work', 'Second update')
+  vi.setSystemTime(Date.parse(grouped.createdAt) + 75_000)
+  await open('/c/work')
+  const row = await vi.waitFor(() => {
+    const message = [...document.querySelectorAll('main .message')].find((el) => el.textContent?.includes('Second update'))
+    expect(message).toBeDefined()
+    return message!
+  })
+  row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+  await vi.waitFor(() => {
+    const time = row.querySelector('.gutter time')
+    expect(time?.textContent).toBe('1m')
+    expect(time?.getAttribute('datetime')).toBe(grouped.createdAt)
+    expect(time?.getAttribute('title')).toBe(new Date(grouped.createdAt).toLocaleString())
+  })
+})
+
+it('shows an older day divider relatively with the local timestamp on hover', async () => {
+  const { client, open } = await workbench()
+  const { createdAt } = await client.post('work', 'Earlier update')
+  const now = new Date(createdAt)
+  now.setDate(now.getDate() + 3)
+  vi.setSystemTime(now)
+  await open('/c/work', { token: await personToken('u_reader', BOARD_URL) })
+  await vi.waitFor(() => {
+    const divider = document.querySelector('main .divider')
+    expect(divider?.textContent).toBe('3d ago')
+    expect(divider?.getAttribute('title')).toBe(new Date(createdAt).toLocaleString())
+  })
+})
+
 it('shows loading before the empty Needs action sentence on an empty board', async () => {
   const { open } = await workbench()
   const listed = Promise.withResolvers<void>()
@@ -1286,6 +1365,21 @@ async function hold(client: ReturnType<typeof createBoardClient>, text: string, 
   const { attention } = await client.tasks.ask(task.id, request)
   return { id: task.id, attention, request }
 }
+
+it.each([
+  ['upcoming', -45_000, '45s left'],
+  ['past', 45_000, '45s ago'],
+] as const)('shows the %s attention deadline relatively with its local timestamp on hover', async (_status, offset, expected) => {
+  const { client, open } = await workbench({ attentionResponders: responders })
+  const { id, attention: { expiresAt } } = await hold(client, 'Draft for review', 'Ship the draft?')
+  vi.setSystemTime(Date.parse(expiresAt) + offset)
+  await open('/attention')
+  await vi.waitFor(() => {
+    const time = decision(id)?.querySelector(`time[datetime="${expiresAt}"]`)
+    expect(time?.textContent).toBe(expected)
+    expect(time?.getAttribute('title')).toBe(new Date(expiresAt).toLocaleString())
+  })
+})
 
 function press(target: HTMLElement, key: string) {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })

@@ -5,6 +5,7 @@ import { Popover } from '@base-ui/react/popover'
 import { X } from 'lucide-react'
 import { createContext, useContext, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { displayEmoji } from '../../contract/emoji.ts'
+import { LabelValue } from './sha.tsx'
 import type { Listed } from './store.ts'
 import { EMOJI_TABLE } from '../../contract/emoji-table.ts'
 
@@ -229,7 +230,7 @@ export function LabelEditor(props: {
           {entries.map(([k, v]) => (
             <div key={k} className="label-row">
               <span className="label-key">{k}</span>
-              <span className="label-value">{v || '—'}</span>
+              <span className="label-value"><LabelValue name={k} value={v || '—'} /></span>
               <button className="tool" title={`remove ${k}`} onClick={() => props.onUnset(k)}>
                 <X size={13} />
               </button>

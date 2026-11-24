@@ -6,6 +6,7 @@ import { toast } from './chrome.ts'
 import { profilesOf, type State } from './store.ts'
 import { actorFor, taskIds } from './task.tsx'
 import { fieldMenu, LabelEditor, Panel, Suggest, type KnownLabels } from './ui.tsx'
+import { LabelValue } from './sha.tsx'
 import { fileSize, laterFields, timingWords } from './words.ts'
 
 // Just Chat's composer: one outlined box, the textarea, a quiet toolbar.
@@ -228,7 +229,7 @@ export function Composer(props: {
           <div className="chips composer-labels">
             {labelEntries.map(([key, value]) => (
               <span key={key} className="label">
-                {key}={value}
+                {key}=<LabelValue name={key} value={value} />
                 <button
                   title={`remove ${key}`}
                   onClick={() =>
