@@ -127,14 +127,22 @@ type ClockState = Pick<State, 'messages' | 'seenProgress' | 'openTaskRoots'>
 /** The newest reply, root edit, or label change the page can time. */
 export function progressAt(state: ClockState, root: TaskRoot): number {
   let at = Date.parse(root.createdAt)
-  if (root.editedAt) at = Math.max(at, Date.parse(root.editedAt))
-  const stamped = state.seenProgress[root.id]
-  if (stamped) at = Math.max(at, Date.parse(stamped))
+  at = later(at, root.editedAt)
+  // The board records a label change on the message, so a reload still has its time.
+  at = later(at, root.labeledAt)
+  at = later(at, state.seenProgress[root.id])
   for (const message of Object.values(state.messages)) {
     if (message.re !== root.id || message.deleted) continue
-    at = Math.max(at, Date.parse(message.editedAt ?? message.createdAt))
+    at = later(at, message.editedAt ?? message.createdAt)
+    at = later(at, message.labeledAt)
   }
   return at
+}
+
+function later(at: number, iso: string | null | undefined): number {
+  if (!iso) return at
+  const parsed = Date.parse(iso)
+  return Number.isFinite(parsed) ? Math.max(at, parsed) : at
 }
 
 /** When the page clock should read again, so a lease or an idle claim can change group. */

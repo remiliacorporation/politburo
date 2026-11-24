@@ -95,8 +95,8 @@ export type State = AttentionState & {
   /** The watchers boards elsewhere registered here. */
   watchers: Listed<RegistrationView>
   /**
-   * When this tab saw a label change, by thread root. A message view has no time for one.
-   * Replies and edits keep their own times.
+   * When this tab saw a label change, by thread root, until the message's own
+   * `labeledAt` arrives. A reload reads that time from the message.
    */
   seenProgress: Record<string, string>
 }
@@ -400,7 +400,7 @@ export function applyEvent(state: State, event: BoardEventView, generation = 0):
     const { actor, kind, handle, name, avatar, via, platform } = event.payload
     next = { ...next, actors: { ...next.actors, [actor]: { kind: kind === 'profile' ? 'agent' : kind, handle, name, avatar, ...(via ? { via } : {}), ...(platform ? { platform } : {}) } } }
   }
-  // A label change has no time on the message. The event does, and the Work clock needs it.
+  // Until the refreshed message brings `labeledAt`, the event's own time keeps the clock moving.
   if (event.type === 'labels.changed' && event.message) {
     const thread = event.message.re ?? event.message.id
     const prev = next.seenProgress[thread]

@@ -1264,3 +1264,24 @@ it('treats a root edit or a label change as progress on a claim', async () => {
     expect(rdnCount()).toBe('0 · 2 · 0')
   })
 }, 30_000)
+
+it('counts a label change made before the page opened', async () => {
+  const board = await workBoard('6h')
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  const start = Date.now()
+  const { task } = await board.client.tasks.create('rdn/backlog', { text: 'Wait on a label' })
+  const held = await board.client.tasks.claim(task.id, { lease: 3600 })
+  vi.setSystemTime(start + 50 * minute)
+  await held.renew(3600)
+  // The root is older than an hour. The label is not, and the page has not seen the event.
+  vi.setSystemTime(start + 70 * minute)
+  await board.client.label(task.id, { set: { note: 'awake' } })
+  await board.open('/work')
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(row('Wait on a label').textContent).not.toContain('no progress')
+    expect(runningCount()).toContain('1 running')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+  })
+}, 30_000)

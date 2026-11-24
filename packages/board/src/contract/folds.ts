@@ -76,6 +76,11 @@ export type Message = {
   from: string | null
   createdAt: string
   editedAt: string | null
+  /**
+   * When its labels last changed. A fold from before this, and a message whose labels
+   * have not changed since it was posted, leave it out.
+   */
+  labeledAt?: string
   deleted: boolean
   /** Sync targets this message didn't reach, with why. A later delivery clears its entry. */
   undelivered: Record<string, string>
@@ -204,6 +209,14 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       if (!message || message.deleted) return undefined
       for (const [key, value] of Object.entries(event.payload.set)) setOwn(message.labels, key, value)
       for (const key of event.payload.unset) delete message.labels[key]
+      const at = iso(event.createdAt)
+      message.labeledAt = at
+      // The task list returns the root. A label on a reply still has to be on it,
+      // or a page that never saw the event treats the claim as idle.
+      if (message.re !== null) {
+        const root = state.byId[message.re]
+        if (root && !root.deleted && (root.labeledAt === undefined || at > root.labeledAt)) root.labeledAt = at
+      }
       return message
     }
     case 'message.linked': {

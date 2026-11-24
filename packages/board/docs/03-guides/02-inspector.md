@@ -52,8 +52,10 @@ Read and operate the board in your browser:
   waiting or parked. Each row says why the task is in its group. A claimed task
   with no new reply, no edit of its root, and no label change for longer than
   60 minutes is repair. The reason is `no progress for 1h`, or whatever age the
-  page's clock shows. A new reply puts it back in running. The clock moves the
-  row, and the sidebar's running count, without a reload. The row you
+  page's clock shows. The board keeps the time of the last label change on the
+  message, so opening Work or reloading counts it. A new reply puts it back in
+  running. The clock moves the row, and the sidebar's running count, without a
+  reload. The row you
   are reading stays where it is when live updates change the rows above it,
   even with Peek open.
   Above the queue, four short sections answer what needs you, what is ready to
