@@ -282,7 +282,7 @@ test('CLI bind validates arguments and the book without waiting for stdin', asyn
   }
 })
 
-test('bind waits for the capability on stdin before it reports an unusable book directory', async (t) => {
+test('bind reports an unusable book directory without waiting for stdin', async (t) => {
   const { bookFile } = paths(t)
   const missing = join(dirname(bookFile), 'unavailable', 'book.json')
   const child = spawn(process.execPath, [...cli, 'bind', '--book', missing, '--session', session], {
@@ -297,7 +297,7 @@ test('bind waits for the capability on stdin before it reports an unusable book 
   assert.deepEqual([code, signal, stderr.trim()], [1, null, 'error: cannot use book directory'])
 })
 
-test('--json success output (listening, bound) is text', async (t) => {
+test('--json success output for listening and bound is one JSON document', async (t) => {
   const { bookFile, ledgerFile, envelopeFile } = paths(t)
   writeFileSync(envelopeFile, JSON.stringify(envelope))
   const issued = run('issue', '--book', bookFile, '--envelope', envelopeFile, '--ttl-hours', '1', '--json')
