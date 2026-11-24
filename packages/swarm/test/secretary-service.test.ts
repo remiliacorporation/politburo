@@ -4,11 +4,13 @@ import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlin
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { macSkip } from './mac-skip.ts'
 import {
   compilePacket, createShadow, handlePush, handleRetire, prepareMail, readFileMail, runShadow, scorecard, unknownLedger,
   type CasePacket, type DecisionRecord, type RetireFacts, type SwarmMessage,
 } from '../src/secretary/index.ts'
 
+const needsCanonicalTmp = macSkip('needs a canonical temporary directory; macOS /var links to /private/var')
 const start = Date.parse('2026-11-20T21:00:00Z')
 const minute = 60_000
 const tag = 'test-repo'
@@ -89,7 +91,7 @@ test('invalid and unparseable files are logged with reasons, never forwarded', a
   ])
 })
 
-test('a rejected header yields one unsent notice with a redacted sender and reason but no body', async (t) => {
+test('a rejected header yields one unsent notice with a redacted sender and reason but no body', { skip: needsCanonicalTmp }, async (t) => {
   const { opts, inbox, records, text } = await mailbox(t)
   const file = join(inbox, 'bad.md')
   const secret = 'ghp_fake_reject_fixture'
@@ -288,7 +290,7 @@ test('repeated ticks and restart do not append or rebatch already forwarded mail
   assert.deepEqual(wakes.map((p) => p.packetId), calls)
 })
 
-test('restart ignores header key order when fingerprinting unchanged mail', async (t) => {
+test('restart ignores header key order when fingerprinting unchanged mail', { skip: needsCanonicalTmp }, async (t) => {
   const { root, opts, out, put, text, records } = await mailbox(t)
   await put('ordered', { body: undefined })
   const [raw] = await readFileMail(opts.mailDir, tag)
