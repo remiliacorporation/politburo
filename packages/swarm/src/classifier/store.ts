@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs'
+import { appendFileSync, closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync, unlinkSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Action, QuestionKey } from './questions.ts'
 
@@ -28,7 +28,7 @@ function read<T>(path: string): T[] {
   })
 }
 
-function discardTornTail(path: string): void {
+function discardTornTail(path: string, duringRepair?: () => void): void {
   let fd: number
   try { fd = openSync(path, 'r+') } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
@@ -38,18 +38,61 @@ function discardTornTail(path: string): void {
     const size = fstatSync(fd).size
     const last = Buffer.alloc(1)
     if (size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10) {
-      ftruncateSync(fd, readFileSync(fd).lastIndexOf(10) + 1)
+      const file = Buffer.alloc(size)
+      readSync(fd, file, 0, size, 0)
+      const cut = file.lastIndexOf(10) + 1
+      duringRepair?.()
+      if (fstatSync(fd).size !== size) throw new Error('invalid classifier log')
+      ftruncateSync(fd, cut)
     }
   } finally { closeSync(fd) }
 }
 
-export function openClassifierStore(dir: string) {
+function withLogLock(path: string, body: () => void): void {
+  const lock = `${path}.lock`
+  const pause = new Int32Array(new SharedArrayBuffer(4))
+  for (let attempt = 0; attempt < 200; attempt++) {
+    let fd: number | undefined
+    try {
+      fd = openSync(lock, 'wx', 0o600)
+      writeSync(fd, `${process.pid}\n`)
+      try { body() } finally {
+        closeSync(fd)
+        fd = undefined
+        unlinkSync(lock)
+      }
+      return
+    } catch (error) {
+      if (fd !== undefined) {
+        closeSync(fd)
+        try { unlinkSync(lock) } catch { /* the lock is already gone */ }
+      }
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      let owner = ''
+      try { owner = readFileSync(lock, 'utf8') } catch { /* the holder already removed it */ }
+      const pid = Number(owner)
+      if (Number.isInteger(pid) && pid > 0) {
+        try { process.kill(pid, 0) } catch (alive) {
+          if ((alive as NodeJS.ErrnoException).code === 'ESRCH') {
+            try { unlinkSync(lock) } catch { /* the holder removed it */ }
+          }
+        }
+      }
+      Atomics.wait(pause, 0, 0, 10)
+    }
+  }
+  throw new Error('invalid classifier log')
+}
+
+export function openClassifierStore(dir: string, hooks?: { duringRepair?: () => void }) {
   const calls = join(dir, 'calls.jsonl')
   const switches = join(dir, 'switches.jsonl')
   function append(path: string, record: CallRecord | OutcomeRecord | SwitchRecord) {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
-    discardTornTail(path)
-    appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+    withLogLock(path, () => {
+      discardTornTail(path, hooks?.duringRepair)
+      appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 })
+    })
   }
   return {
     readCalls: () => read<CallRecord | OutcomeRecord>(calls),

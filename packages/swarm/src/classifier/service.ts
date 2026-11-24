@@ -37,12 +37,13 @@ export function createClassifier({ classifier, dir, config, now = () => new Date
       const { calls, outcomes } = callHistory(records, clear?.type === 'clear' ? clear.call_cursor ?? 0 : 0)
       const policy = policies[question], limit = policy.late_p1_rate_limit
       const [max, window] = rateLimit(limit)
-      const classified = new Set(calls.filter((c) => c.question === question && c.label !== null).map((c) => c.id))
-      // Replay windows in outcome order: a breach in any window survives until clear.
+      // Replay in call order. Outcome arrival order hides a breach in an earlier window.
       const history: number[] = []
       let costly = 0
-      for (const [id, outcome] of outcomes) {
-        if (!classified.has(id)) continue
+      for (const call of calls) {
+        if (call.question !== question || call.label === null) continue
+        const outcome = outcomes.get(call.id)
+        if (!outcome) continue
         const mistake = Number(outcome.costly)
         history.push(mistake)
         costly += mistake - (history[history.length - window - 1] ?? 0)

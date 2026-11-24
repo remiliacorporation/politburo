@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { Worker } from 'node:worker_threads'
 import {
   ClassifierInvalid, ClassifierUnavailable, createClassifier, fakeClassifier, runClassifierCli,
   typesafeClassifier, type Ask, type Classifier, type ClassifierInput,
@@ -153,6 +154,47 @@ test('appending after torn tails corrupts classifier logs or loses complete reco
   const clear = JSON.parse(switchesAfter.slice(switchesBefore.length))
   assert.equal(clear.type, 'clear')
   assert.equal(clear.reason, 'Reviewed the missed wake')
+})
+
+test('outcomes that arrive out of call order hide a breach in the last window', async (t) => {
+  const dir = tempDir(t)
+  const open = () => service(dir, dropClassifier, 'live', 'needs_spawner', '1/2')
+  const live = open()
+  const ids: string[] = []
+  for (const case_ref of ['review-a', 'review-b', 'review-c']) {
+    const { call_id } = await live.ask({ ...mail, case_ref })
+    assert.ok(call_id)
+    ids.push(call_id)
+  }
+  live.outcome(ids[2]!, { spawner_did: 'wake', costly: true })
+  live.outcome(ids[0]!, { spawner_did: 'drop', costly: false })
+  live.outcome(ids[1]!, { spawner_did: 'wake', costly: true })
+  rmSync(join(dir, 'switches.jsonl'), { force: true })
+
+  const decision = await open().ask({ ...mail, case_ref: 'review-next' })
+  assert.equal(decision.action, 'wake')
+  assert.equal(decision.reason, 'shadow')
+})
+
+test('two repairs of one torn tail cannot drop a record the other appended', async (t) => {
+  const dir = tempDir(t)
+  writeFileSync(join(dir, 'calls.jsonl'), '{"id":"kept"}\n{"id":')
+  const shared = new SharedArrayBuffer(8)
+  const view = new Int32Array(shared)
+  const workers = ['a', 'b'].map((id) => new Worker(new URL('./classifier-repair-worker.ts', import.meta.url), {
+    workerData: { dir, id, shared },
+  }))
+  try {
+    await Promise.all(workers.map((worker) => new Promise<void>((resolve, reject) => {
+      worker.once('error', reject)
+      worker.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`repair worker exited ${code}`)))
+    })))
+  } finally {
+    await Promise.all(workers.map((worker) => worker.terminate()))
+  }
+  assert.equal(Atomics.load(view, 1), 1)
+  const lines = readFileSync(join(dir, 'calls.jsonl'), 'utf8').trim().split('\n')
+  assert.deepEqual(lines.map((line) => JSON.parse(line).id ?? JSON.parse(line).call_id).sort(), ['a', 'b', 'kept'])
 })
 
 test('pre-clear outcomes cause one new costly outcome to breach again', async (t) => {
