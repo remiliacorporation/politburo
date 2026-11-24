@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { partyConfigReference } from '../src/config/reference.ts'
 
 type SchemaNode = {
   [keyword: string]: unknown
@@ -62,6 +63,11 @@ function schemaKeys(tree: SchemaNode, definitions: Record<string, SchemaNode>): 
   visit(tree, [])
   return keys
 }
+
+test('the checked-in party config reference matches partyConfigReference()', () => {
+  const doc = readFileSync(new URL('../docs/party-config-reference.md', import.meta.url), 'utf8')
+  assert.equal(doc, partyConfigReference())
+})
 
 test('the party config reference omits a schema key or its example fails validation', () => {
   const schema = JSON.parse(readFileSync(new URL('../src/config/schema.json', import.meta.url), 'utf8')) as SchemaNode

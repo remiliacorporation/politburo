@@ -105,13 +105,12 @@ rollback fix, the mirror CLI and overlap check, the sprite supervisor, spend cap
 sprite logs, and the score command. Do not build on them until each lands.
 
 Not built: the secretary service beyond drafts, the classifier questions, the claim rule,
-the spend limits, the beads adapter, a local walkthrough.
+the spend limits, the beads adapter, a local walkthrough, a party config reference.
 
 ## Where to begin
 
 1. Read [the merger design](swarm-merger.md) for the package boundary and the two kinds
-   of board, then [party config](swarm-party-config.md), the
-   [party config reference](../packages/swarm/docs/party-config-reference.md), and
+   of board, then [party config](swarm-party-config.md) and
    [work items](swarm-work-items.md). Read the others when you touch their area:
    [mail](swarm-mail.md), [secretaries](swarm-secretaries.md), [spend](swarm-spend.md),
    [lifecycle](swarm-lifecycle.md), [frontend](swarm-frontend.md),
