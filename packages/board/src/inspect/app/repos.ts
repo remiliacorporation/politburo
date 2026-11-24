@@ -22,12 +22,17 @@ export function repoOfChannel(path: string): string | null {
   return TAG.test(first) && !RESERVED.has(first) ? first : null
 }
 
-/** A task's repo: the tag of its work id (`rdn-81`), else its channel's. */
-export function repoOfTask(root: Pick<MessageView, 'channel' | 'labels'>): string | null {
+/**
+ * A task's repo: its work id's tag (`rdn-81`) when that tag is already a repo on the board, else
+ * its channel's. A work id alone does not invent one (`wp-1`, a one-character prefix, a prefix
+ * longer than a tag, `party`, `config`).
+ */
+export function repoOfTask(root: Pick<MessageView, 'channel' | 'labels'>, known: ReadonlySet<string>): string | null {
+  const fromChannel = repoOfChannel(root.channel)
   const id = root.labels['work.id']?.toLowerCase()
-  const match = id ? WORK_ID.exec(id) : null
-  if (match && !RESERVED.has(match[1]!)) return match[1]!
-  return repoOfChannel(root.channel)
+  const prefix = id ? WORK_ID.exec(id)?.[1] : undefined
+  if (prefix && TAG.test(prefix) && !RESERVED.has(prefix) && (prefix === fromChannel || known.has(prefix))) return prefix
+  return fromChannel
 }
 
 /** The repo list a `config/repos` message holds, or null when it isn't one. */

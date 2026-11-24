@@ -49,7 +49,7 @@ async function workBoard() {
     },
     client,
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
-    async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void) {
+    async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void, respond?: (request: Request) => Promise<Response | undefined> | Response | undefined) {
       browser.setViewport({ width: 1280, height: 900 })
       browser.setURL(`http://work-${++visit}.test${address.startsWith('/') ? address : `/work${address}`}`)
       const html = new DOMParser().parseFromString(shell({ token: 'inspector-test', base: '', profile: null, named: false }), 'text/html')
@@ -65,6 +65,8 @@ async function workBoard() {
         }
         if (isStream) streaming = true
         if (request.method !== 'GET' && request.method !== 'HEAD') writes.push(request.method)
+        const replaced = await respond?.(request)
+        if (replaced) return replaced
         const url = new URL(request.url)
         if (openTasksResponse && request.method === 'GET' && `${url.origin}${url.pathname}` === `${proxy}/tasks` && url.searchParams.get('state') === 'open') {
           return openTasksResponse()
@@ -1060,18 +1062,20 @@ it('filters the queue by repo and counts each repo in Health', async () => {
   })
 })
 
-it('puts a task held for a person under Needs you, with the question, and counts it in the sidebar', async () => {
+it('does not count a plain hold as Needs you', async () => {
   const { client, open } = await workBoard()
   const { task } = await client.tasks.create('rdn/backlog', { text: 'Decide the screenshot rule' })
   await client.tasks.block(task.id, 'Should logic-only PRs skip the screenshot?', { kind: 'needs_input' })
   await open('/work')
   await vi.waitFor(() => {
-    const needs = document.querySelector('#work-needs')!
-    expect(needs.textContent).toContain('Decide the screenshot rule')
-    expect(needs.textContent).toContain('Should logic-only PRs skip the screenshot?')
-    expect(headings()[0]).toBe('Needs you')
-    expect([...sidebar().querySelectorAll('a[href="/"] .count')].map((el) => el.textContent)).toEqual(['1'])
+    const waitingOn = document.querySelector('#work-queue-waiting')?.closest('section')
+    expect(waitingOn?.textContent).toContain('Decide the screenshot rule')
+    expect(waitingOn?.textContent).toContain('Should logic-only PRs skip the screenshot?')
+    expect(document.querySelector('#work-needs')?.textContent).toContain('nothing needs you')
+    expect(sidebar().querySelector('a[href="/"] .count')).toBeNull()
   })
+  visitScope('/')
+  await vi.waitFor(() => expect(document.querySelector('main')?.textContent).toContain('nothing needs anyone'))
 })
 
 function setField(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -1083,9 +1087,14 @@ function setField(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
 }
 
 it('starts a task for a person from the composer: held with the question, never ready for agents', async () => {
-  const { client, open } = await workBoard()
+  const { client, open, actor } = await workBoard()
   await client.createChannel('rdn/backlog')
-  await open('/c/rdn/backlog')
+  // Hold the block so a claim-next that is already waiting can take a task left ready.
+  await open('/c/rdn/backlog', undefined, undefined, async (request) => {
+    if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/block'))
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    return undefined
+  })
   const composer = await vi.waitFor(() => {
     const area = document.querySelector<HTMLTextAreaElement>('main textarea')
     expect(area).not.toBeNull()
@@ -1097,15 +1106,69 @@ it('starts a task for a person from the composer: held with the question, never 
   flushSync(() => button('needs, for').click())
   setField(document.querySelector<HTMLInputElement>('input[aria-label="ask a person"]')!, 'Keep the screenshot rule for logic-only PRs?')
   setField(composer, 'Decide the screenshot rule')
+  const other = await actor('u_reader')
+  const stop = new AbortController()
+  let taken: string | null = null
+  const waiting = other.tasks.claim({ channel: 'rdn/backlog', wait: 30 }, { signal: stop.signal }).then(
+    (claimed) => { taken = claimed ? claimed.task.id : 'none' },
+    () => { taken = 'stopped' },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 100))
   flushSync(() => button('start task').click())
 
   visitScope('/work')
   await vi.waitFor(() => {
-    const needs = document.querySelector('#work-needs')!
-    expect(needs.textContent).toContain('Decide the screenshot rule')
-    expect(needs.textContent).toContain('Keep the screenshot rule for logic-only PRs?')
+    const waitingOn = document.querySelector('#work-queue-waiting')?.closest('section')
+    expect(waitingOn?.textContent).toContain('Decide the screenshot rule')
+    expect(waitingOn?.textContent).toContain('Keep the screenshot rule for logic-only PRs?')
+    expect(document.querySelector('#work-needs')?.textContent).toContain('nothing needs you')
   })
-  // On the board itself, not just on the page.
+  // On the board itself, not just on the page. Claim-next was already waiting and did not take it.
   const page = await client.tasks.list({ channel: 'rdn/backlog' })
   expect(page.tasks.map(({ message }) => [message.task?.state, message.task?.blocked?.kind])).toEqual([['blocked', 'needs_input']])
+  expect(taken).toBeNull()
+  stop.abort()
+  await waiting
+})
+
+it('shows an ask-a-person failure on the post and does not leave the task ready', async () => {
+  const { client, open } = await workBoard()
+  await client.createChannel('rdn/backlog')
+  await open('/c/rdn/backlog', undefined, undefined, (request) => {
+    if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/block'))
+      return Response.json({ error: { code: 'task_claimed', message: 'claimed' } }, { status: 409 })
+    return undefined
+  })
+  const composer = await vi.waitFor(() => {
+    const area = document.querySelector<HTMLTextAreaElement>('main textarea')
+    expect(area).not.toBeNull()
+    return area!
+  })
+  const button = (words: string) => [...document.querySelectorAll<HTMLButtonElement>('main button')]
+    .find((b) => b.textContent?.trim() === words || b.title === words)!
+  flushSync(() => button('start it as a task').click())
+  flushSync(() => button('needs, for').click())
+  setField(document.querySelector<HTMLInputElement>('input[aria-label="ask a person"]')!, 'Keep the screenshot rule?')
+  setField(composer, 'Decide the screenshot rule')
+  flushSync(() => button('start task').click())
+  await vi.waitFor(() => expect(document.querySelector('.message.pending.failed')?.textContent).toContain('someone holds this task'))
+  const openTasks = await client.tasks.list({ channel: 'rdn/backlog' })
+  expect(openTasks.tasks).toEqual([])
+  const page = await client.tasks.list({ channel: 'rdn/backlog', state: 'failed' })
+  expect(page.tasks.map(({ message }) => message.task?.state)).toEqual(['failed'])
+})
+
+it('does not show a work id as a repo the board does not list', async () => {
+  const { client, open } = await workBoard()
+  await client.tasks.create('work', { text: 'Package task', labels: { 'work.id': 'wp-1' } })
+  await client.tasks.create('rdn', { text: 'Bare channel' })
+  await client.tasks.create('rdn/backlog', { text: 'Backlog item', labels: { 'work.id': 'abcdefghijklmnopq-2' } })
+  await open('/work')
+  await vi.waitFor(() => {
+    expect(row('Package task').querySelector('.repo')?.textContent).toBe('no repo')
+    expect(row('Bare channel').querySelector('.repo')?.textContent).toBe('no repo')
+    expect(row('Backlog item').querySelector('.repo')?.textContent).toBe('rdn')
+    expect(sidebar().querySelector('section[aria-label="repo wp"]')).toBeNull()
+    expect(repoEntry('rdn')?.querySelector('a[href="/r/rdn"] .count')?.textContent).toBe('0 · 0 · 1')
+  })
 })

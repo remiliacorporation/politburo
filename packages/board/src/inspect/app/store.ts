@@ -241,6 +241,13 @@ export function landed<Post extends { channel: string; re: string | null; text: 
 }
 // #endregion
 
+/** A post that must start held, until the message is held for that same reason. */
+function holdOpen(post: Pending, message: MessageView): boolean {
+  const hold = post.task?.hold
+  if (!hold) return false
+  return !(message.task?.state === 'blocked' && message.task.blocked?.reason === hold)
+}
+
 /** When a listed thread was last active: its latest reply, or its root. */
 function activity(state: State, root: string, row: Row): Pick<MessageView, 'createdAt' | 'id'> {
   return (row.last === null ? undefined : state.messages[row.last]) ?? state.messages[root] ?? { createdAt: '', id: root }
@@ -351,7 +358,9 @@ export function applyEvent(state: State, event: BoardEventView, generation = 0):
   if (event.type === 'message.posted' && event.message) {
     next = listed(next, event.message)
     // One to send later isn't on its way as a message: nothing that lands now stands for it.
-    const post = landed(next.pending.filter((pending) => pending.later === undefined), event.message, next.me?.actor ?? '')
+    // A task that must start held stays on the post until the message is held for that reason, so a
+    // create that lands first cannot erase the post before the hold, or its refusal, is known.
+    const post = landed(next.pending.filter((pending) => pending.later === undefined && !holdOpen(pending, event.message!)), event.message, next.me?.actor ?? '')
     if (post) next = { ...next, pending: next.pending.filter((p) => p !== post) }
     const { channel, re } = event.message
     const known = next.channels[channel]

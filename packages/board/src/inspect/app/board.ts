@@ -503,6 +503,31 @@ const setLabels = (id: string, set: Record<string, string>, unset: string[]) => 
 const outgoing = new Map<string, File[]>()
 
 /**
+ * Starts a task. With a hold, claims it in the create (so claim-next cannot take it) and then
+ * blocks with that claim. Creating a task already held is not in the API. A refused claim falls
+ * back to a plain create. If the hold does not land, the task is ended rather than left ready.
+ */
+async function startHeld(channel: string, options: PostOptions & { id: string; needs: string[]; for: string | null }, hold: string | undefined): Promise<MessageView> {
+  if (!hold) return (await team.tasks.create(channel, options)).task
+  let made: Awaited<ReturnType<typeof team.tasks.create>>
+  try {
+    made = await team.tasks.create(channel, { ...options, claim: true })
+  } catch (error) {
+    if (!(error instanceof BoardError && error.code === 'forbidden')) throw error
+    made = await team.tasks.create(channel, options)
+  }
+  try {
+    return made.claim
+      ? await made.claim.block(hold, { kind: 'needs_input' })
+      : await team.tasks.block(made.task.id, hold, { kind: 'needs_input' })
+  } catch (error) {
+    if (made.claim) await made.claim.fail('the hold did not land').catch(() => undefined)
+    else await team.tasks.cancel(made.task.id, 'the hold did not land').catch(() => undefined)
+    throw error
+  }
+}
+
+/**
  * Shows a post at once; the board's answer replaces it. Files upload first. One to send later is
  * kept the same way until the board has its schedule: a refusal stays as the post with why, and
  * retry schedules it again, so nothing typed is lost.
@@ -549,11 +574,11 @@ export async function send(
     // The same `id` never posts twice, so a retry is safe.
     const options = { ...content, id: key }
     // A thread that starts as a task is one write: its root, files and all, and what makes it a task.
-    let sent = post.task
-      ? (await team.tasks.create(post.channel, { ...options, needs: post.task.needs, for: post.task.for })).task
+    // Asking a person claims it in that write, then holds it: nothing is ready for claim-next in between.
+    // The API has no create-already-held. If the hold does not land, the task is ended and the post keeps why.
+    const sent = post.task
+      ? await startHeld(post.channel, { ...options, needs: post.task.needs, for: post.task.for }, post.task.hold)
       : await write(post.re === null ? { channel: post.channel } : { re: post.re }, options)
-    // A task for a person is held for them as it starts: agents never see it as ready to claim.
-    if (post.task?.hold) sent = await team.tasks.block(sent.id, post.task.hold, { kind: 'needs_input' })
     outgoing.delete(key)
     set((s) => as === identity ? store.sent(s, key, sent) : { ...s, pending: s.pending.filter((p) => p.key !== key) })
   } catch (error) {

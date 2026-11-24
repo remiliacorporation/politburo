@@ -6,7 +6,7 @@ import * as board from './board.ts'
 import { toast } from './chrome.ts'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Avatar } from './message.tsx'
-import { Link, useLocation, type Route } from './nav.tsx'
+import { Link, useLocation, useNow, type Route } from './nav.tsx'
 import { openTasks, type State } from './store.ts'
 import { ContextMenuArea, MenuItem } from './ui.tsx'
 import { boardWords, shownName } from './words.ts'
@@ -72,10 +72,11 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
   const { params } = useLocation()
   const records = board.swarmRecords()
   const viewer = useMemo(() => state.openTaskMe && board.viewerOf(state.openTaskMe), [state.openTaskMe])
-  // Counts per repo, from the same rules as the work board.
+  const now = useNow(state.openTaskRoots)
+  // Counts per repo, from the same rules as the work board. A tag the board does not list is not a row.
   const counts = useMemo(() => {
     const out = new Map<string | null, { needs: number; running: number; pull: number }>()
-    for (const row of projectWork(state, records, viewer, Date.now()).rows) {
+    for (const row of projectWork(state, records, viewer, now).rows) {
       const entry = out.get(row.repo) ?? { needs: 0, running: 0, pull: 0 }
       if (row.group === 'needs') entry.needs++
       else if (row.group === 'running') entry.running++
@@ -83,8 +84,10 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
       out.set(row.repo, entry)
     }
     return out
-  }, [state.openTaskRoots, state.attention, viewer, records])
-  const needsAll = [...counts.values()].reduce((sum, { needs }) => sum + needs, 0)
+  }, [state.openTaskRoots, state.attention, state.messages, state.channels, viewer, records, now])
+  const shown = new Set<string | null>(repos.map(({ tag }) => tag))
+  shown.add(null)
+  const needsAll = [...counts].reduce((sum, [tag, { needs }]) => sum + (shown.has(tag) ? needs : 0), 0)
   const repoParty = repoPartyOf(records, current.view === 'party' ? current.party : params.get('party'))
   const repoView = labelsOf(records, repoParty, where.name).repoView
   const copy = (text: string) => void navigator.clipboard.writeText(text).then(() => toast(`copied ${text}`))

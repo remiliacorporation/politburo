@@ -1,7 +1,7 @@
 import { DEFAULT_TASK_PRIORITY, priorityRank, type TaskPriority } from '../../contract/schemas.ts'
 import { needsAttentionAnswer } from './attention-store.ts'
 import { byClaim, claimable, lapsed } from './claim-order.ts'
-import { repoOfTask } from './repos.ts'
+import { listedRepos, repoOfChannel, repoOfTask } from './repos.ts'
 import { byWritten, initialState, isTask, type State, type TaskRoot, type Viewer } from './store.ts'
 import { ago, firstLine, until } from './words.ts'
 
@@ -87,8 +87,6 @@ function classify(root: TaskRoot, obs: Observation | null | undefined, viewer: V
   const expired = lapsed(root, now)
   const held = task.state === 'blocked' || !!task.parked
   if (task.state === 'completed' || task.state === 'failed' || task.state === 'canceled') return ['done', task.state]
-  if (task.state === 'blocked' && (task.blocked?.kind === 'needs_input' || task.blocked?.kind === 'awaiting_approval'))
-    return ['needs', task.blocked.reason || (task.blocked.kind === 'needs_input' ? 'input needed' : 'approval needed')]
   if (needsAttentionAnswer(state, root)) return ['needs', 'attention answer needed']
   if (contract === 'invalid' || contract === 'missing') return ['needs', `contract ${contract}`]
   if (obs?.humanRequest) return ['needs', 'human decision requested']
@@ -156,8 +154,24 @@ export function labelsOf(records: SwarmRecords | null, partyId: string | null, b
   }
 }
 
+/** Tags the board already shows as repos: a channel prefix, or a name in `config/repos`. */
+function knownRepoTags(state: State): Set<string> {
+  const tags = new Set<string>()
+  const add = (path: string | undefined) => {
+    if (!path) return
+    const tag = repoOfChannel(path)
+    if (tag) tags.add(tag)
+  }
+  for (const channel of Object.values(state.channels)) add(channel.path)
+  for (const root of Object.values(state.openTaskRoots)) add(root.channel)
+  for (const message of Object.values(state.messages)) add(message.channel)
+  for (const repo of listedRepos(state.messages) ?? []) tags.add(repo.tag)
+  return tags
+}
+
 export function projectWork(state: State, records: SwarmRecords | null, viewer: Viewer | null, now: number) {
   const buckets = new Map<WorkGroup, WorkRow[]>(GROUPS.map(([group]) => [group, []]))
+  const repos = knownRepoTags(state)
   for (const root of Object.values(state.openTaskRoots)) {
     if (!isTask(root) || root.deleted) continue
     const id = workIdOf(root)
@@ -170,7 +184,7 @@ export function projectWork(state: State, records: SwarmRecords | null, viewer: 
       root, group, reason,
       workId: id ?? `#${root.id}`,
       title: firstLine(root.text),
-      repo: repoOfTask(root),
+      repo: repoOfTask(root, repos),
       priority: root.task.priority ?? DEFAULT_TASK_PRIORITY,
       party: partyId ? { id: partyId, name: party?.name ?? partyId, colour: party?.colour ?? '' } : null,
       claimant: root.task.claim?.actor ?? null,
