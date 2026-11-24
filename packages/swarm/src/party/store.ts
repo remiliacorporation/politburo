@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { parseDocument } from 'yaml'
 import { emptyRegistry, RegistryError, validateRegistry, type Party, type Registry, type Role } from './model.ts'
 import { principalOf } from './principal.ts'
 
@@ -9,7 +10,14 @@ function normalizedEmail(email: string): string {
   return email.toLowerCase()
 }
 
+function rejectSymlink(file: string): void {
+  if (lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new RegistryError('', 'registry path must not be a symlink')
+  }
+}
+
 export function loadRegistry(file: string): Registry {
+  rejectSymlink(file)
   let text: string
   try {
     text = readFileSync(file, 'utf8')
@@ -23,10 +31,14 @@ export function loadRegistry(file: string): Registry {
   } catch {
     throw new RegistryError('', 'invalid registry JSON')
   }
+  // Keep the JSON-only format, but check keys with the same parser as config.
+  if (parseDocument(text, { uniqueKeys: true }).errors.some(({ code }) => code === 'DUPLICATE_KEY')) {
+    throw new RegistryError('', 'duplicate key in registry JSON')
+  }
   return validateRegistry(value)
 }
 
-export function saveRegistry(file: string, reg: Registry): void {
+function saveRegistry(file: string, reg: Registry): void {
   const text = `${JSON.stringify(validateRegistry(reg), null, 2)}\n`
   const temp = join(dirname(file), `.parties-${randomUUID()}.tmp`)
   const fd = openSync(temp, 'wx', 0o600)
@@ -44,6 +56,7 @@ export function saveRegistry(file: string, reg: Registry): void {
 }
 
 export function updateRegistry(file: string, mutate: (reg: Registry) => Registry): void {
+  rejectSymlink(file)
   const lock = `${file}.lock`
   const deadline = performance.now() + 5_000
   const wait = new Int32Array(new SharedArrayBuffer(4))

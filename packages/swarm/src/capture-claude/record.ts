@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { buckets, type RequestFact } from './facts.ts'
 import type { Resolved } from './reconcile.ts'
 
@@ -49,27 +49,61 @@ function conflictDedupeKey(key: string, source: string, tokens: SpendRecord['tok
   return `${key}:conflict:${source}:${tokenFingerprint(tokens)}`
 }
 
-const chainRoot = new Map<string, string>()
-const chainHead = new Map<string, string>()
-const chainKeys = new Map<string, Set<string>>()
+type Chain = { head: string; keys: Set<string> }
+type Pending = { record_id: string; dedupe_key: string }
+
+// Committed heads are records that landed in a spend file. Pending entries only
+// give the next unwritten successor its revises pointer.
+const committed = new Map<string, Chain>()
+const rootOf = new Map<string, string>()
+const staged = new Map<string, Pending[]>()
+
+export function noteSpendRecord(record: SpendRecord) {
+  if (typeof record.record_id !== 'string' || typeof record.dedupe_key !== 'string') return
+  const revises = record.revises ?? null
+  if (!revises) {
+    rootOf.set(record.record_id, record.record_id)
+    if (!committed.has(record.record_id)) committed.set(record.record_id, { head: record.record_id, keys: new Set() })
+    return
+  }
+  const root = rootOf.get(revises) ?? rootOf.get(record.record_id) ?? revises
+  rootOf.set(revises, root)
+  rootOf.set(record.record_id, root)
+  const state = committed.get(root) ?? { head: root, keys: new Set<string>() }
+  committed.set(root, state)
+  state.keys.add(record.dedupe_key)
+  if (state.head === revises) state.head = record.record_id
+  const pending = staged.get(root)
+  const index = pending?.findIndex((item) => item.record_id === record.record_id) ?? -1
+  if (pending && index >= 0) pending.splice(index, 1)
+}
+
+export function rollbackSpend(record: SpendRecord) {
+  if (typeof record.record_id !== 'string') return
+  for (const pending of staged.values()) {
+    const index = pending.findIndex((item) => item.record_id === record.record_id)
+    if (index >= 0) pending.splice(index)
+  }
+}
 
 export function conflictSuccessor(original: { record_id: string }, record: SpendRecord, actor: string): SpendRecord {
   const source = record.source === 'claude_local_request' ? 'otlp'
     : record.source === 'claude_local_transcript' ? 'transcript' : record.source
-  const root = chainRoot.get(original.record_id) ?? original.record_id
-  const head = chainHead.get(root) ?? root
+  const root = rootOf.get(original.record_id) ?? original.record_id
+  const state = committed.get(root)
+  const pending = staged.get(root) ?? []
+  const head = pending.at(-1)?.record_id ?? state?.head ?? root
   const dedupe_key = conflictDedupeKey(record.dedupe_key, source, record.tokens)
   const successor: SpendRecord = {
     ...record, dedupe_key, revises: head, actor, reason: 'conflicting report',
     coverage: { ...record.coverage, state: 'conflict' },
   }
-  const seen = chainKeys.get(root) ?? new Set<string>()
-  if (!seen.has(dedupe_key)) {
-    seen.add(dedupe_key)
-    chainKeys.set(root, seen)
-    chainHead.set(root, successor.record_id)
-    chainRoot.set(original.record_id, root)
-    chainRoot.set(successor.record_id, root)
+  const known = (state?.keys.has(dedupe_key) ?? false) || pending.some((item) => item.dedupe_key === dedupe_key)
+  if (!known) {
+    rootOf.set(original.record_id, root)
+    rootOf.set(successor.record_id, root)
+    pending.push({ record_id: successor.record_id, dedupe_key })
+    staged.set(root, pending)
   }
   return successor
 }
@@ -84,8 +118,17 @@ export function sessionFromEvidenceRef(ref: string): string | null {
   return session.replace(/%25|%2F/g, (escape) => escape === '%25' ? '%' : '/')
 }
 
+// Position in this batch plus the payload, so a replay hashes the same and a later anonymous event does not.
+function gapIdentity(fact: RequestFact): string {
+  const body = JSON.stringify([
+    fact.nativeSession, fact.model, fact.occurred, fact.gap,
+    buckets.map((key) => fact.tokens[key]),
+  ])
+  return `gap:${createHash('sha256').update(body).digest('hex')}`
+}
+
 export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelope | null, now: Date): SpendRecord {
-  const id = fact.gap !== undefined ? `gap:${fact.gap}`
+  const id = fact.gap !== undefined ? gapIdentity(fact)
     : [fact.requestId ?? '', fact.responseId ?? ''].map(encodeURIComponent).join(':')
   const eventKey = `${encodeURIComponent(fact.nativeSession)}:${id}`
   const dedupeKey = `claude:${eventKey}`

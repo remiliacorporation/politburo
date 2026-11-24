@@ -1,5 +1,5 @@
 import { appendFileSync, closeSync, openSync, readSync, statSync, truncateSync } from 'node:fs'
-import { tokenFingerprint, type SpendRecord } from './record.ts'
+import { noteSpendRecord, rollbackSpend, tokenFingerprint, type SpendRecord } from './record.ts'
 
 export interface SpendWriter {
   append(record: SpendRecord): 'written' | 'duplicate' | 'differs'
@@ -48,7 +48,9 @@ export function jsonlWriter(path: string): SpendWriter {
     lines.forEach((line, i) => {
       // Another writer may have separated a previously observed torn tail.
       if (i === 0 && tail.length && !tailRecord && bytes[0] === 10) return
-      remember(parse(line, !remainder.length && i === lines.length - 1))
+      const record = parse(line, !remainder.length && i === lines.length - 1)
+      remember(record)
+      if (record) noteSpendRecord(record)
     })
     tailRecord = parse(remainder.toString(), true)
     tail = Buffer.from(remainder)
@@ -78,13 +80,18 @@ export function jsonlWriter(path: string): SpendWriter {
           tail = Buffer.alloc(0)
         }
         const prior = lookup(record.dedupe_key)
-        if (prior) return prior.fingerprint === tokenFingerprint(record.tokens) ? 'duplicate' : 'differs'
+        if (prior) {
+          rollbackSpend(record)
+          return prior.fingerprint === tokenFingerprint(record.tokens) ? 'duplicate' : 'differs'
+        }
         const line = `${tail.length || failed ? '\n' : ''}${JSON.stringify(record)}\n`
         appendFileSync(path, line, { flush: true })
         failed = false
+        noteSpendRecord(record)
         return 'written'
       } catch (error) {
         failed = true
+        rollbackSpend(record)
         throw error
       }
     },
