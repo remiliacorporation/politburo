@@ -52,18 +52,6 @@ export function checkLeases(history: readonly Batch[]) {
   return violations
 }
 
-/** This fixture has one relevant grant and no regrant or alternative authority. */
-export function checkRevocation(history: readonly Batch[], grant: string, scoper: string) {
-  const violations: string[] = []
-  let revoked = false
-  for (const { facts } of history) for (const { type, id, principal } of facts) {
-    if (type === 'grant.deleted' && id === grant) revoked = true
-    if (revoked && type.startsWith('task.') && principal === scoper)
-      violations.push(`I3 ${type} #${id} by the scoper landed after grant.deleted`)
-  }
-  return violations
-}
-
 export function checkPrerequisites(history: readonly Batch[]) {
   const violations: string[] = []
   const tasks = new Map<string, { needs: string[]; state: string; stage?: string }>()
