@@ -182,23 +182,22 @@ installer finds out before go-live.
    `FileVault is On.` or `FileVault is Off.`; the exact wording is to be
    confirmed on the host. Record the answer in the acceptance table.
 
-**Case 1, FileVault off.** The data volume is not locked at boot. After a power
-loss, with `autorestart` set as in section 4, the Mac starts and LaunchDaemons
-start with no login. The services come back on their own. Afterwards, check
-that each service is up and that each board answers on its port
-([Health](#10-health)).
+**Case 1, FileVault off. [host: not run]** Expected: the data volume is not
+locked at boot. After a power loss, with `autorestart` set as in section 4,
+the Mac and its LaunchDaemons are expected to start without a login. Confirm on
+the host that each service comes back unaided and that each board answers on
+its port ([Health](#10-health)).
 
-**Case 2, FileVault on.** A boot without a login cannot unlock the disk. After
-a power loss the Mac stops at the unlock screen. No service comes back until a
-person unlocks it. Someone enters an authorized account's password at the
-machine, or the disk is unlocked remotely. Whether this hardware and macOS
-version support a remote unlock is **UNKNOWN**; the installer checks Apple's
-documentation for this exact model and OS. This runbook does not claim any
-remote-unlock method works. Until the unlock, the boards, the relay and every
-other service are down, mail to them is not delivered, and backups do not run.
-A planned restart can skip the unlock once with `sudo fdesetup authrestart`.
-That is for planned restarts, not for power loss, and is to be confirmed on this
-macOS version.
+**Case 2, FileVault on. [host: not run]** Expected: after a power loss, the Mac
+waits at the unlock screen until someone unlocks the disk with an authorized
+account's password. Confirm on the host whether the boards, relay, and other
+services stay down, mail to them goes undelivered, and backups do not run
+until unlock. Whether this hardware and macOS version support remote unlock is
+**UNKNOWN**; the installer checks Apple's documentation for this exact model
+and OS. This runbook does not claim any remote-unlock method works. For a
+planned restart, the expectation is that `sudo fdesetup authrestart` can skip
+the unlock once. Confirm that on this host and macOS version; do not rely on
+it for power loss.
 
 What to do:
 
@@ -276,11 +275,12 @@ the same user on the VM, not across macOS users.
 
 The script snapshots each SQLite file first with the online backup API. Then
 it copies attachments, writes `MANIFEST.json` with SHA-256 hashes and a random
-backup token, and atomically renames `.partial-...` to `backup-...`. The per-board
-index `<out>/.backup-index.json` records each published backup's name, token,
-and directory device and inode for retention. A blob is written before its
-referencing message, so the later blob copy covers references in the earlier
-DB snapshot.
+backup token, and atomically renames `.partial-...` to `backup-...`. Attachment
+directories are created only when a file is copied into them, so backups contain
+no empty directories. The per-board index `<out>/.backup-index.json` records each
+published backup's name, token, directory device and inode, and the SHA-256
+digest of the exact manifest bytes. A blob is written before its referencing
+message, so the later blob copy covers references in the earlier DB snapshot.
 
 Ordering, checked in the code: the CLI awaits an upload before it posts. The
 upload awaits the blob and its metadata, and `fsBlob.put` awaits each file and
@@ -298,9 +298,9 @@ turns. A second run waits up to 10 minutes, then fails with
 `another backup of this board is running` if the lock is still held.
 
 The script also records the board directory's device and inode when it starts.
-It checks them again after the database snapshots and just before publishing. If
-the path no longer names the same directory, for example the directory was moved
-aside and a fresh board started there, the backup fails with
+After the database snapshots and just before publishing, it checks those values
+again and resolves the original `--dir` path again. If the directory was
+replaced or a `--dir` symlink now points somewhere else, the backup fails with
 `board directory changed during the backup; retry` and publishes nothing.
 
 Do not start or stop a board while its backup runs. The script compares the
@@ -333,17 +333,21 @@ succeed. Monitor time since the last successful published backup, not merely
 the last job start.
 
 `--keep N` keeps the newest N eligible backups. A candidate must be in the
-index and match its manifest token and directory device and inode. Pruning never
-deletes in place. The script first moves the candidate to a private
-`.pruning-<random>` name inside `<out>` and verifies it completely: the files
-under `files/` are exactly the manifest's files with matching sizes and SHA-256
-hashes, and nothing else is in the directory. It deletes the directory only if
-it verifies. If it does not, the script moves it back (or leaves it under its
-`.pruning-` name if the original name is taken), prints a warning, and deletes
-nothing. A `.pruning-*` directory left by a crash is never deleted by the
-script; a person removes it. A copied, recreated or edited directory stays even
-at the original name. Unindexed backups and older entries without directory
-identity require manual removal. Without `--keep`, nothing is pruned.
+index and have a recorded manifest digest. Pruning never deletes in place. It
+moves a candidate to a private `.pruning-<random>` name inside `<out>` and checks
+the manifest token, directory device and inode, and digest against the index.
+It also checks that `files/` contains exactly the manifest's files with matching
+sizes and SHA-256 hashes, and that there are no other entries. If verification
+fails, it prints a warning and moves the directory back without deleting
+anything. Rollback never overwrites an existing directory; if the name is taken,
+the warning names the quarantine it left behind.
+
+Deletion unlinks only verified files and removes verified directories from the
+bottom up, never recursively. If an extra file appears after verification, it
+survives and the script warns where the quarantine remains. A person removes
+leftover `.pruning-*` directories. Copied, recreated or edited backups are not
+pruned. Unindexed backups and older entries without directory identity or a
+manifest digest require manual removal. Without `--keep`, nothing is pruned.
 
 The index and the verification protect against stray and stale directories. They
 do not protect against someone with write access to `<out>`, who can delete
