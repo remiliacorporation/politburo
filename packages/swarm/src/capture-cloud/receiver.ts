@@ -101,7 +101,7 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
       // The bearer authorizes one envelope. Another session id in the batch is not that credential.
       if (!otlpEntry?.session || sessionId !== otlpEntry.session) return [404, 'unknown_envelope']
       return accept(claim, otlpEntry, received, `session:${sessionId}`, limited)
-    }, otlpEntry?.session)
+    }, otlpEntry?.session ?? undefined)
     respond(req, res, result, true)
   }
 
