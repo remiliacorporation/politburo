@@ -25,8 +25,8 @@ export type ResolvedActor = {
 export function claimsOf(headers: Headers): Claims {
   const { profile, avatar } = profileOf(headers.get('x-board-profile'))
   // What clients sent before, which released `vb` still does and which changes no one's identity, is read by
-  // nothing: a person's picture (`x-board-avatar`), whom an avatar comes to only through a profile's header
-  // now, a coding agent's session (`x-board-session`), which is never kept, and a handle and name
+  // nothing: a person's picture (`x-board-avatar`), a coding agent's session (`x-board-session`),
+  // which is never kept, and a handle and name
   // (`x-board-handle`, `x-board-name`), which come from what verified the caller.
   // Set by a proxy that holds the credential (Pi's sandbox); it only narrows.
   // The old name, refused rather than ignored: ignoring it would give a proxy that still sends it the token's whole access.
@@ -70,7 +70,7 @@ export function resolveActor(principal: Principal, claims: Claims): ResolvedActo
     kind: profile === null ? principal.kind : 'agent',
     handle: profile === null ? principal.handle : `${principal.handle}/${profile}`,
     name: claims.profile ?? (via.environment !== null && via.environment !== 'production' ? `${via.name} (${via.environment})` : principal.handle),
-    avatar: claims.avatar,
+    avatar: profile === null ? principal.avatar ?? null : claims.avatar,
     ...(profile === null ? {} : { via }),
   }
   return {

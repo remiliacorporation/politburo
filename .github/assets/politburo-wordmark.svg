@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="550" height="124" viewBox="0 0 550 124" role="img" aria-labelledby="title">
+  <title id="title">POLITBURO</title>
+  <defs>
+    <!-- Hand-drawn faces, in reading order. The final O shares the first O's geometry. -->
+    <g id="faces" fill-rule="evenodd">
+      <path id="letter-p" transform="translate(6 6)" d="M0 0H43L54 11V47L43 58H20V89L13 96H0ZM20 18V40H32L35 37V21L32 18Z"/>
+      <path id="letter-o" transform="translate(67 6)" d="M12 0H43L55 12V82L41 96H12L0 84V12ZM23 18L19 22V74L23 78H32L36 74V22L32 18Z"/>
+      <path id="letter-l" transform="translate(129 6)" d="M0 0H20V77H50V87L41 96H0Z"/>
+      <path id="letter-i" transform="translate(186 6)" d="M7 0H29V16H24V80H29V89L22 96H0V80H5V16H0V7Z"/>
+      <path id="letter-t" transform="translate(222 6)" d="M8 0H57V19H38V88L30 96H18V19H0V8Z"/>
+      <path id="letter-b" transform="translate(286 6)" d="M0 0H43L53 10V37L45 45L55 55V83L42 96H0ZM19 18V36H31L34 33V21L31 18ZM19 54V78H32L36 74V58L32 54Z"/>
+      <path id="letter-u" transform="translate(348 6)" d="M0 0H19V74L23 78H32L36 74V0H55V82L41 96H12L0 84Z"/>
+      <path id="letter-r" transform="translate(410 6)" d="M0 0H44L55 11V45L44 56L57 96H36L24 58H19V89L12 96H0ZM19 18V40H33L36 37V21L33 18Z"/>
+      <use href="#letter-o" x="407"/>
+    </g>
+    <linearGradient id="depth" x1="0" y1="6" x2="0" y2="115" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#601f32"/>
+      <stop offset="1" stop-color="#291018"/>
+    </linearGradient>
+  </defs>
+  <g stroke-linejoin="round">
+    <use href="#faces" x="13" y="15" fill="#2b111a" stroke="#af8951" stroke-width="2"/>
+    <g fill="url(#depth)" stroke="url(#depth)" stroke-width="3">
+      <use href="#faces" x="11" y="13"/>
+      <use href="#faces" x="9" y="11"/>
+      <use href="#faces" x="7" y="9"/>
+      <use href="#faces" x="5" y="7"/>
+      <use href="#faces" x="3" y="5"/>
+      <use href="#faces" x="1" y="3"/>
+    </g>
+    <use href="#faces" fill="#fff4de" stroke="#411622" stroke-width="2.5"/>
+  </g>
+</svg>

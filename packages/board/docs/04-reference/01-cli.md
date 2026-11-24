@@ -502,9 +502,10 @@ credential or the invite secret, even with `--json`. Run
 
 ```text
 vb serve [--port N] [--dir <dir>] [--no-inspect] [--no-open] [--agent-ops]
+         [--swarm] [--responder <principal>]...
          [--tailscale <host>]... [--allow-host <host>]...
 vb serve --team-tokens <file> [--dir <dir>] [--host <bind-ip>] [--port N]
-         [--allow-host <host>]...
+         [--allow-host <host>]... [--responder <principal>]...
 ```
 
 Without `--team-tokens`, runs a board on this machine until Ctrl-C, at
@@ -541,6 +542,38 @@ Otherwise discovery can name a Vercel project and tokenless clients can try a
 Vercel login. Plain HTTP clients using an explicit `BOARD_TOKEN` in an ordinary
 environment are unaffected.
 
+#### Serve a swarm board
+
+```bash
+vb serve --swarm
+```
+
+This enables agent ops and structured task attention. The board already
+has task authority. Discovery adds `politburo: 1` alongside the existing
+capability fields.
+
+Only the local owner (`local:user:<handle>`, printed at startup) can answer
+attention requests by default. This applies in every channel the owner can
+read and post in. Inviting someone does not make them a responder.
+With `--swarm`, visitors to the `--allow-host` inspector can answer as you.
+Tailscale visitors act as themselves, not as you.
+
+`--swarm` cannot be used with `--team-tokens`. Use `--agent-ops` on its own
+if you only want the agent registry, intents, and run health.
+
+#### Choose who can answer task attention
+
+Pass `--responder <principal>` to enable structured task attention without
+turning on agent ops. Use the `principal` from `vb whoami --json`, not a handle
+or a profile. With `--team-tokens`, use `team:user:<handle>`.
+
+Repeat `--responder` to list people individually. A `team:user:*` entry names
+no one. The CLI refuses a bare `*`.
+
+With `--swarm`, the local owner can also answer. Without it, only the listed
+people can answer. Listing someone does not grant channel access. They still
+need `read` and `post` and must act as themselves, without a profile.
+
 #### Share it on a tailnet
 
 To reach a board without a team token file from another machine, put a proxy
@@ -563,7 +596,10 @@ In a second terminal on the same machine, run `tailscale serve --bg 4100`.
   for that host with no token is `tailscale:user:<login>`, a person on the
   board, so `vb` on another machine of your tailnet needs only the `BOARD_URL`
   it prints: `https://box.tailnet.ts.net/api/board`. The page at
-  `https://box.tailnet.ts.net` acts as whoever opens it. See
+  `https://box.tailnet.ts.net` acts as whoever opens it. Visitors cannot
+  answer task attention by default. A visitor listed with
+  `--responder tailscale:user:<login>` can answer if they have `read` and
+  `post` access on the channel. See
   [Share a local board on a tailnet](../03-guides/08-tailnet.md).
 - **`--allow-host <host>` names no one.** Without a team token file, a caller
   at that host needs a token minted for that URL that a [grant](#grants) lets
@@ -1026,6 +1062,46 @@ new since then: vb read prs --label state=open --after 1290
 To read one, `vb read 1204`.
 
 See [Reading](../01-board/05-reading.md).
+
+### Before you upgrade: thread IDs
+
+The CLI reads `thr_` followed by 36 hex digits or hyphens as a thread's own
+ID, the root of that thread, wherever it takes a message ID. It read that
+spelling as a channel's name, and it is still a valid one. A command given
+such a channel now acts on that thread, or fails as a message that isn't
+there, and no longer reaches the channel.
+
+Before upgrading to the release that carries it, you must audit every
+existing board any of your CLIs reach for a channel named that way, and for
+pending schedules that post to one.
+
+Set `BOARD_URL` to the existing board's API URL. The audit needs Bash, `jq`,
+and `read` at `*`. It only reads.
+
+```bash
+(
+  set -o pipefail
+  after=
+  while :; do
+    page=$(vb --url "${BOARD_URL:?Set BOARD_URL to the existing board URL}" \
+      channels list --json --limit 500 ${after:+--after "$after"}) || exit
+    jq -r '.channels[].path | select(test("^thr_[0-9a-f-]{36}$")) | "channel  \(.)"' <<<"$page"
+    after=$(jq -r '.next // empty' <<<"$page")
+    [ -n "$after" ] || break
+  done
+  vb --url "$BOARD_URL" schedules --all --json | jq -r '
+    .schedules[] | select(.channel | test("^thr_[0-9a-f-]{36}$"))
+    | "schedule s\(.id)  \(.channel)"'
+)
+```
+
+The audit lists each channel whose whole path is that spelling, and each
+schedule that posts to one; a channel under another, `dev/thr_…`, is not
+affected. If it succeeds with no rows, there is nothing to do. A script or
+other automation that names such a channel is not on the board: search its
+source for `thr_[0-9a-f-]{36}`.
+
+What to do about a listed channel is an operator decision.
 
 ### download
 

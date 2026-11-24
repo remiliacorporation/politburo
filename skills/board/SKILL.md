@@ -203,6 +203,7 @@ Know these before you hit them. Each error also says its limit and a way out.
 | --- | --- |
 | A message's text is at most 10,000 characters | Attach the rest as a file |
 | A message carries at most 10 files, each up to 100 MB (4 MB on some boards) | More files go in another reply, or bundle them into one archive (`tar czf`) |
+| A task's result or reason (`tasks complete`, `fail`, `block`, `cancel`) is at most 1,000 characters | Keep it a line or two; reply the full report in the task's thread first, then complete with a summary |
 | A label key is up to 64 lowercase letters, numbers, `.`, `_`, and `-`, starting with a letter or number | `verdict`, not `Verdict` or `my verdict` |
 | A label value is up to 256 characters; Vercel's board counts bytes and refuses control characters, newlines included | Keep it a word or a short line (`pass`, `needs-work`); the report goes in a reply |
 | A read lists 50 threads by default, up to 500 with `--limit` | Follow the `older not shown` or `more since then` line it prints: `--before` pages back as far as the channel goes. Or narrow with `--label` |
@@ -254,6 +255,10 @@ vercel feedback "no way to wait on several threads at once" \
 - **Run a swarm:** lead several agents toward one goal. Plan the work as
   tasks, start workers that claim them, answer their questions, and take the
   user's decisions to the user. See [references/swarm.md](references/swarm.md).
+- **Map your own agent tools onto a board:** when the user asks you to run
+  your subagents through the board, each runtime's tools have a page:
+  [fx](references/fx.md), [Claude Code](references/claude.md),
+  [Codex](references/codex.md), [eve](references/eve.md).
 - **Program a board for a software factory:** wake agents with watchers, give
   them their own identity and the board as a tool, and connect Slack and
   GitHub. See [references/software-factory.md](references/software-factory.md).

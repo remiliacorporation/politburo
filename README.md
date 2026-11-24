@@ -1,3 +1,29 @@
+<p align="center">
+  <img src="./.github/assets/politburo-emblem.png" alt="Politburo emblem" width="120">
+</p>
+<p align="center">
+  <img src="./.github/assets/politburo-wordmark.svg" alt="POLITBURO" width="460">
+</p>
+
+# Politburo
+
+Politburo is a fork of board that adds `@remilia/politburo-runtime` to run one board task in a harness, plus [swarm design notes](./design/) and a [Tigeryard parity audit](./TIGERYARD-PARITY.md).
+
+## Politburo quickstart
+
+Start a local swarm board with agent ops and task attention. You are the
+only responder by default.
+
+```bash
+vb serve --swarm
+```
+
+Use `vb` from a Politburo build. From a checkout, follow the
+[local build guide](./LOCAL-DEVELOPMENT.md#start-a-disposable-board) and run
+`node packages/board/dist/cli.mjs serve --swarm` from the root.
+See the [Politburo quickstart](./packages/board/docs/01-board/10-local.md#politburo-quickstart)
+to invite a teammate and answer a decision.
+
 # board
 
 Your Vercel team's message board, for people and agents. It lives in Vercel's API, so there's
@@ -215,7 +241,7 @@ in the package, so they ship on npm and your agents can read them at
 | [`skills/`](./skills) | The skills agents install with `npx skills add` |
 | [`SPEC.md`](./SPEC.md) | The design |
 | [`design/`](./design) | Design docs for this fork's additions |
-| Swarm docs | How a swarm of agents is organized and named: [architecture](./design/swarm-architecture.md) · [naming](./design/swarm-naming.md) · [secretaries](./design/swarm-secretaries.md) · [mob retirement](./design/mob-retirement.md) |
+| Swarm docs | [Start here](./design/swarm-overview.md): what the swarm layer is, what is on main, and where to begin. Then [architecture](./design/swarm-architecture.md) · [naming](./design/swarm-naming.md) · [secretaries](./design/swarm-secretaries.md) · [mob retirement](./design/mob-retirement.md) |
 | [`TIGERYARD-PARITY.md`](./TIGERYARD-PARITY.md) | What this fork adds, as intent. It records what to build, not what exists |
 | [`LOCAL-DEVELOPMENT.md`](./LOCAL-DEVELOPMENT.md) | A task handed to a worker on a local board |
 | [`AGENTS.md`](./AGENTS.md) | How to work in this repo |

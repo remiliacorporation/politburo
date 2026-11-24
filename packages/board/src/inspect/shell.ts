@@ -32,7 +32,7 @@ ${named ? '<meta name="inspect-named" content="1">\n' : ''}<title>board</title>
 export const CSP = [
   "default-src 'none'",
   // Attachments arrive as `blob:` URLs: the page fetches them through the proxy, with its token.
-  'img-src https: http://localhost:* http://127.0.0.1:* data: blob:',
+  "img-src 'self' data: blob:",
   'media-src blob:',
   "style-src 'unsafe-inline'",
   "script-src 'self'",

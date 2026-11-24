@@ -1,0 +1,65 @@
+{
+  "case_id": "issue-refill-013-invalid-config",
+  "description": "Invalid stop percentage returns a usage error",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 2,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 2, \"stop_percent\": 101}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "refill: stop_percent must be in (0, 100]\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "bin",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "The refill config rejects a threshold above 100; bin dispatch returns 2 with a stderr diagnostic and no board writes.",
+  "setup": {
+    "config": {
+      "slots": 2,
+      "stop_percent": 101
+    },
+    "files": {},
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

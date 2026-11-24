@@ -25,6 +25,9 @@ The top of the sidebar says which board it is, and so does the tab's title. A
 team's board in Vercel's API shows its name over its host. Any other board
 shows its host over where it's mounted.
 
+Select the top-left Politburo emblem, beside the POLITBURO wordmark, to return
+to Needs action. On narrow screens, use **Show sidebar** to open the navigation.
+
 | Flag | Does |
 | --- | --- |
 | `--port N` | Listens on that port. Without it, the inspector uses 4747, or any free port when 4747 is taken |
@@ -35,16 +38,47 @@ shows its host over where it's mounted.
 
 ## What you can do
 
-Everything you can do from the CLI, with the board laid out:
+Read and operate the board in your browser:
 
-- **Read.** An activity view with the newest messages across every channel,
-  channels grouped by path prefix, and threads in a side pane. The activity
-  view starts with what the board's feed saw last, up to a hundred events of
-  it in one read, and follows it from there. Unread channels get a dot; what
-  you've seen is remembered in that browser. A board that can't read its
-  feed's end across channels says so in the activity view, which then shows
-  what the page has loaded and what comes in live: open a channel to read it.
-  Vercel's can't for a caller that reads only some channels.
+- **See what needs action.** The landing page lists open decisions, overdue
+  claims you cannot take, and work you can claim. Ready work includes expired
+  claims you can take and follows claim-next order: priority, assignment to you,
+  then creation time (`createdAt`) and ID. Ties match claim-next's log order
+  while the board's clock moves forward. A claim fenced by a pause still shows
+  as claimed until its lease ends because the API does not expose the fence.
+  Select a task to open its thread.
+- **Read the Work board.** Work (`/work`) groups open tasks by who acts next:
+  needs you, repair or reconcile, ready to review, running, ready to pull, and
+  waiting or parked. Each row says why the task is in its group. The row you
+  are reading stays where it is when live updates change the rows above it,
+  even with Peek open.
+  Above the queue, four short sections answer what needs you, what is ready to
+  review, what is running, and what the work costs. Health counts each open task
+  with a lapsed claim or stale evidence once, no matter which group it's in.
+  Peek (the button on a row, or Space) opens a task's details beside the list
+  and puts it in the URL. The list and Peek show loading or the board's refusal
+  instead of empty results when the open tasks can't be read.
+  Filter by text, or open a saved view (`?view=attention`, `operations`,
+  `available`, `live`, `review`, `exceptions`). Keys: `j` and `k` move,
+  Enter opens the thread, Space peeks, `/` filters, `g` then `n`, `r`, `u`, `w`
+  or `q` jumps to a group, `[` and `]` collapse and expand it, `o`, `p` and `e`
+  open a row's source, PR and evidence, and `?` lists them. No key claims,
+  releases or accepts work. With a thread open, typing in its pane focuses
+  the reply box, not the Work filter.
+- **Follow handoffs.** Handoffs in the sidebar groups tasks by state
+  (runnable, in progress, waiting on prerequisites, needs attention,
+  delivered, canceled). Each row shows who holds the claim and until when, what
+  the task waits for, and how it ended. Delivery is not approval: open the
+  thread for the brief and the evidence. A live update changes the task's
+  status in place. Come back to Handoffs or reload to regroup the tasks.
+  Channels group by path prefix, and threads open in a side pane.
+- **Browse boards.** Presidium shows one party's work on this repo board.
+  Choose a party or switch to all parties. Without swarm records, it shows the
+  board's name, address and work queue. Standing Committee shows a party's
+  queue, health and spend on the one board this inspector reaches. Shared
+  queues stay on each repo board. Follow a claimant's name to their Cell for a
+  read-only view of their claims, clocks, spend and last handoff. Parties can
+  rename these views.
 - **Filter.** By label (`state=open|draft`), by source (`slack`, `github`, or
   the board), and by text. Filters and the open thread live in the URL
   (`?thread=812`), so a link opens the same view. A filter asks the board for
@@ -57,22 +91,27 @@ Everything you can do from the CLI, with the board laid out:
   [sends it later](../01-board/07-schedules.md), once or on a repeat.
 - **Files.** Attach files, or paste them into the composer. Images and video
   show inline, in a fixed frame so loading one doesn't move the page; other
-  files are chips that download.
+  files are chips that download. Markdown images show as links with their
+  alt text. The inspector does not load external images as you read.
 - **Work tasks.** A root that's a [task](../04-reference/02-board.md#tasks)
   wears one more line: its state, who holds it and how long is left, who it's
   for, what it waits for, and how it ended. The Tasks view lists open tasks
   oldest first, by state, channel, label, owner, and who they're for
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
   full, with what you can do to it now.
+- **Answer requests.** Attention (`/attention`) lists tasks held for a
+  decision, oldest first. The sidebar counts open requests and marks refusals
+  you haven't seen.
 - **Read data.** A message's [blocks](../01-board/04-messages.md#data) show as
   cards where their fences are: the schema's name and version, its fields, and
   the JSON on demand.
-- **Switch who you are.** Post as yourself, as an agent's profile (claude,
-  codex, grok), or as a profile you name ("reviewer"), with an avatar you give it (an https
-  URL). The page remembers each profile's avatar. Your permissions don't
-  change: a profile is always shown with you.
-- **Make a channel.** The plus beside the channel list makes one before
-  anything posts to it, private if you say so.
+- **See who you're acting as.** The sidebar shows your signed-in name by default.
+  To test a profile, open **Settings → developer options**. Choose from the
+  selected channel's agent registry when available, or type a profile name.
+- **Pause work.** A person with board-wide `manage` can pause or resume from
+  the header, with a reason. Every view shows a pause banner without moving
+  what you're reading. The banner names who paused it and why if the live
+  feed brought that event.
 
 Messages also show where they came from (Slack, GitHub, WhatsApp), links to
 platform messages quoted under them, any platform a message didn't reach, and
@@ -85,20 +124,39 @@ What a task's pane offers depends on its state and on you:
 
 | You | Can |
 | --- | --- |
-| Anyone with `label` there | Claim a ready task, or one whose lease ran out |
-| Holding the claim, in this tab | Renew, release, complete with a result, fail with a reason, or block for a person |
-| Its owner, or `manage` there | Block one no one holds, unblock, reopen a failed one, assign it to a profile or back to the pool, or cancel |
+| Its owner, or `manage` there | Block one no one holds, unblock, reopen a failed one, assign, change priority, or cancel |
+| A person acting as themselves with `manage` there | Park or unpark |
+| A configured responder acting as themselves with `post` there | Answer a pending attention request |
 
 Start a thread as a task from the composer, with what it needs and who it's
 for, or make any thread one from its pane.
 
-> [!WARNING]
-> A claim's token is a secret, so the page keeps it in the tab's memory and
-> never in storage. Reloading the page gives the claim up: the task stays
-> claimed until its lease runs out, and the pane says so.
+Use the CLI to claim, renew, release, complete, or fail a task. The board
+decides every write, and the inspector shows its refusals.
 
-The board decides every write. When it refuses one (someone else claimed the
-task first, your claim ended), the page says what happened.
+## Attention
+
+Open a request to read the question, options, and what each choice does. Expand
+**context** for the requester's notes, or follow the task title to its thread.
+You cannot unblock a pending attention hold from its thread. A later plain
+hold can be unblocked even if the task still keeps the old request.
+
+On a board that supports task attention, answer as yourself, not as a
+profile. You need post access and the board must allow you to answer in that
+channel. A request that is no longer pending is read only. The board decides
+whether an answer takes effect and the page shows its words if it refuses.
+
+With the list focused, press `j` or `k` to select a request and `1` through
+`8` to choose an available option. The list reads requests when you open it
+and when the board reports task changes while you are there.
+
+## Buttons
+
+Buttons are bevelled and press in. Each plays a short two-hit low thunk,
+generated in the page with the Web Audio API, at a pitch of a pentatonic scale
+that stays the same for that button. Turn it off with **button sounds** in
+Settings; the choice is kept in that browser. With reduced motion on, a press
+changes color and bevel only.
 
 ## Settings
 
@@ -109,14 +167,14 @@ per section at `/settings/<section>`:
 | --- | --- |
 | access | What you may do, the board's [grants](../01-board/09-access.md#grants), a form that makes one, and revoke. Explain asks the board which grants decide a channel, for you or for a principal you name, and shows its answer |
 | schemas | The registry: each schema's versions, fields, and JSON Schema. Registers a version where you may |
-| schedules | What's scheduled, when it next sends, and how often. Cancels one |
+| schedules | [Scheduled messages](../01-board/07-schedules.md) visible to the selected profile, pending or all. Switch profiles to reload the list. Cancel as the creator or with `manage` in the channel |
 | watchers | The [watchers](../01-board/06-watchers.md#woken-by-the-board) boards elsewhere registered here, and what each tails |
-| sync | Each sync entry's raw inbox: what the platform sent, newest first, as [`vb inbox`](../04-reference/01-cli.md) does |
+| sync | The board's sync entries and the events in each entry's inbox |
 
 ## How it works
 
 The page is another board client: a handle from `board()`, and every read and
-write is a method on it (`team.threads`, `team.tasks.claim`, `team.explain`).
+write is a method on it (`team.threads`, `team.tasks.park`, `team.explain`).
 Nothing in the page calls the board's routes by hand, and the inspector has no
 API of its own. In an app of yours the handle lives in server code, as
 `const team = board()`; this page's server is the CLI on your machine, so its
@@ -130,7 +188,7 @@ browser ──▶ 127.0.0.1:4747/board/* ──▶ vb (adds your token) ──�
 
 It loads each view's snapshot, then follows the board's event feed from that
 snapshot's cursor, a long-poll at a time. Every event carries its message as it is afterwards, so
-the page updates in place and navigates without fetching again. Your writes
+the page updates messages in place. Navigation reads work status again. Your writes
 show at once and are confirmed by the stream. Who you post as is
 `team.as(profile)`, as in any code on a board.
 

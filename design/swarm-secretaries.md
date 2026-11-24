@@ -1,6 +1,16 @@
 status: proposed
 bonklek decides on this PR
 
+Partly replaced by [swarm mail](swarm-mail.md): the transport, the channel names
+(`party/<party-id>/inbox` on a repo board, replacing `swarm/<tag>/inbox`), expiry,
+the relay between boards and the file bridge are defined there. The secretary
+becomes a model-free service ([the merger design](swarm-merger.md)): rules alone
+forward every valid p0, `sec.log` included, and a model wakes only as the
+classifier or adviser the design names. The message format below is superseded
+(the sender supplies `id` and `at`, `ref` is a string, the example's channel and
+fields change); the roles, classes and routing table stand. Names move into
+[party configuration](swarm-party-config.md).
+
 # Spawner secretaries and swarm messaging
 
 ## Roles
@@ -35,22 +45,15 @@ Joyce, Bethany, Helen, Pima, Anita, Nan, Toni, Gloria.
 
 ## Message format
 
-Swarm mail uses the board's [operational inbox](../SPEC.md#operational-inbox).
+Swarm mail is a thread root in `swarm/<tag>/inbox`, labeled `swarm.class`,
+`swarm.urgency` and `swarm.state`, with a `swarm-message@1` block. The swarm
+leaves the board's operational inbox unused. See the
+[frontend mapping](swarm-frontend.md#mapping).
 
-- Set `to` to `{ agent: ... }` with the spawner's verified principal ID, not
-  a profile. To address a role from `inboxRoles`, use `{ role: ... }`.
-- Use one `topic` per logical item. A newer send with the same recipient
-  kind, recipient ID and topic permanently replaces the older message.
-- Put the summary and routing header in `text`.
-- The board assigns the message `id`, identifies the sender in `by` and
-  records the send time in `sentAt`. The sender can set an `expiresAt` cutoff.
-- The board keeps `seenAt`, `actedAt` and `archivedAt` per principal. They
-  record the times of `seen`, `acted` and archive actions.
-
-Put a plain one-line summary first in `text`, then a fenced YAML header. The
-board treats the header as text. Keep `summary` to at most 120 characters.
-The secretary assigns the header `id` per repo. It is separate from the
-board's message `id`.
+Keep the plain one-line summary and fenced YAML header shown below as text.
+Keep `summary` to at most 120 characters. On the board, the structured block
+carries `from`, `ref`, `summary` and `body`; the board message supplies the ID
+and time, and the labels carry class, urgency and state.
 
 Use `ref` to identify the work, `body` to point to the details and `at` for
 the header timestamp. Read every header, but open the referenced body only
@@ -88,8 +91,8 @@ is authoritative for who sent the message.
 | `core.escalate` | Spawner, then core | The message needs core or the owner. The spawner decides whether to pass it up. |
 
 Follow the [mob retirement rules](mob-retirement.md) for `sec.retire`.
-An inbox read returns the message `text`. For `sec.log`, count by header
-and never open the body. The secretary follows this rule, not the board.
+For `sec.log`, count by header and never open the body. The secretary
+follows this rule, not the board.
 
 ## Routing
 
@@ -103,14 +106,15 @@ and never open the body. The secretary follows this rule, not the board.
 Use p0 for a security or integrity finding, a broken default branch, or
 unpushed work on a machine about to stop.
 
-Use a token-free script to route and count headers after an authorized inbox
-read. This is a session convention, not a board feature. Wake the secretary
-model only for work it handles and to send forwards.
+Use a token-free script to route and count headers after an authorized
+thread read. This is a session convention, not a board feature. Wake the
+secretary model only for work it handles and to send forwards.
 
 ## Digest
 
-Send the 30-minute digest as an inbox message to the spawner. Use one `topic`
-per window. Put a plain one-line summary first, then the fenced digest YAML.
+Post the 30-minute digest for the spawner as a message with a
+`swarm-digest@1` block in `swarm/<tag>/inbox`, once per window. Put a plain
+one-line summary first and use the fields shown below for the digest.
 Include headers only, never bodies.
 
 ```yaml
@@ -124,37 +128,19 @@ items: [...]                # headers, sorted p0 to p3
 
 ## Transport and records
 
-Send through the [SDK](../packages/board/docs/04-reference/02-board.md#operationalinbox)
-(`team.operationalInbox`) or HTTP. The CLI does not send inbox mail. The inbox
-works on `local()` and over HTTP to a board that keeps it. Vercel's board
-answers 501 `no_operational_inbox`.
+Read `swarm/<tag>/inbox` with `team.threads` or `vb` thread reads. Filter by
+class, urgency or state, and follow the live stream for new headers and
+label updates. The secretary and spawner read the same channel under the
+board's channel grants.
 
-Send needs board-wide `post`. Read, `ack` and `archive` need board-wide `read`.
-Inbox mail never appears in feeds, threads, watchers or sync. Each member of
-an inbox role can see mail sent to that role. Direct mail to the spawner does
-not appear in a separate secretary principal's inbox. For shared delivery,
-address a configured inbox role that includes both principals.
-
-1. Read with `vb inbox read`. A read does not acknowledge mail.
-2. Record `seen` with `vb inbox ack <id> seen`. When the message is handled,
-   record `acted` with `vb inbox ack <id> acted`. This also records `seen` if
-   it was not already set.
-3. Archive when done with `vb inbox archive <id>`. This hides the message for
-   that principal only. Use the board's message `id` for `ack` and `archive`.
-
-Read shows at most 15 active messages, newest first. Drain the inbox each
-wake. Read again after archiving handled mail to reach older messages. There
-is no paging or archive read. Set `expiresAt` on mail that goes stale. The
-board checks expiry on read.
+`swarm.state` is `open`, `handled` or `forwarded`. A read does not change it.
+Take an open header with a compare-and-set label write from `open` to
+`handled`; if another actor took it first, the write returns `409 label_conflict`.
+Use the board's message ID for the label write. See
+[Digests and escalations](swarm-frontend.md#digests-and-escalations).
 
 Escalate one step at a time: secretary to spawner, spawner to core, core to
 the human owner.
-
-The [runtime's `runController`](../packages/runtime/README.md#controller-loop)
-wakes a handler on inbox mail. It records `seen` before calling the handler and
-`acted` when the handler reports the work is done. If the message is still
-visible and unacted at the deadline, the caller-supplied `parentOf` looks up the immediate registry
-parent. If there is a parent, the loop sends one reference, not the message text.
 
 If the owner opts to register a secretary, the entry uses an existing role
 that matches its duty.

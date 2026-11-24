@@ -2,11 +2,12 @@ import { ListFilter, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { MessageView } from '../../api/routes.ts'
 import * as board from './board.ts'
+import { compileAccess } from '../../server/access.ts'
 import { Composer } from './composer.tsx'
 import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
-import { isTask, nameOf, placesUnder, stateNow, tasks, type State, type TaskFilter, type TaskRoot } from './store.ts'
+import { isTask, nameOf, placesUnder, stateNow, tasks, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark, useLapse } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
 import { firstLine } from './words.ts'
@@ -31,8 +32,10 @@ function readFilter(params: URLSearchParams): TaskFilter {
 
 const setFilter = (changes: Record<string, string | string[] | null>) => navigate(here({ params: changes }), true)
 
-export function Tasks(props: { state: State; now: number; lead: ReactNode; where: Where; known: KnownLabels }) {
-  const { state, where } = props
+export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: ReactNode; where: Where; known: KnownLabels }) {
+  const { state, viewer, where } = props
+  const mayPost = (channel: string) => viewer.may('post', channel)
+  const writable = Object.keys(state.channels).filter(mayPost).sort()
   useTypeToFocus('main')
   const query = where.params.toString()
   const filter = useMemo(() => readFilter(where.params), [query])
@@ -48,7 +51,7 @@ export function Tasks(props: { state: State; now: number; lead: ReactNode; where
     // A refusal was the last filter's: this one says its own once the board answers.
     setRefused(null)
     void board.loadTasks(filter).then((page) => {
-      if (!current) return
+      if (!current || !page) return
       setLoading(false)
       setRefused('refused' in page ? { text: page.refused, tooWide: page.tooWide } : null)
       setListed('cursor' in page ? { key, ...page } : null)
@@ -82,6 +85,7 @@ export function Tasks(props: { state: State; now: number; lead: ReactNode; where
       <Header title="tasks" meta="oldest first" live={state.live} lead={props.lead}>
         <TaskFilterButton filter={filter} channels={Object.keys(state.channels).sort()} owners={owners} assignees={assignees} state={state} known={props.known} count={chips.length} />
       </Header>
+      <div className="view-body">
       <nav className="tabs plain">
         {STATES.map((name) => (
           <Link key={name} to={here({ params: { state: name === 'open' ? null : name } })} className="tab" current={filter.state === name}>
@@ -115,22 +119,26 @@ export function Tasks(props: { state: State; now: number; lead: ReactNode; where
         {more && (
           <button
             className="clear more"
-            onClick={() => void board.loadTasks(filter, listed.cursor).then((page) => 'cursor' in page && setListed({ key, ...page }))}
+            onClick={() => void board.loadTasks(filter, listed.cursor).then((page) => page && 'cursor' in page && setListed({ key, ...page }))}
           >
             load more
           </button>
         )}
       </div>
-      <Composer
+      {state.me && compileAccess(state.me.can).anywhere('post') && <Composer
         scope="tasks"
         role="main"
         placeholder="start a task…"
         known={props.known}
-        channels={Object.keys(state.channels).sort()}
-        {...(filter.channel && !filter.channel.endsWith('/') ? { channel: filter.channel } : {})}
+        channels={writable}
+        syncConfigured={Boolean(state.discovery?.sync.length)}
+        mayPost={mayPost}
+        mayLabel={(channel) => viewer.may('label', channel)}
+        {...(filter.channel && !filter.channel.endsWith('/') && mayPost(filter.channel) ? { channel: filter.channel } : {})}
         tasks={{ state, always: true }}
         onSend={({ text, noSync, channel, labels, files, task }) => void board.send({ channel, re: null, text, noSync, labels, files, ...(task ? { task } : {}) })}
-      />
+      />}
+      </div>
     </>
   )
 }

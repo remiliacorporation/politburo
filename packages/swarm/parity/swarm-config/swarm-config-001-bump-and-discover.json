@@ -1,0 +1,99 @@
+{
+  "case_id": "swarm-config-001-bump-and-discover",
+  "description": "Read the config, then bump two fields and notify participating mailboxes.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/core/.keep": "",
+      "mail/ex/.keep": "",
+      "mail/ex/ex-0001.yaml": "id: \"ex-0001\"\nclass: \"policy\"\nurgency: \"p2\"\nfrom: \"swarm-config\"\nto: \"ex\"\nref: {version: 7}\nsummary: \"swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\"\nat: \"2026-02-03T04:05:06Z\"\n",
+      "mail/ex/id-counter.txt": "1\n",
+      "mail/ex2/.keep": "",
+      "mail/ex2/ex2-0001.yaml": "id: \"ex2-0001\"\nclass: \"policy\"\nurgency: \"p2\"\nfrom: \"swarm-config\"\nto: \"ex2\"\nref: {version: 7}\nsummary: \"swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\"\nat: \"2026-02-03T04:05:06Z\"\n",
+      "mail/ex2/id-counter.txt": "1\n",
+      "mail/ex3": "Example non-directory\n",
+      "mail/log.yaml": "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"9dd74439b34405bbe3237349db9a4d895eb91e7689696fe7a91d2a0eba8cd6f9\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex\"}\n- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"f388ec5afbb6ec1cb781a4b18f71c1392b7bee545977cacef517a6cc4726d776\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex2-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\", \"to\": \"ex2\", \"urgency\": \"p2\"}, \"id\": \"ex2-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex2\"}\n",
+      "mail/out/.keep": "",
+      "mail/owner/.keep": "",
+      "swarm-config.json": "{\n  \"heartbeat_minutes\": 20,\n  \"mob_limit_rule\": \"Keep example limits\",\n  \"sprite_default_model\": \"example-model\",\n  \"sprite_thinking_default\": \"medium\",\n  \"updated_at\": \"2026-02-03T04:05:06Z\",\n  \"usage_stop_percent\": 99.5,\n  \"version\": 7\n}\n",
+      "swarm-config.json.lock": ""
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"9dd74439b34405bbe3237349db9a4d895eb91e7689696fe7a91d2a0eba8cd6f9\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\", \"to\": \"ex\", \"urgency\": \"p2\"}, \"id\": \"ex-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-02-03T04:05:06Z\", \"event\": \"created\", \"hash\": \"f388ec5afbb6ec1cb781a4b18f71c1392b7bee545977cacef517a6cc4726d776\", \"header\": {\"at\": \"2026-02-03T04:05:06Z\", \"class\": \"policy\", \"from\": \"swarm-config\", \"id\": \"ex2-0001\", \"ref\": {\"version\": 7}, \"summary\": \"swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\", \"to\": \"ex2\", \"urgency\": \"p2\"}, \"id\": \"ex2-0001\", \"key\": [\"swarm-config\", {\"version\": 7}, \"policy\"], \"to\": \"ex2\"}"
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"heartbeat_minutes\": 30,\n  \"mob_limit_rule\": \"Keep example limits\",\n  \"sprite_default_model\": \"example-model\",\n  \"sprite_thinking_default\": \"medium\",\n  \"updated_at\": \"2026-02-03T04:00:00Z\",\n  \"usage_stop_percent\": 95,\n  \"version\": 6\n}\nexample-model\nswarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\n",
+    "steps": [
+      {
+        "exit_code": 0,
+        "log_line_count": 0,
+        "stderr": "",
+        "stdout": "{\n  \"heartbeat_minutes\": 30,\n  \"mob_limit_rule\": \"Keep example limits\",\n  \"sprite_default_model\": \"example-model\",\n  \"sprite_thinking_default\": \"medium\",\n  \"updated_at\": \"2026-02-03T04:00:00Z\",\n  \"usage_stop_percent\": 95,\n  \"version\": 6\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "log_line_count": 0,
+        "stderr": "",
+        "stdout": "example-model\n"
+      },
+      {
+        "exit_code": 0,
+        "log_line_count": 2,
+        "stderr": "",
+        "stdout": "swarm-config v7: usage_stop_percent 95 -> 99.5; heartbeat_minutes 30 -> 20\n"
+      }
+    ]
+  },
+  "inputs": {
+    "steps": [
+      {
+        "argv": [
+          "show"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "get",
+          "sprite_default_model"
+        ],
+        "kind": "cli"
+      },
+      {
+        "argv": [
+          "bump",
+          "--notify",
+          "--set",
+          "usage_stop_percent=99.5",
+          "--set",
+          "heartbeat_minutes=20"
+        ],
+        "kind": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M16",
+  "notes": "Set fields in reverse diff order; decision mailboxes, a reserved directory and a file are not targets.",
+  "setup": {
+    "files": {
+      "mail/core/.keep": "",
+      "mail/ex/.keep": "",
+      "mail/ex2/.keep": "",
+      "mail/ex3": "Example non-directory\n",
+      "mail/out/.keep": "",
+      "mail/owner/.keep": "",
+      "swarm-config.json": "{\"version\": 6, \"sprite_default_model\": \"example-model\", \"sprite_thinking_default\": \"medium\", \"usage_stop_percent\": 95, \"heartbeat_minutes\": 30, \"mob_limit_rule\": \"Keep example limits\", \"updated_at\": \"2026-02-03T04:00:00Z\"}\n"
+    },
+    "now": "2026-02-03T04:05:06Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/swarm_config.py",
+      "supervisor/swarm_policy.py",
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}

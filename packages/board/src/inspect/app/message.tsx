@@ -11,7 +11,7 @@ import { BlockCard } from './blocks.tsx'
 import * as board from './board.ts'
 import { setEditing, toast, useEditing } from './chrome.ts'
 import { Ago } from './nav.tsx'
-import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type Pending, type ReplySummary, type State } from './store.ts'
+import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type Pending, type ReplySummary, type State, type Viewer } from './store.ts'
 import { TaskLine } from './task.tsx'
 import { authorName, fileSize, shownName, timingWords } from './words.ts'
 import { ContextMenuArea, EmojiPicker, fieldMenu, LabelEditor, Panel, Menu, MenuEmojiRow, MenuItem, MenuSeparator, nativeMenu, type KnownLabels } from './ui.tsx'
@@ -20,12 +20,12 @@ const MENU_EMOJI = ['thumbs_up', 'heart', 'laugh', 'party', 'eyes', 'check']
 
 export type RowOptions = {
   me: string
+  viewer: Viewer
+  syncConfigured: boolean
   now: number
   known: KnownLabels
   /** Opens a message's thread; unset inside the thread itself. */
   openThread?: (id: string) => void
-  /** Shown after the author, e.g. "in #prs" in the activity view. */
-  context?: (m: MessageView) => ReactNode
   /** A root's replies, summarized under it. */
   summary?: (m: MessageView) => ReplySummary | undefined
   /** Sync key → platform, for each message's source mark. */
@@ -42,12 +42,30 @@ export type RowOptions = {
 const MENTIONS = /((?<![\w@.-])@\[[^\]\s]+\])/g
 const MENTION = /^@\[([^\]\s]+)\]$/
 
-type MdNode = { type: string; value?: string; children?: MdNode[]; data?: unknown }
+type MdNode = { type: string; value?: string; alt?: string; children?: MdNode[]; data?: unknown }
+
+/** Images are opt-in links, never requests made just by reading. An image inside a link is its label. */
+const remarkImageLinks = () => (tree: MdNode) => {
+  const walk = (node: MdNode, linked = false) => {
+    if (!node.children) return
+    const inLink = linked || node.type === 'link' || node.type === 'linkReference'
+    node.children = node.children.map((child) => {
+      if (child.type !== 'image' && child.type !== 'imageReference') {
+        walk(child, inLink)
+        return child
+      }
+      const label: MdNode = { type: 'text', value: child.alt || 'image' }
+      if (inLink) return label
+      return { ...child, type: child.type === 'image' ? 'link' : 'linkReference', children: [label] }
+    })
+  }
+  walk(tree)
+}
 
 /** Picks out the mentions in text, but not inside code or links: each reads as who it mentions, by `names`, or as it's written. */
 const remarkMentions = (names: Record<string, string>) => () => {
   const walk = (node: MdNode) => {
-    if (!node.children || node.type === 'link' || node.type === 'inlineCode' || node.type === 'code') return
+    if (!node.children || node.type === 'link' || node.type === 'linkReference' || node.type === 'inlineCode' || node.type === 'code') return
     node.children = node.children.flatMap((child): MdNode[] => {
       if (child.type !== 'text') {
         walk(child)
@@ -81,7 +99,7 @@ const COMPONENTS = {
  * code, links. Raw HTML is dropped. Right-clicking it gives the browser's menu.
  */
 export const Text = memo(function Text({ text, edited = false, names = NO_NAMES }: { text: string; edited?: boolean; names?: Record<string, string> }) {
-  const plugins = useMemo(() => [remarkGfm, remarkBreaks, remarkMentions(names)], [names])
+  const plugins = useMemo(() => [remarkGfm, remarkBreaks, remarkImageLinks, remarkMentions(names)], [names])
   return (
     <div className="text" {...nativeMenu}>
       <Markdown remarkPlugins={plugins} components={COMPONENTS} skipHtml>
@@ -221,11 +239,11 @@ export function SourceLogo({ platform }: { platform: string }) {
   )
 }
 
-export function Avatar({ name, url, size = 28 }: { name: string; url: string | null | undefined; size?: number }) {
-  const [broken, setBroken] = useState(false)
+// Author avatars are metadata, not images fetched through the inspector's token-bearing proxy.
+export function Avatar({ name, size = 28 }: { name: string; size?: number }) {
   return (
     <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.43 }}>
-      {url && !broken ? <img src={url} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} /> : name.slice(0, 1).toUpperCase()}
+      {name.slice(0, 1).toUpperCase()}
     </span>
   )
 }
@@ -312,9 +330,13 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
   const [hovered, setHovered] = useState(false)
   const [labelsOpen, setLabelsOpen] = useState(false)
   const row = useRef<HTMLDivElement>(null)
-  const editing = useEditing() === m.id
+  const editingId = useEditing()
   const name = authorName(m)
-  const mine = m.by.actor === options.me
+  const canEdit = m.by.actor === options.me && options.viewer.may('post', m.channel)
+  const editing = canEdit && editingId === m.id
+  const canLabel = !m.deleted && options.viewer.may('label', m.channel)
+  const canReact = !m.deleted && options.viewer.may('react', m.channel)
+  const replyAction = m.re === null && options.viewer.may('post', m.channel) ? 'reply in thread' : 'open thread'
   const reacted = (emoji: string) => (m.reactions[emoji] ?? []).includes(options.me)
   const toggle = (emoji: string) => void board.react(m.id, emoji, reacted(emoji))
   const replies = m.re === null ? options.summary?.(m) : undefined
@@ -324,19 +346,18 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
 
   const items = (
     <>
-      <MenuEmojiRow emojis={MENU_EMOJI} onPick={toggle} />
-      <MenuSeparator />
-      {options.openThread && <MenuItem onClick={() => options.openThread!(thread)}>{m.re === null ? 'reply in thread' : 'open thread'}</MenuItem>}
-      <MenuItem onClick={() => setLabelsOpen(true)}>labels…</MenuItem>
+      {canReact && <><MenuEmojiRow emojis={MENU_EMOJI} onPick={toggle} /><MenuSeparator /></>}
+      {options.openThread && <MenuItem onClick={() => options.openThread!(thread)}>{replyAction}</MenuItem>}
+      {canLabel && <MenuItem onClick={() => setLabelsOpen(true)}>labels…</MenuItem>}
       {m.text && <MenuItem onClick={() => void copy(m.text, 'text')}>copy text</MenuItem>}
       <MenuItem onClick={() => void copy(String(m.id), `#${m.id}`)} hint={`#${m.id}`}>
         copy id
       </MenuItem>
-      {mine && (
+      {canEdit && (
         <>
           <MenuSeparator />
           <MenuItem onClick={() => setEditing(m.id)}>edit message</MenuItem>
-          <MenuItem danger onClick={() => confirm(`Delete #${m.id}? It's removed on Slack and GitHub too.`) && void board.remove(m.id)}>
+          <MenuItem danger onClick={() => confirm(`Delete #${m.id}?${options.syncConfigured ? ' This may also remove synced copies.' : ''}`) && void board.remove(m.id)}>
             delete message
           </MenuItem>
         </>
@@ -360,7 +381,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
             </span>
           ) : (
             <span className="avatar-wrap">
-              <Avatar name={name} url={m.author?.avatar} />
+              <Avatar name={name} />
               {m.from && <SourceLogo platform={sourcePlatform(m, options.platforms) ?? m.from} />}
             </span>
           )}
@@ -371,9 +392,8 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
               <span className="author" {...nativeMenu}>
                 {name}
               </span>
-              {options.context?.(m)}
               <Ago iso={m.createdAt} />
-              {m.noSync && <span className="badge">board only</span>}
+              {m.noSync && options.syncConfigured && <span className="badge">board only</span>}
               {m.schedule && (
                 <span className="badge" title={`sent by schedule ${m.schedule.id}: send ${m.schedule.n + 1}`}>
                   <Clock size={10} /> scheduled
@@ -397,16 +417,16 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
           {options.board && isTask(m) && !m.deleted && <TaskLine root={m} state={options.board} />}
           {(labels.length > 0 || Object.keys(m.reactions).length > 0) && (
             <div className="chips">
-              {labels.map(([key, value]) => (
+              {labels.map(([key, value]) => canLabel ? (
                 <button key={key} className="label" title="edit labels" onClick={() => setLabelsOpen(true)}>
                   {key}={value}
                 </button>
-              ))}
-              {Object.entries(m.reactions).map(([emoji, actors]) => (
-                <button key={emoji} className={`chip${reacted(emoji) ? ' mine' : ''}`} title={`:${emoji}: ${actors.join(', ')}`} onClick={() => toggle(emoji)}>
-                  {displayEmoji(emoji)} {actors.length}
-                </button>
-              ))}
+              ) : <span key={key} className="label">{key}={value}</span>)}
+              {Object.entries(m.reactions).map(([emoji, actors]) => {
+                const chip = { className: `chip${reacted(emoji) ? ' mine' : ''}`, title: `:${emoji}: ${actors.join(', ')}` }
+                const count = <>{displayEmoji(emoji)} {actors.length}</>
+                return canReact ? <button key={emoji} {...chip} onClick={() => toggle(emoji)}>{count}</button> : <span key={emoji} {...chip}>{count}</span>
+              })}
             </div>
           )}
           {Object.entries(m.undelivered ?? {}).map(([target, error]) => (
@@ -418,7 +438,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
             <button className="replies" onClick={() => options.openThread!(m.id)}>
               <span className="faces">
                 {replies.faces.map((r) => (
-                  <Avatar key={r.by.actor} name={authorName(r)} url={r.author?.avatar} size={16} />
+                  <Avatar key={r.by.actor} name={authorName(r)} size={16} />
                 ))}
               </span>
               {replies.count} {replies.count === 1 ? 'reply' : 'replies'}
@@ -428,31 +448,31 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
         </div>
         {active && !m.deleted && (
           <div className="actions">
-            <button className="tool" title={`${reacted('thumbs_up') ? 'remove' : 'react'} 👍`} onClick={() => toggle('thumbs_up')}>
+            {canReact && <><button className="tool" title={`${reacted('thumbs_up') ? 'remove' : 'react'} 👍`} onClick={() => toggle('thumbs_up')}>
               👍
             </button>
-            <EmojiPicker trigger={<SmilePlus size={15} strokeWidth={1.75} />} onPick={toggle} onOpenChange={setMenuOpen} />
+            <EmojiPicker trigger={<SmilePlus size={15} strokeWidth={1.75} />} onPick={toggle} onOpenChange={setMenuOpen} /></>}
             {options.openThread && (
-              <button className="tool" title={m.re === null ? 'reply in thread' : 'open thread'} onClick={() => options.openThread!(thread)}>
+              <button className="tool" title={replyAction} onClick={() => options.openThread!(thread)}>
                 <MessageSquare size={15} strokeWidth={1.75} />
               </button>
             )}
-            <button className="tool" title="labels" onClick={() => setLabelsOpen(true)}>
+            {canLabel && <button className="tool" title="labels" onClick={() => setLabelsOpen(true)}>
               <Tag size={15} strokeWidth={1.75} />
-            </button>
+            </button>}
             <Menu trigger={<Ellipsis size={15} strokeWidth={1.75} />} title="more" onOpenChange={setMenuOpen}>
               {items}
             </Menu>
           </div>
         )}
-        <Panel title="labels" open={labelsOpen} onOpenChange={setLabelsOpen} anchor={row}>
+        {canLabel && <Panel title="labels" open={labelsOpen} onOpenChange={setLabelsOpen} anchor={row}>
           <LabelEditor
             labels={m.labels}
             known={options.known}
             onSet={(key, value) => void board.label(m.id, { [key]: value }, [])}
             onUnset={(key) => void board.label(m.id, {}, [key])}
           />
-        </Panel>
+        </Panel>}
       </div>
   )
   if (m.deleted) return element
@@ -463,7 +483,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
   )
 }
 
-type Me = { actor: string; name: string; handle: string; profile: string | null; avatar: string | null }
+type Me = { actor: string; name: string; handle: string; profile: string | null }
 
 /**
  * Posts on their way, after `after` (the last message shown). Each is grouped
@@ -494,7 +514,7 @@ export function PendingRow({ post, me, continued = false }: { post: Pending; me:
             …
           </span>
         ) : (
-          <Avatar name={shownName(me)} url={me.avatar} />
+          <Avatar name={shownName(me)} />
         )}
       </div>
       <div className="body">

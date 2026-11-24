@@ -16,7 +16,7 @@ type Principal =
   | { type: 'app'; clientId: string }
   | { type: 'project'; projectId: string; environment: string }
   | { type: 'github'; repositoryId: string; repository: string }
-  | { type: 'oidc'; issuer: string; subject: string; claims: Record<string, string> }
+  | { type: 'oidc'; issuer: string; subject: string }
   | { type: 'external'; id: string; syncKey: string }
 type Actor = {
   id: string
@@ -201,7 +201,7 @@ function actorOf(request: Request, tokens: Record<string, string> = {}, protocol
           : repository
             ? { type: 'github', repositoryId: environment!, repository }
             : type === 'oidc' && subject
-              ? { type: 'oidc', issuer: `https://${decodeURIComponent(id!)}`, subject, claims: { sub: subject } }
+              ? { type: 'oidc', issuer: `https://${decodeURIComponent(id!)}`, subject }
               : null
   if (!principal) throw new Refused(401, 'invalid_token', 'This token is invalid, expired, or revoked.')
   let { name, avatar, session } = {
@@ -295,7 +295,7 @@ const whoOf = (actor: Actor): Who => {
       : p.type === 'github'
         ? { kind: 'github', repositoryId: p.repositoryId, repository: p.repository, ...limit }
         : p.type === 'oidc'
-          ? { kind: 'oidc', issuer: p.issuer, claims: p.claims, ...limit }
+          ? { kind: 'oidc', issuer: p.issuer, claims: { sub: p.subject }, ...limit }
           : { kind: 'app', clientId: p.clientId, ...limit }
 }
 
@@ -310,6 +310,7 @@ const whoOf = (actor: Actor): Who => {
 type Shared = {
   teamId: string
   inlineThreadMessages: boolean
+  inlineTaskMessages: boolean
   channelNames: boolean
   inlineActors: boolean
   threadsLimit: boolean
@@ -1548,6 +1549,10 @@ function fakeBoard(shared: Shared, boardId: string) {
    */
   function listTasks(url: URL, actor: Actor) {
     const query = (name: string) => url.searchParams.get(name)
+    const include = query('include')
+    // An API from before `include=messages` takes no `include`, as it takes no other parameter it doesn't know.
+    if (include !== null && !shared.inlineTaskMessages) throw new Refused(400, 'invalid_request', 'Invalid request: should NOT have additional property `include`.')
+    if (include !== null && include !== 'messages') throw new Refused(400, 'invalid_request')
     const wanted = query('state') ?? 'open'
     const states: TaskState[] | null = wanted === 'all' ? null : wanted === 'open' ? ['waiting', 'ready', 'claimed', 'blocked'] : ['waiting', 'ready', 'claimed', 'blocked', 'completed', 'failed', 'canceled'].includes(wanted) ? [wanted as TaskState] : []
     if (states?.length === 0) throw bad('state is open, all, or a state.')
@@ -1610,7 +1615,15 @@ function fakeBoard(shared: Shared, boardId: string) {
         (query('for') === null || t.task!.for === query('for')) &&
         (needs === null || t.task!.needs.includes(needs)),
     )
-    return { tasks: kept.map(taskOf), cursor }
+    return {
+      tasks: kept.map((t) => {
+        if (include === null) return taskOf(t)
+        // Its newest message when it has replies: its first is in every task.
+        const latest = t.lastMessage && t.lastMessage.sequence > 1 ? t.messages.find((m) => m.sequence === t.lastMessage!.sequence) : undefined
+        return { ...taskOf(t), ...(latest ? { latestMessage: show(latest) } : {}) }
+      }),
+      cursor,
+    }
   }
 
   async function watchers(method: string, rest: string, actor: Actor, parsed: Record<string, any>, url: URL): Promise<unknown> {
@@ -2607,6 +2620,8 @@ export function fakeMessageboard(
     notDefault?: boolean
     /** True for an API that lists threads with their first and newest messages (`include=messages`). Vercel's doesn't yet: `include` is 400 there. */
     inlineThreadMessages?: boolean
+    /** True for an API that lists tasks with their newest messages (`include=messages` on `GET /v2/tasks`). Vercel's doesn't yet: `include` is 400 there. */
+    inlineTaskMessages?: boolean
     /** `false`: an API from before its thread list took `limit`, which is 400 there, and every page is 25 threads. Vercel's takes 1 to 100. */
     threadsLimit?: boolean
     /**
@@ -2688,6 +2703,7 @@ export function fakeMessageboard(
     receipt,
     stored,
     inlineThreadMessages: options.inlineThreadMessages ?? false,
+    inlineTaskMessages: options.inlineTaskMessages ?? false,
     channelNames: options.channelNames ?? false,
     inlineActors: options.inlineActors ?? false,
     boardFeed: options.boardFeed ?? false,

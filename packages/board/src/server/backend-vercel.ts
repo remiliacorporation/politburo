@@ -29,9 +29,9 @@ type ApiPrincipal =
   | { type: 'app'; clientId: string }
   | { type: 'project'; projectId: string; environment: string }
   /** A GitHub Actions run, by its repository: `github:repo:<repositoryId>`. */
-  | { type: 'github'; repositoryId: string; repository: string; workflowRef?: string; ref?: string; event?: string }
+  | { type: 'github'; repositoryId: string; repository: string }
   /** A caller another OIDC issuer vouches for: `oidc:<issuer's host and path>:<subject>`. */
-  | { type: 'oidc'; issuer: string; subject: string; claims: Record<string, string | number | boolean> }
+  | { type: 'oidc'; issuer: string; subject: string }
   /** An imported message's author as the API named it before platform profiles: the platform user alone. */
   | { type: 'external'; id: string; syncKey: string }
 /**
@@ -78,6 +78,8 @@ type ApiTaskOf = ApiTask & {
   messageCount: number
   lastActivityAt: number
   lastMessage?: { id: string; sequence: number; createdAt: number; createdBy: ApiActor }
+  /** With `include=messages` on a task list: its newest message when it has replies, as it is now. */
+  latestMessage?: ApiMessage
 }
 type ApiThread = {
   id: string
@@ -331,6 +333,12 @@ const CLIENT_ID = /^[A-Za-z0-9_.:-]{1,128}$/
 const MESSAGE_ID = /^msg_([0-9a-f-]{36})_([1-9]\d*)$/
 /** Whether `value` is a message ID Vercel's API hands out (`msg_<thread>_<n>`): the CLI takes one as a message, even where a channel has its name. */
 export const isApiMessageId = (value: string) => MESSAGE_ID.test(value)
+const THREAD_ID = /^thr_([0-9a-f-]{36})$/
+/** A thread ID Vercel's API hands out (`thr_<thread>`, a message's `thread`) as its root's message ID, or null for one that isn't. */
+export const apiThreadRoot = (value: string): string | null => {
+  const found = THREAD_ID.exec(value)
+  return found ? `msg_${found[1]}_1` : null
+}
 /** A cursor this backend made: a time, then the position it names, in base 36. */
 const CURSOR = /^([0-9a-z]+)(?:\.([0-9a-z]+))?$/
 /** The API's own cursor for one channel, which its message list and feed share, and any process resumes. */
@@ -1887,6 +1895,8 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
 
   /** Whether the API lists threads with their first and newest messages (`include=messages`): until it refuses the parameter, it's asked. */
   let threadsWithMessages = true
+  /** Whether the API lists tasks with their newest messages (`include=messages`): until it refuses the parameter, it's asked. */
+  let tasksWithMessages = true
   /** Whether the API takes how many threads a page holds (`limit`): until it refuses the parameter, it's asked. */
   let threadsByLimit = true
   /** Whether a page of threads was answered, so what the thread list takes is known: until one is, reads of it wait for the first. */
@@ -2923,6 +2933,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
     messageCount: task.messageCount,
     lastActivityAt: task.lastActivityAt,
     ...(task.lastMessage ? { lastMessage: task.lastMessage } : {}),
+    ...(task.latestMessage ? { latestMessage: task.latestMessage } : {}),
     createdAt: task.message.createdAt,
     createdBy: task.message.createdBy,
     rootMessage: firstOf(task),
@@ -3624,9 +3635,18 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       let from: { after?: string; cursor?: string } = after !== undefined ? { after } : {}
       // The last active are anywhere in the list, which goes by when each was made: it's read to its end.
       while (query.latest || found.length < limit) {
-        const page = await api<{ tasks: ApiTaskOf[]; cursor: string | null }>(who, 'GET', path, { version: 2, query: { ...asked, ...from }, signal }).catch((error: unknown) => {
+        // What this request asks, which a list running beside it may change before it's answered. A `latest` list reads
+        // every page and answers only `limit` of them: their replies are read by ID, not every page's with it.
+        const including = tasksWithMessages && !query.latest
+        const page = await api<{ tasks: ApiTaskOf[]; cursor: string | null }>(who, 'GET', path, { version: 2, query: { ...asked, ...from, ...(including ? { include: 'messages' } : {}) }, signal }).catch((error: unknown) => {
+          // An API from before `include=messages` refuses it: the page is asked again without, and each latest reply read by ID.
+          if (including && unknownParameter(error, 'include')) {
+            tasksWithMessages = false
+            return null
+          }
           throw taskRefusal(error)
         })
+        if (!page) continue
         for (const task of page.tasks) if ((query.latest || found.length < limit) && matching(task)) found.push(task)
         if (!page.cursor) break
         from = { cursor: page.cursor }
@@ -3634,8 +3654,8 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       // Only what it answers is built: the list says when each was last active, so the rest cost no reads.
       // A sort keeps ties as they came, in the order they were made.
       const kept = query.latest ? [...found].sort((a, b) => a.lastActivityAt - b.lastActivityAt).slice(-limit) : found
-      // Each task comes with its first message: only its latest reply is read apart, by reference, and the page's
-      // authors are named together, as a page of threads' are.
+      // Each task comes with its first message, and its latest reply where the API sends it: on an API that doesn't,
+      // that reply is read apart, by reference. The page's authors are named together, as a page of threads' are.
       const tasks = await summaries(who, await Promise.all(kept.map(async (task) => ({ thread: listedOf(task), channel: await channelById(who, task.channelId) }))), signal)
       const last = found.at(-1)
       return { tasks, cursor: last ? idAt(last.id, 1) : none.cursor }

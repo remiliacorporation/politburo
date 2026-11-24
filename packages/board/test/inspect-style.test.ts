@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom'
 import { describe, expect, it } from 'vitest'
 import { CSS } from '../src/inspect/style.ts'
 
@@ -112,10 +113,37 @@ const px = (size: string) => (size.endsWith('rem') ? parseFloat(size) * 16 : par
 const phone = (media: string) => !media.includes('prefers-color-scheme')
 const desktop = (media: string) => !media.includes('pointer: coarse') && !media.includes('max-width')
 
+it('uses the text cursor only in text fields, not on controls or read-only prose', async () => {
+  const window = new Window()
+  try {
+    window.document.head.innerHTML = `<style>${CSS}</style>`
+    window.document.body.innerHTML = `
+      <label class="button-sounds"><input type="checkbox"> button sounds</label>
+      <button class="send">send</button>
+      <nav class="sidebar"><a href="/">Handoffs</a></nav>
+      <input placeholder="name"><textarea placeholder="reply"></textarea>
+      <div contenteditable>draft</div><div contenteditable="false">read-only</div>
+      <div class="text">selectable message</div>
+      <dl class="block-fields"><dt>status</dt><dd>ready</dd></dl>
+      <pre class="block-raw">raw block</pre>
+      <div class="schema-fields">schema fields</div>
+      <div class="schema-json"><pre>schema JSON</pre></div>
+      <div class="explained">access explanation</div>
+    `
+    const cursor = (selector: string) => window.getComputedStyle(window.document.querySelector(selector)!).cursor
+    for (const selector of ['.button-sounds input', 'button', '.sidebar a', '[contenteditable="false"]', '.text', '.block-fields dd', '.block-raw', '.schema-fields', '.schema-json pre', '.explained']) {
+      expect(cursor(selector), selector).toBe('default')
+    }
+    for (const selector of ['[placeholder="name"]', 'textarea', '[contenteditable]:not([contenteditable="false"])']) expect(cursor(selector), selector).toBe('text')
+  } finally {
+    await window.happyDOM.close()
+  }
+})
+
 describe('the inspector on a touch device', () => {
   it('finds the fields the stylesheet sizes', () => {
     expect(fields).toEqual(
-      expect.arrayContaining(['.composer-box textarea', '.editor textarea', '.ask textarea', '.ask textarea.code', '.new-channel input', '.whoami.naming input', '.suggest input']),
+      expect.arrayContaining(['.composer-box textarea', '.editor textarea', '.ask textarea', '.ask textarea.code', '.new-channel input', '.suggest input']),
     )
   })
 

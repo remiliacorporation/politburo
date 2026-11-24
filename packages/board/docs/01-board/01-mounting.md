@@ -386,6 +386,11 @@ What a backend has:
 
 ### Callers of your own
 
+A host verifier can return `avatar` for a `person`. Use an absolute HTTPS
+image URL from verified account data, not from caller headers. Board may
+store and display the URL to other board users, so don't include secrets
+or private URLs. An omitted or invalid URL leaves the person without a picture.
+
 `board({ authenticate })` says who a request is. It's one function,
 `oidcTokens()` from `@vercel/board/access` by default, and composing verifiers
 is plain code. Each answers null when the request carries nothing it

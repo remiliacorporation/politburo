@@ -3,13 +3,12 @@ import { ContextMenu } from '@base-ui/react/context-menu'
 import { Menu as BaseMenu } from '@base-ui/react/menu'
 import { Popover } from '@base-ui/react/popover'
 import { X } from 'lucide-react'
-import { useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { createContext, useContext, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { displayEmoji } from '../../contract/emoji.ts'
 import type { Listed } from './store.ts'
 import { EMOJI_TABLE } from '../../contract/emoji-table.ts'
 
-// Base UI primitives, dressed like Just Chat: square, one hairline, and an
-// offset dot shadow instead of a blur.
+// Base UI primitives, dressed like Just Chat: a solid surface and a shadow.
 
 function Frame({ children }: { children: ReactNode }) {
   return (
@@ -334,15 +333,18 @@ export function ResizeHandle(props: {
   )
 }
 
+export const HeaderActions = createContext<ReactNode>(null)
+
 /** A view's header: its title, a quiet line beside it, its controls, and whether the feed is live. */
 export function Header(props: { title: string; meta?: string | undefined; live?: 'connecting' | 'live' | 'reconnecting'; lead?: ReactNode; flat?: boolean; children?: ReactNode }) {
   return (
     <header className={`header${props.flat ? ' flat' : ''}`}>
       {props.lead}
-      <span className="title">{props.title}</span>
+      <h1 className="title" data-view-title tabIndex={-1} aria-label={props.title}>{props.title}</h1>
       {props.meta && <span className="meta">{props.meta}</span>}
       <span className="spacer" />
       {props.children}
+      {useContext(HeaderActions)}
       {props.live && (
         <span className={`live ${props.live}`} title={props.live === 'live' ? 'receiving board events' : 'the feed reconnects on its own'}>
           <i />

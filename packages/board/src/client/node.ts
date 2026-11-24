@@ -373,7 +373,7 @@ export function connect(
   url = url.replace(/\/+$/, '')
   const rawFetch: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
   const doFetch = guarded(url, rawFetch, options.token)
-  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: 'error' })
+  const joinedFetch: typeof fetch = (input, init) => rawFetch(input, { ...init, redirect: init?.redirect === 'manual' ? 'manual' : 'error' })
   // Every token is for `url`, the board it's sent to. A board whose discovery claims another
   // audience gets none, so its answer can't get us to mint one it could replay.
   let discovery: Promise<Discovery> | undefined
@@ -665,6 +665,15 @@ function guarded(url: string, doFetch: typeof fetch, suppliedToken?: Resolvable<
   }
 }
 
+/** `location` against `base`, or null when it isn't a URL. */
+function urlOf(location: string, base: string): URL | null {
+  try {
+    return new URL(location, base)
+  } catch {
+    return null
+  }
+}
+
 /**
  * One request that recognizes the wall: a redirect to `/sso-api`, an HTML
  * page where the board answers JSON (on SAML teams, the redirects end at the
@@ -685,9 +694,14 @@ async function through(doFetch: typeof fetch, input: RequestInfo | URL, init: Re
   const wall = (status: number) => (moved ? new Moved(moved, status) : new Wall(status))
   for (let hops = 0; ; hops++) {
     const response = await doFetch(hops === 0 ? input : target, { ...init, headers, redirect: 'manual' })
-    const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null
-    if (location) {
-      const next = new URL(location, target)
+    const redirected = response.status >= 300 && response.status < 400
+    // A caller that asked for the redirect itself (a claim's request, which goes nowhere else) gets it back before anything reads it.
+    if (redirected && init.redirect === 'manual') return response
+    const location = redirected ? response.headers.get('location') : null
+    // A `Location` that isn't a URL goes nowhere: the 3xx comes back as it is.
+    const next = location ? urlOf(location, target) : null
+    if (location && !next) return response
+    if (location && next) {
       if (next.pathname.startsWith('/sso-api')) throw wall(response.status)
       if (method === 'GET' || method === 'HEAD') {
         if (hops >= 20) throw new BoardError('too_many_redirects', `${target} redirected more than 20 times.`, response.status)

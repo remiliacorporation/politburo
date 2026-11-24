@@ -73,6 +73,48 @@ describe("a host's authenticate", () => {
     expect(me.body).toMatchObject({ principal: 'vercel:user:u_ada', actor: 'vercel:user:u_ada+pi', handle: 'user-ada/pi', expiresAt: null })
   })
 
+  it('shows only a verified host picture on the person, without changing their author ID or scope', async () => {
+    const id = 'example:user:fixture'
+    const picture = 'https://images.example.invalid/fixture.png'
+    const profilePicture = 'https://images.example.invalid/profile.png'
+    const pictures = new Map<string, string | undefined>([
+      ['valid', picture],
+      ['missing', undefined],
+      ['http', 'http://images.example.invalid/p.png'],
+      ['userinfo', 'https://other@images.example.invalid/p.png'],
+      ['malformed', 'https:////images.example.invalid/p.png'],
+      ['fragment', 'https://images.example.invalid/p.png#fragment'],
+    ])
+    const tenant = hosted('team_a', {
+      authenticate: ({ credential }) => credential !== null && pictures.has(credential) ? {
+        id, kind: 'person', handle: 'fixture', avatar: pictures.get(credential),
+      } : null,
+    })
+    const headers = { 'x-board-avatar': 'https://images.example.invalid/untrusted.png', 'x-board-can': 'dev=read,post' }
+    expect((await caller(tenant.fetch, 'unknown', headers)('GET', '/me')).status).toBe(401)
+    const person = caller(tenant.fetch, 'valid', headers)
+    expect((await person('GET', '/me')).body).toMatchObject({ principal: id, actor: id, avatar: picture })
+    expect((await person('POST', '/messages', { channel: 'outside', text: 'denied' })).status).toBe(403)
+    const post = await person('POST', '/messages', { channel: 'dev', text: 'with picture' })
+    expect(post.status).toBe(201)
+    const path = `/messages/${post.body.message.id}`
+    const identity = { by: { principal: id, actor: id, profile: null }, author: { kind: 'person', name: 'fixture', avatar: picture, verified: true } }
+    expect((await person('GET', path)).body.message).toMatchObject(identity)
+    expect((await caller(tenant.fetch, 'missing', headers)('GET', path)).body.message).toMatchObject(identity)
+
+    const profile = caller(tenant.fetch, 'valid', { ...headers, 'x-board-profile': `agent;avatar="${profilePicture}"` })
+    expect((await profile('GET', '/me')).body).toMatchObject({ principal: id, actor: `${id}+agent`, avatar: profilePicture })
+    for (const credential of ['missing', 'http', 'userinfo', 'malformed', 'fragment']) {
+      expect((await caller(tenant.fetch, credential, headers)('GET', '/me')).body).toMatchObject({ principal: id, actor: id, avatar: null })
+    }
+    const noPicture = caller(tenant.fetch, 'missing', headers)
+    const fallback = await noPicture('POST', '/messages', { channel: 'dev', text: 'without picture' })
+    expect(fallback.status).toBe(201)
+    expect((await noPicture('GET', `/messages/${fallback.body.message.id}`)).body.message).toMatchObject({
+      by: { principal: id, actor: id, profile: null }, author: { kind: 'person', name: 'fixture', avatar: null, verified: true },
+    })
+  })
+
   it('carries its principal through reads, writes, tails and SSE', async () => {
     const tenant = hosted('team_a')
     const ada = caller(tenant.fetch, 'pt_ada', {})

@@ -1,0 +1,64 @@
+{
+  "case_id": "routing-digest-003-empty-inbox",
+  "description": "Scan an existing empty inbox with no log or digest.",
+  "expected": {
+    "exit_code": 0,
+    "files": {
+      "mail/example/digest.yaml": "batch: \"example-1970-01-01T00:00Z\"\nrepo: \"example\"\nwindow: {\"from\": \"1970-01-01T00:00Z\", \"to\": \"1970-01-01T00:00Z\"}\ncounts: {\"p0\": 0, \"p1\": 0, \"p2\": 0, \"p3\": 0}\nact_on: []\nitems: []\n",
+      "mail/log.yaml": ""
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\n",
+    "timeline": [
+      {
+        "at": "2026-11-20T21:14:00Z",
+        "digest": {
+          "act_on": [],
+          "batch": "example-1970-01-01T00:00Z",
+          "counts": {
+            "p0": 0,
+            "p1": 0,
+            "p2": 0,
+            "p3": 0
+          },
+          "items": [],
+          "repo": "example",
+          "window": {
+            "from": "1970-01-01T00:00Z",
+            "to": "1970-01-01T00:00Z"
+          }
+        },
+        "exit_code": 0,
+        "log_line_count": 0,
+        "stderr": "",
+        "stdout": "digest: <WORK>/mail/example/digest.yaml counts p0=0 p1=0 p2=0 p3=0 new=0 invalid=0\n"
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/example/digest.yaml",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "after_seconds": 0
+      }
+    ],
+    "tag": "example"
+  },
+  "matrix_row": "M06",
+  "notes": "",
+  "setup": {
+    "files": {},
+    "now": "2026-11-20T21:14:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_router.py",
+      "supervisor/schemas/swarm-message-header.v1.json"
+    ]
+  }
+}

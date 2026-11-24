@@ -1,0 +1,57 @@
+{
+  "case_id": "check-lock-006-ownerless-default",
+  "description": "An old hand-run lock is left alone by default.",
+  "expected": {
+    "attempts": [
+      {
+        "exception": "_OwnerlessLockTimeout",
+        "lock_dir_exists": true,
+        "message": "timeout waiting for check lock <WORK>/example-notes/mac-check.lock: no owner.json; remove it by hand once nobody is running a check",
+        "sleeps": []
+      }
+    ],
+    "exit_code": null,
+    "files": {
+      "example-notes/mac-check.lock/owner.json": null
+    },
+    "lock_path": "example-notes/mac-check.lock",
+    "log_lines": [],
+    "stale_directories": 0,
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "attempts": [
+      {
+        "args": {
+          "tag": "example-worker",
+          "timeout": 0
+        }
+      }
+    ],
+    "collect": [
+      "example-notes/mac-check.lock/owner.json"
+    ],
+    "function": "take_lock",
+    "kind": "call",
+    "notes_root": "example-notes"
+  },
+  "matrix_row": "M11",
+  "notes": "",
+  "setup": {
+    "files": {
+      "example-proc/120/stat": "120 (example fixture) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 345\n"
+    },
+    "hostname": "example-host",
+    "lock_age": 10000,
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 120,
+    "proc_root": "example-proc"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_push.py"
+    ]
+  }
+}

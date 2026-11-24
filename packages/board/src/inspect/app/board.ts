@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import type { BoardEventView, Explanation, GrantInput, GrantWriteOptions, InboxEntry, Me, MessageView, SchemaInput, SyncedView, TaskView } from '../../api/routes.ts'
+import { flushSync } from 'react-dom'
+import type { AttentionAnswerBody, BoardEventView, Explanation, GrantInput, GrantWriteOptions, InboxEntry, Me, MessageView, SchemaInput, SyncedView, TaskView } from '../../api/routes.ts'
 // `@vercel/board/access`, in an app of yours.
 import { compileAccess } from '../../server/access.ts'
 import { board, BoardError, type Attachment, type EventsState, type ExplainPrincipal, type PostOptions, type ScheduleTiming } from '../../server/index.default.ts'
@@ -10,11 +11,15 @@ import { board, BoardError, type Attachment, type EventsState, type ExplainPrinc
 // Everything under that line reads as it would in your app: plain `team.*` calls.
 import { http } from '../../backend-http/index.default.ts'
 import { everyChannel } from '../../client/channels.ts'
+import type { TaskPriority } from '../../contract/schemas.ts'
+import * as attentionStore from './attention-store.ts'
 import { toast } from './chrome.ts'
 import { listing } from './listing.ts'
-import { base } from './nav.tsx'
+import { base, currentPath, route } from './nav.tsx'
 import * as store from './store.ts'
 import { refusal, said } from './words.ts'
+import { fixtureRecords } from './work-fixtures.ts'
+import type { SwarmRecords } from './work.ts'
 
 // The page's data: one handle on the board, and every read and write the page makes through it.
 
@@ -57,7 +62,8 @@ const stored = <T>(key: string): T | undefined => {
 /** The profile `vb inspect` started as (`--as claude`), which the page is told beside its token. */
 const started: Profile | null = (() => {
   try {
-    return JSON.parse(meta('inspect-profile') || 'null') as Profile | null
+    const value = JSON.parse(meta('inspect-profile') || 'null') as string | Profile | null
+    return typeof value === 'string' ? { name: value } : value
   } catch {
     return null
   }
@@ -88,17 +94,37 @@ const handleFor = (choice: Profile | null | undefined) => {
 
 /** The handle every call below goes through: you, or you as the profile you picked. */
 let team = handleFor(profile)
+let identity = 0
+let profileChoice = 0
+let feedFollow: AbortController | undefined
+let bootStarted = false
+
+export const getIdentity = () => identity
 
 /** Switches who you post as, then learns the identity that is, and remembers it once the board takes it. */
 export async function setProfile(next: Profile | null | undefined): Promise<boolean> {
+  const choice = ++profileChoice
   const handle = handleFor(next)
   try {
     const me = await handle.me()
-    team = handle
-    profile = next
-    set((s) => ({ ...s, me }))
+    if (choice !== profileChoice) return false
+    feedFollow?.abort()
+    feedFollow = undefined
+    // Publish the new handle and its acting-as label in the same turn.
+    flushSync(() => {
+      team = handle
+      identity++
+      profile = next
+      loaded.clear()
+      listed = listingForCurrentHandle()
+      set((s) => ({ ...s, me, schedules: { is: 'loading' }, live: bootStarted ? 'reconnecting' : s.live,
+        tasksCounted: false, openTaskRoots: {}, openTaskMe: null, openTaskAttentionRefusals: {}, paneThread: null,
+        tasksRefused: null, attention: {}, attentionUnsupported: false }))
+    })
+    if (bootStarted) void boot().catch((error) => toast(said(error)))
+    else void loadSchedules()
   } catch (error) {
-    toast(`couldn't switch: ${said(error)}`)
+    if (choice === profileChoice) toast(`couldn't switch: ${said(error)}`)
     return false
   }
   if (next) {
@@ -116,7 +142,7 @@ export async function setProfile(next: Profile | null | undefined): Promise<bool
 /** What you may do where: `me.can` is each channel pattern's permissions, and `compileAccess` answers for a channel. */
 export function viewerOf(me: Me): store.Viewer {
   const access = compileAccess(me.can)
-  return { actor: me.actor, principal: me.principal, profile: me.profile, may: (permission, channel) => access.can(permission, channel), manages: access.at('manage', '*') }
+  return { actor: me.actor, principal: me.principal, profile: me.profile, may: (permission, channel) => access.can(permission, channel), manages: access.at('manage', '*'), person: me.kind === 'person' }
 }
 
 // --- the page's state: what the board said, folded by store.ts --------------------------------
@@ -149,7 +175,9 @@ const loaded = new Map<string, Promise<void>>()
 function once(key: string, load: () => Promise<void>): Promise<void> {
   let promise = loaded.get(key)
   if (!promise) {
+    const as = identity
     promise = load().catch((error) => {
+      if (as !== identity) return
       loaded.delete(key)
       toast(said(error))
     })
@@ -160,50 +188,77 @@ function once(key: string, load: () => Promise<void>): Promise<void> {
 
 // --- reading -----------------------------------------------------------------------
 
-/** How many of the feed's newest events fill the activity view: the most one read of them answers. */
-const RECENT = 100
-
-/**
- * The page shows once it knows who you are and the channels. The feed's newest events across them fill the
- * activity view, in one read, and the feed goes on from that read's cursor. A board that can't read them
- * across channels says so: its words show there, and the feed starts from now.
- */
-export async function boot() {
-  // Settled either way: a refusal is what the view shows, not a failed boot.
-  const recent = team.poll({ all: true, last: RECENT }).then(
-    (page) => ({ page }),
-    (error: unknown) => ({ refused: refusal(error) }),
-  )
-  // Every channel, a page at a time: the sidebar lists them all.
-  const [me, discovery, channels] = await Promise.all([team.me(), team.discovery().catch(() => null), everyChannel(team)])
+/** The page shows once it knows who you are and the channels the sidebar lists. */
+export async function boot(): Promise<void> {
+  bootStarted = true
+  const handle = team
+  const as = identity
+  const current = () => handle === team && as === identity
+  // Keep the first page's cursor so live updates cover posts while later pages are loading.
+  let after: string | undefined
+  const snapshot = await Promise.all([
+    handle.me(),
+    handle.discovery().catch(() => null),
+    everyChannel({ channels: async (query) => {
+      const page = await handle.channels(query)
+      after ??= page.cursor
+      return page
+    } }),
+  ]).catch((error) => {
+    if (current()) throw error
+    return null
+  })
+  if (!snapshot || !current()) return
+  const [me, discovery, channels] = snapshot
   set((s) => ({ ...s, me, discovery, channels: Object.fromEntries(channels.map((c) => [c.path, c])) }))
-  const latest = await recent
-  // Folded as live events are, oldest first, so an edit or a delete among them leaves its message as it is now.
-  if ('page' in latest) {
-    listed.apply(latest.page.events)
-    set((s) => ({ ...s, cursor: latest.page.cursor }))
-  } else set((s) => ({ ...s, activityRefused: latest.refused }))
+  const controller = feedFollow = new AbortController()
   // A burst of events is one render: they're folded in a frame at a time.
   let queue: BoardEventView[] = []
+  let taskUpdates: { root: MessageView; epoch: number }[] = []
   const flush = () => {
     const events = queue
+    const updates = taskUpdates
     queue = []
+    taskUpdates = []
+    if (!current()) return
     listed.apply(events)
+    mergeOpenTaskEvents(updates)
+    if (attentionVisit) refreshAttentionEvents(events)
     // A schedule's own state isn't in the feed, but its sends are: one that landed means the list moved.
     if (events.some((event) => event.message?.schedule !== undefined)) void loadSchedules()
   }
   follow(
-    'page' in latest ? latest.page.cursor : undefined,
+    handle,
+    after,
+    controller.signal,
     (event) => {
-      if (queue.push(event) === 1) requestAnimationFrame(flush)
+      if (!current()) return
+      if (event.type === 'work.control') {
+        // Apply the transition immediately so the store can reject older status snapshots.
+        set((s) => store.applyEvent(s, event))
+        void loadStatus()
+      } else {
+        if (event.message && observeOpenTaskEvent(event.message))
+          taskUpdates.push({ root: event.message, epoch: openTaskEpoch })
+        if (queue.push(event) === 1) requestAnimationFrame(flush)
+      }
     },
-    (feed) => set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' })),
-  ).catch((error) => toast(`live updates stopped: ${said(error)}`))
+    (feed) => {
+      if (!current()) return
+      const reconnected = feed === 'live' && state.live === 'reconnecting'
+      set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' }))
+      if (reconnected && needsVisit) refreshOpenTasks(true)
+    },
+  ).catch((error) => { if (current()) toast(`live updates stopped: ${said(error)}`) })
+  // Read after the feed's cursor is fixed: a pause is either in this snapshot or in the feed.
+  void loadStatus()
   // Who's who, for the names of a task's owner and holder; and the open tasks, for their count.
-  void team.actors().then((actors) => set((s) => ({ ...s, actors: { ...Object.fromEntries(actors.map((actor) => [actor.id, actor])), ...s.actors } })), () => {})
+  void handle.actors().then((actors) => {
+    if (current()) set((s) => ({ ...s, actors: { ...Object.fromEntries(actors.map((actor) => [actor.id, actor])), ...s.actors } }))
+  }, () => {})
   void loadSchemas()
   void loadSchedules()
-  void loadTasks({ state: 'open', label: [] }).then((listed) => 'cursor' in listed && !listed.more && set((s) => ({ ...s, tasksCounted: true })))
+  if (route(currentPath()).view !== 'needs' && openTaskRead?.identity !== identity) refreshOpenTasks()
 }
 
 // #region guide inspector/live.ts
@@ -213,8 +268,8 @@ export async function boot() {
  * The handle retries a dropped connection itself; this throws only when the board refuses the feed (a
  * token that ran out, say).
  */
-async function follow(after: string | undefined, each: (event: BoardEventView) => void, onState: (state: EventsState) => void) {
-  for await (const event of team.events({ all: true, ...(after !== undefined ? { after } : {}) }, { onState })) each(event)
+async function follow(team: ReturnType<typeof board>, after: string | undefined, signal: AbortSignal, each: (event: BoardEventView) => void, onState: (state: EventsState) => void) {
+  for await (const event of team.events({ all: true, ...(after !== undefined ? { after } : {}) }, { signal, onState })) each(event)
 }
 // #endregion
 
@@ -222,7 +277,7 @@ async function follow(after: string | undefined, each: (event: BoardEventView) =
 const PAGE = 200
 
 /** One channel's newest messages across its threads, roots and replies alike, oldest first. */
-const readChannel = (channel: string) => team.channel(channel).messages({ limit: PAGE })
+const readChannel = (channel: string, handle = team) => handle.channel(channel).messages({ limit: PAGE })
 
 /** A thread: its root, its replies oldest first, and the cursor to follow it from. */
 const readThread = (id: string) => team.thread(id)
@@ -232,36 +287,79 @@ const readThread = (id: string) => team.thread(id)
  * Each channel's view, a page of its threads at a time (by messages on a board from before `older`), through
  * whichever handle you post as now.
  */
-const listed = listing(
-  { threads: (query) => team.threads(query), messages: (channel) => readChannel(channel) },
-  () => state,
-  set,
-)
+function listingForCurrentHandle() {
+  const handle = team
+  const as = identity
+  return listing(
+    { threads: (query) => handle.threads(query), messages: (channel) => readChannel(channel, handle) },
+    () => state,
+    (next) => { if (as === identity) set(next) },
+  )
+}
+
+let listed = listingForCurrentHandle()
 
 export const loadChannel = (channel: string) => once(`channel:${channel}`, () => listed.load(channel))
 
 export async function loadOlder(channel: string): Promise<boolean> {
+  const as = identity
   try {
     return await listed.older(channel)
   } catch (error) {
-    toast(said(error))
+    if (as === identity) toast(said(error))
     return true
   }
 }
 
 export const loadThread = (id: string) =>
   once(`thread:${id}`, async () => {
-    const { message: root, replies } = await readThread(id)
-    set((s) => store.merge(s, [root, ...replies]))
+    const as = identity
+    try {
+      const { message: root, replies } = await readThread(id)
+      if (as !== identity) return
+      set((s) => store.merge(s, [root, ...replies]))
+    } catch (error) {
+      if (as === identity && inaccessible(error)) {
+        forgetThread(id, said(error))
+        refreshThreadPane(id)
+      }
+      throw error
+    } finally {
+      // Share in-flight reads, not the access decision from a prior visit to the thread.
+      if (as === identity) loaded.delete(`thread:${id}`)
+    }
   })
 
-export const loadInbox = (key: string): Promise<InboxEntry[]> => team.inbox(key, { limit: 100 })
+let pane: { id: string; identity: number; read: number } | undefined
+
+export function openThreadPane(id: string) {
+  const visit = pane = { id, identity, read: 0 }
+  set((s) => ({ ...s, paneThread: { id, identity, result: 'loading' } }))
+  refreshThreadPane()
+  return () => { if (pane === visit) pane = undefined }
+}
+
+function refreshThreadPane(only?: string) {
+  const visit = pane
+  if (!visit || visit.identity !== identity || (only !== undefined && only !== visit.id)) return
+  const { id } = visit
+  const read = ++visit.read
+  const current = () => pane === visit && visit.identity === identity && read === visit.read
+  void readThread(id).then(({ message, replies }) => {
+    if (!current()) return
+    set((s) => ({ ...store.merge(s, [message, ...replies]), paneThread: { id, identity, result: 'readable' } }))
+  }, (error: unknown) => {
+    if (!current()) return
+    if (inaccessible(error)) forgetThread(id, said(error))
+    else set((s) => ({ ...s, paneThread: { id, identity, result: { refused: said(error) } } }))
+  })
+}
 
 /** Threads a filtered view asks the board for, and how many of them it reads whole. */
 const FILTERED = 50
 const FILTERED_WHOLE = 30
 
-/** The kinds of filtered read the board refused, each asked once: where, and by what. */
+/** The kinds of filtered read the board refused, each asked once. */
 const unsupported = new Set<string>()
 
 /**
@@ -270,25 +368,77 @@ const unsupported = new Set<string>()
  * since the match may be any message of it. A board that can't find threads that way says so once,
  * and the filter then shows what matches among what's loaded.
  */
-export const loadFiltered = (channel: string | undefined, filter: store.Filter) => {
-  const kind = `${channel ? 'channel' : 'board'}:${filter.from ? 'from' : ''}:${filter.text ? 'text' : ''}:${filter.label.length > 0 ? 'label' : ''}`
+export const loadFiltered = (channel: string, filter: store.Filter) => {
+  const kind = `${filter.from ? 'from' : ''}:${filter.text ? 'text' : ''}:${filter.label.length > 0 ? 'label' : ''}`
   if (unsupported.has(kind)) return Promise.resolve()
-  return once(`filtered:${channel ?? '*'}:${JSON.stringify(filter)}`, async () => {
+  return once(`filtered:${channel}:${JSON.stringify(filter)}`, async () => {
+    const as = identity
     const page = await team
       .threads({
-        ...(channel ? { channel } : {}),
+        channel,
         ...(filter.from ? { from: filter.from } : {}),
         ...(filter.text ? { text: filter.text } : {}),
         ...(filter.label.length > 0 ? { label: filter.label } : {}),
         limit: FILTERED,
       })
       .catch((error: unknown) => {
-        if ((error as { status?: unknown } | null)?.status === 501) unsupported.add(kind)
+        if (as === identity && (error as { status?: unknown } | null)?.status === 501) unsupported.add(kind)
         throw error
       })
+    if (as !== identity) return
     set((s) => store.merge(s, page.threads.flatMap((thread) => (thread.last ? [thread.message, thread.last] : [thread.message]))))
     await Promise.all(page.threads.filter((thread) => thread.replies > 1).slice(0, FILTERED_WHOLE).map((thread) => loadThread(thread.message.id)))
   })
+}
+
+// --- work control and registry ------------------------------------------------------
+
+let statusRead = 0
+let statusSettled = 0
+let statusRefusedAt = 0
+
+export async function loadStatus() {
+  const read = ++statusRead
+  const as = identity
+  try {
+    const status = await team.status()
+    if (as !== identity) return
+    statusSettled = Math.max(statusSettled, read)
+    set((s) => {
+      // Work state is ordered by the board's transitions; the refusal is ordered by request.
+      const next = store.applyStatus(s, status)
+      return next.statusRefused !== null && read > statusRefusedAt ? { ...next, statusRefused: null } : next
+    })
+  } catch (error) {
+    // A refusal only adds a note to the header; it never replaces a successful status.
+    if (as !== identity || read <= statusSettled) return
+    statusSettled = statusRefusedAt = read
+    set((s) => ({ ...s, statusRefused: said(error) }))
+  }
+}
+
+export async function changePause(paused: boolean, reason: string) {
+  const as = identity
+  try {
+    const status = await (paused ? team.pause(reason) : team.resume(reason))
+    if (as === identity) set((s) => store.applyStatus(s, status))
+  } catch (error) {
+    if (as === identity) toast(refusal(error))
+  }
+}
+
+export async function listProfiles(channel: string): Promise<string[] | undefined> {
+  const handle = team
+  const as = identity
+  try {
+    const { agents } = await handle.agents.list(channel)
+    if (handle !== team || as !== identity) return
+    return [...new Set(agents.flatMap(({ binding }) => binding.profile === null ? [] : [binding.profile]))].sort()
+  } catch (error) {
+    if (handle !== team || as !== identity) return
+    if (!(error instanceof BoardError && error.code === 'no_agent_ops')) throw error
+    return []
+  }
 }
 
 // --- writing -----------------------------------------------------------------------
@@ -336,7 +486,9 @@ export async function send(
   }
   set((s) => ({ ...s, pending: [...s.pending.filter((p) => p.key !== key), pending] }))
   try {
+    const as = identity
     const attachments = await Promise.all(files.map((file) => team.upload({ data: file, name: file.name })))
+    if (as !== identity) throw new Error('the acting identity changed before this was sent; retry to send as the current identity')
     const content = {
       text: post.text,
       ...(attachments.length ? { attachments } : {}),
@@ -359,7 +511,7 @@ export async function send(
       ? (await team.tasks.create(post.channel, { ...options, needs: post.task.needs, for: post.task.for })).task
       : await write(post.re === null ? { channel: post.channel } : { re: post.re }, options)
     outgoing.delete(key)
-    set((s) => store.sent(s, key, sent))
+    set((s) => as === identity ? store.sent(s, key, sent) : { ...s, pending: s.pending.filter((p) => p.key !== key) })
   } catch (error) {
     set((s) => ({ ...s, pending: s.pending.map((p) => (p.key === key ? { ...p, error: refusal(error) } : p)) }))
   }
@@ -438,46 +590,13 @@ const listTasks = (query: { state?: 'open' | 'all' | TaskView['state']; channel?
   team.tasks.list({ ...query, limit: PAGE })
 // #endregion
 
-// #region guide inspector/claims.ts
-/**
- * The claims this tab holds, by task: each claim's `epoch` and `token`, which its writes carry.
- * The token is a secret, so it lives in memory and nowhere else: never in storage, where a script
- * on the page or another tab could read it. A reload gives the claims up, and their leases run out.
- */
-const claims = new Map<string, { epoch: number; token: string }>()
-
-/** Claims a task, and keeps the claim. A task that can't be claimed now throws a 409: `task_claimed`, `task_waiting`, `task_assigned`. */
-async function claim(id: string): Promise<MessageView> {
-  const claimed = await team.tasks.claim(id)
-  claims.set(id, { epoch: claimed.epoch, token: claimed.token })
-  return claimed.task
-}
-
-/** What this tab's claim on a task does: `renew`, `release`, `complete`, `fail`, and `block`. Once the claim is over, each throws a 409 `claim_lost` and changes nothing. */
-function held(id: string) {
-  const mine = claims.get(id)
-  if (!mine) throw new BoardError('claim_lost', 'this tab holds no claim on it', 409)
-  return team.tasks.held(id, mine)
-}
-// #endregion
-
-// The store knows which claims are live, from what the board shows; once it drops one it had,
-// its token goes too. One the store hasn't taken in yet is kept: a claim's token is here a
-// moment before the store hears of it, and anything that changes the store in between runs this.
-const recorded = new Set<string>()
-listeners.add(() => {
-  for (const id of claims.keys()) {
-    if (state.claims[id]) recorded.add(id)
-    else if (recorded.delete(id)) claims.delete(id)
-  }
-})
-
 /**
  * The tasks a filter keeps, a page at a time, into the store. Answers where the list ends for
  * now, or what the board refused it for: `tooWide` when the filter's tree holds more channels than
  * one list reads, as Vercel's board says for a caller who doesn't read every channel.
  */
-export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<{ cursor: string; last: MessageView | undefined; more: boolean } | { refused: string; tooWide: boolean }> {
+export async function loadTasks(filter: store.TaskFilter, after?: string): Promise<{ cursor: string; last: MessageView | undefined; more: boolean; roots: MessageView[] } | { refused: string; tooWide: boolean; inaccessible: boolean } | undefined> {
+  const as = identity
   try {
     const page = await listTasks({
         state: filter.state,
@@ -487,77 +606,275 @@ export async function loadTasks(filter: store.TaskFilter, after?: string): Promi
         ...(filter.for ? { for: filter.for } : {}),
         ...(after ? { after } : {}),
       })
+    if (as !== identity) return
     const roots = page.tasks.map((task) => task.message)
     set((s) => store.merge(s, roots))
-    return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE }
+    return { cursor: page.cursor, last: roots.at(-1), more: roots.length === PAGE, roots }
   } catch (error) {
-    return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large' }
+    if (as !== identity) return
+    return { refused: refusal(error), tooWide: (error as { code?: unknown } | null)?.code === 'channel_tree_too_large', inaccessible: inaccessible(error) }
+  }
+}
+
+const inaccessible = (error: unknown) => error instanceof BoardError && (error.status === 403 || error.status === 404)
+
+let openTaskEpoch = 0
+let openTaskRead: {
+  identity: number; again: boolean; superseded: boolean; refused: Set<string>; observed: Map<string, MessageView>
+} | undefined
+let attentionVisit: symbol | undefined
+let needsVisit: symbol | undefined
+
+/** The feed updates members, but only a complete list may admit a new member. */
+function observeOpenTaskEvent(root: MessageView): boolean {
+  if (root.re !== null) return false
+  const member = Object.hasOwn(state.openTaskRoots, root.id)
+  if (!member && store.isTask(root) && !root.deleted && store.OPEN_STATES.includes(root.task.state)) refreshOpenTasks()
+  const read = openTaskRead
+  // A root can be in the in-flight snapshot even if it has never been a member here.
+  if (read?.identity === identity && (read.observed.get(root.id)?.version ?? -1) <= root.version)
+    read.observed.set(root.id, root)
+  return member
+}
+
+function mergeOpenTaskEvents(updates: { root: MessageView; epoch: number }[]) {
+  const members = updates.flatMap(({ root, epoch }) =>
+    epoch === openTaskEpoch && Object.hasOwn(state.openTaskRoots, root.id) ? [root] : [])
+  if (members.length) set((s) => ({ ...s, openTaskRoots: store.newest(s.openTaskRoots, members) }))
+}
+
+function forgetThread(id: string, reason: string, fromNeedsAttention = false) {
+  if (openTaskRead?.identity === identity) openTaskRead.refused.add(id)
+  const inPane = pane?.identity === identity && pane.id === id ? pane : undefined
+  // An older pane snapshot must not replace the refusal.
+  if (inPane) inPane.read++
+  set((s) => {
+    const { [id]: _, ...openTaskRoots } = s.openTaskRoots
+    return { ...s, openTaskRoots,
+      openTaskAttentionRefusals: fromNeedsAttention ? { ...s.openTaskAttentionRefusals, [id]: reason } : s.openTaskAttentionRefusals,
+      paneThread: inPane ? { id, identity, result: { refused: reason } } : s.paneThread }
+  })
+}
+
+/** Publish the full membership and its permissions together. Never publish a partial page. */
+function refreshOpenTasks(revalidate = false) {
+  if (openTaskRead?.identity === identity) {
+    openTaskRead.again = true
+    openTaskRead.superseded ||= revalidate
+    return
+  }
+  const read = openTaskRead = { identity, again: false, superseded: false, refused: new Set<string>(), observed: new Map<string, MessageView>() }
+  const handle = team
+  const current = () => read.identity === identity && !read.superseded
+  const roots = async () => {
+    const found: MessageView[] = []
+    let after: string | undefined
+    while (current()) {
+      const page = await handle.tasks.list({ state: 'open', limit: PAGE, ...(after ? { after } : {}) })
+      found.push(...page.tasks.map(({ message }) => message))
+      if (page.tasks.length < PAGE || page.cursor === after) break
+      after = page.cursor
+    }
+    return found
+  }
+  const requests = [roots(), handle.me()] as const
+  void Promise.all(requests).then(([tasks, me]) => {
+    if (!current()) return
+    openTaskEpoch++
+    const accepted = tasks.filter(({ id }) => !read.refused.has(id)).map((root) => {
+      let latest = root
+      for (const view of [state.openTaskRoots[root.id], read.observed.get(root.id)])
+        if (view && view.version > latest.version) latest = view
+      return latest
+    })
+    const openTaskRoots = Object.fromEntries(accepted.filter((root) =>
+      store.isTask(root) && !root.deleted && store.OPEN_STATES.includes(root.task.state)).map((root) => [root.id, root]))
+    set((s) => {
+      const next = store.merge(s, accepted)
+      const id = pane?.identity === identity ? pane.id : undefined
+      const root = id === undefined ? undefined : next.messages[id]
+      // Do not keep a possibly revoked task on screen while its thread read is in flight.
+      // A known transition out of open work is not itself a loss of access.
+      const hide = id !== undefined && root && !Object.hasOwn(openTaskRoots, id) &&
+        (!viewerOf(me).may('read', root.channel) || (Object.hasOwn(s.openTaskRoots, id) &&
+          store.isTask(root) && !root.deleted && store.OPEN_STATES.includes(root.task.state)))
+      const paneThread = hide && s.paneThread?.result === 'readable' ? { ...s.paneThread, result: 'loading' as const } : s.paneThread
+      return { ...next, openTaskRoots, openTaskMe: me, tasksCounted: true, tasksRefused: null, openTaskAttentionRefusals: {}, paneThread }
+    })
+    refreshThreadPane()
+    refreshAttentionRoots()
+  }, (error: unknown) => {
+    if (!current()) return
+    openTaskEpoch++
+    set((s) => ({ ...s, openTaskRoots: {}, openTaskMe: null, tasksCounted: false, tasksRefused: refusal(error) }))
+  }).finally(async () => {
+    // Even on refusal, don't start another read until both requests have settled.
+    await Promise.allSettled(requests)
+    if (openTaskRead !== read) return
+    openTaskRead = undefined
+    if (read.identity === identity && read.again) refreshOpenTasks()
+  })
+}
+
+export function swarmRecords(): SwarmRecords | null {
+  return new URLSearchParams(location.search).get('swarm') === 'fixtures' ? fixtureRecords : null
+}
+
+export function openNeeds() {
+  const visit = needsVisit = Symbol()
+  const close = openAttention()
+  const revalidate = () => { if (document.visibilityState === 'visible') refreshOpenTasks(true) }
+  window.addEventListener('focus', revalidate)
+  document.addEventListener('visibilitychange', revalidate)
+  refreshOpenTasks(true)
+  return () => {
+    if (needsVisit === visit) needsVisit = undefined
+    window.removeEventListener('focus', revalidate)
+    document.removeEventListener('visibilitychange', revalidate)
+    close()
+  }
+}
+
+function refreshAttentionRoots() {
+  if (!attentionVisit) return
+  const roots = needsVisit ? Object.values(state.openTaskRoots).filter(attentionStore.holdsAttention) : attentionStore.attentionTasks(state)
+  for (const root of roots) void readAttention(root)
+}
+
+export function openAttention() {
+  const visit = attentionVisit = Symbol()
+  refreshAttentionRoots()
+  return () => {
+    if (attentionVisit !== visit) return
+    attentionVisit = undefined
+    set(attentionStore.leaveAttention)
+  }
+}
+
+function refreshAttentionEvents(events: BoardEventView[]) {
+  const touched = new Set<string>()
+  for (const event of events) {
+    const message = event.message
+    if (store.isTask(message)) touched.add(message.id)
+    // Editing or deleting a reply can invalidate evidence in the request.
+    if ((event.type === 'message.edited' || event.type === 'message.deleted') && message?.re) touched.add(message.re)
+  }
+  for (const id of touched) {
+    const root = needsVisit ? state.openTaskRoots[id] : state.messages[id]
+    if (attentionStore.holdsAttention(root)) void readAttention(root)
+  }
+}
+
+const attentionFailure = (error: unknown) => ({
+  words: said(error),
+  unsupported: error instanceof BoardError && error.status === 501,
+})
+
+export function attentionRendered(rendered: store.State) {
+  set((s) => attentionStore.showAttentionRefusals(s, rendered))
+}
+
+async function readAttention(root: ReturnType<typeof attentionStore.attentionTasks>[number]) {
+  const as = identity
+  const visit = attentionVisit
+  const needs = needsVisit
+  const epoch = openTaskEpoch
+  const { id } = root
+  const reading = attentionStore.beginAttentionRead(state, root)
+  set(() => reading.state)
+  const current = () => as === identity && visit === attentionVisit &&
+    state.attention[id]?.latest === reading.read &&
+    (!needs || (epoch === openTaskEpoch && Object.hasOwn(state.openTaskRoots, id)))
+  try {
+    const { attention } = await team.tasks.attention(id)
+    if (current()) set((s) => attentionStore.finishAttentionRead(s, id, reading.read, { is: 'here', value: attention }))
+  } catch (error) {
+    if (!current()) return
+    if (inaccessible(error)) {
+      forgetThread(id, said(error), needs !== undefined)
+      refreshThreadPane(id)
+      if (needs) return
+    }
+    set((s) => attentionStore.finishAttentionRead(s, id, reading.read, { is: 'failed', ...attentionFailure(error) }))
+  }
+}
+
+/** Only the feed settles a successful answer. */
+export async function answerAttention(id: string, requestId: string, optionId: string) {
+  const root = state.messages[id]
+  if (!attentionStore.holdsAttention(root) || !state.me) return
+  const { attention, reason, disabled } = attentionStore.attentionFor(state, root, viewerOf(state.me))
+  if (!attention || attention.id !== requestId || reason !== null || disabled) return
+  const option = attention.options.find((option) => option.id === optionId)
+  if (!option) return
+  const as = identity
+  set((s) => attentionStore.beginAnswer(s, root, attention, option.label))
+  try {
+    await team.tasks.answer(id, requestId, { option: option.id, commit: attention.commit })
+    if (as === identity) set((s) => attentionStore.finishAnswer(s, id, attention))
+  } catch (error) {
+    if (as === identity) set((s) => attentionStore.finishAnswer(s, id, attention, attentionFailure(error)))
   }
 }
 
 /** A task write: the root it answers goes in the store, and a refusal is said in the page's words. */
-async function work(id: string, write: () => Promise<MessageView>): Promise<boolean> {
+async function work(write: () => Promise<MessageView>): Promise<boolean> {
+  const as = identity
   try {
     const root = await write()
+    if (as !== identity) return false
     set((s) => store.merge(s, [root]))
     return true
   } catch (error) {
-    // The board never says who holds it now, only that this claim doesn't.
-    if (error instanceof BoardError && error.code === 'claim_lost') set((s) => store.unclaimed(s, id))
-    toast(refusal(error))
+    if (as === identity) toast(refusal(error))
     return false
   }
 }
 
-/** Claims a task for the board's default lease, and tells the store which claim this tab now holds. */
-export async function claimTask(id: string): Promise<boolean> {
-  try {
-    const root = await claim(id)
-    set((s) => store.claimed(s, root, { epoch: claims.get(id)!.epoch }))
-    // The feed was ahead and the task has moved on: the store never held this claim, so its token goes here.
-    if (!state.claims[id]) claims.delete(id)
-    return true
-  } catch (error) {
-    toast(refusal(error))
-    return false
-  }
-}
-
-export const renewTask = (id: string) => work(id, async () => (await held(id).renew()).task)
-export const releaseTask = (id: string) => work(id, async () => held(id).release())
-export const completeTask = (id: string, result?: string) => work(id, async () => held(id).complete(result))
-export const failTask = (id: string, reason: string) => work(id, async () => held(id).fail(reason))
-/** Holds a task for a person: through this tab's claim while it has one, which ends the claim, or else as its owner. */
-export const blockTask = (id: string, reason: string, kind?: string) =>
-  work(id, async () => {
-    const root = state.messages[id]
-    const mine = store.isTask(root) && store.holding(state, root, Date.now()) !== undefined
-    return mine ? held(id).block(reason, kind ? { kind } : {}) : team.tasks.block(id, reason, kind ? { kind } : {})
-  })
-export const unblockTask = (id: string) => work(id, () => team.tasks.unblock(id))
-export const reopenTask = (id: string) => work(id, () => team.tasks.reopen(id))
+export const blockTask = (id: string, reason: string, kind?: string) => work(() => team.tasks.block(id, reason, kind ? { kind } : {}))
+export const unblockTask = (id: string) => work(() => team.tasks.unblock(id))
+export const reopenTask = (id: string) => work(() => team.tasks.reopen(id))
 /** `actor` is one of the owner's (`<owner>+<profile>`), or null for anyone who may claim it. */
-export const assignTask = (id: string, actor: string | null) => work(id, () => team.tasks.assign(id, actor))
-export const cancelTask = (id: string, reason: string) => work(id, () => team.tasks.cancel(id, reason))
+export const assignTask = (id: string, actor: string | null) => work(() => team.tasks.assign(id, actor))
+export const cancelTask = (id: string, reason: string) => work(() => team.tasks.cancel(id, reason))
+export const parkTask = (id: string, reason: string) => work(() => team.tasks.park(id, reason))
+export const unparkTask = (id: string, reason: string) => work(() => team.tasks.unpark(id, reason))
+export const prioritizeTask = (id: string, priority: TaskPriority) => work(() => team.tasks.priority(id, priority))
+export async function loadAttention(id: string) {
+  const as = identity
+  const visit = pane
+  const member = Object.hasOwn(state.openTaskRoots, id)
+  const current = () => as === identity && pane === visit && (!member || Object.hasOwn(state.openTaskRoots, id))
+  try {
+    const result = await team.tasks.attention(id)
+    if (current() && (visit?.id !== id || state.paneThread?.result === 'readable')) return result
+  } catch (error) {
+    if (!current()) return
+    if (inaccessible(error)) {
+      forgetThread(id, said(error))
+      refreshThreadPane(id)
+    }
+    throw error
+  }
+}
+export const answerTask = (id: string, request: string, answer: AttentionAnswerBody) => work(async () => (await team.tasks.answer(id, request, answer)).task)
 
 /** Makes the thread `re` roots a task, as it is. */
-export const makeTask = (re: string, options: { needs: string[]; for: string | null }) => work(re, async () => (await team.tasks.create({ re }, options)).task)
-
-// A claim's token is only in this tab: leaving the page gives up what it holds, so the browser asks first.
-addEventListener('beforeunload', (event) => {
-  if (Object.keys(state.claims).length > 0) event.preventDefault()
-})
+export const makeTask = (re: string, options: { needs: string[]; for: string | null }) => work(async () => (await team.tasks.create({ re }, options)).task)
 
 // --- schemas: what a message's blocks hold -------------------------------------------------
 
 /** The board's registry: the built-ins, then its own. It says what each block's fields mean. */
 export async function loadSchemas() {
+  const handle = team
+  const as = identity
+  const current = () => handle === team && as === identity
   try {
-    const schemas = await team.schemas()
-    set((s) => ({ ...s, schemas, schemasRefused: null }))
+    const schemas = await handle.schemas()
+    if (current()) set((s) => ({ ...s, schemas, schemasRefused: null }))
   } catch (error) {
     // Blocks still show, by their data alone; the registry's view says what the board answered.
-    set((s) => ({ ...s, schemasRefused: said(error) }))
+    if (current()) set((s) => ({ ...s, schemasRefused: said(error) }))
   }
 }
 
@@ -566,9 +883,10 @@ export const findSchema = (id: string) => once(`schema:${id}`, loadSchemas)
 
 /** Registers a schema version, for good. Answers what the board refused it for, in its words, or null once it's kept. */
 export async function registerSchema(input: SchemaInput): Promise<string | null> {
+  const as = identity
   try {
     const { schema } = await team.createSchema(input)
-    set((s) => store.addSchema(s, schema))
+    if (as === identity) set((s) => store.addSchema(s, schema))
     return null
   } catch (error) {
     return said(error)
@@ -596,10 +914,11 @@ const lockout = (error: unknown) => error instanceof BoardError && error.code ==
  * `lockMeOut` on a yes, and a no leaves the board's refusal as it was.
  */
 async function askingFirst<T>(write: (options: GrantWriteOptions) => Promise<T>): Promise<T> {
+  const as = identity
   try {
     return await write({})
   } catch (error) {
-    if (!lockout(error) || !confirm(`${said(error)}: only someone who still manages grants there could change it then. Go ahead?`)) throw error
+    if (as !== identity || !lockout(error) || !confirm(`${said(error)}: only someone who still manages grants there could change it then. Go ahead?`)) throw error
     return write({ lockMeOut: true })
   }
 }
@@ -632,14 +951,19 @@ export const explain = (channel: string, whom: ExplainPrincipal = {}): Promise<E
 
 // --- schedules: messages that post later --------------------------------------------------------
 
+let scheduleRead = 0
+
 /** What's scheduled: pending ones, or with `all`, done and canceled ones too. */
 export async function loadSchedules(all = state.everySchedule) {
-  set((s) => ({ ...s, everySchedule: all, schedules: s.schedules.is === 'here' ? s.schedules : { is: 'loading' } }))
+  const read = ++scheduleRead
+  const handle = team
+  const current = () => read === scheduleRead && handle === team
+  set((s) => ({ ...s, everySchedule: all, schedules: all === s.everySchedule && s.schedules.is === 'here' ? s.schedules : { is: 'loading' } }))
   try {
-    const schedules = await team.schedules({ all })
-    set((s) => ({ ...s, schedules: { is: 'here', items: schedules } }))
+    const schedules = await handle.schedules({ all })
+    if (current()) set((s) => ({ ...s, schedules: { is: 'here', items: schedules } }))
   } catch (error) {
-    set((s) => ({ ...s, schedules: { is: 'failed', why: said(error) } }))
+    if (current()) set((s) => ({ ...s, schedules: { is: 'failed', why: said(error) } }))
   }
 }
 
@@ -653,7 +977,9 @@ export async function cancelSchedule(id: string) {
   await loadSchedules()
 }
 
-// --- watchers, sync, and channels ------------------------------------------------------------
+// --- watchers and sync ---------------------------------------------------------------------
+
+export const loadInbox = (key: string): Promise<InboxEntry[]> => team.inbox(key, { limit: 100 })
 
 /** The watchers boards elsewhere registered here, and what each tails: all of them with `manage` everywhere, or else your own. */
 export async function loadWatchers() {
@@ -673,18 +999,5 @@ export async function loadSynced(id: string): Promise<SyncedView['targets']> {
     return (await team.sync(id)).targets
   } catch {
     return []
-  }
-}
-
-/** Makes a channel before anything posts to it; `private` closes it to everyone but you, with two grants. Answers whether it's there to open. */
-export async function createChannel(path: string, options: { private?: boolean } = {}): Promise<boolean> {
-  try {
-    const { channel, created } = await team.createChannel(path, options)
-    set((s) => (s.channels[channel.path] ? s : { ...s, channels: { ...s.channels, [channel.path]: channel } }))
-    if (!created) toast(`#${path} is there already`)
-    return true
-  } catch (error) {
-    toast(`couldn't make #${path}: ${said(error)}`)
-    return false
   }
 }

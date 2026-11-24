@@ -42,6 +42,8 @@ export type Principal = {
   kind: PrincipalKind
   /** Its handle, as what verified it says: a host's verifier's, a Vercel login's user ID, a deployment's project. */
   handle: string
+  /** A host-verified person's picture, separate from any claimed profile. */
+  avatar?: string
   expiresAt: Date | null
   /** The verified token's claims, so its access can be worked out again later, as a schedule's sends do. Absent for people and the board's own code. */
   facts?: TokenFacts
@@ -516,7 +518,7 @@ export function createAuthority(options: {
    * `byGrants` says. A host's principal is what its kind is, until it expires. A 401 or 403 when
    * it may do nothing.
    */
-  async function resolve(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Resolved> {
+  async function resolve(principal: Known, snapshot?: readonly StoredGrant[], now?: number): Promise<Resolved> {
     if (principal.facts?.issuer === 'joined') {
       const { facts } = await factsFor(principal, principal.facts, null, snapshot)
       if (facts && admits(facts)) return { facts }
@@ -529,7 +531,7 @@ export function createAuthority(options: {
       // One a host's verifier made, on a board whose verifier is now the built-in one alone, is from before it switched.
       if (!options.hosts) throw forbidden("this token can't use this board: its board no longer takes a host's principals")
       const { exp } = principal.facts!.claims
-      if (typeof exp === 'number' && exp * 1000 <= Date.now()) throw unauthorized('token expired')
+      if (typeof exp === 'number' && exp * 1000 <= (now ?? Date.now())) throw unauthorized('token expired')
     }
     if (principal.kind === 'person') {
       if (!options.grants) return { fixed: FULL_ACCESS }
@@ -544,8 +546,8 @@ export function createAuthority(options: {
    * What a principal may do now, narrowed by its scope, or under `snapshot`, grants as a write is
    * about to change them. A 401 or 403 when it may do nothing.
    */
-  async function grant(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Access> {
-    const resolved = await resolve(principal, snapshot)
+  async function grant(principal: Known, snapshot?: readonly StoredGrant[], now?: number): Promise<Access> {
+    const resolved = await resolve(principal, snapshot, now)
     const scope = principal.scope === undefined ? undefined : parseCan(principal.scope)
     if ('fixed' in resolved) return scope === undefined ? resolved.fixed : resolved.fixed.narrow(scope)
     const decided = grantAccess({ ...resolved.facts, ...(scope !== undefined ? { can: scope } : {}) })
@@ -554,9 +556,9 @@ export function createAuthority(options: {
   }
 
   /** What a stored principal (a schedule's creator, a watcher's registrant) may do now: null once nothing. */
-  async function accessNow(principal: Known, snapshot?: readonly StoredGrant[]): Promise<Access | null> {
+  async function accessNow(principal: Known, snapshot?: readonly StoredGrant[], now?: number): Promise<Access | null> {
     try {
-      return await grant(principal, snapshot)
+      return await grant(principal, snapshot, now)
     } catch (error) {
       const status = (error as { status?: number }).status
       if (status === 401 || status === 403) return null
@@ -619,6 +621,8 @@ export type HostPrincipal = {
    * it as a plain sender. A verifier that knows only an ID gives that.
    */
   handle: string
+  /** Optional absolute HTTPS picture URL for a person. Invalid pictures are ignored. */
+  avatar?: string | null
   expiresAt?: Date | null
 }
 
@@ -648,6 +652,10 @@ export const verifiesTokens = (authenticate: Authenticate) => TOKENS in authenti
 export const fromTokens = (principal: object) => verifiedTokens.has(principal)
 
 const PRINCIPAL_ID = /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*:[^\s+\]]{1,200}$/
+
+/** The shape of a principal ID, without checking who can issue it. */
+export const isPrincipalId = (id: string): boolean => PRINCIPAL_ID.test(id)
+
 const KINDS: readonly PrincipalKind[] = ['person', 'deployment', 'workflow', 'external']
 
 /**
@@ -659,7 +667,7 @@ export function hostPrincipal(value: HostPrincipal): Principal {
     throw new TypeError(`authenticate returned an invalid principal: ${why}`)
   }
   if (typeof value !== 'object' || value === null) fail('not an object')
-  if (typeof value.id !== 'string' || !PRINCIPAL_ID.test(value.id) || /^(board|joined):/.test(value.id))
+  if (typeof value.id !== 'string' || !isPrincipalId(value.id) || /^(board|joined):/.test(value.id))
     fail(`id must look like \`vercel:user:<id>\`, got ${JSON.stringify(value.id)}`)
   if (!KINDS.includes(value.kind)) fail(`kind must be one of ${KINDS.join(', ')}`)
   if (typeof value.handle !== 'string' || !/^\S{1,64}$/.test(value.handle)) fail('handle must be 1-64 characters, no spaces')
@@ -667,5 +675,13 @@ export function hostPrincipal(value: HostPrincipal): Principal {
   if (expiresAt !== null && (!(expiresAt instanceof Date) || Number.isNaN(expiresAt.getTime()))) fail('expiresAt must be a Date or null')
   if (expiresAt !== null && expiresAt.getTime() <= Date.now()) throw unauthorized('token expired')
   const claims: Record<string, number> = expiresAt === null ? {} : { exp: Math.floor(expiresAt.getTime() / 1000) }
-  return { id: value.id, kind: value.kind, handle: value.handle, expiresAt, facts: { issuer: 'host', iss: '', claims } }
+  const avatar = value.kind === 'person' ? hostAvatar(value.avatar) : undefined
+  return { id: value.id, kind: value.kind, handle: value.handle, ...(avatar === undefined ? {} : { avatar }), expiresAt, facts: { issuer: 'host', iss: '', claims } }
+}
+
+function hostAvatar(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048 || /[\s\\\x00-\x1f\x7f#]/u.test(value)) return undefined
+  if (!/^https:\/\/[^/@?]+(?:[/?]|$)/i.test(value)) return undefined
+  const url = URL.parse(value)
+  return url && url.href.length <= 2048 ? url.href : undefined
 }

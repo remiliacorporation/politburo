@@ -1,0 +1,157 @@
+{
+  "case_id": "mail-delivery-005-stale-claim",
+  "description": "Recover an older claim before handling a fresh entry with the same queue name.",
+  "expected": {
+    "exit_code": null,
+    "files": {
+      "mail/ex/bodies/ex-0002.txt": "Example newer detail\n",
+      "mail/ex/ex-0002.yaml": "id: \"ex-0002\"\nclass: \"spawner.dispatch\"\nurgency: \"p0\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {report: \"example-two\"}\nsummary: \"Example batch dispatch\"\nbody: \"bodies/ex-0002.txt\"\nat: \"2026-11-20T21:14:01Z\"\n",
+      "mail/ex/ex-0011.yaml": "id: \"ex-0011\"\nclass: \"spawner.dispatch\"\nurgency: \"p1\"\nfrom: \"ex2 120-BEE\"\nto: \"ex\"\nreply_to: \"ex2\"\nthread: \"example.v2_02\"\nref: {}\nsummary: \"Example batch dispatch\"\nbody: \"bodies/example.txt\"\nat: \"2026-11-20T21:14Z\"\n",
+      "mail/ex/id-counter.txt": "11\n",
+      "mail/ex2/out/.claimed/ex-0002.json": null,
+      "mail/ex2/out/ex-0002.json": null,
+      "mail/log.yaml": "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"6b575ce3dbb853be032cfcef34baff280251fabb797b4b832c470947467d7be5\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"updated\", \"hash\": \"48d48a628ea26309f998849cb79d61a472945e6f96767749c20d0202041aaf6a\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}\n- {\"at\": \"2026-11-20T21:21:00Z\", \"event\": \"delivered\", \"hash\": \"4e8c7f7b0e1e4d73b82471f2dbeec354ca7c9eb6343eaf2cccfb807c6ca8a05a\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/example.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0011\", \"ref\": {}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0011\", \"to\": \"ex\"}\n"
+    },
+    "log_lines": [
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"created\", \"hash\": \"6b575ce3dbb853be032cfcef34baff280251fabb797b4b832c470947467d7be5\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:20:00Z\", \"event\": \"updated\", \"hash\": \"48d48a628ea26309f998849cb79d61a472945e6f96767749c20d0202041aaf6a\", \"header\": {\"at\": \"2026-11-20T21:14:01Z\", \"body\": \"bodies/ex-0002.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0002\", \"ref\": {\"report\": \"example-two\"}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p0\"}, \"id\": \"ex-0002\", \"key\": [\"ex2 120-BEE\", {\"report\": \"example-two\"}, \"spawner.dispatch\"], \"to\": \"ex\"}",
+      "- {\"at\": \"2026-11-20T21:21:00Z\", \"event\": \"delivered\", \"hash\": \"4e8c7f7b0e1e4d73b82471f2dbeec354ca7c9eb6343eaf2cccfb807c6ca8a05a\", \"header\": {\"at\": \"2026-11-20T21:14Z\", \"body\": \"bodies/example.txt\", \"class\": \"spawner.dispatch\", \"from\": \"ex2 120-BEE\", \"id\": \"ex-0011\", \"ref\": {}, \"reply_to\": \"ex2\", \"summary\": \"Example batch dispatch\", \"thread\": \"example.v2_02\", \"to\": \"ex\", \"urgency\": \"p1\"}, \"id\": \"ex-0011\", \"to\": \"ex\"}"
+    ],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "return": {
+          "action": "created",
+          "id": "ex-0002",
+          "notice": null,
+          "path": "mail/ex/ex-0002.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": {
+          "action": "updated",
+          "id": "ex-0002",
+          "notice": null,
+          "path": "mail/ex/ex-0002.yaml",
+          "reason": null,
+          "to": "ex"
+        }
+      },
+      {
+        "return": [
+          {
+            "action": "unchanged",
+            "id": "ex-0002",
+            "notice": null,
+            "path": "mail/ex/ex-0002.yaml",
+            "reason": null,
+            "to": "ex"
+          },
+          {
+            "action": "created",
+            "id": "ex-0011",
+            "notice": null,
+            "path": "mail/ex/ex-0011.yaml",
+            "reason": null,
+            "to": "ex"
+          }
+        ]
+      },
+      {
+        "return": []
+      }
+    ]
+  },
+  "inputs": {
+    "collect": [
+      "mail/ex2/out/.claimed/ex-0002.json",
+      "mail/ex2/out/ex-0002.json",
+      "mail/ex/ex-0002.yaml",
+      "mail/ex/bodies/ex-0002.txt",
+      "mail/ex/ex-0011.yaml",
+      "mail/ex/id-counter.txt",
+      "mail/log.yaml"
+    ],
+    "steps": [
+      {
+        "args": {
+          "body": "Example original detail\n",
+          "header": {
+            "at": "2026-11-20T21:14Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0002",
+            "ref": {
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example batch dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p1"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "body": "Example newer detail\n",
+          "header": {
+            "at": "2026-11-20T21:14:01Z",
+            "body": "bodies/ex-0002.txt",
+            "class": "spawner.dispatch",
+            "from": "ex2 120-BEE",
+            "id": "ex-0010",
+            "ref": {
+              "report": "example-two"
+            },
+            "reply_to": "ex2",
+            "summary": "Example batch dispatch",
+            "thread": "example.v2_02",
+            "to": "ex",
+            "urgency": "p0"
+          }
+        },
+        "function": "deliver",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "now": "2026-11-20T21:21:00Z",
+          "tag": "ex2"
+        },
+        "function": "deliver_out_queue",
+        "kind": "call"
+      },
+      {
+        "args": {
+          "now": "2026-11-20T21:21:00Z",
+          "tag": "ex2"
+        },
+        "function": "deliver_out_queue",
+        "kind": "call"
+      }
+    ]
+  },
+  "matrix_row": "M05",
+  "notes": "A staged claim models interrupted cleanup. The stale p1 entry must not revert a newer p0 update.",
+  "setup": {
+    "files": {
+      "mail/ex2/out/.claimed/ex-0002.json": "{\n  \"id\": \"ex-0002\",\n  \"class\": \"spawner.dispatch\",\n  \"urgency\": \"p1\",\n  \"from\": \"ex2 120-BEE\",\n  \"to\": \"ex\",\n  \"reply_to\": \"ex2\",\n  \"thread\": \"example.v2_02\",\n  \"ref\": {\"report\": \"example-two\"},\n  \"summary\": \"Example batch dispatch\",\n  \"body\": \"bodies/ex-0002.txt\",\n  \"at\": \"2026-11-20T21:14Z\"\n}\n",
+      "mail/ex2/out/ex-0002.json": "{\"id\": \"ex-0011\", \"class\": \"spawner.dispatch\", \"urgency\": \"p1\", \"from\": \"ex2 120-BEE\", \"to\": \"ex\", \"reply_to\": \"ex2\", \"thread\": \"example.v2_02\", \"ref\": {}, \"summary\": \"Example batch dispatch\", \"body\": \"bodies/example.txt\", \"at\": \"2026-11-20T21:14Z\"}\n"
+    },
+    "now": "2026-11-20T21:20:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/secretary_mailbox.py",
+      "supervisor/secretary_router.py"
+    ]
+  }
+}

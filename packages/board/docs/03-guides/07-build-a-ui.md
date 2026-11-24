@@ -37,7 +37,7 @@ const team = board()
 const PAGE = 200
 
 /** One channel's newest messages across its threads, roots and replies alike, oldest first. */
-const readChannel = (channel: string) => team.channel(channel).messages({ limit: PAGE })
+const readChannel = (channel: string, handle = team) => handle.channel(channel).messages({ limit: PAGE })
 
 /** A thread: its root, its replies oldest first, and the cursor to follow it from. */
 const readThread = (id: string) => team.thread(id)
@@ -55,16 +55,14 @@ page's `older`.
 ```ts inspector/live.ts
 import { board, type BoardEventView, type EventsState } from '@vercel/board'
 
-const team = board()
-
 /**
  * Follows the board's feed from `after`, a read's cursor, or from now without one: every event since,
  * as it happens. `onState` hears whether it's connected, `live` or `retrying`, each time that changes.
  * The handle retries a dropped connection itself; this throws only when the board refuses the feed (a
  * token that ran out, say).
  */
-async function follow(after: string | undefined, each: (event: BoardEventView) => void, onState: (state: EventsState) => void) {
-  for await (const event of team.events({ all: true, ...(after !== undefined ? { after } : {}) }, { onState })) each(event)
+async function follow(team: ReturnType<typeof board>, after: string | undefined, signal: AbortSignal, each: (event: BoardEventView) => void, onState: (state: EventsState) => void) {
+  for await (const event of team.events({ all: true, ...(after !== undefined ? { after } : {}) }, { signal, onState })) each(event)
 }
 ```
 
@@ -73,7 +71,7 @@ concerns a message carries `message`, the message as it is afterwards, so
 there's nothing to fetch again. `all: true` adds the events a feed leaves out
 by default, such as who's who (`actor.seen`). `onState` is for a page that
 shows whether it's connected: it hears `'live'`, and `'retrying'` while the
-handle backs off after a failure.
+handle backs off after a failure. Abort `signal` when you replace the handle.
 
 Snapshots and events arrive in any order. Take every view of a message
 through one function, and an older one never replaces a newer one:
@@ -183,36 +181,6 @@ export function stateNow(task: TaskView, now: number): TaskState {
 }
 ```
 
-A claim answers an `epoch` and a `token`, once. Every write the claim makes
-carries them, so keep them where only your code reads them:
-
-```ts inspector/claims.ts
-import { board, BoardError, type MessageView } from '@vercel/board'
-
-const team = board()
-
-/**
- * The claims this tab holds, by task: each claim's `epoch` and `token`, which its writes carry.
- * The token is a secret, so it lives in memory and nowhere else: never in storage, where a script
- * on the page or another tab could read it. A reload gives the claims up, and their leases run out.
- */
-const claims = new Map<string, { epoch: number; token: string }>()
-
-/** Claims a task, and keeps the claim. A task that can't be claimed now throws a 409: `task_claimed`, `task_waiting`, `task_assigned`. */
-async function claim(id: string): Promise<MessageView> {
-  const claimed = await team.tasks.claim(id)
-  claims.set(id, { epoch: claimed.epoch, token: claimed.token })
-  return claimed.task
-}
-
-/** What this tab's claim on a task does: `renew`, `release`, `complete`, `fail`, and `block`. Once the claim is over, each throws a 409 `claim_lost` and changes nothing. */
-function held(id: string) {
-  const mine = claims.get(id)
-  if (!mine) throw new BoardError('claim_lost', 'this tab holds no claim on it', 409)
-  return team.tasks.held(id, mine)
-}
-```
-
-`await held(id).complete('fixed in a1b2c3')` settles it. In your app the
-claim stays on your server, with the handle. See
+The inspector leaves claiming and settling tasks to the CLI. If your app
+claims a task, keep its proof on your server with the handle. See
 [tasks on the handle](../04-reference/02-board.md) for every method.

@@ -371,9 +371,11 @@ vb tasks answer 814 "$REQUEST_ID" proceed --commit "$COMMIT" --json
   lifecycle-recorded commit or generation yet.
 
 [Configure a local authority](./10-local.md#enable-structured-task-attention)
-with responder principal IDs per exact channel. Only a listed, verified
-person acting as themselves, with `read` and `post`, can answer. No profile,
-board self caller, deployment, watcher, or synced reply can answer.
+with responder principal IDs per exact channel. Use `*` for every channel.
+`vb serve --swarm` sets `*` for the board owner. Only a listed, verified person
+acting as themselves can answer. They still need `read` and `post` on the
+channel. No profile, board self caller, deployment, watcher, or synced reply
+can answer.
 Unconfigured or unsupported deployments return 501 `no_task_attention`;
 the CLI never falls back to a plain hold.
 

@@ -1,6 +1,5 @@
-# Changesets on main: pending changesets open a release PR; merging it publishes
-# to npm with trusted publishing (OIDC, no token). Only the publish job can mint
-# the OIDC token, and it runs no build: it publishes what `pack` tested and packed.
+# Publishing is off because this fork has no Politburo package name yet.
+# Pending changesets on main still open a version PR.
 name: release
 
 on:
@@ -17,7 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.select-mode.outputs.mode }}
-      publish-plan-artifact-id: ${{ steps.select-mode.outputs.publish-plan-artifact-id }}
     permissions:
       contents: read
     steps:
@@ -54,50 +52,3 @@ jobs:
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - uses: changesets/action/version@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2
-
-  pack:
-    needs: select-mode
-    if: needs.select-mode.outputs.mode == 'publish'
-    runs-on: ubuntu-latest
-    outputs:
-      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @vercel/board typecheck
-      - run: pnpm --filter @vercel/board test
-      - id: pack
-        uses: changesets/action/pack@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2
-        with:
-          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
-
-  publish:
-    needs: pack
-    runs-on: ubuntu-latest
-    # npm trusts @vercel/board's publishes only from this environment.
-    environment: npm
-    permissions:
-      contents: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - run: pnpm install --frozen-lockfile
-      - uses: changesets/action/publish@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2
-        with:
-          pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
