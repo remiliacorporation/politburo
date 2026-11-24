@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from '../config/load.ts'
-import { misuse, printError } from '../usage.ts'
+import { misuse, printError } from '../cli-usage.ts'
 
 export const name = 'config'
 export const summary = 'config <show|validate> [--json] [--party FILE] [--repo FILE]'

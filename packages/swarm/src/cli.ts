@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { commandNames, loadCommand } from './commands/load.ts'
-import { helpText, misuse, usage } from './usage.ts'
+import { helpText, misuse, usage } from './cli-usage.ts'
 
 async function dispatch(args: string[]): Promise<number> {
   const [command, action] = args
