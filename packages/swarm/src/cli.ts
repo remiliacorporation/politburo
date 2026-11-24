@@ -3,10 +3,9 @@ import { readFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
+import { skillsMain } from './skills/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n' +
-  '       swarm mirror sync --repo owner/name [--json]\n' +
-  '       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]'
 
 class ReadError extends Error {}
 
@@ -34,11 +33,8 @@ function misuse(message: string): number {
   return 2
 }
 
-async function main(args: string[]): Promise<number> {
+function main(args: string[]): number {
   const [command, action, ...flags] = args
-  if (command === 'mirror' || command === 'overlap') {
-    return (await import('./mirror/command.ts')).runMirrorCommand(args)
-  }
   if (
     (args.length === 1 && command === '--help') ||
     (args.length === 2 && command === 'config' && action === '--help')
@@ -46,6 +42,7 @@ async function main(args: string[]): Promise<number> {
     console.log(usage)
     return 0
   }
+  if (command === 'skills') return skillsMain(args.slice(1))
   if (command === undefined) return misuse('missing command')
   if (command !== 'config') return misuse(`unknown command ${command}`)
   if (action === undefined) return misuse('missing config command')
@@ -98,4 +95,14 @@ async function main(args: string[]): Promise<number> {
   }
 }
 
-process.exitCode = await main(process.argv.slice(2))
+// One line per area: the subcommand's module exports run(argv): Promise<number>.
+const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  check: () => import('./checks/cli.ts'),
+  watch: () => import('./watch/cli.ts'),
+  trackers: () => import('./trackers/cli.ts'),
+  mirror: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['mirror', ...argv]) }),
+  overlap: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['overlap', ...argv]) }),
+}
+const [subcommand, ...subargs] = process.argv.slice(2)
+const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
+process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))

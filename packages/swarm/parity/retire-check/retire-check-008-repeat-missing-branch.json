@@ -1,0 +1,61 @@
+{
+  "case_id": "retire-check-008-repeat-missing-branch",
+  "description": "Repeat a read-only check with a published branch and a local-only branch.",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "repo/ex.txt": "base\n"
+    },
+    "git_unchanged": true,
+    "log_lines": [],
+    "repeats": [
+      {
+        "exit_code": 1,
+        "stderr": "",
+        "stdout": "unpushed work: example-mob: ex-local\nex-main: pushed (local <SHA1>, remote <SHA1>)\nex-local: missing (local <SHA1>, remote -)\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "unpushed work: example-mob: ex-local\nex-main: pushed (local <SHA1>, remote <SHA1>)\nex-local: missing (local <SHA1>, remote -)\n"
+  },
+  "inputs": {
+    "argv": [
+      "--repo-dir",
+      "repo",
+      "--mob",
+      "example-mob",
+      "--dry-run",
+      "--worktree",
+      "repo",
+      "--branch",
+      "ex-main",
+      "--branch",
+      "ex-local",
+      "--branch",
+      "ex-main"
+    ],
+    "kind": "cli",
+    "repeat": 2
+  },
+  "matrix_row": "M12",
+  "notes": "The repeated name exercises deduplication; both checks share the same fixture.",
+  "setup": {
+    "files": {
+      "repo/ex.txt": "base\n"
+    },
+    "git": [
+      [
+        "branch",
+        "ex-local"
+      ]
+    ],
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_retire.py",
+      "supervisor/sec_push.py"
+    ]
+  }
+}

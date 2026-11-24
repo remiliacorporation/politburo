@@ -1,0 +1,802 @@
+{
+  "case_id": "priority-004-default-migration",
+  "description": "Plan and apply the default legacy mapping",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at",
+        "issue_priority"
+      ],
+      "rows": {
+        "board_events": [
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 14,
+            "event_type": "schema_migrated",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"schema_migration\", \"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": 14, \"reason\": \"Board schema migrated\", \"reason_code\": \"schema_migration\", \"to\": 15}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 1,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-00",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 0, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 0)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 0\", \"to\": 5, \"to_label\": \"Critical\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 10,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-09",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 500, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 80)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 80\", \"to\": 1, \"to_label\": \"Deferred\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 11,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-10",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": -1, \"reason\": \"Mapped legacy priority to canonical scale (default for invalid legacy value)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"default for invalid legacy value\", \"to\": 3, \"to_label\": \"Normal\", \"warning\": \"legacy priority is invalid; defaulted to 3 Normal\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 12,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-11",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"real\", \"legacy_value\": 2.5, \"reason\": \"Mapped legacy priority to canonical scale (default for invalid legacy value)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"default for invalid legacy value\", \"to\": 3, \"to_label\": \"Normal\", \"warning\": \"legacy priority is invalid; defaulted to 3 Normal\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 13,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-12",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"text\", \"legacy_value\": \"invalid\", \"reason\": \"Mapped legacy priority to canonical scale (default for invalid legacy value)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"default for invalid legacy value\", \"to\": 3, \"to_label\": \"Normal\", \"warning\": \"legacy priority is invalid; defaulted to 3 Normal\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 2,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-01",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 19, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 0)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 0\", \"to\": 5, \"to_label\": \"Critical\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 3,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-02",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 20, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 20)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 20\", \"to\": 4, \"to_label\": \"High\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 4,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-03",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 39, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 20)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 20\", \"to\": 4, \"to_label\": \"High\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 5,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-04",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 40, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 40)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 40\", \"to\": 3, \"to_label\": \"Normal\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 6,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-05",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 59, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 40)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 40\", \"to\": 3, \"to_label\": \"Normal\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 7,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-06",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 60, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 60)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 60\", \"to\": 2, \"to_label\": \"Low\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 8,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-07",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 79, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 60)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 60\", \"to\": 2, \"to_label\": \"Low\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 9,
+            "event_type": "priority_migrated",
+            "issue_key": "example-level-08",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 80, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 80)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 80\", \"to\": 1, \"to_label\": \"Deferred\"}"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "issue_priority_legacy": [
+          {
+            "canonical_priority": 1,
+            "issue_key": "example-level-08",
+            "legacy_type": "integer",
+            "legacy_value": "80",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 80",
+            "warning": null
+          },
+          {
+            "canonical_priority": 1,
+            "issue_key": "example-level-09",
+            "legacy_type": "integer",
+            "legacy_value": "500",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 80",
+            "warning": null
+          },
+          {
+            "canonical_priority": 2,
+            "issue_key": "example-level-06",
+            "legacy_type": "integer",
+            "legacy_value": "60",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 60",
+            "warning": null
+          },
+          {
+            "canonical_priority": 2,
+            "issue_key": "example-level-07",
+            "legacy_type": "integer",
+            "legacy_value": "79",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 60",
+            "warning": null
+          },
+          {
+            "canonical_priority": 3,
+            "issue_key": "example-level-04",
+            "legacy_type": "integer",
+            "legacy_value": "40",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 40",
+            "warning": null
+          },
+          {
+            "canonical_priority": 3,
+            "issue_key": "example-level-05",
+            "legacy_type": "integer",
+            "legacy_value": "59",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 40",
+            "warning": null
+          },
+          {
+            "canonical_priority": 3,
+            "issue_key": "example-level-10",
+            "legacy_type": "integer",
+            "legacy_value": "-1",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "default for invalid legacy value",
+            "warning": "legacy priority is invalid; defaulted to 3 Normal"
+          },
+          {
+            "canonical_priority": 3,
+            "issue_key": "example-level-11",
+            "legacy_type": "real",
+            "legacy_value": "2.5",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "default for invalid legacy value",
+            "warning": "legacy priority is invalid; defaulted to 3 Normal"
+          },
+          {
+            "canonical_priority": 3,
+            "issue_key": "example-level-12",
+            "legacy_type": "text",
+            "legacy_value": "invalid",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "default for invalid legacy value",
+            "warning": "legacy priority is invalid; defaulted to 3 Normal"
+          },
+          {
+            "canonical_priority": 4,
+            "issue_key": "example-level-02",
+            "legacy_type": "integer",
+            "legacy_value": "20",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 20",
+            "warning": null
+          },
+          {
+            "canonical_priority": 4,
+            "issue_key": "example-level-03",
+            "legacy_type": "integer",
+            "legacy_value": "39",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 20",
+            "warning": null
+          },
+          {
+            "canonical_priority": 5,
+            "issue_key": "example-level-00",
+            "legacy_type": "integer",
+            "legacy_value": "0",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 0",
+            "warning": null
+          },
+          {
+            "canonical_priority": 5,
+            "issue_key": "example-level-01",
+            "legacy_type": "integer",
+            "legacy_value": "19",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 0",
+            "warning": null
+          }
+        ],
+        "issues": [
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-00",
+            "issue_priority": 5,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 0,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-00",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-01",
+            "issue_priority": 5,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 19,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-01",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-02",
+            "issue_priority": 4,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 20,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-02",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-03",
+            "issue_priority": 4,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 39,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-03",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-04",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 40,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-04",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-05",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 59,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-05",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-06",
+            "issue_priority": 2,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 60,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-06",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-07",
+            "issue_priority": 2,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 79,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-07",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-08",
+            "issue_priority": 1,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 80,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-08",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-09",
+            "issue_priority": 1,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 500,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-09",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-10",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": -1,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-10",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-11",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 2.5,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-11",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-level-12",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": "invalid",
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-level-12",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          }
+        ],
+        "sqlite_sequence": [
+          {
+            "name": "board_events",
+            "seq": 14
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\n  \"dry_run\": true,\n  \"issues\": [\n    {\n      \"issue_key\": \"example-level-00\",\n      \"label\": \"Critical\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 0,\n      \"proposed\": 5,\n      \"reason\": \"legacy >= 0\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-01\",\n      \"label\": \"Critical\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 19,\n      \"proposed\": 5,\n      \"reason\": \"legacy >= 0\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-02\",\n      \"label\": \"High\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 20,\n      \"proposed\": 4,\n      \"reason\": \"legacy >= 20\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-03\",\n      \"label\": \"High\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 39,\n      \"proposed\": 4,\n      \"reason\": \"legacy >= 20\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-04\",\n      \"label\": \"Normal\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 40,\n      \"proposed\": 3,\n      \"reason\": \"legacy >= 40\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-05\",\n      \"label\": \"Normal\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 59,\n      \"proposed\": 3,\n      \"reason\": \"legacy >= 40\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-06\",\n      \"label\": \"Low\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 60,\n      \"proposed\": 2,\n      \"reason\": \"legacy >= 60\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-07\",\n      \"label\": \"Low\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 79,\n      \"proposed\": 2,\n      \"reason\": \"legacy >= 60\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-08\",\n      \"label\": \"Deferred\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 80,\n      \"proposed\": 1,\n      \"reason\": \"legacy >= 80\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-09\",\n      \"label\": \"Deferred\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 500,\n      \"proposed\": 1,\n      \"reason\": \"legacy >= 80\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-level-10\",\n      \"label\": \"Normal\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": -1,\n      \"proposed\": 3,\n      \"reason\": \"default for invalid legacy value\",\n      \"warning\": \"legacy priority is invalid; defaulted to 3 Normal\"\n    },\n    {\n      \"issue_key\": \"example-level-11\",\n      \"label\": \"Normal\",\n      \"legacy_type\": \"real\",\n      \"legacy_value\": 2.5,\n      \"proposed\": 3,\n      \"reason\": \"default for invalid legacy value\",\n      \"warning\": \"legacy priority is invalid; defaulted to 3 Normal\"\n    },\n    {\n      \"issue_key\": \"example-level-12\",\n      \"label\": \"Normal\",\n      \"legacy_type\": \"text\",\n      \"legacy_value\": \"invalid\",\n      \"proposed\": 3,\n      \"reason\": \"default for invalid legacy value\",\n      \"warning\": \"legacy priority is invalid; defaulted to 3 Normal\"\n    }\n  ],\n  \"ok\": true,\n  \"warnings\": [\n    \"example-level-10\",\n    \"example-level-11\",\n    \"example-level-12\"\n  ]\n}\n{\n  \"changed\": true,\n  \"ok\": true,\n  \"schema_version\": 15\n}\n{\n  \"dry_run\": true,\n  \"issues\": [],\n  \"ok\": true,\n  \"warnings\": []\n}\n{\n  \"changed\": false,\n  \"ok\": true,\n  \"schema_version\": 15\n}\n",
+    "steps": [
+      {
+        "db_changed": false,
+        "exit_code": 0
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0
+      },
+      {
+        "db_changed": false,
+        "exit_code": 0
+      },
+      {
+        "db_changed": false,
+        "exit_code": 0
+      }
+    ]
+  },
+  "inputs": {
+    "commands": [
+      [
+        "priority-plan"
+      ],
+      [
+        "migrate"
+      ],
+      [
+        "priority-plan"
+      ],
+      [
+        "migrate"
+      ]
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M87",
+  "notes": "Compare plan/apply at the default range boundaries and for negative, fractional and text values. The plan is read-only, each raw value is preserved, and the rerun is quiet.",
+  "setup": {
+    "files": {},
+    "legacy": [
+      [
+        "example-level-00",
+        0
+      ],
+      [
+        "example-level-01",
+        19
+      ],
+      [
+        "example-level-02",
+        20
+      ],
+      [
+        "example-level-03",
+        39
+      ],
+      [
+        "example-level-04",
+        40
+      ],
+      [
+        "example-level-05",
+        59
+      ],
+      [
+        "example-level-06",
+        60
+      ],
+      [
+        "example-level-07",
+        79
+      ],
+      [
+        "example-level-08",
+        80
+      ],
+      [
+        "example-level-09",
+        500
+      ],
+      [
+        "example-level-10",
+        -1
+      ],
+      [
+        "example-level-11",
+        2.5
+      ],
+      [
+        "example-level-12",
+        "invalid"
+      ]
+    ],
+    "now": "2026-01-03T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/priority.py",
+      "board/board.py",
+      "board/schema.sql"
+    ]
+  }
+}
