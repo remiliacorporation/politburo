@@ -8,6 +8,7 @@ import { Composer } from './composer.tsx'
 import { describe } from './filters.tsx'
 import { Pendings } from './message.tsx'
 import { Ago, here, Link, navigate, useTypeToFocus, type Where } from './nav.tsx'
+import { LabelValue } from './sha.tsx'
 import { nameOf, placesUnder, readFilter, taskScope, tasks, taskState, TASK_FILTER_STATES, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
@@ -243,7 +244,7 @@ function TaskRow({ root, state, now, open }: { root: TaskRoot; state: State; now
         <span className="faint">#{root.id}</span> {firstLine(root.text) || (root.attachments ?? []).map((file) => file.name).join(', ') || 'message removed'}
         {labels.map(([key, value]) => (
           <span key={key} className="label">
-            {key}={value}
+            {key}=<LabelValue name={key} value={value} />
           </span>
         ))}
       </span>
