@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util'
 import { board, BoardError, type Board } from '@vercel/board'
+import { stopIfPaused } from '../pause.ts'
 import { checksReason, selectTask, verdictReason, type CheckRun, type GateTask } from './decide.ts'
 
 const usage = 'usage: swarm gate check <pr-number> --board URL'
@@ -156,6 +157,8 @@ export async function gateCommand(argv: string[]): Promise<number> {
     return misuse('expected --board URL')
   }
   try {
+    const stopped = await stopIfPaused(team)
+    if (stopped !== null) return stopped
     const selected = selectTask(await listedTasks(team), pr)
     if (!selected.ok) return say(selected.reason)
     const head = parseHead(await githubGet(selected.repo, pr, `/pulls/${pr}`), pr)

@@ -98,7 +98,16 @@ async function fixture(t: TestContext, github: {
       else resolve({ status, stdout, stderr, github: [...githubHits], boardMethods: [...boardMethods] })
     })
   })
-  return { team, run }
+  const operator = await localUserToken('operator')
+  const control = async (action: 'pause' | 'resume', why: string) => {
+    const response = await fetch(`http://127.0.0.1:${boardPort}/api/board/control/${action}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${operator}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: why }),
+    })
+    assert.equal(response.status, 200)
+  }
+  return { team, run, control }
 }
 
 async function task(team: Board, labels: Record<string, string>, result?: string) {
@@ -125,6 +134,23 @@ test('a completed plb task with a pass for this head and successful checks print
   assert.ok(result.boardMethods.length > 0)
   assert.deepEqual([...new Set(result.boardMethods)], ['GET'])
   assert.deepEqual(await team.thread(root.id), before)
+})
+
+test('a paused board refuses the gate before it can pass, and a resume lets it pass', async (t) => {
+  const { team, run, control } = await fixture(t)
+  await task(team, { 'pr.number': pr, 'work.repo': repo, 'review.verdict': 'pass', 'review.head': sha }, 'done')
+  const reason = 'hold the queue'
+  await control('pause', reason)
+  const held = await run()
+  assert.equal(held.status, 1)
+  assert.equal(held.stderr, `error: board paused: ${reason}\n`)
+  assert.equal(held.stdout, '')
+  assert.deepEqual(held.github, [])
+  await control('resume', 'queue open')
+  const next = await run()
+  assert.equal(next.status, 0, next.stderr)
+  assert.equal(next.stdout, 'pass\n')
+  assert.equal(next.stderr, '')
 })
 
 test('a plb task past the first page is still the one the gate reads', async (t) => {
