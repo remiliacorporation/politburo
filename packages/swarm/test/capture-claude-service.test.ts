@@ -159,10 +159,12 @@ test('same-batch ledger disagreements and later quarantine disagreements persist
     const [original, ...successors] = readJsonl(path)
     assert.ok(original)
     assert.deepEqual([original, ...successors].map((row) => row.tokens.output), counts)
+    let parent = original.record_id
     for (const successor of successors) {
       assert.equal(successor.coverage.state, 'conflict')
       assert.deepEqual(successor.envelope, binding)
-      assert.equal(successor.revises, original.record_id)
+      assert.equal(successor.revises, parent)
+      parent = successor.record_id
       assert.equal(successor.actor, 'capture-claude receiver')
       assert.equal(successor.evidence_ref, original.evidence_ref)
     }
@@ -409,6 +411,56 @@ test('colon-delimited IDs release both distinct requests even when their joined 
   assert.deepEqual(released.map((row) => [row.envelope, row.tokens.output]), [[envelope, 91], [other, 42]])
   assert.equal((await send(address, body)).status, 200)
   assert.deepEqual(readJsonl(f.ledgerPath), released)
+})
+
+test('a third conflicting report revises the conflict head and a replay does not fork it', async (t) => {
+  const f = fixture(t)
+  f.registry.bind(session, envelope)
+  const { address } = await f.start()
+  for (const output of [91, 90, 89]) {
+    assert.equal((await send(address, batch(log(session, 'req-1', output)))).status, 200)
+  }
+  const rows = readJsonl(f.ledgerPath)
+  assert.equal(rows.length, 3)
+  assert.equal(rows[1]?.revises, rows[0]?.record_id)
+  assert.equal(rows[2]?.revises, rows[1]?.record_id)
+  assert.notEqual(rows[2]?.revises, rows[0]?.record_id)
+  assert.equal((await send(address, batch(log(session, 'req-1', 90)))).status, 200)
+  assert.equal(readJsonl(f.ledgerPath).length, 3)
+})
+
+test('anonymous usage is stored as a gap with no known tokens', async (t) => {
+  const f = fixture(t)
+  f.registry.bind(session, envelope)
+  const { address } = await f.start()
+  assert.equal((await send(address, batch(log(session, '')))).status, 200)
+  const [row] = readJsonl(f.ledgerPath)
+  assert.equal(row?.status, 'gap')
+  assert.equal(row?.tokens.output, null)
+  assert.equal((await send(address, batch(log(session, '')))).status, 200)
+  assert.equal(readJsonl(f.ledgerPath).length, 1)
+})
+
+test('a conflicting release does not strand a later quarantined record', async (t) => {
+  const f = fixture(t)
+  const { address } = await f.start()
+  assert.equal((await send(address, batch(log(), log('other-session', 'req-2', 42)))).status, 200)
+  const records = readJsonl(f.quarantinePath)
+  assert.equal(records.length, 2)
+  f.registry.bind(session, envelope)
+  f.registry.bind('other-session', { ...envelope, work_id: 'other' })
+  const first = records[0]
+  assert.ok(first)
+  writeFileSync(f.ledgerPath, `${JSON.stringify({
+    ...first, record_id: 'ledger-original', envelope, tokens: { ...first.tokens, output: 1 },
+  })}\n`)
+  const result = releaseQuarantine({
+    records, registry: f.registry, ledger: jsonlWriter(f.ledgerPath), actor: 'operator', reason: 'binding verified', now,
+  })
+  assert.equal(result.released, 2)
+  const rows = readJsonl(f.ledgerPath)
+  assert.equal(rows.at(-1)?.tokens.output, 42)
+  assert.equal(rows.at(-1)?.envelope?.work_id, 'other')
 })
 
 test('a completed empty POST returns 400 without writing', async (t) => {

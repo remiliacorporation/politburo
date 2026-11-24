@@ -1,0 +1,310 @@
+{
+  "case_id": "board-cli-messages-012-archive",
+  "description": "Archive old routine and consumed rows, but not open actions",
+  "expected": {
+    "db": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": "2026-01-16T00:00:00+00:00",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 1, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": "2026-01-16T00:00:00+00:00",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 2, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": "2026-01-16T00:00:00+00:00",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 3, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-02T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "message",
+          "issue_key": null,
+          "payload_json": "{\"kind\": \"note\", \"message_id\": 4, \"to_agent\": null, \"to_role\": \"implementation-worker\", \"topic\": null}"
+        },
+        {
+          "actor": "worker-01",
+          "archived_at": "2026-01-16T00:00:00+00:00",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "message_consumed",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"recipient\", \"actor_type\": \"agent\", \"disposition\": \"acted\", \"envelope_version\": 1, \"message_id\": 3, \"reason\": \"Recipient consumed a routed message\", \"reason_code\": \"message_consumed\"}"
+        }
+      ],
+      "board_messages": [
+        {
+          "actionable": 0,
+          "archived_at": "2026-01-16T00:00:00+00:00",
+          "body": "Old routine",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "bb675484403b0f20d151773c9f39c09eae2eacaf5cf36f860d5c35a73060e4f8",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 1,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 0,
+          "archived_at": null,
+          "body": "Exactly at cutoff",
+          "created_at": "2026-01-02T00:00:00+00:00",
+          "dedup_key": "4e61d8de5d832d5cfce4f0c61adcd868d61298d26fbb06916eb359894931bd82",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 4,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": "2026-01-16T00:00:00+00:00",
+          "body": "Old consumed",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "f981b33d65ee0bea83ce768c09c242c3dfeb58c71eb7ba3ef6a04a9827aab746",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 3,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "resolved",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        },
+        {
+          "actionable": 1,
+          "archived_at": null,
+          "body": "Old open action",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "dedup_key": "ca4657963838e140b2a8bd8f0b53a603a624cbbbe0f4ac8f9f69d86ddbebb64d",
+          "from_actor": "operator",
+          "issue_key": null,
+          "kind": "note",
+          "message_id": 2,
+          "payload_ref": null,
+          "priority": 100,
+          "status": "active",
+          "summary": null,
+          "supersedes_message_id": null,
+          "to_agent": null,
+          "to_role": "implementation-worker",
+          "topic_key": null,
+          "valid_until": null
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "message_receipts": [
+        {
+          "actor": "worker-01",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "disposition": "acted",
+          "message_id": 3,
+          "note": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"bb675484403b0f20d151773c9f39c09eae2eacaf5cf36f860d5c35a73060e4f8\",\n  \"message_id\": 1,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"ca4657963838e140b2a8bd8f0b53a603a624cbbbe0f4ac8f9f69d86ddbebb64d\",\n  \"message_id\": 2,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"f981b33d65ee0bea83ce768c09c242c3dfeb58c71eb7ba3ef6a04a9827aab746\",\n  \"message_id\": 3,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actor\": \"worker-01\",\n  \"consumed\": true,\n  \"disposition\": \"acted\",\n  \"duplicate\": false,\n  \"message_id\": 3,\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"dedup_key\": \"4e61d8de5d832d5cfce4f0c61adcd868d61298d26fbb06916eb359894931bd82\",\n  \"message_id\": 4,\n  \"ok\": true,\n  \"superseded\": []\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"cutoff\": \"2026-01-02T00:00:00+00:00\",\n  \"events_archived\": 4,\n  \"messages_archived\": 2,\n  \"note\": \"Archived rows remain durable but are excluded from normal context reads.\",\n  \"ok\": true\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"actionable\": 1,\n    \"archived_at\": null,\n    \"body\": \"Old open action\",\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"dedup_key\": \"ca4657963838e140b2a8bd8f0b53a603a624cbbbe0f4ac8f9f69d86ddbebb64d\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 2,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  },\n  {\n    \"actionable\": 0,\n    \"archived_at\": null,\n    \"body\": \"Exactly at cutoff\",\n    \"created_at\": \"2026-01-02T00:00:00+00:00\",\n    \"dedup_key\": \"4e61d8de5d832d5cfce4f0c61adcd868d61298d26fbb06916eb359894931bd82\",\n    \"from_actor\": \"operator\",\n    \"issue_key\": null,\n    \"issue_state\": null,\n    \"issue_title\": null,\n    \"kind\": \"note\",\n    \"message_id\": 4,\n    \"payload_ref\": null,\n    \"priority\": 100,\n    \"status\": \"active\",\n    \"summary\": null,\n    \"supersedes_message_id\": null,\n    \"to_agent\": null,\n    \"to_role\": \"implementation-worker\",\n    \"topic_key\": null,\n    \"valid_until\": null\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Old routine",
+          "--to-role",
+          "sprite"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Old open action",
+          "--to-role",
+          "sprite",
+          "--actionable"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Old consumed",
+          "--to-role",
+          "sprite",
+          "--actionable"
+        ]
+      },
+      {
+        "actor": "worker-01",
+        "argv": [
+          "ack",
+          "3",
+          "--disposition",
+          "acted"
+        ]
+      },
+      {
+        "argv": [
+          "message",
+          "--kind",
+          "note",
+          "--body",
+          "Exactly at cutoff",
+          "--to-role",
+          "sprite"
+        ],
+        "at": "2026-01-02T00:00:00+00:00"
+      },
+      {
+        "argv": [
+          "archive"
+        ],
+        "at": "2026-01-16T00:00:00+00:00"
+      },
+      {
+        "argv": [
+          "inbox",
+          "--role",
+          "sprite"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_messages",
+      "board_meta",
+      "message_receipts",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "The default 14-day cutoff is strict. An exactly-14-day-old note and old actionable work remain visible; archived messages, receipts and events remain auditable in storage.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

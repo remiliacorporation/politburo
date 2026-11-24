@@ -1,0 +1,237 @@
+{
+  "case_id": "board-cli-issues-015-convergence",
+  "description": "Start and inspect a convergence goal and take one bounded step",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "convergence_goal_started",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"convergence\", \"actor_type\": \"supervisor\", \"envelope_version\": 1, \"goal_id\": \"00000000000000000000000000000001\", \"reason\": \"Convergence goal started\", \"reason_code\": \"goal_started\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:01:00+00:00",
+          "event_id": 3,
+          "event_type": "convergence_goal_step",
+          "issue_key": null,
+          "payload_json": "{\"actor_role\": \"convergence\", \"actor_type\": \"supervisor\", \"backoff_seconds\": null, \"converged\": false, \"envelope_version\": 1, \"goal_id\": \"00000000000000000000000000000001\", \"no_safe_action\": false, \"reason\": \"Convergence goal step evaluated\", \"reason_code\": \"goal_step\", \"snapshot_fingerprint\": \"d008a2ff49c71928b3ae44ce0ce08803cf932c1d59f0c242c2a5a7d1d46cfc7a\", \"step_version\": 1, \"wake_at\": null}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [
+        {
+          "action_id": 1,
+          "attempt_disposition": null,
+          "attempt_id": null,
+          "candidate_sha": null,
+          "created_at": "2026-01-01T00:01:00+00:00",
+          "diagnosis": null,
+          "goal_id": "00000000000000000000000000000001",
+          "issue_key": "example-issue",
+          "issue_version": 1,
+          "missing_gates_json": "[]",
+          "outcome": "open",
+          "reason": "state:ready",
+          "responsible_actor": null,
+          "step_version": 1,
+          "strategy": "assign",
+          "wake_at": null
+        }
+      ],
+      "convergence_goal_steps": [
+        {
+          "actor": "operator-01",
+          "attention_count": 0,
+          "closed_count": 0,
+          "converged": 0,
+          "created_at": "2026-01-01T00:01:00+00:00",
+          "goal_id": "00000000000000000000000000000001",
+          "idempotency_key": "example-step",
+          "issue_count": 1,
+          "open_count": 1,
+          "snapshot_fingerprint": "d008a2ff49c71928b3ae44ce0ce08803cf932c1d59f0c242c2a5a7d1d46cfc7a",
+          "step_version": 1
+        }
+      ],
+      "convergence_goals": [
+        {
+          "attention_count": 0,
+          "closed_count": 0,
+          "completed_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "goal_id": "00000000000000000000000000000001",
+          "issue_count": 1,
+          "open_count": 1,
+          "snapshot_fingerprint": "d008a2ff49c71928b3ae44ce0ce08803cf932c1d59f0c242c2a5a7d1d46cfc7a",
+          "status": "active",
+          "step_version": 1,
+          "updated_at": "2026-01-01T00:01:00+00:00"
+        }
+      ],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": null,
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "ready",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"created\": true,\n  \"goal\": {\n    \"attention_count\": 0,\n    \"closed_count\": 0,\n    \"completed_at\": null,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"goal_id\": \"00000000000000000000000000000001\",\n    \"issue_count\": 0,\n    \"open_count\": 0,\n    \"snapshot_fingerprint\": null,\n    \"status\": \"active\",\n    \"step_version\": 0,\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  },\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"actions\": [\n    {\n      \"attempt_disposition\": null,\n      \"attempt_id\": null,\n      \"candidate_sha\": null,\n      \"diagnosis\": null,\n      \"issue_key\": \"example-issue\",\n      \"issue_version\": 1,\n      \"missing_gates\": [],\n      \"outcome\": \"open\",\n      \"reason\": \"state:ready\",\n      \"responsible_actor\": null,\n      \"strategy\": \"assign\",\n      \"wake_at\": null\n    }\n  ],\n  \"converged\": false,\n  \"goal\": {\n    \"attention_count\": 0,\n    \"closed_count\": 0,\n    \"completed_at\": null,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"goal_id\": \"00000000000000000000000000000001\",\n    \"issue_count\": 1,\n    \"open_count\": 1,\n    \"snapshot_fingerprint\": \"d008a2ff49c71928b3ae44ce0ce08803cf932c1d59f0c242c2a5a7d1d46cfc7a\",\n    \"status\": \"active\",\n    \"step_version\": 1,\n    \"updated_at\": \"2026-01-01T00:01:00+00:00\"\n  },\n  \"lifecycle\": \"active\",\n  \"ok\": true,\n  \"replayed\": false,\n  \"step_version\": 1,\n  \"wake_at\": null\n}\n"
+      },
+      {
+        "exit_code": 2,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": false,\n  \"error\": \"stale goal version: expected 0, current 1\"\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"actions\": [\n    {\n      \"attempt_disposition\": null,\n      \"attempt_id\": null,\n      \"candidate_sha\": null,\n      \"diagnosis\": null,\n      \"issue_key\": \"example-issue\",\n      \"issue_version\": 1,\n      \"missing_gates\": [],\n      \"outcome\": \"open\",\n      \"reason\": \"state:ready\",\n      \"responsible_actor\": null,\n      \"strategy\": \"assign\",\n      \"wake_at\": null\n    }\n  ],\n  \"goal\": {\n    \"attention_count\": 0,\n    \"closed_count\": 0,\n    \"completed_at\": null,\n    \"created_at\": \"2026-01-01T00:00:00+00:00\",\n    \"goal_id\": \"00000000000000000000000000000001\",\n    \"issue_count\": 1,\n    \"open_count\": 1,\n    \"snapshot_fingerprint\": \"d008a2ff49c71928b3ae44ce0ce08803cf932c1d59f0c242c2a5a7d1d46cfc7a\",\n    \"status\": \"active\",\n    \"step_version\": 1,\n    \"updated_at\": \"2026-01-01T00:01:00+00:00\"\n  },\n  \"lifecycle\": \"active\",\n  \"schema_ready\": true,\n  \"wake_at\": null\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "convergence",
+          "start"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "convergence",
+          "step",
+          "--expected-version",
+          "0",
+          "--idempotency-key",
+          "example-step"
+        ],
+        "now": "2026-01-01T00:01:00Z"
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "convergence",
+          "step",
+          "--expected-version",
+          "0"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "convergence",
+          "status"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "An open issue keeps the goal active. The first step records a strategy; a stale retry is refused, and status reports the unchanged step version and actions.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "issue_key": "example-issue",
+          "state": "ready",
+          "title": "Example issue"
+        }
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py",
+      "board/convergence_goals.py",
+      "board/convergence.py"
+    ]
+  }
+}

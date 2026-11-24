@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs, type ParseArgsConfig } from 'node:util'
 import {
-  buildRecord, createReceiver, fileRegistry, jsonlWriter, parseTranscript, readJsonl, reconcile,
+  buildGap, buildRecord, createReceiver, fileRegistry, jsonlWriter, parseTranscript, readJsonl, reconcile,
   releaseQuarantine, sessionFromEvidenceRef, type Envelope, type RequestFact, type SpendRecord,
 } from './index.ts'
 import { buckets as tokenBuckets, identifier } from './facts.ts'
@@ -145,28 +145,38 @@ function revisionHistory(history: SpendRecord[]) {
 function check(paths: State, session: string, file: string, write: boolean, json: boolean) {
   let text: string
   try { text = readFileSync(file, 'utf8') } catch { throw new Failure(`cannot read transcript ${file}`) }
-  const { facts: transcript, badLines, foreign, noId } = parseTranscript(text, session)
-  const requestIds = new Set(transcript.map((fact) => fact.requestId))
-  const responseIds = new Set(transcript.map((fact) => fact.responseId))
+  const { facts: transcript, gaps, badLines, foreign, noId, unscoped } = parseTranscript(text, session)
   const originals = new Map<RequestFact, SpendRecord>()
   const { byKey, head } = revisionHistory([...readJsonl(paths.quarantine), ...readJsonl(paths.ledger)])
+  let gapCount = 0
+  const disputed = new Set<string>()
+  const prints = new Map<string, Set<string>>()
+  for (const record of byKey.values()) {
+    if (sessionFromEvidenceRef(record.evidence_ref) !== session) continue
+    if (record.status === 'gap') gapCount++
+    if (record.source !== 'claude_local_request' || record.status === 'gap') continue
+    const seen = prints.get(record.evidence_ref) ?? new Set<string>()
+    seen.add(tokenFingerprint(record.tokens))
+    prints.set(record.evidence_ref, seen)
+    if (seen.size > 1) disputed.add(record.evidence_ref)
+  }
   // Compare the transcript with the original OTLP observation, not with a prior check.
   for (const record of byKey.values()) {
     if (record.source !== 'claude_local_request' || sessionFromEvidenceRef(record.evidence_ref) !== session ||
-      record.coverage.state === 'closed_reconciled' || record.coverage.state === 'conflict') continue
-    const [request, response] = record.evidence_ref.split('/')[2]!.split(':')
-    const id = identifier(decodeURIComponent(request || response || ''))
-    // Check uses the preferred ID (request first) to pair with transcript rows.
-    const responseOnly = responseIds.has(id) && !requestIds.has(id)
+      record.status === 'gap' || record.coverage.state === 'closed_reconciled' || record.coverage.state === 'conflict') continue
+    const encoded = record.evidence_ref.split('/').slice(2).join('/')
+    const colon = encoded.indexOf(':')
+    const requestId = identifier(decodeURIComponent(colon < 0 ? encoded : encoded.slice(0, colon)))
+    const responseId = identifier(decodeURIComponent(colon < 0 ? '' : encoded.slice(colon + 1)))
     originals.set({
-      source: 'otlp', nativeSession: session, requestId: responseOnly ? null : id,
-      responseId: responseOnly ? id : null, model: record.actual_model,
+      source: 'otlp', nativeSession: session, requestId, responseId, model: record.actual_model,
       tokens: record.tokens, occurred: record.occurred,
     }, record)
   }
   const otlp = [...originals.keys()]
   const { counters, records, counterparts } = reconcile(otlp, transcript, { exactCounts: true })
-  const differs = badLines || foreign || noId || counters.mismatched || counters.transcriptOnly || counters.otlpOnly
+  const differs = badLines || foreign || noId || unscoped || gapCount || disputed.size ||
+    counters.mismatched || counters.transcriptOnly || counters.otlpOnly
   const result = differs ? 'differs' : 'match'
 
   if (write) {
@@ -177,12 +187,18 @@ function check(paths: State, session: string, file: string, write: boolean, json
     }
     const now = new Date()
     const actor = 'swarm capture-claude check'
+    for (const gap of gaps) {
+      const record = buildGap(
+        { nativeSession: session, occurred: gap.occurred, tokens: gap.tokens }, envelope, now, 'transcript',
+      )
+      if (!byKey.has(record.dedupe_key)) append(record)
+    }
     for (const item of records) {
       if (item.state === 'otlp_only') continue
       const record = buildRecord(item, envelope, now)
       const original = originals.get(item.fact)
       if (original) {
-        const matched = item.state === 'matched'
+        const matched = item.state === 'matched' && !disputed.has(original.evidence_ref)
         const current = head(original)
         const other = counterparts.get(item.fact)
         const state = matched ? 'closed_reconciled' : 'conflict'
@@ -197,7 +213,7 @@ function check(paths: State, session: string, file: string, write: boolean, json
             coverage: { ...record.coverage, state },
           })
         }
-        if (matched && other) {
+        if (other) {
           const backfill = buildRecord({ ...item, fact: other, state: 'transcript_only' }, envelope, now)
           const prior = byKey.get(`${backfill.dedupe_key}:transcript`)
           if (prior && head(prior).status !== 'superseded') {
@@ -210,8 +226,8 @@ function check(paths: State, session: string, file: string, write: boolean, json
             }
             append({
               ...backfill, dedupe_key: `${current.dedupe_key}:superseded`, revises: current.record_id,
-              actor, reason: 'matched late telemetry', status: 'superseded', tokens,
-              coverage: { state: 'closed_reconciled', field_quality },
+              actor, reason: matched ? 'matched late telemetry' : 'late disagreement', status: 'superseded', tokens,
+              coverage: { state: matched ? 'closed_reconciled' : 'conflict', field_quality },
             })
           }
         }
@@ -225,13 +241,14 @@ function check(paths: State, session: string, file: string, write: boolean, json
   }
 
   const sums = { otlp: totals(otlp), transcript: totals(transcript) }
-  if (json) console.log(JSON.stringify({ counters, totals: sums, badTranscriptLines: badLines, foreign, noId, result }))
+  if (json) console.log(JSON.stringify({ counters, totals: sums, badTranscriptLines: badLines, foreign, noId, unscoped, result }))
   else {
     const { matched, mismatched, transcriptOnly, otlpOnly } = counters
     console.log(`matched          ${matched}\nmismatched       ${mismatched}\ntranscript only  ${transcriptOnly}\notlp only        ${otlpOnly}`)
     if (badLines) console.log(`bad transcript lines  ${badLines}`)
     if (foreign) console.log(`foreign rows  ${foreign}`)
     if (noId) console.log(`rows without id  ${noId}`)
+    if (unscoped) console.log(`rows without session  ${unscoped}`)
     const width = Math.max(4, ...buckets.map((key) => display(sums.otlp[key]!).length))
     console.log(`\n${' '.repeat(16)}${'otlp'.padEnd(width)}  transcript`)
     for (const key of buckets) {

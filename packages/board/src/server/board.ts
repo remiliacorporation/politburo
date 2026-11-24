@@ -45,6 +45,9 @@ export type BoardOptions = PolicyOptions & (BackendOptions | DefaultOptions) & {
    * Each calls `next()` to pass the write on; one that doesn't drops it.
    */
   middleware?: readonly Middleware[]
+  /** Checks a claim after access, before it reaches the backend. `task` is null for claim-next. */
+  claimRule?: (claim: { actor: string; channel: string; task: string | null }) =>
+    void | { refuse: { code: string; message: string } } | Promise<void | { refuse: { code: string; message: string } }>
   /** Operational inbox roles and their verified principal IDs (as `me().principal` reports them). */
   inboxRoles?: Readonly<Record<string, readonly string[]>>
   /** Tails the board runs for you, keyed by an id you choose: `{ triage: { tail: 'firehose', run } }`. */
@@ -463,7 +466,7 @@ export function createBoard(options: BoardOptions, runtime: Runtime): Board {
       return entry.url(thread.slice(key.length + 1), message).catch(() => null)
     },
     typing: async (messages, status) => (await server()).typing(messages, status),
-    accessNow: (principal, grants) => policy.accessNow(principal, grants),
+    accessNow: (principal, grants, now) => policy.accessNow(principal, grants, now),
     inboxRolesFor: (principal) => [...(inboxRolesByPrincipal.get(principal) ?? [])],
     explain: (principal, channel) => policy.explain(principal, channel),
     project: () => policy.project(),

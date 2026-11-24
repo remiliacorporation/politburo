@@ -1,0 +1,76 @@
+{
+  "case_id": "issue-refill-001-ready-above",
+  "description": "Ready work exceeds capacity",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": []
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": []
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"repo_path\": \"<WORK>\", \"slots\": 1}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [],
+    "source_calls": [],
+    "stderr": "",
+    "stdout": "refill: skipped (enough ready work: 2 ready for 1 free slots)\n"
+  },
+  "inputs": {
+    "argv": [],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "An active board with more ready work than free slots skips before consulting any source.",
+  "setup": {
+    "config": {
+      "slots": 1
+    },
+    "files": {},
+    "issues": [
+      {
+        "issue_key": "example-ready",
+        "state": "ready",
+        "title": "Refresh the example index"
+      },
+      {
+        "issue_key": "example-extra",
+        "state": "ready",
+        "title": "Check the example manifest"
+      }
+    ],
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

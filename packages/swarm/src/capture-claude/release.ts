@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { object } from './facts.ts'
-import { sessionFromEvidenceRef, type SpendRecord } from './record.ts'
+import { conflictSuccessor, sessionFromEvidenceRef, type SpendRecord } from './record.ts'
 import type { SessionRegistry } from './registry.ts'
 import type { SpendWriter } from './writer.ts'
 
@@ -54,7 +54,19 @@ export function releaseQuarantine({ records, registry, ledger, actor, reason, no
       received: (typeof now === 'function' ? now() : now).toISOString(),
       coverage: record.coverage.state === 'unattributed' ? { ...record.coverage, state: 'partial' } : record.coverage,
     })
-    if (result === 'differs') throw new Error('quarantine release differs from ledger')
+    if (result === 'differs') {
+      // One conflicting key must not abort the records that follow it.
+      const original = ledger.existing(record.dedupe_key)
+      if (original) {
+        const parent = ledger.head(original.record_id)
+        const successor = conflictSuccessor(parent, {
+          ...record, record_id: id, envelope, actor, reason,
+          received: (typeof now === 'function' ? now() : now).toISOString(),
+        }, actor)
+        if (ledger.append(successor) === 'written') released++
+      }
+      continue
+    }
     const copy = result === 'written' ? id : ledger.existing(record.dedupe_key)?.record_id
     if (copy !== undefined) attributed.set(record.record_id, copy)
     if (result === 'written') released++

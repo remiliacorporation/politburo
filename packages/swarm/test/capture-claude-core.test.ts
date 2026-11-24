@@ -38,7 +38,7 @@ function batch(...logRecords: object[]) {
 
 function assistant(usage?: object, requestId = 'req-1', id = 'msg-1') {
   return {
-    type: 'assistant', requestId, timestamp: '2026-11-22T13:00:06+01:00',
+    type: 'assistant', sessionId: session, requestId, timestamp: '2026-11-22T13:00:06+01:00',
     message: { id, model: 'claude-example', usage },
   }
 }
@@ -83,7 +83,7 @@ test('OTLP accepts a body-named request and rejects a request without a session'
 
 test('OTLP tool_result events produce no request facts', () => {
   const unrelated = log({ 'event.name': { stringValue: 'tool_result' } })
-  assert.deepEqual(parseOtlpLogs(batch(unrelated)), { facts: [], rejected: 0 })
+  assert.deepEqual(parseOtlpLogs(batch(unrelated)), { facts: [], gaps: [], rejected: 0 })
 })
 
 test('prompt text, account data, tool input, and paths stay out of facts and JSONL', (t) => {
@@ -224,13 +224,14 @@ function reported(output = 91, requestId = 'req-1') {
 }
 
 test('transcript binds rows to its native session', () => {
-  const { facts, foreign } = parseTranscript(jsonl(
+  const { facts, foreign, unscoped } = parseTranscript(jsonl(
     { ...assistant({ output_tokens: 1 }, 'foreign-request'), sessionId: 'other-session' },
     { ...assistant({ output_tokens: 2 }), sessionId: session },
-    assistant({ output_tokens: 3 }, 'other-request'),
+    { ...assistant({ output_tokens: 3 }, 'other-request'), sessionId: undefined },
   ), session)
-  assert.deepEqual(facts.map((fact) => fact.tokens.output), [2, 3])
+  assert.deepEqual(facts.map((fact) => fact.tokens.output), [2])
   assert.equal(foreign, 1)
+  assert.equal(unscoped, 1)
 })
 
 test('identifiers cannot carry paths, emails, or malformed values into spend', (t) => {
@@ -255,12 +256,18 @@ test('identifiers cannot carry paths, emails, or malformed values into spend', (
 })
 
 test('both parsers count but do not emit anonymous usage', () => {
-  const { facts, rejected } = parseOtlpLogs(batch(log({ request_id: {}, 'message.id': {} })))
+  const { facts, gaps, rejected } = parseOtlpLogs(batch(log({ request_id: {}, 'message.id': {} })))
   assert.equal(facts.length, 0, 'anonymous OTLP usage')
+  assert.equal(gaps.length, 1, 'anonymous OTLP usage is a durable gap')
   assert.equal(rejected, 1)
-  const rows = parseTranscript(jsonl(assistant({ output_tokens: 4 }, '', '')), session)
+  const rows = parseTranscript(jsonl(
+    { ...assistant({ output_tokens: 4 }, '', ''), sessionId: session },
+    { ...assistant({ output_tokens: 9 }, '', ''), sessionId: undefined },
+  ), session)
   assert.equal(rows.facts.length, 0, 'anonymous transcript usage')
+  assert.equal(rows.gaps.length, 1, 'only the row that names this session is a gap')
   assert.equal(rows.noId, 1)
+  assert.equal(rows.unscoped, 1)
 })
 
 test('same-request responses reconcile separately and both reach disk', (t) => {
@@ -280,7 +287,7 @@ test('same-request responses reconcile separately and both reach disk', (t) => {
 
 test('evidence references round-trip a session without exposing it as a path', () => {
   const native = 'local%2Fsession/child%'
-  const { facts } = parseTranscript(jsonl(assistant()), native)
+  const { facts } = parseTranscript(jsonl({ ...assistant(), sessionId: native }), native)
   const ref = buildRecord(reconcile([], facts).records[0]!, null, now).evidence_ref
   assert.ok(!ref.includes(native), 'raw session leaked into the reference')
   assert.equal(ref.split('/').length, 3)
@@ -304,6 +311,8 @@ test('JSONL skips a torn tail but rejects a malformed middle line', (t) => {
   writeFileSync(path, `${line}\n{"unfinished":`)
   jsonlWriter(path).append(reported(8, 'another-request'))
   assert.equal(JSON.parse(readFileSync(path, 'utf8').trimEnd().split('\n').at(-1)!).tokens.output, 8)
+  jsonlWriter(path).append(reported(9, 'third-request'))
+  assert.deepEqual(outputs(path), [91, 8, 9])
   writeFileSync(path, `${line}\n{"unfinished":\n${line}\n`)
   assert.throws(() => jsonlWriter(path), SyntaxError)
 })
@@ -349,6 +358,27 @@ test('distinct same-source conflicts persist, but their replays do not', (t) => 
     for (const item of reconcile(facts, []).records) writer.append(buildRecord(item, envelope, now))
   }
   assert.deepEqual(outputs(path), [91, 90])
+})
+
+test('a later conflict revises the current head and a replay does not fork it', (t) => {
+  const path = spendPath(t)
+  const writer = jsonlWriter(path)
+  const original = reported()
+  writer.append(original)
+  let parent = original.record_id
+  for (const value of [90, 89]) {
+    const report = reported(value)
+    assert.equal(writer.append(report), 'differs')
+    const head = writer.head(writer.existing(report.dedupe_key)!.record_id)
+    const next = capture.conflictSuccessor(head, report, 'receiver')
+    assert.equal(writer.append(next), 'written')
+    assert.equal(next.revises, parent)
+    parent = next.record_id
+  }
+  const replay = reported(90)
+  const head = writer.head(writer.existing(replay.dedupe_key)!.record_id)
+  assert.equal(writer.append(capture.conflictSuccessor(head, replay, 'receiver')), 'duplicate')
+  assert.equal(head.record_id, parent)
 })
 
 test('conflict successors preserve distinct changed reports and link to the original', (t) => {

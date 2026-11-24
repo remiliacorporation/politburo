@@ -1,0 +1,55 @@
+{
+  "case_id": "retire-check-002-unpushed-commit",
+  "description": "The checked-out branch has a clean but unpushed commit.",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "repo/ex-draft.txt": "example draft\n",
+      "repo/ex.txt": "base\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "unpushed work: example-mob: ex-main\nex-main: unpushed (local <SHA1>, remote <SHA2>)\nworktree: unpushed (HEAD <SHA1>)\n"
+  },
+  "inputs": {
+    "argv": [
+      "--repo-dir",
+      "repo",
+      "--mob",
+      "example-mob",
+      "--dry-run",
+      "--worktree",
+      "repo",
+      "--branch",
+      "ex-main"
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M12",
+  "notes": "",
+  "setup": {
+    "files": {
+      "repo/ex-draft.txt": "example draft\n",
+      "repo/ex.txt": "base\n"
+    },
+    "git": [
+      [
+        "add",
+        "ex-draft.txt"
+      ],
+      [
+        "commit",
+        "-m",
+        "draft"
+      ]
+    ],
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "ac8e4445d49ff811f24cd44d8e5f30dfad2da7ba",
+    "modules": [
+      "supervisor/sec_retire.py",
+      "supervisor/sec_push.py"
+    ]
+  }
+}

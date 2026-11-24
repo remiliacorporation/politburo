@@ -206,7 +206,8 @@ test('check --write never prints or stores transcript content, even on a malform
   writeFileSync(f.file, JSON.stringify({ type: 'assistant', requestId: '../unsafe' }))
   const noId = f.check('--write', '--json')
   assert.equal(noId.status, 1)
-  assert.equal(JSON.parse(noId.stdout).noId, 1)
+  assert.equal(JSON.parse(noId.stdout).unscoped, 1)
+  assert.equal(JSON.parse(noId.stdout).noId, 0)
   assert.equal(readJsonl(f.ledger).length, 1)
 })
 
@@ -453,6 +454,67 @@ test('bind rejects empty and whitespace-only session, party and internal session
   assert.deepEqual(readJsonl(f.ledger), [])
   assert.equal(f.bind().status, 0)
   assert.equal(readJsonl(f.ledger).length, 1)
+})
+
+test('check pairs both responses under one request id', async (t) => {
+  const f = fixture(t)
+  assert.equal(f.bind().status, 0)
+  const server = await start(t, f.dir)
+  const posted = [91, 7].map((output, index) => {
+    const row = log(session, 'req:1')
+    return { attributes: [
+      ...row.attributes.filter((attribute) => attribute.key !== 'output_tokens'),
+      { key: 'output_tokens', value: { intValue: output } },
+      { key: 'message.id', value: { stringValue: `msg-${index}` } },
+    ] }
+  })
+  await server.post(...posted)
+  await server.stop()
+  writeFileSync(f.file, [91, 7].map((output, index) => JSON.stringify({
+    type: 'assistant', sessionId: session, requestId: 'req:1',
+    message: { id: `msg-${index}`, usage: { input_tokens: 240, output_tokens: output, cache_read_input_tokens: 0 } },
+  })).join('\n') + '\n')
+  const report = JSON.parse(f.check('--json').stdout)
+  assert.deepEqual(report.counters, { matched: 2, mismatched: 0, transcriptOnly: 0, otlpOnly: 0 })
+  assert.equal(report.result, 'match')
+})
+
+test('check --write does not turn a receiver conflict into reconciled spend', async (t) => {
+  const f = fixture(t)
+  assert.equal(f.bind().status, 0)
+  const server = await start(t, f.dir)
+  const reports = [91, 7].map((output) => {
+    const row = log(session, 'req:1')
+    return { attributes: row.attributes.map((attribute) => attribute.key === 'output_tokens'
+      ? { key: attribute.key, value: { intValue: output } } : attribute) }
+  })
+  await server.post(...reports)
+  await server.stop()
+  f.transcript({ output: 91 })
+  const result = f.check('--write', '--json')
+  assert.equal(result.status, 1)
+  assert.equal(JSON.parse(result.stdout).result, 'differs')
+  assert.equal(readJsonl(f.ledger).some((row) => row.coverage.state === 'closed_reconciled'), false)
+})
+
+test('check --write removes known spend from a transcript backfill that later disagrees', async (t) => {
+  const f = fixture(t)
+  assert.equal(f.bind().status, 0)
+  f.transcript({ output: 91 })
+  assert.equal(f.check('--write').status, 1)
+  const [backfill] = readJsonl(f.ledger)
+  assert.equal(backfill?.tokens.output, 91)
+  const server = await start(t, f.dir)
+  const row = log(session, 'req:1')
+  await server.post({ attributes: row.attributes.map((attribute) => attribute.key === 'output_tokens'
+    ? { key: attribute.key, value: { intValue: 7 } } : attribute) })
+  await server.stop()
+  assert.equal(f.check('--write').status, 1)
+  const rows = readJsonl(f.ledger)
+  const successor = rows.find((row) => row.revises === backfill?.record_id)
+  assert.equal(successor?.status, 'superseded')
+  assert.equal(successor?.tokens.output, null)
+  assert.equal(successor?.coverage.state, 'conflict')
 })
 
 test('serve exits cleanly with status 0 on SIGTERM', async (t) => {

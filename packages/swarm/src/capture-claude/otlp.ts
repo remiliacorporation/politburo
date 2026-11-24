@@ -23,8 +23,11 @@ function timestamp(value: unknown): string | null {
     ? utc(new Date(value / 1_000_000)) : null
 }
 
-export function parseOtlpLogs(body: unknown): { facts: RequestFact[]; rejected: number } {
+export type UsageGap = { nativeSession: string; occurred: string | null; tokens: RequestFact['tokens'] }
+
+export function parseOtlpLogs(body: unknown): { facts: RequestFact[]; gaps: UsageGap[]; rejected: number } {
   const facts: RequestFact[] = []
+  const gaps: UsageGap[] = []
   let rejected = 0
   for (const resource of list(object(body)?.resourceLogs)) {
     for (const scope of list(object(resource)?.scopeLogs)) {
@@ -42,24 +45,25 @@ export function parseOtlpLogs(body: unknown): { facts: RequestFact[]; rejected: 
         const nativeSession = id('session.id')
         const requestId = id('request_id')
         const responseId = id('message.id') ?? id('response_id')
+        const tokens = {
+          input_uncached: token(attrs.get('input_tokens')),
+          input_total: null,
+          output: token(attrs.get('output_tokens')),
+          cache_read: token(attrs.get('cache_read_tokens')),
+          cache_write: token(attrs.get('cache_creation_tokens')),
+          reasoning: null,
+        }
+        const occurred = timestamp(row?.timeUnixNano)
         if (nativeSession === null || (requestId === null && responseId === null)) {
           rejected++
+          if (nativeSession !== null) gaps.push({ nativeSession, occurred, tokens })
           continue
         }
         facts.push({
-          source: 'otlp', nativeSession, requestId, responseId, model: id('model'),
-          tokens: {
-            input_uncached: token(attrs.get('input_tokens')),
-            input_total: null,
-            output: token(attrs.get('output_tokens')),
-            cache_read: token(attrs.get('cache_read_tokens')),
-            cache_write: token(attrs.get('cache_creation_tokens')),
-            reasoning: null,
-          },
-          occurred: timestamp(row?.timeUnixNano),
+          source: 'otlp', nativeSession, requestId, responseId, model: id('model'), tokens, occurred,
         })
       }
     }
   }
-  return { facts, rejected }
+  return { facts, gaps, rejected }
 }

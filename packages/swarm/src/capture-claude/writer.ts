@@ -1,9 +1,10 @@
-import { appendFileSync, closeSync, openSync, readSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, openSync, readSync, statSync, truncateSync } from 'node:fs'
 import { tokenFingerprint, type SpendRecord } from './record.ts'
 
 export interface SpendWriter {
   append(record: SpendRecord): 'written' | 'duplicate' | 'differs'
   existing(key: string): { record_id: string } | null
+  head(recordId: string): { record_id: string }
 }
 
 type Entry = { record_id: string; fingerprint: string }
@@ -11,9 +12,12 @@ type Entry = { record_id: string; fingerprint: string }
 // Thin stand-in for WP-103. Refresh sees completed appends; it does not lock concurrent writes.
 export function jsonlWriter(path: string): SpendWriter {
   const keys = new Map<string, Entry>()
+  const revisedBy = new Map<string, string>()
   const entry = (record: SpendRecord): Entry => ({ record_id: record.record_id, fingerprint: tokenFingerprint(record.tokens) })
   const remember = (record: SpendRecord | null) => {
-    if (record && !keys.has(record.dedupe_key)) keys.set(record.dedupe_key, entry(record))
+    if (!record || keys.has(record.dedupe_key)) return
+    keys.set(record.dedupe_key, entry(record))
+    if (record.revises !== null) revisedBy.set(record.revises, record.record_id)
   }
   let offset = 0, tail = Buffer.alloc(0), tailRecord: SpendRecord | null = null
   let failed = false
@@ -66,12 +70,30 @@ export function jsonlWriter(path: string): SpendWriter {
       const prior = lookup(key)
       return prior ? { record_id: prior.record_id } : null
     },
+    head(recordId) {
+      refresh()
+      let current = recordId
+      const seen = new Set<string>()
+      while (revisedBy.has(current) && !seen.has(current)) {
+        seen.add(current)
+        current = revisedBy.get(current)!
+      }
+      return { record_id: current }
+    },
     append(record) {
       try {
         refresh()
         const prior = lookup(record.dedupe_key)
         if (prior) return prior.fingerprint === tokenFingerprint(record.tokens) ? 'duplicate' : 'differs'
-        const line = `${tail.length || failed ? '\n' : ''}${JSON.stringify(record)}\n`
+        // A torn tail is not a record. Drop it before the next line, or the next open sees a corrupt middle.
+        if (tail.length) {
+          const keep = offset - tail.length
+          truncateSync(path, keep)
+          offset = keep
+          tail = Buffer.alloc(0)
+          tailRecord = null
+        }
+        const line = `${failed ? '\n' : ''}${JSON.stringify(record)}\n`
         appendFileSync(path, line, { flush: true })
         failed = false
         return 'written'

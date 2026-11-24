@@ -3,7 +3,7 @@ import type { Readable } from 'node:stream'
 import { createGunzip } from 'node:zlib'
 import { parseOtlpLogs } from './otlp.ts'
 import { reconcile } from './reconcile.ts'
-import { buildRecord, conflictSuccessor } from './record.ts'
+import { buildGap, buildRecord, conflictSuccessor } from './record.ts'
 import type { SessionRegistry } from './registry.ts'
 import type { SpendWriter } from './writer.ts'
 
@@ -93,8 +93,16 @@ export function createReceiver({
     }
 
     try {
-      const { facts, rejected } = parseOtlpLogs(payload)
+      const { facts, gaps, rejected } = parseOtlpLogs(payload)
       counters.rejected += rejected
+      for (const gap of gaps) {
+        const envelope = registry.lookup(gap.nativeSession)
+        const writer = envelope === null ? quarantine : ledger
+        writer.append(buildGap(gap, envelope, now(), 'otlp'))
+        if (envelope === null) counters.quarantined++
+        else counters.attributed++
+        counters.accepted++
+      }
       for (const fact of facts) {
         const envelope = registry.lookup(fact.nativeSession)
         const [resolved] = reconcile([fact], []).records
@@ -103,7 +111,8 @@ export function createReceiver({
         if (writer.append(record) === 'differs') {
           const original = writer.existing(record.dedupe_key)
           if (!original) throw new Error('conflicting record has no original')
-          const result = writer.append(conflictSuccessor(original, record, 'capture-claude receiver'))
+          const parent = writer.head(original.record_id)
+          const result = writer.append(conflictSuccessor(parent, record, 'capture-claude receiver'))
           if (result === 'differs') throw new Error('conflict successor differs')
           if (result === 'written') counters.conflicts++
         }

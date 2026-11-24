@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { buckets, type RequestFact } from './facts.ts'
+import type { UsageGap } from './otlp.ts'
 import type { Resolved } from './reconcile.ts'
 
 export type Envelope = {
@@ -67,6 +68,29 @@ export function sessionFromEvidenceRef(ref: string): string | null {
   const session = /^claude\/([^/]+)\/[^/]+$/.exec(ref)?.[1]
   if (session === undefined || /%(?!25|2F)/.test(session)) return null
   return session.replace(/%25|%2F/g, (escape) => escape === '%25' ? '%' : '/')
+}
+
+const unknownTokens = (): RequestFact['tokens'] => ({
+  input_uncached: null, input_total: null, output: null, cache_read: null, cache_write: null, reasoning: null,
+})
+
+// A request with no id is not spend. The gap is durable so a later check cannot call the session a match.
+export function buildGap(gap: UsageGap, envelope: Envelope | null, now: Date, kind: 'otlp' | 'transcript'): SpendRecord {
+  const id = `gap:${kind}:${gap.occurred ?? ''}:${tokenFingerprint(gap.tokens)}`
+  const eventKey = `${encodeURIComponent(gap.nativeSession)}:${encodeURIComponent(id)}`
+  const field_quality: Record<string, string> = { amount: 'unknown' }
+  for (const key of buckets) field_quality[`tokens.${key}`] = 'unknown'
+  return {
+    record_id: randomUUID(), dedupe_key: `claude:${eventKey}`, revises: null, envelope,
+    source: kind === 'otlp' ? 'claude_local_request' : 'claude_local_transcript',
+    source_version: 'capture-claude@1', source_event_key: eventKey,
+    evidence_ref: `${evidencePrefix(gap.nativeSession)}${encodeURIComponent(id)}:`,
+    provider: 'anthropic', requested_route: 'claude-local', actual_model: null, auth_class: null,
+    tokens: unknownTokens(), amount: null, basis: 'unknown',
+    occurred: gap.occurred, received: now.toISOString(), started: null, ended: null,
+    status: 'gap',
+    coverage: { state: 'partial', field_quality },
+  }
 }
 
 export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelope | null, now: Date): SpendRecord {

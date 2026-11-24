@@ -1,0 +1,929 @@
+{
+  "case_id": "review-marks-007-queue-order",
+  "description": "List ready, reviewed, superseded and awaiting entries in queue order",
+  "expected": {
+    "db_dump": {
+      "board_events": [
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 1,
+          "event_type": "candidate_review_opened",
+          "issue_key": "example-reviewed-first",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "reason": "Candidate review opened",
+            "reason_code": "review_opened",
+            "stage_id": "stage-first"
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "event_id": 2,
+          "event_type": "candidate_reviewed",
+          "issue_key": "example-reviewed-first",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "reason": "Candidate review result recorded",
+            "reason_code": "review_recorded",
+            "stage_id": "stage-first"
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:01:00+00:00",
+          "event_id": 3,
+          "event_type": "candidate_review_opened",
+          "issue_key": "example-reviewed-last",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "reason": "Candidate review opened",
+            "reason_code": "review_opened",
+            "stage_id": "stage-last"
+          }
+        },
+        {
+          "actor": "reviewer-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T12:01:00+00:00",
+          "event_id": 4,
+          "event_type": "candidate_reviewed",
+          "issue_key": "example-reviewed-last",
+          "payload_json": {
+            "actor_role": "reviewer",
+            "actor_type": "agent",
+            "candidate_sha": "candidate-current",
+            "envelope_version": 1,
+            "reason": "Candidate review result recorded",
+            "reason_code": "review_recorded",
+            "stage_id": "stage-last"
+          }
+        }
+      ],
+      "board_messages": [],
+      "execution_attempts": [
+        {
+          "adapter": "synthetic.fake",
+          "agent_generation": 1,
+          "agent_id": "worker-01",
+          "assignment_generation": 2,
+          "attempt_id": "attempt-a",
+          "controller": "001-FOX",
+          "created_at": "2026-01-01T11:59:10+00:00",
+          "dispatched_at": null,
+          "finished_at": "2026-01-01T11:59:10+00:00",
+          "issue_key": "example-awaiting",
+          "issue_version": 1,
+          "launch_error": null,
+          "launched_at": null,
+          "lease_token": "",
+          "model": "example-model",
+          "network_generation": 1,
+          "process_result": null,
+          "provider": "synthetic",
+          "receipt_ref": null,
+          "reserved_at": "2026-01-01T11:59:10+00:00",
+          "reserved_slot": "slot-attempt-a",
+          "resolved_at": null,
+          "session_ref": null,
+          "staged_at": null,
+          "state": "collected",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "worktree": null
+        },
+        {
+          "adapter": "synthetic.fake",
+          "agent_generation": 1,
+          "agent_id": "worker-01",
+          "assignment_generation": 3,
+          "attempt_id": "attempt-first",
+          "controller": "001-FOX",
+          "created_at": "2026-01-01T11:58:30+00:00",
+          "dispatched_at": null,
+          "finished_at": "2026-01-01T11:58:30+00:00",
+          "issue_key": "example-awaiting",
+          "issue_version": 1,
+          "launch_error": null,
+          "launched_at": null,
+          "lease_token": "",
+          "model": "example-model",
+          "network_generation": 1,
+          "process_result": null,
+          "provider": "synthetic",
+          "receipt_ref": null,
+          "reserved_at": "2026-01-01T11:58:30+00:00",
+          "reserved_slot": "slot-attempt-first",
+          "resolved_at": null,
+          "session_ref": null,
+          "staged_at": null,
+          "state": "collected",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "worktree": null
+        },
+        {
+          "adapter": "synthetic.fake",
+          "agent_generation": 1,
+          "agent_id": "worker-01",
+          "assignment_generation": 4,
+          "attempt_id": "attempt-staged",
+          "controller": "001-FOX",
+          "created_at": "2026-01-01T11:57:00+00:00",
+          "dispatched_at": null,
+          "finished_at": "2026-01-01T11:57:00+00:00",
+          "issue_key": "example-awaiting",
+          "issue_version": 1,
+          "launch_error": null,
+          "launched_at": null,
+          "lease_token": "",
+          "model": "example-model",
+          "network_generation": 1,
+          "process_result": null,
+          "provider": "synthetic",
+          "receipt_ref": null,
+          "reserved_at": "2026-01-01T11:57:00+00:00",
+          "reserved_slot": "slot-attempt-staged",
+          "resolved_at": null,
+          "session_ref": null,
+          "staged_at": "2026-01-01T12:00:00+00:00",
+          "state": "collected",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "worktree": null
+        },
+        {
+          "adapter": "synthetic.fake",
+          "agent_generation": 1,
+          "agent_id": "worker-01",
+          "assignment_generation": 1,
+          "attempt_id": "attempt-z",
+          "controller": "001-FOX",
+          "created_at": "2026-01-01T11:59:10+00:00",
+          "dispatched_at": null,
+          "finished_at": "2026-01-01T11:59:10+00:00",
+          "issue_key": "example-awaiting",
+          "issue_version": 1,
+          "launch_error": null,
+          "launched_at": null,
+          "lease_token": "",
+          "model": "example-model",
+          "network_generation": 1,
+          "process_result": null,
+          "provider": "synthetic",
+          "receipt_ref": null,
+          "reserved_at": "2026-01-01T11:59:10+00:00",
+          "reserved_slot": "slot-attempt-z",
+          "resolved_at": null,
+          "session_ref": null,
+          "staged_at": null,
+          "state": "collected",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "worktree": null
+        }
+      ],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-awaiting",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-awaiting",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        },
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-project",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-project",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        },
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-ready",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-ready",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        },
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-reviewed-first",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-reviewed-first",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        },
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "head_sha": "candidate-current",
+          "issue_key": "example-reviewed-last",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": null,
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "example-reviewed-last",
+          "updated_at": "2026-01-01T12:00:00+00:00",
+          "version": 1,
+          "worktree": null
+        }
+      ],
+      "pipeline_stages": [
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:59:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-project",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-b",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        },
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:53:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": "runs/example-run/collection.json",
+          "finding": null,
+          "issue_key": "example-awaiting",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-earliest",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:53:00+00:00"
+        },
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:59:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-reviewed-first",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-first",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        },
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:58:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-reviewed-last",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-last",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:58:00+00:00"
+        },
+        {
+          "candidate_sha": "candidate-newer",
+          "created_at": "2026-01-01T11:54:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-project",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-newer",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:30+00:00"
+        },
+        {
+          "candidate_sha": "candidate-older",
+          "created_at": "2026-01-01T11:55:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-project",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-older",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        },
+        {
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T11:59:00+00:00",
+          "delivery_id": null,
+          "evidence_ref": null,
+          "finding": null,
+          "issue_key": "example-ready",
+          "origin_attempt_id": null,
+          "result": null,
+          "source_stage_id": null,
+          "stage": "review",
+          "stage_id": "stage-z",
+          "state": "pending",
+          "updated_at": "2026-01-01T11:59:00+00:00"
+        }
+      ],
+      "review_marks": [
+        {
+          "actor": "reviewer-01",
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T12:00:00+00:00",
+          "first_seen_at": "2026-01-01T12:00:00+00:00",
+          "issue_key": "example-reviewed-first",
+          "reviewed_at": "2026-01-01T12:00:00+00:00",
+          "updated_at": "2026-01-01T12:00:00+00:00"
+        },
+        {
+          "actor": "reviewer-01",
+          "candidate_sha": "candidate-current",
+          "created_at": "2026-01-01T12:01:00+00:00",
+          "first_seen_at": "2026-01-01T12:01:00+00:00",
+          "issue_key": "example-reviewed-last",
+          "reviewed_at": "2026-01-01T12:01:00+00:00",
+          "updated_at": "2026-01-01T12:01:00+00:00"
+        }
+      ]
+    },
+    "exit_code": null,
+    "files": {
+      "runs/example-run/collection.json": "{\"candidate_sha\":\"candidate-current\",\"summary\":\"Updated the example view.\",\"checks\":{\"unit tests\":\"passed\"},\"preview\":{\"ref\":\"evidence/preview.html\",\"expires_at\":\"2026-01-01T12:00:00Z\"}}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "",
+    "steps": [
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "first_seen_at": "2026-01-01T12:00:00+00:00",
+            "issue_key": "example-reviewed-first",
+            "reviewed_at": "2026-01-01T12:00:00+00:00",
+            "updated_at": "2026-01-01T12:00:00+00:00"
+          },
+          "recorded": "reviewed"
+        }
+      },
+      {
+        "op": "mark",
+        "result": {
+          "mark": {
+            "actor": "reviewer-01",
+            "candidate_sha": "candidate-current",
+            "created_at": "2026-01-01T12:01:00+00:00",
+            "first_seen_at": "2026-01-01T12:01:00+00:00",
+            "issue_key": "example-reviewed-last",
+            "reviewed_at": "2026-01-01T12:01:00+00:00",
+            "updated_at": "2026-01-01T12:01:00+00:00"
+          },
+          "recorded": "reviewed"
+        }
+      },
+      {
+        "op": "queue",
+        "result": {
+          "awaiting": [
+            {
+              "attempt_id": "attempt-first",
+              "finished_at": "2026-01-01T11:58:30+00:00",
+              "issue_key": "example-awaiting",
+              "reserved_at": "2026-01-01T11:58:30+00:00",
+              "resolved_at": null,
+              "state": "collected",
+              "title": "example-awaiting"
+            },
+            {
+              "attempt_id": "attempt-a",
+              "finished_at": "2026-01-01T11:59:10+00:00",
+              "issue_key": "example-awaiting",
+              "reserved_at": "2026-01-01T11:59:10+00:00",
+              "resolved_at": null,
+              "state": "collected",
+              "title": "example-awaiting"
+            },
+            {
+              "attempt_id": "attempt-z",
+              "finished_at": "2026-01-01T11:59:10+00:00",
+              "issue_key": "example-awaiting",
+              "reserved_at": "2026-01-01T11:59:10+00:00",
+              "resolved_at": null,
+              "state": "collected",
+              "title": "example-awaiting"
+            }
+          ],
+          "ready": [
+            {
+              "attempt_id": "example-run",
+              "candidate_sha": "candidate-current",
+              "evidence_ref": "runs/example-run/collection.json",
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-awaiting",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": "2026-01-01T12:00:00Z",
+                "label": null,
+                "state": "expired"
+              },
+              "ready_at": "2026-01-01T11:53:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-earliest",
+              "stage_state": "pending",
+              "summary": "Updated the example view.",
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-awaiting",
+              "verification": [
+                [
+                  "unit tests",
+                  "passed",
+                  null
+                ]
+              ]
+            },
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-current",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-project",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:59:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-b",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-project",
+              "verification": []
+            },
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-current",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-ready",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:59:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-z",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-ready",
+              "verification": []
+            }
+          ],
+          "reviewed": [
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-current",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": "2026-01-01T12:01:00+00:00",
+              "issue_key": "example-reviewed-last",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:58:00+00:00",
+              "reviewed_at": "2026-01-01T12:01:00+00:00",
+              "stage_id": "stage-last",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-reviewed-last",
+              "verification": []
+            },
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-current",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": "2026-01-01T12:00:00+00:00",
+              "issue_key": "example-reviewed-first",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:59:00+00:00",
+              "reviewed_at": "2026-01-01T12:00:00+00:00",
+              "stage_id": "stage-first",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-reviewed-first",
+              "verification": []
+            }
+          ],
+          "superseded": [
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-newer",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-project",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:54:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-newer",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": true,
+              "superseded_at": "2026-01-01T11:59:30+00:00",
+              "title": "example-project",
+              "verification": []
+            },
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-older",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-project",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:55:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-older",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": true,
+              "superseded_at": "2026-01-01T11:59:00+00:00",
+              "title": "example-project",
+              "verification": []
+            }
+          ]
+        }
+      },
+      {
+        "op": "queue",
+        "result": {
+          "awaiting": [
+            {
+              "attempt_id": "attempt-first",
+              "finished_at": "2026-01-01T11:58:30+00:00",
+              "issue_key": "example-awaiting",
+              "reserved_at": "2026-01-01T11:58:30+00:00",
+              "resolved_at": null,
+              "state": "collected",
+              "title": "example-awaiting"
+            }
+          ],
+          "ready": [
+            {
+              "attempt_id": "example-run",
+              "candidate_sha": "candidate-current",
+              "evidence_ref": "runs/example-run/collection.json",
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-awaiting",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": "2026-01-01T12:00:00Z",
+                "label": null,
+                "state": "expired"
+              },
+              "ready_at": "2026-01-01T11:53:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-earliest",
+              "stage_state": "pending",
+              "summary": "Updated the example view.",
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-awaiting",
+              "verification": [
+                [
+                  "unit tests",
+                  "passed",
+                  null
+                ]
+              ]
+            }
+          ],
+          "reviewed": [
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-current",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": "2026-01-01T12:01:00+00:00",
+              "issue_key": "example-reviewed-last",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:58:00+00:00",
+              "reviewed_at": "2026-01-01T12:01:00+00:00",
+              "stage_id": "stage-last",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": false,
+              "superseded_at": null,
+              "title": "example-reviewed-last",
+              "verification": []
+            }
+          ],
+          "superseded": [
+            {
+              "attempt_id": null,
+              "candidate_sha": "candidate-newer",
+              "evidence_ref": null,
+              "finding": null,
+              "first_seen_at": null,
+              "issue_key": "example-project",
+              "issue_state": "review_ready",
+              "preview": {
+                "expires_at": null,
+                "label": null,
+                "state": "none"
+              },
+              "ready_at": "2026-01-01T11:54:00+00:00",
+              "reviewed_at": null,
+              "stage_id": "stage-newer",
+              "stage_state": "pending",
+              "summary": null,
+              "superseded": true,
+              "superseded_at": "2026-01-01T11:59:30+00:00",
+              "title": "example-project",
+              "verification": []
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "action": "reviewed",
+        "issue": "example-reviewed-first",
+        "op": "mark"
+      },
+      {
+        "action": "reviewed",
+        "issue": "example-reviewed-last",
+        "op": "mark",
+        "seconds": 60
+      },
+      {
+        "op": "queue"
+      },
+      {
+        "limit": 0,
+        "op": "queue"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "Ready and awaiting sort oldest first with ID ties; reviewed and superseded sort newest first. Zero clamps to one per group, and a preview expiring at the clock is labeled expired.",
+  "setup": {
+    "attempts": [
+      {
+        "id": "attempt-z",
+        "issue": "example-awaiting",
+        "seconds": -50
+      },
+      {
+        "id": "attempt-a",
+        "issue": "example-awaiting",
+        "seconds": -50
+      },
+      {
+        "id": "attempt-first",
+        "issue": "example-awaiting",
+        "seconds": -90
+      },
+      {
+        "id": "attempt-staged",
+        "issue": "example-awaiting",
+        "seconds": -180,
+        "staged": true
+      }
+    ],
+    "files": {
+      "runs/example-run/collection.json": "{\"candidate_sha\":\"candidate-current\",\"summary\":\"Updated the example view.\",\"checks\":{\"unit tests\":\"passed\"},\"preview\":{\"ref\":\"evidence/preview.html\",\"expires_at\":\"2026-01-01T12:00:00Z\"}}\n"
+    },
+    "issues": [
+      {
+        "head": "candidate-current",
+        "key": "example-project"
+      },
+      {
+        "head": "candidate-current",
+        "key": "example-ready"
+      },
+      {
+        "head": "candidate-current",
+        "key": "example-reviewed-first"
+      },
+      {
+        "head": "candidate-current",
+        "key": "example-reviewed-last"
+      },
+      {
+        "head": "candidate-current",
+        "key": "example-awaiting"
+      }
+    ],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": [
+      {
+        "id": "stage-z",
+        "issue": "example-ready"
+      },
+      {
+        "id": "stage-b"
+      },
+      {
+        "id": "stage-first",
+        "issue": "example-reviewed-first",
+        "seconds": -60
+      },
+      {
+        "id": "stage-last",
+        "issue": "example-reviewed-last",
+        "seconds": -120
+      },
+      {
+        "candidate": "candidate-older",
+        "id": "stage-older",
+        "seconds": -300,
+        "updated_seconds": -60
+      },
+      {
+        "candidate": "candidate-newer",
+        "id": "stage-newer",
+        "seconds": -360,
+        "updated_seconds": -30
+      },
+      {
+        "evidence_ref": "runs/example-run/collection.json",
+        "id": "stage-earliest",
+        "issue": "example-awaiting",
+        "seconds": -420
+      }
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql"
+    ]
+  }
+}

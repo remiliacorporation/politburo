@@ -1,0 +1,86 @@
+{
+  "case_id": "local-ci-021-lock-busy",
+  "description": "A held check lock prevents checkout even when the PR head matches.",
+  "expected": {
+    "exit_code": 4,
+    "files": {
+      "snapshots/example-first/.github/workflows/unittest.yml": "steps:\n  - name: Other\n    run: example-other\n  - name: Run unittest suite\n    run: |\n      example-check --label 'example suite'\n",
+      "snapshots/example-next/.github/workflows/unittest.yml": "steps:\n  - name: Run unittest suite\n    run: example-check --label next\n"
+    },
+    "log_lines": [
+      "local-ci-status: check lock busy"
+    ],
+    "runs": [
+      {
+        "api_calls": [
+          [
+            "api",
+            "repos/example-owner/example-repo/pulls/7",
+            "--jq",
+            ".head.sha"
+          ]
+        ],
+        "exit_code": 4,
+        "git_calls": [
+          [
+            "-C",
+            "repo",
+            "rev-parse",
+            "--show-toplevel"
+          ]
+        ],
+        "lock_present": true,
+        "tempdir_left": false,
+        "test_calls": []
+      }
+    ],
+    "stderr": "local-ci-status: check lock busy\n",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "cli",
+    "runs": [
+      {
+        "argv": [
+          "--repo-dir",
+          "repo",
+          "--repo",
+          "example-owner/example-repo",
+          "--sha",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "--mail-root",
+          "notes",
+          "--out-dir",
+          "out",
+          "--pr",
+          "7",
+          "--lock-timeout",
+          "0.25"
+        ],
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "matrix_row": "M18",
+  "notes": "",
+  "setup": {
+    "commits": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "snapshots/example-first",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "snapshots/example-next"
+    },
+    "files": {
+      "snapshots/example-first/.github/workflows/unittest.yml": "steps:\n  - name: Other\n    run: example-other\n  - name: Run unittest suite\n    run: |\n      example-check --label 'example suite'\n",
+      "snapshots/example-next/.github/workflows/unittest.yml": "steps:\n  - name: Run unittest suite\n    run: example-check --label next\n"
+    },
+    "lock_busy": true,
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/local_ci_status.py",
+      "supervisor/sec_push.py",
+      "supervisor/check_runner.py"
+    ]
+  }
+}
