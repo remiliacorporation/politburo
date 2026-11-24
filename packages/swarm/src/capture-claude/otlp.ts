@@ -26,6 +26,7 @@ function timestamp(value: unknown): string | null {
 export function parseOtlpLogs(body: unknown): { facts: RequestFact[]; rejected: number } {
   const facts: RequestFact[] = []
   let rejected = 0
+  let gaps = 0
   for (const resource of list(object(body)?.resourceLogs)) {
     for (const scope of list(object(resource)?.scopeLogs)) {
       for (const item of list(object(scope)?.logRecords)) {
@@ -42,12 +43,15 @@ export function parseOtlpLogs(body: unknown): { facts: RequestFact[]; rejected: 
         const nativeSession = id('session.id')
         const requestId = id('request_id')
         const responseId = id('message.id') ?? id('response_id')
-        if (nativeSession === null || (requestId === null && responseId === null)) {
+        if (nativeSession === null) {
           rejected++
           continue
         }
+        const gap = requestId === null && responseId === null ? ++gaps : undefined
+        if (gap !== undefined) rejected++
         facts.push({
           source: 'otlp', nativeSession, requestId, responseId, model: id('model'),
+          ...(gap === undefined ? {} : { gap }),
           tokens: {
             input_uncached: token(attrs.get('input_tokens')),
             input_total: null,

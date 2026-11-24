@@ -224,13 +224,14 @@ function reported(output = 91, requestId = 'req-1') {
 }
 
 test('transcript binds rows to its native session', () => {
-  const { facts, foreign } = parseTranscript(jsonl(
+  const { facts, foreign, unscoped } = parseTranscript(jsonl(
     { ...assistant({ output_tokens: 1 }, 'foreign-request'), sessionId: 'other-session' },
     { ...assistant({ output_tokens: 2 }), sessionId: session },
     assistant({ output_tokens: 3 }, 'other-request'),
   ), session)
-  assert.deepEqual(facts.map((fact) => fact.tokens.output), [2, 3])
+  assert.deepEqual(facts.map((fact) => fact.tokens.output), [2])
   assert.equal(foreign, 1)
+  assert.equal(unscoped, 1)
 })
 
 test('identifiers cannot carry paths, emails, or malformed values into spend', (t) => {
@@ -254,10 +255,10 @@ test('identifiers cannot carry paths, emails, or malformed values into spend', (
   }
 })
 
-test('both parsers count but do not emit anonymous usage', () => {
+test('both parsers count anonymous usage instead of booking it as an identified request', () => {
   const { facts, rejected } = parseOtlpLogs(batch(log({ request_id: {}, 'message.id': {} })))
-  assert.equal(facts.length, 0, 'anonymous OTLP usage')
   assert.equal(rejected, 1)
+  assert.deepEqual(facts.map((fact) => [fact.requestId, fact.responseId, fact.gap]), [[null, null, 1]])
   const rows = parseTranscript(jsonl(assistant({ output_tokens: 4 }, '', '')), session)
   assert.equal(rows.facts.length, 0, 'anonymous transcript usage')
   assert.equal(rows.noId, 1)
@@ -351,6 +352,69 @@ test('distinct same-source conflicts persist, but their replays do not', (t) => 
   assert.deepEqual(outputs(path), [91, 90])
 })
 
+test('a mixed transcript does not book a row with no sessionId onto the bound session', () => {
+  const { facts, foreign, unscoped } = parseTranscript(jsonl(
+    { ...assistant({ output_tokens: 1 }, 'foreign-request'), sessionId: 'other-session' },
+    { ...assistant({ output_tokens: 2 }), sessionId: session },
+    assistant({ output_tokens: 3 }, 'other-request'),
+  ), session)
+  assert.deepEqual(facts.map((fact) => [fact.nativeSession, fact.tokens.output]), [[session, 2]])
+  assert.equal(foreign, 1)
+  assert.equal(unscoped, 1)
+})
+
+test('a request with neither id is stored as a gap so check cannot match', (t) => {
+  const path = spendPath(t)
+  const anonymous = { request_id: {}, 'message.id': {}, response_id: {} }
+  const { facts, rejected } = parseOtlpLogs(batch(log(), log(anonymous), log({
+    ...anonymous, output_tokens: { intValue: 4 },
+  })))
+  assert.equal(rejected, 2)
+  const rows = transcript(assistant({ output_tokens: 91 }))
+  const { records, counters } = reconcile(facts, rows)
+  const writer = jsonlWriter(path)
+  for (const item of records) writer.append(buildRecord(item, envelope, now))
+  const stored = readFileSync(path, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line))
+  const gaps = stored.filter((record) => String(record.evidence_ref).includes('/gap:'))
+  assert.equal(gaps.length, 2, 'each unidentified request has its own durable record')
+  assert.deepEqual(gaps.map((record) => record.coverage.state), ['partial', 'partial'])
+  assert.equal(counters.matched, 1)
+  assert.ok(counters.otlpOnly >= 1)
+  const verdict = counters.mismatched || counters.transcriptOnly || counters.otlpOnly ? 'differs' : 'match'
+  assert.equal(verdict, 'differs')
+  const gap = records.find((item) => item.fact.gap === 1)
+  assert.equal(writer.append(buildRecord(gap!, envelope, now)), 'duplicate')
+  assert.equal(readFileSync(path, 'utf8').trimEnd().split('\n').length, stored.length)
+})
+
+test('a later conflicting report revises the current head', (t) => {
+  const path = spendPath(t)
+  const writer = jsonlWriter(path)
+  const original = reported()
+  writer.append(original)
+  const successors = [90, 89, 88].map((value) => capture.conflictSuccessor(original, reported(value), 'reviewer'))
+  for (const record of successors) assert.equal(writer.append(record), 'written')
+  const lines = readFileSync(path, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(lines.map((record) => record.tokens.output), [91, 90, 89, 88])
+  assert.equal(lines[1].revises, original.record_id)
+  assert.equal(lines[2].revises, lines[1].record_id)
+  assert.equal(lines[3].revises, lines[2].record_id)
+  const revised = new Set(lines.map((record) => record.revises).filter((id) => id !== null))
+  const heads = lines.filter((record) => !revised.has(record.record_id))
+  assert.deepEqual(heads.map((record) => record.record_id), [lines[3].record_id])
+})
+
+test('recovery after a torn append restarts without a malformed middle line', (t) => {
+  const path = spendPath(t)
+  const line = JSON.stringify(reported())
+  writeFileSync(path, `${line}\n{"unfinished":`)
+  jsonlWriter(path).append(reported(8, 'another-request'))
+  const reopened = jsonlWriter(path)
+  assert.equal(reopened.append(reported(4, 'third-request')), 'written')
+  assert.deepEqual(outputs(path), [91, 8, 4])
+  assert.equal(readFileSync(path, 'utf8').includes('unfinished'), false)
+})
+
 test('conflict successors preserve distinct changed reports and link to the original', (t) => {
   const path = spendPath(t)
   const writer = jsonlWriter(path)
@@ -361,8 +425,11 @@ test('conflict successors preserve distinct changed reports and link to the orig
   writer.append(capture.conflictSuccessor(original, buildRecord(transcriptReport!, envelope, now), 'reviewer'))
   assert.deepEqual(outputs(path), [91, 90, 89, 90])
   const successors = readFileSync(path, 'utf8').trimEnd().split('\n').slice(1).map((line) => JSON.parse(line))
+  assert.equal(successors[0].revises, original.record_id)
+  assert.equal(successors[1].revises, successors[0].record_id)
+  assert.equal(successors[2].revises, successors[1].record_id)
   for (const record of successors) {
-    assert.deepEqual([record.coverage.state, record.revises, record.actor, record.reason],
-      ['conflict', original.record_id, 'reviewer', 'conflicting report'])
+    assert.deepEqual([record.coverage.state, record.actor, record.reason],
+      ['conflict', 'reviewer', 'conflicting report'])
   }
 })

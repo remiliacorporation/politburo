@@ -21,7 +21,7 @@ function matches(a: RequestFact, b: RequestFact): boolean {
 export function reconcile(otlp: RequestFact[], transcript: RequestFact[]) {
   const groups = new Map<string, RequestFact[]>()
   for (const fact of otlp) {
-    const key = JSON.stringify([fact.nativeSession, fact.requestId, fact.responseId])
+    const key = JSON.stringify([fact.nativeSession, fact.requestId, fact.responseId, fact.gap ?? null])
     const group = groups.get(key)
     if (!group) groups.set(key, [fact])
     else if (!group.some((a) => buckets.every((k) => a.tokens[k] === fact.tokens[k]))) group.push(fact)

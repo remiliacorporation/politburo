@@ -49,14 +49,29 @@ function conflictDedupeKey(key: string, source: string, tokens: SpendRecord['tok
   return `${key}:conflict:${source}:${tokenFingerprint(tokens)}`
 }
 
+const chainRoot = new Map<string, string>()
+const chainHead = new Map<string, string>()
+const chainKeys = new Map<string, Set<string>>()
+
 export function conflictSuccessor(original: { record_id: string }, record: SpendRecord, actor: string): SpendRecord {
   const source = record.source === 'claude_local_request' ? 'otlp'
     : record.source === 'claude_local_transcript' ? 'transcript' : record.source
-  return {
-    ...record, dedupe_key: conflictDedupeKey(record.dedupe_key, source, record.tokens),
-    revises: original.record_id, actor, reason: 'conflicting report',
+  const root = chainRoot.get(original.record_id) ?? original.record_id
+  const head = chainHead.get(root) ?? root
+  const dedupe_key = conflictDedupeKey(record.dedupe_key, source, record.tokens)
+  const successor: SpendRecord = {
+    ...record, dedupe_key, revises: head, actor, reason: 'conflicting report',
     coverage: { ...record.coverage, state: 'conflict' },
   }
+  const seen = chainKeys.get(root) ?? new Set<string>()
+  if (!seen.has(dedupe_key)) {
+    seen.add(dedupe_key)
+    chainKeys.set(root, seen)
+    chainHead.set(root, successor.record_id)
+    chainRoot.set(original.record_id, root)
+    chainRoot.set(successor.record_id, root)
+  }
+  return successor
 }
 
 function evidencePrefix(nativeSession: string): string {
@@ -70,7 +85,8 @@ export function sessionFromEvidenceRef(ref: string): string | null {
 }
 
 export function buildRecord({ fact, state, quality }: Resolved, envelope: Envelope | null, now: Date): SpendRecord {
-  const id = [fact.requestId ?? '', fact.responseId ?? ''].map(encodeURIComponent).join(':')
+  const id = fact.gap !== undefined ? `gap:${fact.gap}`
+    : [fact.requestId ?? '', fact.responseId ?? ''].map(encodeURIComponent).join(':')
   const eventKey = `${encodeURIComponent(fact.nativeSession)}:${id}`
   const dedupeKey = `claude:${eventKey}`
   const conflictKey = state === 'mismatch' ? conflictDedupeKey(dedupeKey, fact.source, fact.tokens) : null

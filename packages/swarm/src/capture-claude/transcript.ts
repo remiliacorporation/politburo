@@ -5,18 +5,30 @@ export function parseTranscript(jsonl: string, nativeSession: string) {
   const responses = new Map<string, number>()
   const lines = jsonl.split('\n')
   if (lines.at(-1) === '') lines.pop()
-  let badLines = 0, foreign = 0, noId = 0
+  const decoded: ({ row: Record<string, unknown> | undefined } | null)[] = []
   for (const line of lines) {
-    let parsed: unknown
     try {
-      parsed = JSON.parse(line)
+      decoded.push({ row: object(JSON.parse(line)) })
     } catch {
+      decoded.push(null)
+    }
+  }
+  // A row with no sessionId may belong to this file only when every named row does.
+  const mixed = decoded.some((item) => !!item?.row && Object.hasOwn(item.row, 'sessionId') &&
+    item.row.sessionId !== nativeSession)
+  let badLines = 0, foreign = 0, noId = 0, unscoped = 0
+  for (const item of decoded) {
+    if (item === null) {
       badLines++
       continue
     }
-    const row = object(parsed)
+    const row = item.row
     if (row && Object.hasOwn(row, 'sessionId') && row.sessionId !== nativeSession) {
       foreign++
+      continue
+    }
+    if (mixed && row && !Object.hasOwn(row, 'sessionId')) {
+      if (row.type === 'assistant') unscoped++
       continue
     }
     if (row?.type !== 'assistant') continue
@@ -52,5 +64,5 @@ export function parseTranscript(jsonl: string, nativeSession: string) {
     responses.set(key, facts.length)
     facts.push(fact)
   }
-  return { facts, badLines, foreign, noId }
+  return { facts, badLines, foreign, noId, unscoped }
 }

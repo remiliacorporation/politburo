@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, openSync, readSync, statSync } from 'node:fs'
+import { appendFileSync, closeSync, openSync, readSync, statSync, truncateSync } from 'node:fs'
 import { tokenFingerprint, type SpendRecord } from './record.ts'
 
 export interface SpendWriter {
@@ -69,6 +69,14 @@ export function jsonlWriter(path: string): SpendWriter {
     append(record) {
       try {
         refresh()
+        // A torn fragment is not a line. Cut it off before this append, or the next
+        // open reads it as a malformed line between the records.
+        if (tail.length && !tailRecord) {
+          const keep = offset - tail.length
+          truncateSync(path, keep)
+          offset = keep
+          tail = Buffer.alloc(0)
+        }
         const prior = lookup(record.dedupe_key)
         if (prior) return prior.fingerprint === tokenFingerprint(record.tokens) ? 'duplicate' : 'differs'
         const line = `${tail.length || failed ? '\n' : ''}${JSON.stringify(record)}\n`
