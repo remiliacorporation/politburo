@@ -33,10 +33,21 @@ function repoFromResult(value: string | null | undefined, pr: number): string | 
   return validRepo(`${match[1]}/${match[2]}`)
 }
 
-function namesTask(task: GateTask, pr: number): boolean {
+function isPlb(task: GateTask): boolean {
+  return parseWorkId(task.labels['work.id'] ?? '')?.tag === 'plb'
+}
+
+/** A fix round for this pull request is not the task that owns it. */
+function fixOf(task: GateTask, pr: number): boolean {
+  return namesPullRequest(task.labels['fix.of'], pr)
+}
+
+function ownsPullRequest(task: GateTask, pr: number): boolean {
   return namesPullRequest(task.labels['pr.number'], pr)
-    || namesPullRequest(task.labels.result, pr)
-    || namesPullRequest(task.result, pr)
+}
+
+function namesInResult(task: GateTask, pr: number): boolean {
+  return namesPullRequest(task.labels.result, pr) || namesPullRequest(task.result, pr)
 }
 
 function repoOf(task: GateTask, pr: number): string | null {
@@ -46,11 +57,17 @@ function repoOf(task: GateTask, pr: number): string | null {
   return labeled ?? linked
 }
 
-/** Board-side reasons, in the order a merge is refused. `repo` means GitHub still has to agree. */
+/**
+ * Board-side reasons, in the order a merge is refused. `repo` means GitHub still has to agree.
+ * The owner is the one plb task labelled `pr.number` for this pull request. A task labelled
+ * `fix.of` for it is not an owner. With no `pr.number`, a result that names the pull request is.
+ */
 export function selectTask(tasks: readonly GateTask[], pr: number):
   | { ok: false; reason: string }
   | { ok: true; task: GateTask; repo: string } {
-  const matches = tasks.filter((task) => parseWorkId(task.labels['work.id'] ?? '')?.tag === 'plb' && namesTask(task, pr))
+  const candidates = tasks.filter((task) => isPlb(task) && !fixOf(task, pr))
+  const owners = candidates.filter((task) => ownsPullRequest(task, pr))
+  const matches = owners.length > 0 ? owners : candidates.filter((task) => namesInResult(task, pr))
   if (matches.length === 0) return { ok: false, reason: 'task missing' }
   if (matches.length > 1) return { ok: false, reason: 'more than one task' }
   const task = matches[0]!

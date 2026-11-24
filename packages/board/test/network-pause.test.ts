@@ -18,7 +18,9 @@ type Call = ReturnType<typeof caller>
 type AuditEvent = { type: string; payload: { id?: string } }
 const pausedError = { status: 409, body: { error: { code: 'board_paused' } } }
 const lostClaim = { status: 409, body: { error: { code: 'claim_lost' } } }
-const control = (paused: boolean, pauseEpoch: number) => ({ status: 200, body: { paused, pauseEpoch } })
+const control = (paused: boolean, pauseEpoch: number, reason?: string) => ({
+  status: 200, body: { paused, pauseEpoch, ...(reason ? { reason } : {}) },
+})
 const events = async (call: Call) => (await call('GET', '/events?after=0&all=1')).body.events as AuditEvent[]
 const makeTask = async (call: Call, text: string) => {
   const { status, body } = await call('POST', '/tasks', { channel: 'work', text })
@@ -64,12 +66,12 @@ describe('network pause', () => {
     const team = testBoard({ initiallyPaused: true })
     const token = await personToken('u_ada')
     const ada = caller(team.fetch, token)
-    expect(await ada('GET', '/control')).toEqual(control(true, 0))
-    expect(await ada('POST', '/control/pause', { reason: 'already paused' })).toEqual(control(true, 0))
+    expect(await ada('GET', '/control')).toEqual(control(true, 0, 'initial configuration'))
+    expect(await ada('POST', '/control/pause', { reason: 'already paused' })).toEqual(control(true, 0, 'initial configuration'))
     expect(await ada('POST', '/control/resume', { reason: 'ready to work' })).toEqual(control(false, 0))
     const change = await ada('POST', '/control/pause', { reason: 'check prod' })
-    expect(change).toEqual(control(true, 1))
-    expect(await ada('POST', '/control/pause', { reason: 'still paused' })).toEqual(control(true, 1))
+    expect(change).toEqual(control(true, 1, 'check prod'))
+    expect(await ada('POST', '/control/pause', { reason: 'still paused' })).toEqual(control(true, 1, 'check prod'))
     expect(await ada('POST', '/control/resume', { reason: 'all clear' })).toEqual(control(false, 1))
     expect(await ada('POST', '/control/resume', { reason: 'still running' })).toEqual(control(false, 1))
     expect(await ada('GET', '/control')).toEqual(control(false, 1))
@@ -101,9 +103,9 @@ describe('network pause', () => {
     expect((await caller(team.fetch, 'invalid-fixture-jwt')('POST', '/control/pause', { reason: 'not verified' })).status).toBe(401)
     expect((await caller(team.fetch, 'invalid-fixture-jwt')('GET', '/control')).status).toBe(401)
     await expect(team.pause('board code is not a person')).rejects.toMatchObject({ status: 403 })
-    expect(await ada('POST', '/control/pause', { reason: 'operator pauses' })).toEqual(control(true, 1))
+    expect(await ada('POST', '/control/pause', { reason: 'operator pauses' })).toEqual(control(true, 1, 'operator pauses'))
     for (const actor of denied) expect((await actor('POST', '/control/resume', { reason: 'not an operator' })).status).toBe(403)
-    expect(await ada('GET', '/control')).toEqual(control(true, 1))
+    expect(await ada('GET', '/control')).toEqual(control(true, 1, 'operator pauses'))
     expect((await events(ada)).filter((event) => event.type === 'work.control')).toMatchObject([{ payload: { reason: 'operator pauses' } }])
   })
 
@@ -128,10 +130,10 @@ describe('network pause', () => {
       })
       await open(true, async (call) => {
         expect(await call('GET', '/control')).toEqual(control(false, 0))
-        expect(await call('POST', '/control/pause', { reason: 'maintenance' })).toEqual(control(true, 1))
+        expect(await call('POST', '/control/pause', { reason: 'maintenance' })).toEqual(control(true, 1, 'maintenance'))
       })
       await open(false, async (call) => {
-        expect(await call('GET', '/control')).toEqual(control(true, 1))
+        expect(await call('GET', '/control')).toEqual(control(true, 1, 'maintenance'))
         expectConflict(await call('POST', '/tasks/claim', { channel: 'work' }), pausedError)
         expect(await call('POST', '/control/resume', { reason: 'maintenance finished' })).toEqual(control(false, 1))
       })
@@ -171,7 +173,7 @@ describe('network pause', () => {
       }
       const store = sqlite({ path })
       try {
-        const paused = { paused: true, pauseEpoch: 0 }
+        const paused = { paused: true, pauseEpoch: 0, reason: 'initial configuration' }
         expect(await testBoard({ store, initiallyPaused: true }).status()).toEqual(paused)
 
         const replay = memory()
@@ -242,7 +244,7 @@ describe('network pause', () => {
     const pending = ada('POST', '/tasks', { channel: 'work', text, claim: true })
     try {
       await gate.reached
-      expect(await ada('POST', '/control/pause', { reason: 'interrupt queue admission' })).toEqual(control(true, 1))
+      expect(await ada('POST', '/control/pause', { reason: 'interrupt queue admission' })).toEqual(control(true, 1, 'interrupt queue admission'))
       expect(await ada('POST', '/control/resume', { reason: 'new admissions only' })).toEqual(control(false, 1))
     } finally {
       gate.release()
@@ -265,7 +267,7 @@ describe('network pause', () => {
     const pending = ada('POST', '/tasks', { channel: 'work', text, claim: true })
     try {
       await Promise.race([gate.reached, pending.then(() => { throw new Error('task request finished before the schema read') })])
-      expect(await ada('POST', '/control/pause', { reason: 'interrupt validation' })).toEqual(control(true, 1))
+      expect(await ada('POST', '/control/pause', { reason: 'interrupt validation' })).toEqual(control(true, 1, 'interrupt validation'))
       expect(await ada('POST', '/control/resume', { reason: 'new admissions only' })).toEqual(control(false, 1))
     } finally {
       gate.release()
@@ -300,7 +302,7 @@ describe('network pause', () => {
     }
     const result = await late
     if (first === 'pause') expectConflict(result, pausedError)
-    else expect(result).toEqual(control(true, 1))
+    else expect(result).toEqual(control(true, 1, 'operator stops starts'))
     const order = (await events(ada)).filter((event) => event.type === 'work.control' || event.type === 'task.claimed').map((event) => event.type)
     expect(order).toEqual(first === 'pause' ? ['work.control'] : ['task.claimed', 'work.control'])
   })
@@ -320,7 +322,7 @@ describe('network pause', () => {
     const pending = ada('POST', '/tasks/claim', { channel: 'work', wait: 3 })
     try {
       await gate.reached
-      expect(await ada('POST', '/control/pause', { reason: 'interrupt old waits' })).toEqual(control(true, 1))
+      expect(await ada('POST', '/control/pause', { reason: 'interrupt old waits' })).toEqual(control(true, 1, 'interrupt old waits'))
       if (resume) expect(await ada('POST', '/control/resume', { reason: 'only new requests may claim' })).toEqual(control(false, 1))
       await makeTask(ada, 'ready before the old wait tries again')
     } finally {

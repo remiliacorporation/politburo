@@ -49,7 +49,8 @@ Each transition to paused advances the epoch. Resume keeps it. A write for
 the state already in effect adds no audit event. The state survives restarts
 and replays from the log alone.
 
-`--json` answers `{ paused, pauseEpoch }` on all three commands. State changes
+`--json` answers `{ paused, pauseEpoch }` on all three commands, plus `reason`
+while the board is paused. State changes
 are logged as [`work.control`](../04-reference/03-http.md#event-types), with
 the reason and server-recorded author. A reader with access to every channel
 can see these events with unfiltered `vb tail --all`. Vercel's board does not

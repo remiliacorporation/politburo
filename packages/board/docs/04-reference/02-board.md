@@ -140,7 +140,8 @@ backend. See [Claim rules](../01-board/08-middleware.md#claim-rules).
 `status()` reads [network pause](../01-board/12-network-pause.md).
 `pause(reason)` and `resume(reason)` change it. All three return
 `Promise<BoardStatus>`, with `BoardStatus` exported from `@vercel/board`
-as `{ paused: boolean; pauseEpoch: number }`. A control write needs a verified
+as `{ paused: boolean; pauseEpoch: number; reason?: string }`. `reason` is
+set only while the board is paused. A control write needs a verified
 person with `manage` everywhere and no profile, and a nonblank reason of up
 to 1,000 characters. The local in-process identity is not a person.
 
