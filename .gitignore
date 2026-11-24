@@ -1,5 +1,6 @@
 node_modules
 dist
+packages/swarm/src/index.generated.ts
 .a2
 *.tsbuildinfo
 .env*.local
