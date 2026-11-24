@@ -655,11 +655,13 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .attention-row[aria-current='true'] .attention-choice { background: var(--shade-hover); }
 .attention-choice:not(:disabled):hover { color: var(--accent); }
 
+.task-page { overflow-anchor: none; }
 .task-rows { display: grid; container-type: inline-size; }
-.task-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 32px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
+.task-row { display: grid; grid-template-columns: 80px 48px minmax(0, 1fr) 32px; align-items: center; gap: 0 8px; min-height: 32px; padding: 4px var(--inset); }
 .task-row:hover { background: var(--shade); }
 .task-row[aria-current] { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
 .task-row:focus-visible { outline-offset: -2px; }
+.task-priority { color: var(--muted); white-space: nowrap; }
 .task-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
 .task-title .label { margin-left: 6px; vertical-align: 1px; }
 .task-now { max-width: 36ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
@@ -673,7 +675,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .task-place .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-place .count { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .task-where { display: none; }
-.task-now { grid-column: 2 / -1; grid-row: 2; max-width: none; }
+.task-now { grid-column: 3 / -1; grid-row: 2; max-width: none; }
 .task-now:empty { display: none; }
 
 .composer-task { display: flex; gap: 6px; margin: 8px 8px 0; }
@@ -780,7 +782,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 /* --- a narrow page: the sidebar comes over it when it's asked for --- */
 .shell.nav .sidebar { display: grid; z-index: var(--nav-layer); width: min(280px, 84vw) !important; opacity: 1 !important; }
 .shell.nav .scrim { display: block; grid-area: 1 / 1 / -1 / 2; z-index: calc(var(--nav-layer) - 1); background: var(--scrim); }
-:is(.brand .at, .sidebar h2, .sidebar .count, .whoami, .header .meta, .live, .time, .id, .divider, .where, .edited, .undelivered, .hint, .task-state, .task-now, .task-where) { font: var(--metadata); }
+:is(.brand .at, .sidebar h2, .sidebar .count, .whoami, .header .meta, .live, .time, .id, .divider, .where, .edited, .undelivered, .hint, .task-state, .task-priority, .task-now, .task-where) { font: var(--metadata); }
 :is(.chip, .label button, .file button, .sidebar h2 .tool, .replies, .clear) { min-height: 24px; }
 .emoji-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); width: min(372px, calc(100vw - 24px)); }
 @media (max-width: 700px) {
@@ -801,7 +803,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 }
 
 @container (min-width: 42rem) {
-  .task-row { grid-template-columns: 80px minmax(0, 1fr) auto auto 36px; }
+  .task-row { grid-template-columns: 80px 48px minmax(0, 1fr) auto auto 36px; }
   .task-where, .task-now:empty { display: block; }
   .task-now { grid-column: auto; grid-row: auto; max-width: 24ch; }
   .task-where { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }

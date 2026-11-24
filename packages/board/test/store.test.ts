@@ -320,7 +320,7 @@ describe('the inspector store', () => {
     const changed = { cursor: '9', type: 'task.needs_changed', createdAt: '', payload: { id: '1', needs: ['6', '7'] }, message: task(1, { state: 'waiting', needs: ['6', '7'] }, { version: 9 }) }
     state = store.applyEvent(state, changed as unknown as BoardEventView)
     expect((store.shown(state, '1') as store.TaskRoot).task.needs).toEqual(['6', '7'])
-    expect(store.tasks(state, { state: 'waiting', label: [] }, NOW).map((t) => t.task.needs)).toEqual([['6', '7']])
+    expect(store.tasks({ ...state, openTaskRoots: state.messages }, { state: 'waiting', label: [] }, NOW).map((t) => t.task.needs)).toEqual([['6', '7']])
   })
 
   it('lists tasks like the board: oldest first, by state, place, labels, owner, and who they are for', () => {
@@ -333,7 +333,8 @@ describe('the inspector store', () => {
       task(6, {}, { createdAt: at(5), deleted: true }),
       message(7, { channel: 'work' }), // a thread that isn't a task
     ])
-    const ids = (filter: Partial<store.TaskFilter>, through?: MessageView) => store.tasks(state, { state: 'open', label: [], ...filter }, NOW, through).map((t) => t.id)
+    const accepted = { ...state, openTaskRoots: state.messages }
+    const ids = (filter: Partial<store.TaskFilter>, through?: MessageView) => store.tasks(accepted, { state: 'open', label: [], ...filter }, NOW, through).map((t) => t.id)
     expect(ids({})).toEqual(['5', '1', '2', '3'])
     expect(ids({ state: 'all' })).toEqual(['5', '1', '2', '3', '4'])
     // A lapsed claim lists as ready, and not as claimed.
@@ -350,7 +351,7 @@ describe('the inspector store', () => {
     expect(ids({}, state.messages['1'])).toEqual(['5', '1'])
     // They're counted only once every open one is here.
     expect(store.openTasks(state)).toBeNull()
-    expect(store.openTasks({ ...state, tasksCounted: true })).toBe(4)
+    expect(store.openTasks({ ...accepted, tasksCounted: true })).toBe(4)
   })
 
   it('counts tasks by their current state, moving a lapsed claim back to ready', () => {
@@ -366,8 +367,9 @@ describe('the inspector store', () => {
       message(9),
     ])
     const counts = { ready: 1, claimed: 1, waiting: 1, blocked: 1, failed: 1, completed: 1, canceled: 1 }
-    expect(store.taskCounts(state, NOW)).toEqual(counts)
-    expect(store.taskCounts(state, NOW + 5 * 60_000)).toEqual({ ...counts, ready: 2, claimed: 0 })
+    const accepted = { ...state, openTaskRoots: state.messages }
+    expect(store.taskCounts(accepted, NOW)).toEqual(counts)
+    expect(store.taskCounts(accepted, NOW + 5 * 60_000)).toEqual({ ...counts, ready: 2, claimed: 0 })
   })
 
   it('says what a refusal means', () => {
