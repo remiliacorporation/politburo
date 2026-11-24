@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { childEnv } from './suite/child-env.mjs';
 import { args, changeKeys, cli, count, fields, jsonl, modelKey, print, proxies, record, requireThat, seconds, sum, thinkingLevel, tokenKeys, validModel } from './record.mjs';
 
 const usageKeys = { in: 'input', out: 'output', reasoning: 'reasoning', cached: 'cacheRead' };
@@ -121,10 +122,13 @@ function main() {
   catch (e) { if (e.code !== 'ENOENT') throw e; }
   if (o.base) {
     const gitOptions = {
-      cwd: o.worktree, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: o.worktree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...childEnv({ LC_ALL: 'C' }), GIT_ATTR_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
     };
     const base = execFileSync('git', ['rev-parse', '--verify', '--end-of-options', `${o.base}^{commit}`], gitOptions).trim();
-    const stat = execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', '--shortstat', base, '--'], gitOptions);
+    const stat = execFileSync('git', ['-c', 'core.attributesFile=/dev/null', `--attr-source=${base}`,
+      'diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--text', '--shortstat', base, '--'], gitOptions);
     const counts = [/\d+(?= files? changed)/, /\d+(?= insertions?\()/, /\d+(?= deletions?\()/];
     changes = fields(changeKeys, k => Number(stat.match(counts[changeKeys.indexOf(k)])?.[0] ?? 0));
   }

@@ -1,0 +1,106 @@
+{
+  "party": {"id": "default", "name": "The People's Party", "colour": "#b3261e"},
+  "labels": {
+    "product": "Politburo",
+    "core": "Party Chairman",
+    "party_board": "Standing Committee",
+    "repo_view": "Presidium",
+    "mob_view": "Cell"
+  },
+  "names": {
+    "spawners": [
+      "ZAVOD", "FABRIKA", "KOMBINAT", "KOLKHOZ", "SOVKHOZ", "ARTEL", "SHAKHTA", "TSEKH", "DOMNA", "KOTLOVAN",
+      "PRORAB", "BRIGADIR", "MASTER", "NARKOM", "UDARNIK", "TREST", "GLAVK", "GOSPLAN", "NORMA", "SMENA", "OTDEL",
+      "MOLOT", "SERP", "TRAKTOR", "TURBINA", "KRAN", "STAL", "GUDOK", "MAGNITKA", "URALMASH", "ZIL", "GAZ", "KAMAZ"
+    ],
+    "secretaries": [
+      "Peggy", "Joan", "Dawn", "Ida", "Allison", "Lois", "Hildy", "Olive", "Clara", "Margie", "Kathy",
+      "Jenny", "Scarlet", "Fran", "Betty", "Megan", "Sally", "Trudy", "Rachel", "Midge", "Faye", "Shirley",
+      "Jane", "Bobbie", "Suzanne", "Sylvia", "Mona", "Marie", "Carla", "Diana", "Beth", "Rebecca", "Anna",
+      "Joyce", "Bethany", "Helen", "Pima", "Anita", "Nan", "Toni", "Gloria"
+    ],
+    "mob_species": {
+      "passive": {
+        "audit": ["COW", "SHEEP", "MOOSH", "CHICKEN", "PIG"],
+        "research": ["FOX", "CAT", "OCELOT"],
+        "review": ["BAT", "AXOLOTL", "FROG", "TURTLE", "TADPOLE", "PUFFER"],
+        "status": ["PARROT", "RABBIT", "SQUID", "COD", "SALMON"],
+        "gather": ["ALLAY", "DONKEY", "MULE", "CAMEL", "HORSE", "SKORSE", "ZORSE"],
+        "plan": ["VILLAGER", "SNOWMAN"]
+      },
+      "neutral": {
+        "build": ["BEE", "DOLPHIN"],
+        "fix": ["WOLF", "POLAR"],
+        "refactor": ["ENDERMAN", "SPIDER"],
+        "sync": ["GOAT", "PIGLIN"],
+        "port": ["LLAMA"],
+        "docs": ["PANDA", "CAVSPIDR"],
+        "ci": ["GOLEM", "PIGMAN"]
+      },
+      "hostile": {
+        "integrate": ["CREEPER", "HOGLIN", "ZOGLIN", "BRUTE"],
+        "merge": ["GUARDIAN", "SHULKER", "WITCH"],
+        "revert": ["SKELETON", "STRAY", "WITHSKEL"],
+        "release": ["BLAZE", "GHAST", "PHANTOM"],
+        "raid": ["PILLAGER", "VINDICTR", "EVOKER", "VEX"],
+        "cleanup": ["ZOMBIE", "HUSK", "DROWNED", "ZILLAGER", "SILVER", "MITE", "SLIME", "MAGMA"]
+      },
+      "boss": ["DRAGON", "WITHER", "WARDEN", "ELDERG"]
+    },
+    "sprite_items": {
+      "implement": ["PICKAXE", "AXE", "SHOVEL", "HOE"],
+      "fix": ["ANVIL", "SHEARS", "FLINT"],
+      "review": ["SWORD", "BOW", "TRIDENT"],
+      "verify": ["COMPASS", "CLOCK"],
+      "research": ["MAP", "BOOK"],
+      "docs": ["QUILL", "SIGN"]
+    }
+  },
+  "tiers": {
+    "shares": {"core": 0.5, "spawner": 4.5, "mob": 15, "sprite": 75},
+    "models": {
+      "core": "inherit",
+      "spawner": "inherit",
+      "mob": "inherit",
+      "sprite": {"model": "fallback/codex-cursor", "thinking": "medium"},
+      "adviser": "openai-codex/gpt-5.6-terra",
+      "classifier": "typesafe/jev-1.14"
+    }
+  },
+  "mail": {
+    "classes": ["sec.push", "sec.retry", "sec.retire", "sec.log", "spawner.dispatch", "spawner.decide", "core.escalate", "policy"],
+    "urgency": {"p0": "forward_now", "p1": {"forward_within_minutes": 10}, "p2": "digest", "p3": "digest_summary"},
+    "digest_minutes": 30
+  },
+  "secretary": {
+    "questions": {
+      "intake_route": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "needs_spawner": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "can_wait": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "urgency_match": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "report_clean": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "duplicate": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "still_relevant": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "handler": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "outcomes_complete": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"},
+      "finding_blocks_invariant": {"enabled": false, "prompt_version": 1, "threshold": 0.97, "on_low_confidence": "wake", "late_p1_rate_limit": "1/500", "state": "shadow"}
+    }
+  },
+  "claims": {
+    "hours": 4,
+    "pause_on_downtime": false,
+    "reclaim_cooldown_minutes": 15,
+    "open_claims_per_repo": 2,
+    "uncommitted_claims_per_repo": 1,
+    "dock": {"missed_claim": 1}
+  },
+  "review": {"docs_only": {"model_review": false}, "code": {"review_rounds": 1, "fix_rounds": 1}},
+  "limits": {"usage_stop_percent": 100, "budgets": []},
+  "heartbeat_minutes": 30,
+  "setup": {
+    "environment": "politburo",
+    "version": {"id": "v11", "sha256": null},
+    "canary_environment": "politburo-canary"
+  },
+  "trackers": {}
+}

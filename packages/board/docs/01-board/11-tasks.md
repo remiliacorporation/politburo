@@ -44,8 +44,8 @@ when any task on that page is not `normal`. JSON always includes it.
 
 Use `vb tasks priority <id> low` to set it later. The owner or a channel
 manager can set an open task's priority either way. If you hold the task,
-the command uses your claim and can only lower the priority. The lease and
-state do not change. Priority is not a label.
+the command uses your claim and can only lower the priority. A priority
+change does not end a live lease. Priority is not a label.
 
 ## Work a task
 

@@ -1,0 +1,332 @@
+{
+  "case_id": "priority-005-custom-migration",
+  "description": "Plan and migrate with a custom mapping file",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at",
+        "issue_priority"
+      ],
+      "rows": {
+        "board_events": [
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 4,
+            "event_type": "schema_migrated",
+            "issue_key": null,
+            "payload_json": "{\"actor_role\": \"schema_migration\", \"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": 14, \"reason\": \"Board schema migrated\", \"reason_code\": \"schema_migration\", \"to\": 15}"
+          },
+          {
+            "actor": "operator-01",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 5,
+            "event_type": "priority_changed",
+            "issue_key": "example-override",
+            "payload_json": "{\"actor_type\": \"user\", \"envelope_version\": 1, \"from\": 1, \"from_label\": \"Deferred\", \"reason\": \"Synthetic scheduling decision\", \"reason_code\": \"priority_change\", \"to\": 2, \"to_label\": \"Low\", \"version\": 2}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 1,
+            "event_type": "priority_migrated",
+            "issue_key": "example-gap",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 0, \"reason\": \"Mapped legacy priority to canonical scale (no range matched)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"no range matched\", \"to\": 3, \"to_label\": \"Normal\", \"warning\": \"no range matched; defaulted\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 2,
+            "event_type": "priority_migrated",
+            "issue_key": "example-override",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 45, \"reason\": \"Mapped legacy priority to canonical scale (instance override)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"instance override\", \"to\": 1, \"to_label\": \"Deferred\"}"
+          },
+          {
+            "actor": "priority-migration",
+            "archived_at": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "event_id": 3,
+            "event_type": "priority_migrated",
+            "issue_key": "example-range",
+            "payload_json": "{\"actor_type\": \"migration\", \"envelope_version\": 1, \"from\": null, \"legacy_type\": \"integer\", \"legacy_value\": 45, \"reason\": \"Mapped legacy priority to canonical scale (legacy >= 40)\", \"reason_code\": \"priority_migration_v15\", \"rule\": \"legacy >= 40\", \"to\": 2, \"to_label\": \"Low\"}"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "paused"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "issue_priority_legacy": [
+          {
+            "canonical_priority": 1,
+            "issue_key": "example-override",
+            "legacy_type": "integer",
+            "legacy_value": "45",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "instance override",
+            "warning": null
+          },
+          {
+            "canonical_priority": 2,
+            "issue_key": "example-range",
+            "legacy_type": "integer",
+            "legacy_value": "45",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "legacy >= 40",
+            "warning": null
+          },
+          {
+            "canonical_priority": 3,
+            "issue_key": "example-gap",
+            "legacy_type": "integer",
+            "legacy_value": "0",
+            "migrated_at": "2026-01-03T00:00:00+00:00",
+            "rule": "no range matched",
+            "warning": "no range matched; defaulted"
+          }
+        ],
+        "issues": [
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-gap",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 0,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-gap",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-override",
+            "issue_priority": 2,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 45,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-override",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 2,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-range",
+            "issue_priority": 2,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 45,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-range",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          }
+        ],
+        "sqlite_sequence": [
+          {
+            "name": "board_events",
+            "seq": 5
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "example-map.json": "{\"ranges\": [{\"min\": 10, \"priority\": 4}, {\"min\": 40, \"priority\": 2}], \"overrides\": {\"example-override\": 1}}"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\n  \"dry_run\": true,\n  \"issues\": [\n    {\n      \"issue_key\": \"example-gap\",\n      \"label\": \"Normal\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 0,\n      \"proposed\": 3,\n      \"reason\": \"no range matched\",\n      \"warning\": \"no range matched; defaulted\"\n    },\n    {\n      \"issue_key\": \"example-override\",\n      \"label\": \"Deferred\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 45,\n      \"proposed\": 1,\n      \"reason\": \"instance override\",\n      \"warning\": null\n    },\n    {\n      \"issue_key\": \"example-range\",\n      \"label\": \"Low\",\n      \"legacy_type\": \"integer\",\n      \"legacy_value\": 45,\n      \"proposed\": 2,\n      \"reason\": \"legacy >= 40\",\n      \"warning\": null\n    }\n  ],\n  \"ok\": true,\n  \"warnings\": [\n    \"example-gap\"\n  ]\n}\n{\n  \"changed\": true,\n  \"ok\": true,\n  \"schema_version\": 15\n}\n{\n  \"from\": 1,\n  \"issue_key\": \"example-override\",\n  \"label\": \"Low\",\n  \"ok\": true,\n  \"to\": 2,\n  \"version\": 2\n}\n{\n  \"changed\": false,\n  \"ok\": true,\n  \"schema_version\": 15\n}\n",
+    "steps": [
+      {
+        "db_changed": false,
+        "exit_code": 0
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0
+      },
+      {
+        "db_changed": true,
+        "exit_code": 0
+      },
+      {
+        "db_changed": false,
+        "exit_code": 0
+      }
+    ]
+  },
+  "inputs": {
+    "commands": [
+      [
+        "priority-plan",
+        "--priority-map",
+        "example-map.json"
+      ],
+      [
+        "migrate",
+        "--priority-map",
+        "example-map.json"
+      ],
+      [
+        "priority-set",
+        "example-override",
+        "--value",
+        "2",
+        "--expected-version",
+        "1",
+        "--actor-type",
+        "user",
+        "--reason-code",
+        "priority_change",
+        "--reason",
+        "Synthetic scheduling decision"
+      ],
+      [
+        "migrate",
+        "--priority-map",
+        "example-map.json"
+      ]
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M87",
+  "notes": "Unsorted ranges are normalized, a per-issue override wins, and uncovered values warn. A subsequent canonical edit is not remapped on rerun.",
+  "setup": {
+    "files": {
+      "example-map.json": "{\"ranges\": [{\"min\": 10, \"priority\": 4}, {\"min\": 40, \"priority\": 2}], \"overrides\": {\"example-override\": 1}}"
+    },
+    "legacy": [
+      [
+        "example-override",
+        45
+      ],
+      [
+        "example-range",
+        45
+      ],
+      [
+        "example-gap",
+        0
+      ]
+    ],
+    "now": "2026-01-03T00:00:00Z"
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/priority.py",
+      "board/board.py",
+      "board/schema.sql"
+    ]
+  }
+}

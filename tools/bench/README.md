@@ -71,3 +71,35 @@ Only the runner pins models. Group by complexity; report pass rate with a Wilson
 interval, median and p90 wall seconds and tokens, and tokens per changed line.
 Name the source run IDs for every reported number. Use sprite records for
 model-grouped reporting.
+
+## Suite runner
+
+```sh
+node tools/bench/suite/run.mjs --task serve-responder-flag --rep 1
+```
+
+The [suite runner](../../design/benchmark-suite.md) grades a staged snapshot
+and leaves separate per-run trees under `--work` for inspection. Results go
+in the work root by default, or in a new mode-0700 `--results-dir` outside
+those trees. `--out` defaults to `results.jsonl` there. A custom path must have
+no `..` and resolve inside the results directory to a new file or a regular,
+single-link file, not a symlink. The runner validates before launch and opens
+only to append the record after grading.
+
+Exit `0` means a record was written, even for a failing check or a refusal.
+Exit `1` means no record was produced; exit `2` means misuse. A refusal records
+`not_run` and one of `refused_symlink`, `refused_export` or `refused_encoding`.
+The summary includes `skipped_special=N` when export skips special files.
+Children get an allowlisted environment and a fresh home. Use `BENCH_PASS_ENV`
+to name any additional variables the launcher needs, including model access.
+Inherited `GIT_*` variables never cross.
+
+### Threat model and known limits
+
+The runner grades our own sprites. Use one disposable VM per model run. It
+is not a sandbox: hostile-sprite escapes such as swapped directories, moved
+file descriptors and races against runner files are out of scope. Setup and
+the golden command run sprite-written code with the runner's filesystem
+permissions. Export stages raw bytes and refuses bases that set
+`working-tree-encoding` because they need Git's encoding conversion for
+correct churn.

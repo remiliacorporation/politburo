@@ -1,0 +1,48 @@
+{
+  "case_id": "liveness-006-invalid-tag",
+  "description": "A dotted tag is rejected before publication.",
+  "expected": {
+    "exit_code": null,
+    "files": {},
+    "log_lines": [],
+    "runs": [
+      {
+        "exception": "ValueError",
+        "message": "tag and name must be filename components; tag must not contain a dot",
+        "stderr": "",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": ""
+  },
+  "inputs": {
+    "kind": "function",
+    "steps": [
+      {
+        "after": 0,
+        "args": {
+          "cycle": 1,
+          "interval": 10,
+          "name": "wake",
+          "notes_dir": "notes",
+          "tag": "example.invalid"
+        },
+        "function": "touch"
+      }
+    ]
+  },
+  "matrix_row": "M14",
+  "notes": "",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00Z",
+    "pid": 123
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/liveness.py"
+    ]
+  }
+}

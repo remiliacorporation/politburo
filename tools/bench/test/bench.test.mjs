@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -284,6 +284,58 @@ test('base accepts a single commit, not a range, tree or option', t => {
   assert.equal(good.status, 0);
   assert.ok(Number.isSafeInteger(JSON.parse(good.stdout).changes.files));
   for (const base of ['--cached', 'HEAD..HEAD', 'HEAD^{tree}']) exited(diff(base), 2);
+});
+
+function churnFixture(t) {
+  const { dir } = spriteLog(t, fixture('single'));
+  const work = join(dir, 'work');
+  mkdirSync(work);
+  const env = { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+  const git = (...args) => assert.equal(spawnSync('git', args, { cwd: work, env, stdio: 'ignore' }).status, 0);
+  git('init', '--template=');
+  file(work, 'answer', 'before\n');
+  git('add', 'answer');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Fixture');
+  const measure = (config = {}, path = work) => {
+    const run = spawnSync(process.execPath, [fileURLToPath(new URL('../sprite-usage.mjs', import.meta.url)),
+      's', '--dir', dir, '--worktree', path, '--base', 'HEAD'], { env: { ...env, ...config }, encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout).changes;
+  };
+  return { dir, work, git, measure };
+}
+
+for (const attrs of ['answer -diff', '* -diff', '* diff=custom', '* text eol=crlf']) {
+  test(`churn ignores patched attributes (${attrs})`, t => {
+    const { work, git, measure } = churnFixture(t);
+    file(work, 'answer', 'after\n');
+    file(work, '.gitattributes', `${attrs}\n`);
+    if (attrs === '* diff=custom') git('config', 'diff.custom.binary', 'true');
+    git('add', '.gitattributes', 'answer');
+    const expected = { files: 2, linesAdded: 2, linesRemoved: 1 };
+    assert.deepEqual(measure(), expected);
+    if (attrs === '* text eol=crlf') {
+      // Back to the original text, but with a different line ending. The
+      // patched attribute must not normalize away this unstaged edit.
+      file(work, 'answer', 'before\r\n');
+      assert.deepEqual(measure(), expected);
+    }
+  });
+}
+
+test('churn counts a rename as add plus delete despite host git configuration', t => {
+  const { dir, work, git, measure } = churnFixture(t);
+  renameSync(join(work, 'answer'), join(work, 'renamed'));
+  git('add', '--all');
+  const sub = join(work, 'sub');
+  mkdirSync(sub);
+  const config = file(dir, 'gitconfig', '[diff]\n\trenames = true\n\trelative = true\n');
+  const expected = { files: 2, linesAdded: 1, linesRemoved: 1 };
+  assert.deepEqual(measure(), expected);
+  for (const overrides of [{ GIT_CONFIG_GLOBAL: config }, { GIT_CONFIG_SYSTEM: config }, {
+    GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'diff.renames', GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'diff.relative', GIT_CONFIG_VALUE_1: 'true',
+  }]) assert.deepEqual(measure(overrides, sub), expected);
 });
 
 test('retries count only regular session files and are null without them', t => {
