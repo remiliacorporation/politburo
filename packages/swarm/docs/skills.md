@@ -5,3 +5,4 @@ Use `--repo` for repo overrides, `--dry-run` to preview, `--force` to replace un
 
 Run `swarm skills plan-mob --skills ./agent-skills --tag plb --job build --serial 1` to preview a mob and its brief without launching it or writing files.
 Pass `--registry FILE` to read a tag list other than `registry/tags.json`.
+The file is the one `swarm tags check` reads. The tag matches in any letter case, and the title uses the lowercase tag.

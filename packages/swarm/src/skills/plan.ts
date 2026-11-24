@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PartyConfig } from '../config/load.ts'
-import { tagProblems } from '../tags.ts'
+import { canonicalTag, openTagRegistry } from '../tags.ts'
 import { generatedMarker, hasBlockedReference } from './render.ts'
 
 type PlanOptions = {
@@ -23,23 +23,11 @@ function firstFree(pool: string[], used: Set<string>) {
 const disallowedControls = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/
 
 export function planMob(config: PartyConfig, { skills, tag, job, serial, live, sprite, registry: registryFile }: PlanOptions) {
-  let registryText: string
-  try {
-    registryText = readFileSync(registryFile ?? new URL('../../registry/tags.json', import.meta.url), 'utf8')
-  } catch {
-    throw new Error(registryFile ? `cannot read ${registryFile}` : 'cannot read tag registry')
-  }
-  let registry
-  try {
-    registry = JSON.parse(registryText)
-  } catch {
-    throw new Error('invalid tag registry: malformed JSON')
-  }
-  const problems = tagProblems(registry, { indexOnly: true })
-  if (problems.length) throw new Error(`invalid tag registry: ${problems[0]}`)
-  if (!(registry.tags as { tag: string }[]).some((entry) => entry.tag === tag)) {
-    throw new Error(`unknown tag ${tag}`)
-  }
+  const opened = openTagRegistry(registryFile)
+  if (opened.status === 'unreadable') throw new Error(opened.message)
+  if (opened.status === 'invalid') throw new Error(`invalid tag registry: ${opened.problems[0]}`)
+  const repo = canonicalTag(opened.tags, tag)
+  if (!repo) throw new Error(`unknown tag ${tag}`)
 
   const classes = ['passive', 'neutral', 'hostile'] as const
   const pools: Record<(typeof classes)[number], Pools> = config.names.mob_species
@@ -66,7 +54,7 @@ export function planMob(config: PartyConfig, { skills, tag, job, serial, live, s
   }
   const name = pick(pools[mobClass][job]!, liveNames, /^[A-Z0-9]{1,8}$/)
   const mob = `${serial}-${name}`
-  const title = `${tag} ${mob}`
+  const title = `${repo} ${mob}`
   const usedItems = new Set<string>()
   const items: Pools = config.names.sprite_items
   const sprites = (sprite ?? []).map((spriteJob) => {
@@ -88,7 +76,7 @@ export function planMob(config: PartyConfig, { skills, tag, job, serial, live, s
   if (disallowedControls.test(template)) throw new Error('control character in brief template')
   if (!template.split('\n').includes(generatedMarker)) throw new Error(`missing generated marker in ${path}`)
   const fields = new Map([
-    ['mob_id', mob], ['class', mobClass], ['repo', tag], ['party', String(config.party.id)], ['tier', 'mob'],
+    ['mob_id', mob], ['class', mobClass], ['repo', repo], ['party', String(config.party.id)], ['tier', 'mob'],
   ])
   const placeholders = /<<[^\r\n]*?>>/g
   const brief = template.replace(placeholders, (match) => fields.get(match.slice(2, -2)) ?? match)

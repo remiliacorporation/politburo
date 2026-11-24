@@ -2,7 +2,7 @@ import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { usageBlock } from '../cli-usage.ts'
-import { readRegistry, tagProblems } from '../tags.ts'
+import { canonicalTag, openTagRegistry } from '../tags.ts'
 import { parseOutcomesContract } from './contract.ts'
 import { allocateWorkId } from './ids.ts'
 
@@ -95,14 +95,13 @@ export async function workCommand(args: string[]): Promise<number> {
     if (positionals.length !== 1 || !tag || tag.startsWith('-') || !/^\d+$/.test(after ?? '')) {
       return error('expected id TAG --after N', 2)
     }
-    let registry: unknown
-    try { registry = await readRegistry(registryFile) } catch {
-      return error(registryFile ? `cannot read ${registryFile}` : 'cannot read tag registry')
-    }
-    if (tagProblems(registry).length) return error('invalid tag registry')
-    const tags = (registry as { tags: { tag: string }[] }).tags.map(entry => entry.tag)
+    const opened = openTagRegistry(registryFile)
+    if (opened.status === 'unreadable') return error(opened.message)
+    if (opened.status === 'invalid') return error('invalid tag registry')
+    const tagName = canonicalTag(opened.tags, tag)
+    if (!tagName) return error('unknown work tag')
     try {
-      console.log(allocateWorkId(tags, tag, Number(after)).id)
+      console.log(allocateWorkId(opened.tags.map(entry => entry.tag), tagName, Number(after)).id)
       return 0
     } catch (err) {
       if (!(err instanceof RangeError)) throw err

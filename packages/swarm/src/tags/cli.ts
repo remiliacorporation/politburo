@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util'
 import { printError, usageBlock } from '../cli-usage.ts'
-import { readRegistry, tagProblems } from '../tags.ts'
+import { openTagRegistry } from '../tags.ts'
 
 export const tagsUsageLines = ['swarm tags check [--registry FILE] [--json]']
 export const tagsUsage = usageBlock(tagsUsageLines)
@@ -43,17 +43,15 @@ export async function tagsCommand(argv: string[]): Promise<number> {
     return misuse(error.message.replace(/^./, (letter) => letter.toLowerCase()))
   }
 
-  let registry: unknown
-  try {
-    registry = await readRegistry(values.registry)
-  } catch {
-    const problem = values.registry ? `cannot read ${values.registry}` : 'cannot read tag registry'
+  const opened = openTagRegistry(values.registry)
+  if (opened.status === 'unreadable') {
+    const problem = opened.message
     if (values.json) console.log(JSON.stringify({ valid: false, problems: [problem] }))
     else printError(problem)
     return 1
   }
 
-  const problems = tagProblems(registry)
+  const problems = opened.status === 'invalid' ? opened.problems : []
   if (values.json) {
     console.log(JSON.stringify({ valid: problems.length === 0, problems }))
   } else if (problems.length) {

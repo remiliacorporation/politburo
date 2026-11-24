@@ -1,11 +1,12 @@
-import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function tagProblems(registry: unknown, { indexOnly = false } = {}): string[] {
+export function tagProblems(registry: unknown): string[] {
   if (!isObject(registry) || !Array.isArray(registry.tags)) {
     return ['The registry must be an object with a tags array.']
   }
@@ -14,7 +15,7 @@ export function tagProblems(registry: unknown, { indexOnly = false } = {}): stri
   const tags = new Set<string>()
   const projects = new Set<string>()
   for (const [index, entry] of registry.tags.entries()) {
-    const report = (detail: string) => problems.push(indexOnly ? `Entry ${index}.` : `Entry ${index} ${detail}.`)
+    const report = (detail: string) => problems.push(`Entry ${index} ${detail}.`)
     if (!isObject(entry)) {
       report('must be an object')
       continue
@@ -35,6 +36,39 @@ export function tagProblems(registry: unknown, { indexOnly = false } = {}): stri
   return problems
 }
 
+function registryPath(file?: string): string {
+  return file ?? fileURLToPath(new URL('../registry/tags.json', import.meta.url))
+}
+
 export async function readRegistry(file?: string): Promise<unknown> {
-  return parse(await readFile(file ?? new URL('../registry/tags.json', import.meta.url), 'utf8'))
+  return parse(readFileSync(registryPath(file), 'utf8'))
+}
+
+export type OpenedTagRegistry =
+  | { status: 'ok'; tags: { tag: string }[] }
+  | { status: 'unreadable'; message: string }
+  | { status: 'invalid'; problems: string[] }
+
+/** Read and validate a tag registry. `tags check`, `work id`, and `plan-mob` all use this. */
+export function openTagRegistry(file?: string): OpenedTagRegistry {
+  let text: string
+  try {
+    text = readFileSync(registryPath(file), 'utf8')
+  } catch {
+    return { status: 'unreadable', message: file ? `cannot read ${file}` : 'cannot read tag registry' }
+  }
+  let registry: unknown
+  try {
+    registry = parse(text)
+  } catch {
+    return { status: 'invalid', problems: ['Malformed tag registry.'] }
+  }
+  const problems = tagProblems(registry)
+  if (problems.length) return { status: 'invalid', problems }
+  return { status: 'ok', tags: (registry as { tags: { tag: string }[] }).tags }
+}
+
+export function canonicalTag(tags: readonly { tag: string }[], tag: string): string | undefined {
+  const canonical = tag.toLowerCase()
+  return tags.some((entry) => entry.tag === canonical) ? canonical : undefined
 }
