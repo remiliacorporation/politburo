@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+import { stopIfPaused } from '../pause.ts'
 import {
   BUCKETS, fromBenchRun, ingest, LedgerError, openLedger, rollupBy, rollupLevel, unmatched,
   validateDispatch, type Dispatch, type EnvelopeField, type Ledger, type Level, type LevelScope,
@@ -142,7 +143,7 @@ function printRows(rows: Row[], json: boolean) {
   if (groups.length) console.log(groups.join('\n\n'))
 }
 
-export function ledgerCommand(args: string[]): number {
+export async function ledgerCommand(args: string[]): Promise<number> {
   const [action, ...flags] = args
   if (action === '--help' && !flags.length) {
     console.log(usage)
@@ -183,6 +184,11 @@ export function ledgerCommand(args: string[]): number {
     }
     if (level !== undefined && !levels.includes(level)) return misuse('invalid --level')
     if (by?.some((field) => !fields.includes(field))) return misuse('invalid --by field')
+  }
+
+  if (action === 'dispatch') {
+    const stopped = await stopIfPaused()
+    if (stopped !== null) return stopped
   }
 
   try {

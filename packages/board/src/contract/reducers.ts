@@ -48,17 +48,19 @@ export const channelsReducer = reducer({
   return state
 })
 
-export type WorkState = { paused: boolean; pauseEpoch: number; resumedAt: number | null }
+export type WorkState = { paused: boolean; pauseEpoch: number; resumedAt: number | null; reason: string | null }
 
 export const workReducer = reducer({
   contract: boardContract,
-  name: 'board.work.control.v1',
-  initialState: { paused: false, pauseEpoch: 0, resumedAt: null } as WorkState,
+  // v2 keeps the pause reason. A v1 snapshot folded before that field existed.
+  name: 'board.work.control.v2',
+  initialState: { paused: false, pauseEpoch: 0, resumedAt: null, reason: null } as WorkState,
 }).fold((state, event) => {
   if (event.type === 'work.control') {
     state.paused = event.payload.paused
     state.pauseEpoch = event.payload.pauseEpoch
     state.resumedAt = state.paused ? null : new Date(event.createdAt).getTime()
+    state.reason = state.paused ? event.payload.reason : null
   }
   return state
 })

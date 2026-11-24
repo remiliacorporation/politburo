@@ -234,7 +234,7 @@ describe("the inspector's page, reading work control", () => {
     expect(page.getState().statusRefused).toBe('status is temporarily unavailable')
     old.resolve(paused)
     await first
-    expect(page.getState().status).toEqual({ paused: true, pauseEpoch: 1 })
+    expect(page.getState().status).toEqual({ paused: true, pauseEpoch: 1, reason: 'maintenance' })
     expect(page.getState().statusRefused).toBe('status is temporarily unavailable')
   })
 
@@ -257,7 +257,7 @@ describe("the inspector's page, reading work control", () => {
     // The read issued first can sample the board after the other read did.
     newer.resolve(paused)
     await second
-    expect(page.getState().status).toEqual({ paused: true, pauseEpoch: 1 })
+    expect(page.getState().status).toEqual({ paused: true, pauseEpoch: 1, reason: 'maintenance' })
     old.resolve(running)
     await first
     expect(page.getState().status).toEqual({ paused: false, pauseEpoch: 1 })

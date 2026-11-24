@@ -1693,7 +1693,7 @@ it('shows a pause that lands before the first channels cursor is captured', asyn
     expect(document.querySelector('.live')?.textContent).toBe('live')
     expect(document.querySelector('.pause-banner:not([hidden])')?.textContent).toBe('paused')
   })
-  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1 })
+  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1, reason: 'paused during boot' })
 })
 
 it('asks for a reason to Pause, shows the board’s refusal, and lets the manager try again', async () => {
@@ -1714,7 +1714,7 @@ it('asks for a reason to Pause, shows the board’s refusal, and lets the manage
   button('Pause').click()
   await submitReason('reason', 'rotate workers')
   await vi.waitFor(() => expect(document.querySelector('.pause-banner:not([hidden])')?.textContent).toContain('rotate workers'))
-  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1 })
+  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1, reason: 'rotate workers' })
 })
 
 it('shows live pause detail on every view and lets the manager resume with a reason', async () => {

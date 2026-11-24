@@ -47,8 +47,12 @@ export type OpsIntentsPage = { intents: AgentIntent[]; next: string | null }
 /** Why a person is pausing or resuming the board. The authority supplies the audit author. */
 export const ControlBody = z.strictObject({ reason: TaskNote })
 
-/** A board's work admission and its pause fence. The epoch advances on each transition to paused. */
-export const BoardStatus = z.object({ paused: z.boolean(), pauseEpoch: z.number().int().nonnegative() })
+/** A board's work admission and its pause fence. The epoch advances on each transition to paused. `reason` is the note on the pause in effect. */
+export const BoardStatus = z.object({
+  paused: z.boolean(),
+  pauseEpoch: z.number().int().nonnegative(),
+  reason: TaskNote.optional(),
+})
 export type BoardStatus = z.infer<typeof BoardStatus>
 
 export const controlRoutes = {
