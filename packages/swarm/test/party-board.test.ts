@@ -200,7 +200,7 @@ test('reconciling a mixed grant removes the former member without dropping the p
 
 test('reconciling keeps an everyone deny beside an allow and the audit flags widening', async (t) => {
   const as = openBoard(t)
-  const closed = 'vault'
+  const closed = 'party/secret'
   const project = { project: 'prj_fixture', environment: 'production' } as const
   await as('jockey')(async (b) => {
     await b.createChannel(closed)
