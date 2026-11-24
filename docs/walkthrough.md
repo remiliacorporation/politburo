@@ -10,6 +10,9 @@ Use a Mac or Linux laptop with Bash, Git, Node 22.18 or later, and pnpm
 install pnpm and have Corepack, use `corepack enable pnpm` to let it select
 that version in this checkout. Otherwise, install that pnpm version directly.
 
+macOS opens zsh by default. Run `bash` first in each terminal in this
+walkthrough. The `read -p` prompts below work in Bash, not in zsh.
+
 Clone `main` into a new directory.
 
 ```bash
