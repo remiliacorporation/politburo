@@ -18,6 +18,8 @@ import { listing } from './listing.ts'
 import { base, currentPath, route } from './nav.tsx'
 import * as store from './store.ts'
 import { refusal, said } from './words.ts'
+import { fixtureRecords } from './work-fixtures.ts'
+import type { SwarmRecords } from './work.ts'
 
 // The page's data: one handle on the board, and every read and write the page makes through it.
 
@@ -795,6 +797,10 @@ export function watchTaskReads() {
     window.removeEventListener('focus', revalidate)
     document.removeEventListener('visibilitychange', visible)
   }
+}
+
+export function swarmRecords(): SwarmRecords | null {
+  return new URLSearchParams(location.search).get('swarm') === 'fixtures' ? fixtureRecords : null
 }
 
 export function openNeeds() {

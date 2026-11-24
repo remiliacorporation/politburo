@@ -1,0 +1,292 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["party", "labels", "names", "tiers", "mail", "secretary", "claims", "review", "limits", "heartbeat_minutes", "setup", "trackers"],
+  "properties": {
+    "party": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "colour"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "name": {"type": "string"},
+        "colour": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product", "core", "party_board", "repo_view", "mob_view"],
+      "properties": {
+        "product": {"type": "string"},
+        "core": {"type": "string"},
+        "party_board": {"type": "string"},
+        "repo_view": {"type": "string"},
+        "mob_view": {"type": "string"}
+      }
+    },
+    "names": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spawners", "secretaries", "mob_species", "sprite_items"],
+      "properties": {
+        "spawners": {"$ref": "#/definitions/pool"},
+        "secretaries": {"$ref": "#/definitions/pool"},
+        "mob_species": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["passive", "neutral", "hostile", "boss"],
+          "properties": {
+            "passive": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["audit", "research", "review", "status", "gather", "plan"],
+              "properties": {
+                "audit": {"$ref": "#/definitions/pool"},
+                "research": {"$ref": "#/definitions/pool"},
+                "review": {"$ref": "#/definitions/pool"},
+                "status": {"$ref": "#/definitions/pool"},
+                "gather": {"$ref": "#/definitions/pool"},
+                "plan": {"$ref": "#/definitions/pool"}
+              }
+            },
+            "neutral": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["build", "fix", "refactor", "sync", "port", "docs", "ci"],
+              "properties": {
+                "build": {"$ref": "#/definitions/pool"},
+                "fix": {"$ref": "#/definitions/pool"},
+                "refactor": {"$ref": "#/definitions/pool"},
+                "sync": {"$ref": "#/definitions/pool"},
+                "port": {"$ref": "#/definitions/pool"},
+                "docs": {"$ref": "#/definitions/pool"},
+                "ci": {"$ref": "#/definitions/pool"}
+              }
+            },
+            "hostile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["integrate", "merge", "revert", "release", "raid", "cleanup"],
+              "properties": {
+                "integrate": {"$ref": "#/definitions/pool"},
+                "merge": {"$ref": "#/definitions/pool"},
+                "revert": {"$ref": "#/definitions/pool"},
+                "release": {"$ref": "#/definitions/pool"},
+                "raid": {"$ref": "#/definitions/pool"},
+                "cleanup": {"$ref": "#/definitions/pool"}
+              }
+            },
+            "boss": {"$ref": "#/definitions/pool"}
+          }
+        },
+        "sprite_items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["implement", "fix", "review", "verify", "research", "docs"],
+          "properties": {
+            "implement": {"$ref": "#/definitions/pool"},
+            "fix": {"$ref": "#/definitions/pool"},
+            "review": {"$ref": "#/definitions/pool"},
+            "verify": {"$ref": "#/definitions/pool"},
+            "research": {"$ref": "#/definitions/pool"},
+            "docs": {"$ref": "#/definitions/pool"}
+          }
+        }
+      }
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shares", "models"],
+      "properties": {
+        "shares": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["core", "spawner", "mob", "sprite"],
+          "properties": {
+            "core": {"$ref": "#/definitions/nonnegative"},
+            "spawner": {"$ref": "#/definitions/nonnegative"},
+            "mob": {"$ref": "#/definitions/nonnegative"},
+            "sprite": {"$ref": "#/definitions/nonnegative"}
+          }
+        },
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["core", "spawner", "mob", "sprite", "adviser", "classifier"],
+          "properties": {
+            "core": {"type": "string"},
+            "spawner": {"type": "string"},
+            "mob": {"type": "string"},
+            "sprite": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["model", "thinking"],
+              "properties": {"model": {"type": "string"}, "thinking": {"type": "string"}}
+            },
+            "adviser": {"type": "string"},
+            "classifier": {"type": "string"}
+          }
+        }
+      }
+    },
+    "mail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classes", "urgency", "digest_minutes"],
+      "properties": {
+        "classes": {"$ref": "#/definitions/strings"},
+        "urgency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["p0", "p1", "p2", "p3"],
+          "properties": {
+            "p0": {"$ref": "#/definitions/urgency"},
+            "p1": {"$ref": "#/definitions/urgency"},
+            "p2": {"$ref": "#/definitions/urgency"},
+            "p3": {"$ref": "#/definitions/urgency"}
+          }
+        },
+        "digest_minutes": {"$ref": "#/definitions/minutes"}
+      }
+    },
+    "secretary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questions"],
+      "properties": {
+        "questions": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {"^(?!(?:__proto__|constructor)$)": {"$ref": "#/definitions/question"}}
+        }
+      }
+    },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hours", "pause_on_downtime", "reclaim_cooldown_minutes", "open_claims_per_repo", "uncommitted_claims_per_repo", "dock"],
+      "properties": {
+        "hours": {"type": "integer", "minimum": 1},
+        "pause_on_downtime": {"type": "boolean"},
+        "reclaim_cooldown_minutes": {"$ref": "#/definitions/count"},
+        "open_claims_per_repo": {"$ref": "#/definitions/count"},
+        "uncommitted_claims_per_repo": {"$ref": "#/definitions/count"},
+        "dock": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["missed_claim"],
+          "properties": {"missed_claim": {"$ref": "#/definitions/count"}}
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["docs_only", "code"],
+      "properties": {
+        "docs_only": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_review"],
+          "properties": {"model_review": {"type": "boolean"}}
+        },
+        "code": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["review_rounds", "fix_rounds"],
+          "properties": {
+            "review_rounds": {"$ref": "#/definitions/count"},
+            "fix_rounds": {"$ref": "#/definitions/count"}
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usage_stop_percent", "budgets"],
+      "properties": {
+        "usage_stop_percent": {"$ref": "#/definitions/nonnegative"},
+        "budgets": {"type": "array", "items": {"$ref": "#/definitions/budget"}}
+      }
+    },
+    "heartbeat_minutes": {"$ref": "#/definitions/minutes"},
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "version", "canary_environment"],
+      "properties": {
+        "environment": {"type": "string"},
+        "version": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "sha256"],
+          "properties": {
+            "id": {"type": "string"},
+            "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+          }
+        },
+        "canary_environment": {"type": "string"}
+      }
+    },
+    "trackers": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {"^(?!(?:__proto__|constructor)$)": {"$ref": "#/definitions/tracker"}}
+    }
+  },
+  "definitions": {
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "pool": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "count": {"type": "integer", "minimum": 0},
+    "minutes": {"type": "integer", "minimum": 1},
+    "nonnegative": {"type": "number", "minimum": 0},
+    "urgency": {
+      "if": {"type": "object"},
+      "then": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["forward_within_minutes"],
+        "properties": {"forward_within_minutes": {"$ref": "#/definitions/minutes"}}
+      },
+      "else": {"type": "string"}
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "prompt_version", "threshold", "on_low_confidence", "late_p1_rate_limit", "state"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "prompt_version": {"type": "integer", "minimum": 1},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "on_low_confidence": {"enum": ["wake"]},
+        "late_p1_rate_limit": {"type": "string"},
+        "state": {"enum": ["shadow", "live"]}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "dimension", "window", "warn", "hard"],
+      "properties": {
+        "scope": {"type": "string"},
+        "dimension": {"type": "string"},
+        "window": {"type": "string"},
+        "warn": {"$ref": "#/definitions/nonnegative"},
+        "hard": {"$ref": "#/definitions/nonnegative"}
+      }
+    },
+    "tracker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "precedence"],
+      "properties": {
+        "sources": {"$ref": "#/definitions/strings"},
+        "precedence": {"$ref": "#/definitions/strings"}
+      }
+    }
+  }
+}

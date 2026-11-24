@@ -1,0 +1,59 @@
+[
+  {
+    "id": "serve-responder-flag",
+    "title": "Let named responders answer task attention",
+    "base": "40c67b065937437bb7440be6d19614417e1cbb68",
+    "goldenRef": "ec332c606d302f0a7ce2e6e0056ca5610a15c4e4",
+    "goldenFiles": ["packages/board/test/responder-serve.test.ts"],
+    "goldenCommand": ["pnpm", "--dir", "packages/board", "exec", "vitest", "run", "test/responder-serve.test.ts"],
+    "setup": [["pnpm", "install", "--frozen-lockfile"]],
+    "timeCapSeconds": 900,
+    "briefFile": "tools/bench/suite/briefs/serve-responder-flag.md",
+    "rating": {
+      "score": 3,
+      "size": "M",
+      "reason": "A bounded CLI feature extends existing configuration without changing channel grants.",
+      "ratedBy": "218-BEE7",
+      "ratedAt": "2026-11-22T06:38:45.000Z"
+    }
+  },
+  {
+    "id": "serve-swarm-flag",
+    "title": "Serve a swarm board locally",
+    "base": "6db26db294d0537a8a32c6b726652a16df78c09b",
+    "goldenRef": "40c67b065937437bb7440be6d19614417e1cbb68",
+    "goldenFiles": ["packages/board/test/swarm-serve.test.ts"],
+    "goldenCommand": ["pnpm", "--dir", "packages/board", "exec", "vitest", "run", "test/swarm-serve.test.ts"],
+    "setup": [["pnpm", "install", "--frozen-lockfile"]],
+    "timeCapSeconds": 900,
+    "briefFile": "tools/bench/suite/briefs/serve-swarm-flag.md",
+    "rating": {
+      "score": 4,
+      "size": "M",
+      "reason": "One flag spans CLI, authorization and the discovery contract.",
+      "ratedBy": "218-BEE7",
+      "ratedAt": "2026-11-22T06:38:45.000Z"
+    }
+  },
+  {
+    "id": "claim-redirect-hardening",
+    "title": "Refuse redirects for requests with claim proof",
+    "base": "45f4d04b33f4c699195921b34c785e60bcbf72ed",
+    "goldenRef": "245c8f5fd8d61603fb43a4eafb8484e191958fbf",
+    "goldenFiles": [
+      "packages/board/test/claim-redirect.test.ts",
+      "packages/board/test/claim-redirect-hardening.test.ts"
+    ],
+    "goldenCommand": ["pnpm", "--dir", "packages/board", "exec", "vitest", "run", "test/claim-redirect.test.ts", "test/claim-redirect-hardening.test.ts"],
+    "setup": [["pnpm", "install", "--frozen-lockfile"]],
+    "timeCapSeconds": 1200,
+    "briefFile": "tools/bench/suite/briefs/claim-redirect-hardening.md",
+    "rating": {
+      "score": 4,
+      "size": "L",
+      "reason": "Preserving a security invariant across several transports and proxy paths takes a cross-cutting audit.",
+      "ratedBy": "218-BEE7",
+      "ratedAt": "2026-11-22T06:38:45.000Z"
+    }
+  }
+]

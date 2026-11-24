@@ -1,6 +1,16 @@
 status: proposed
 bonklek decides on this PR
 
+Partly replaced by [swarm mail](swarm-mail.md): the transport, the channel names
+(`party/<party-id>/inbox` on a repo board, replacing `swarm/<tag>/inbox`), expiry,
+the relay between boards and the file bridge are defined there. The secretary
+becomes a model-free service ([the merger design](swarm-merger.md)): rules alone
+forward every valid p0, `sec.log` included, and a model wakes only as the
+classifier or adviser the design names. The message format below is superseded
+(the sender supplies `id` and `at`, `ref` is a string, the example's channel and
+fields change); the roles, classes and routing table stand. Names move into
+[party configuration](swarm-party-config.md).
+
 # Spawner secretaries and swarm messaging
 
 ## Roles

@@ -597,9 +597,19 @@ A task is a thread with a state. Its ID is its root's, and its root carries
   bound claims; don't retry a failed bound write on an original path.
 - **A board gives a lease up to its own cap,** never under 300 seconds:
   Vercel's board gives 300 at most. The claim's `until` says what it got.
+- **`hold`** on either claim route sets a hard end in 1 to 86400 whole
+  seconds. It caps the initial lease and renewals. A lease that expires at
+  that end emits `task.expired` with `reason: 'hold'`. Discovery advertises
+  support on `GET /` with the `X-Board-Task-Claim-Hold: 1` response header,
+  without changing the discovery JSON. The handle exposes this as
+  `task_claim_hold: true` in `discovery()` and also accepts that field from
+  custom boards. Unsupported backends answer 501
+  `no_claim_hold` through the board handle. If a claim succeeds without
+  `claim.holdUntil`, the handle tries to release it and throws `no_claim_hold`.
 - **A lease that runs out** makes the task claimable at once, and `GET
-  /tasks?state=ready` lists it. Its label says `ready` once the board appends
-  `task.expired`: when its timer fires, or with the next claim.
+  /tasks?state=ready` lists it. The board appends `task.expired` when its timer
+  fires or in the same append as a write that sees and acts on the lapsed
+  claim. An ordinary lease lapse before the hard end has no `reason`.
 - **`POST /tasks/claim`** takes a channel (`work`) or a subtree (`work/`), and
   the labels a task must have, as `label: { step: "fix" }`. Claim-next takes
   the highest priority eligible ready task. At equal priority, it prefers
@@ -1001,7 +1011,7 @@ the thread key:
 | `task.claimed` | `id`, `epoch`, `until`, `pauseEpoch?`, `binding?`, `by` | (server) `by` holds it until `until`. On `local()`, an absent `pauseEpoch` in the event means zero. The log keeps the hash of the claim's token, which no view shows |
 | `task.renewed` | `id`, `epoch`, `until`, `by` | a claim's lease is extended |
 | `task.released` | `id`, `epoch`, `by` | a claim gives the task back |
-| `task.expired` | `id`, `epoch` | (server) a claim's lease ran out |
+| `task.expired` | `id`, `epoch`, `reason?` | (server) a claim ended; `reason: 'hold'` means its lease reached the hard end |
 | `task.completed` | `id`, `epoch`, `result`, `by` | a claim completes the task |
 | `task.failed` | `id`, `epoch`, `reason`, `by` | a claim fails the task |
 | `task.blocked` | `id`, `kind`, `reason`, `by` | a task is held for a person. Kind `edited` is the board's: `by` edited the root, and isn't the task's owner |

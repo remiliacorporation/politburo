@@ -1,0 +1,10 @@
+{
+  "tags": [
+    { "tag": "plb", "project": "Politburo", "repo": "remiliacorporation/politburo" },
+    { "tag": "rml", "project": "Remilytics" },
+    { "tag": "kgm", "project": "Kagami" },
+    { "tag": "rdn", "project": "RemiDarkNET" },
+    { "tag": "rmw", "project": "Remilia World" },
+    { "tag": "tyr", "project": "Tigeryard" }
+  ]
+}

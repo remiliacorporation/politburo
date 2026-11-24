@@ -1,0 +1,79 @@
+{
+  "case_id": "attempt-ledger-011-linked-ledger",
+  "description": "Refuse to follow a symlink at the ledger path",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "attempt_ledger.sqlite": null,
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null,
+      "attempt_ledger.sqlite.target": "zlib+base64:eJxLrUjMLchJVShOzSvJzEvN4QIAPQUGeQ=="
+    },
+    "ledger_mode": null,
+    "log_lines": [],
+    "stderr": "error: attempt ledger path must not be a symbolic link\n",
+    "stdout": "total=0 shown=0 quarantined=0\n",
+    "steps": [
+      null,
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "total=0 shown=0 quarantined=0\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "error: attempt ledger path must not be a symbolic link\n",
+        "stdout": ""
+      }
+    ],
+    "symlinks": {
+      "attempt_ledger.sqlite": "attempt_ledger.sqlite.target"
+    }
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm",
+      "attempt_ledger.sqlite.target"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "op": "symlink",
+        "path": "attempt_ledger.sqlite",
+        "target": "attempt_ledger.sqlite.target"
+      },
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "List reports empty; reconcile refuses the link. Capture the link target and preserve its sentinel bytes. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {
+      "attempt_ledger.sqlite.target": "example sentinel\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}
