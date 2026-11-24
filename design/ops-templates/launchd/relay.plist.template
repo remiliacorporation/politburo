@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+PLACEHOLDER: subcommand and flags are not built yet; confirm against packages/swarm when it lands; do not install this file until then.
+relay daemon. Runs as RELAY_USER; reads relay.env under CONFIG_ROOT.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL_PREFIX}}.relay</string>
+  <key>UserName</key>
+  <string>{{RELAY_USER}}</string>
+  <key>GroupName</key>
+  <string>{{SERVICE_GROUP}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{HOST_BIN}}/run-with-env.sh</string>
+    <string>{{CONFIG_ROOT}}/relay.env</string>
+    <string>--</string>
+    <string>{{NODE}}</string>
+    <string>{{SWARM_CLI}}</string>
+    <string>relay</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{{DATA_ROOT}}/relay</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ExitTimeOut</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>{{LOG_ROOT}}/relay.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_ROOT}}/relay.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{{SERVICE_PATH}}</string>
+    <key>HOME</key>
+    <string>{{HOME_ROOT}}/relay</string>
+  </dict>
+</dict>
+</plist>

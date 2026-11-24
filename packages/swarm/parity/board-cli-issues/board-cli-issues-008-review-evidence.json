@@ -1,0 +1,480 @@
+{
+  "case_id": "board-cli-issues-008-review-evidence",
+  "description": "Refuse review readiness until exact evidence passes",
+  "expected": {
+    "database": {
+      "agents": [],
+      "board_events": [
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "issue_imported",
+          "issue_key": "example-issue",
+          "payload_json": "{\"priority\": 3, \"version\": 1}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "evidence_gate",
+          "issue_key": "example-issue",
+          "payload_json": "{\"candidate_sha\": \"000000a\", \"evidence_ref\": \"example-artifact:submission\", \"gate\": \"submission\", \"note\": \"\", \"result\": \"passed\", \"valid_until\": null}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 3,
+          "event_type": "evidence_gate",
+          "issue_key": "example-issue",
+          "payload_json": "{\"candidate_sha\": \"000000a\", \"evidence_ref\": \"example-artifact:tests\", \"gate\": \"tests\", \"note\": \"\", \"result\": \"passed\", \"valid_until\": null}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 4,
+          "event_type": "evidence_gate",
+          "issue_key": "example-issue",
+          "payload_json": "{\"candidate_sha\": \"000000a\", \"evidence_ref\": \"example-artifact:tests\", \"gate\": \"tests\", \"note\": \"\", \"result\": \"failed\", \"valid_until\": null}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 5,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": null, \"envelope_version\": 1, \"from\": \"working\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"repair_needed\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 6,
+          "event_type": "evidence_gate",
+          "issue_key": "example-issue",
+          "payload_json": "{\"candidate_sha\": \"000000a\", \"evidence_ref\": \"example-artifact:tests\", \"gate\": \"tests\", \"note\": \"\", \"result\": \"passed\", \"valid_until\": \"2026-01-01T00:00:00Z\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 7,
+          "event_type": "evidence_gate",
+          "issue_key": "example-issue",
+          "payload_json": "{\"candidate_sha\": \"000000a\", \"evidence_ref\": \"example-artifact:tests\", \"gate\": \"tests\", \"note\": \"\", \"result\": \"passed\", \"valid_until\": null}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 8,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": \"000000a\", \"envelope_version\": 1, \"from\": \"repair_needed\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"handoff_ready\"}"
+        },
+        {
+          "actor": "operator-01",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 9,
+          "event_type": "transition",
+          "issue_key": "example-issue",
+          "payload_json": "{\"actor_type\": \"user\", \"blocker\": null, \"candidate_sha\": \"000000a\", \"envelope_version\": 1, \"from\": \"handoff_ready\", \"reason\": \"Record a synthetic lifecycle change\", \"reason_code\": \"example_change\", \"to\": \"review_ready\"}"
+        }
+      ],
+      "board_messages": [],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "convergence_goal_actions": [],
+      "convergence_goal_steps": [],
+      "convergence_goals": [],
+      "dependencies": [],
+      "harnesses": [],
+      "issue_priority_legacy": [],
+      "issues": [
+        {
+          "approved_scope": null,
+          "assignment_generation": 1,
+          "base_sha": null,
+          "blocker": null,
+          "branch": null,
+          "controller": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "head_sha": "000000a",
+          "issue_key": "example-issue",
+          "issue_priority": 3,
+          "lane": "unassigned",
+          "last_activity_at": "2026-01-01T00:00:00+00:00",
+          "lease_expires_at": null,
+          "lease_token": null,
+          "model": null,
+          "owner": null,
+          "packet_path": null,
+          "packet_sha256": null,
+          "priority": 100,
+          "provider": null,
+          "session_id": null,
+          "state": "review_ready",
+          "title": "Example issue",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 4,
+          "worktree": null
+        }
+      ],
+      "role_profiles": []
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "previous": [
+      {
+        "exit_code": 1,
+        "stderr": "state 'review_ready' is evidence-gated; --candidate must name the exact candidate revision the transition advances, or name an operational target\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "candidate mismatch: --candidate names 000000b but the transition advances 000000a\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "transition to 'review_ready' rejected for candidate 000000a: unsatisfied evidence gates: submission=missing, tests=missing. Record passing evidence with 'evidence example-issue --candidate 000000a --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"gate\": \"submission\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"gate\": \"tests\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"gate\": \"tests\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"result\": \"failed\"\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "transition to 'review_ready' rejected for candidate 000000a: unsatisfied evidence gates: tests=failed. Record passing evidence with 'evidence example-issue --candidate 000000a --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"repair_needed\",\n  \"version\": 2\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"gate\": \"tests\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "transition to 'review_ready' rejected for candidate 000000a: unsatisfied evidence gates: tests=expired. Record passing evidence with 'evidence example-issue --candidate 000000a --gate GATE --result passed --evidence-ref REF' for the exact candidate, or reconcile explicitly with --override-gates --override-reason\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"gate\": \"tests\",\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"result\": \"passed\"\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"handoff_ready\",\n  \"version\": 3\n}\n"
+      }
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"issue_key\": \"example-issue\",\n  \"ok\": true,\n  \"overridden_gates\": [],\n  \"state\": \"review_ready\",\n  \"version\": 4\n}\n"
+  },
+  "inputs": {
+    "collect": [],
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "review_ready",
+          "--expected-version",
+          "1",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "review_ready",
+          "--expected-version",
+          "1",
+          "--candidate",
+          "000000b",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "review_ready",
+          "--expected-version",
+          "1",
+          "--candidate",
+          "000000a",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "evidence",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--candidate",
+          "000000a",
+          "--gate",
+          "submission",
+          "--result",
+          "passed",
+          "--evidence-ref",
+          "example-artifact:submission"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "evidence",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--candidate",
+          "000000a",
+          "--gate",
+          "tests",
+          "--result",
+          "passed",
+          "--evidence-ref",
+          "example-artifact:tests"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "evidence",
+          "example-issue",
+          "--expected-version",
+          "1",
+          "--candidate",
+          "000000a",
+          "--gate",
+          "tests",
+          "--result",
+          "failed",
+          "--evidence-ref",
+          "example-artifact:tests"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "review_ready",
+          "--expected-version",
+          "1",
+          "--candidate",
+          "000000a",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "repair_needed",
+          "--expected-version",
+          "1",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "evidence",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--candidate",
+          "000000a",
+          "--gate",
+          "tests",
+          "--result",
+          "passed",
+          "--evidence-ref",
+          "example-artifact:tests",
+          "--valid-until",
+          "2026-01-01T00:00:00Z"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "review_ready",
+          "--expected-version",
+          "2",
+          "--candidate",
+          "000000a",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "evidence",
+          "example-issue",
+          "--expected-version",
+          "2",
+          "--candidate",
+          "000000a",
+          "--gate",
+          "tests",
+          "--result",
+          "passed",
+          "--evidence-ref",
+          "example-artifact:tests"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "handoff_ready",
+          "--expected-version",
+          "2",
+          "--candidate",
+          "000000a",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "transition",
+          "example-issue",
+          "review_ready",
+          "--expected-version",
+          "3",
+          "--candidate",
+          "000000a",
+          "--actor-type",
+          "user",
+          "--reason-code",
+          "example_change",
+          "--reason",
+          "Record a synthetic lifecycle change"
+        ]
+      }
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M80",
+  "notes": "Missing candidate, candidate mismatch, missing gates, failed tests, and a latest pass expiring exactly now all refuse review_ready. Move through repair_needed, then fresh passes allow handoff_ready and review_ready.",
+  "setup": {
+    "commands": [
+      {
+        "actor": "operator-01",
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "actor": "operator-01",
+        "argv": [
+          "upsert"
+        ],
+        "stdin": {
+          "head_sha": "000000a",
+          "issue_key": "example-issue",
+          "state": "working",
+          "title": "Example issue"
+        }
+      }
+    ],
+    "files": {},
+    "now": "2026-01-01T00:00:00Z"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/schema.sql",
+      "board/gates.py",
+      "board/history.py",
+      "board/blockers.py"
+    ]
+  }
+}

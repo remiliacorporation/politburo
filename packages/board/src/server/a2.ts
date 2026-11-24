@@ -17,7 +17,7 @@ import { importedHandle, shownName, userIdOf } from '../contract/profiles.ts'
 import { extractMentions, isEmail, replaceMentions } from '../contract/mentions.ts'
 import { ATTACHMENT_BYTES_MAX, ATTACHMENTS_PER_MESSAGE_MAX, IMPORT_BYTES_MAX, MESSAGE_TEXT_MAX, platformAvatar, RemoteWatcherId, type Labels } from '../contract/schemas.ts'
 import { CHANNELS_LIMIT_DEFAULT, INBOX_EVENT_ID_MAX, REGISTERED_WATCHERS_MAX, type Discovery, type InboxEntry, type Me, type ScheduleView } from '../api/routes.ts'
-import type { Protocol } from '../api/protocol.ts'
+import type { Method, Protocol } from '../api/protocol.ts'
 import { FULL_ACCESS, parseCan, type Access, type Permission } from './access.ts'
 import { authenticates, type Granted } from './auth.ts'
 import { viaOf } from './actors.ts'
@@ -31,6 +31,7 @@ import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
 import { createTasks, taskLimits } from './tasks.ts'
 import { createOperationalInbox } from './operational-inbox.ts'
+import { AccessMoved, appendRefusal, wallTime, writerFor } from '../store/single-writer.ts'
 import type { BoardStore, MessageFilter, ThreadPosition } from '../store/types.ts'
 import { compileWatcher, createWatchers, ID, registrantSession } from './watch.ts'
 import { ack, pull, pullInbox, type QueueSession } from './registered.ts'
@@ -229,17 +230,31 @@ const alreadyReceived = (error: unknown) => {
 }
 
 /** Everything behind a board on the engine, built once board() binds it. Nothing in it connects until it's used. */
+function refuseMovedAccess(error: unknown): never {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if (cause instanceof AccessMoved) throw new HttpError(409, 'access_changed', cause.message)
+  }
+  throw appendRefusal(error)
+}
+
 function build(options: A2Options, binding: BoardBinding) {
   const blob = options.blob ?? null
   const { store } = options
   // The same A2 store object for every server: A2 recognizes its own stores by identity.
   const log = store.log
+  const writer = writerFor(log)
   const registry = createRegistry({ store: log, scheduler: options.scheduler })
 
-  /**
-   * Who a caller is, and what it may do now: one board() verified, as it said, its access
-   * included; this deployment's own code everything.
-   */
+  // Keep the verified identity and its scope, not the permissions from request admission.
+  async function currentCaller(caller: Caller, now: number): Promise<Caller> {
+    if (!('identity' in caller)) return caller
+    const { identity } = caller
+    const rights = await binding.accessNow(identity.principal, await access.trust.grants(), now)
+    if (rights === null) throw forbidden("this token can't use this board")
+    return { ...caller, identity: { ...identity, principal: { ...identity.principal, access: rights } } }
+  }
+
+  /** The caller as verified for a read, or as refreshed by the writer for a mutation. */
   const identityOf = async (caller: Caller): Promise<Identity> => ('identity' in caller ? caller.identity : selfIdentity(caller))
   const boundClaimIdentity = (caller: Caller, input: { binding?: unknown }) => {
     if (input.binding !== undefined && !('identity' in caller)) throw forbidden('a bound claim needs a verified claimant')
@@ -253,7 +268,7 @@ function build(options: A2Options, binding: BoardBinding) {
   // Always, since anyone may register watchers here, to pull, at any time.
   const watchers = createWatchers({
     watch: tails,
-    run: (id, event, trigger, attempt) => binding.run(id, event, { trigger, attempt }),
+    run: (id, event, trigger, attempt) => writer.detached(() => binding.run(id, event, { trigger, attempt })),
     store: log,
     scheduler: options.scheduler,
     registered: { state: registry.state, accessNow: (principal) => binding.accessNow(principal) },
@@ -291,7 +306,7 @@ function build(options: A2Options, binding: BoardBinding) {
         const about = event.type === 'thread.synced' ? ((await reads.ensure(event.index - 1, ctx.signal), await store.tables.byEventId(event.payload.thread)) ?? undefined) : after
         // A label change re-renders a copy only when the labels change what it shows: sync compares them.
         const shown = { ...eventView(event, about, actors, OWN_CODE), ...(event.type === 'labels.changed' && before ? { before: view(before, actors, OWN_CODE) } : {}) }
-        await delivering.run(ctx as ConsumerContext<BoardEvents>, () => binding.run(SYNC, shown, { trigger: ctx.event.id, attempt: ctx.attempt }))
+        await writer.detached(() => delivering.run(ctx as ConsumerContext<BoardEvents>, () => binding.run(SYNC, shown, { trigger: ctx.event.id, attempt: ctx.attempt })))
       })
     : undefined
 
@@ -307,7 +322,7 @@ function build(options: A2Options, binding: BoardBinding) {
   const operationalInbox = createOperationalInbox(session, binding.inboxRolesFor ?? (() => []))
   const reads = createReads(store.tables, session, projection)
   const work = createControl(log, session, binding.initiallyPaused)
-  const writes: WriteContext = { session, reads, work }
+  const writes: WriteContext = { session, reads, work, writer }
 
   async function setPaused(caller: Caller, paused: boolean, reason: string) {
     if (!fromRequest(caller) || !('identity' in caller)) throw forbidden('only a person with board-wide manage can change work control')
@@ -318,7 +333,7 @@ function build(options: A2Options, binding: BoardBinding) {
       const { status, index } = await work.at()
       if (status.paused === paused) return publicStatus(status)
       const pauseEpoch = status.pauseEpoch + (paused ? 1 : 0)
-      const rows = await session.append.ifLastIndex(index, { type: 'work.control', payload: { paused, pauseEpoch, reason, by: author } })
+      const rows = await writer.outside(() => session.append.ifLastIndex(index, { type: 'work.control', payload: { paused, pauseEpoch, reason, by: author } }))
       await untilApplied(writes, rows)
       return { paused, pauseEpoch }
     })
@@ -347,7 +362,7 @@ function build(options: A2Options, binding: BoardBinding) {
     lane: ({ event }) => `thread:${event.payload.event.thread}`,
   }).run(async (ctx) => {
     const { payload } = ctx.event as Received
-    await binding.receive(payload.sync, { event: payload.event, raw: payload.raw }, { id: ctx.event.id, attempt: ctx.attempt, signal: ctx.signal })
+    await writer.detached(() => binding.receive(payload.sync, { event: payload.event, raw: payload.raw }, { id: ctx.event.id, attempt: ctx.attempt, signal: ctx.signal }))
   })
   const inboxServer = createServer({
     contract: inboxContract,
@@ -358,7 +373,8 @@ function build(options: A2Options, binding: BoardBinding) {
   // Who the board trusts beside its defaults: its grants.
   const access = createTrust({
     store: log,
-    accessNow: (principal, grants) => binding.accessNow(principal, grants),
+    accessNow: (principal, grants) => binding.accessNow(principal, grants, writer.time()),
+    clock: writer.time,
     explain: (principal, channel) => binding.explain(principal, channel),
     team: async () => (await binding.project()).teamId,
     logins: () => binding.logins,
@@ -742,7 +758,7 @@ function build(options: A2Options, binding: BoardBinding) {
       const identity = await boundClaimIdentity(caller, body)
       const { principal } = identity
       const about = { needs: body.needs, for: body.for, priority: body.priority, claim: body.claim, lease: body.lease, token: body.token, binding: body.binding }
-      if (body.re !== undefined) return tasks.adopt(identity, messageAt(body.re), about)
+      if (body.re !== undefined) return tasks.adopt(identity, messageAt(body.re), about, caller.origin.claimEpoch)
       // A new thread, posted as any is: `post` where it lands, and `label` for the labels it carries.
       const proofs = await authorizePost(writes, principal.access, { channel: body.channel, labels: body.labels })
       ownId(caller, principal, body.id)
@@ -790,11 +806,14 @@ function build(options: A2Options, binding: BoardBinding) {
     async claimReadyTask(caller, body, signal) {
       taskLimits.lease(body.lease)
       taskLimits.from(body.from)
-      return tasks.claimReady(await boundClaimIdentity(caller, body), body, signal)
+      const identity = await boundClaimIdentity(caller, body)
+      return tasks.claimReady(identity, body, signal, (tryClaim) =>
+        writer.run(async (now) => tryClaim(await identityOf(await currentCaller(caller, now)))).catch(refuseMovedAccess),
+      )
     },
     async claimTask(caller, body) {
       taskLimits.lease(body.lease)
-      return tasks.claim(await boundClaimIdentity(caller, body), messageAt(body.id), body)
+      return tasks.claim(await boundClaimIdentity(caller, body), messageAt(body.id), body, caller.origin.claimEpoch)
     },
     async renewTask(caller, { id, epoch, token, lease }) {
       taskLimits.lease(lease)
@@ -914,23 +933,25 @@ function build(options: A2Options, binding: BoardBinding) {
       ownWatchers(principal)
       if (!(await registry.state()).byOwner[principal.id]) throw notFound('this token has no watchers registered here', 'no_registration')
       const queue = queueOf(principal.id) as unknown as QueueSession
-      const pulling = { access: principal.access, limit: query.limit ?? 10 }
-      const deadline = Date.now() + (query.wait ?? 0) * 1000
+      const deadline = wallTime() + (query.wait ?? 0) * 1000
       for (let pause = 100; ; pause = Math.min(pause * 2, 1000)) {
-        const matches = await pull(queue, { ...pulling, now: Date.now() })
-        if (matches.length > 0) {
+        const matches = await writer.run(async (now) => {
+          const { principal: { access } } = await identityOf(await currentCaller(caller, now))
+          const found = await pull(queue, { access, limit: query.limit ?? 10, now })
+          if (found.length === 0) return found
           // Each was made for what its registrant could read when it matched: its links show what it may read now.
-          const reader = await reads.readerOf(principal.access, matches.flatMap((match) => viewLinkedIds(match.event)))
-          return { matches: matches.map((match) => ({ ...match, event: viewedBy(match.event, reader) })) }
-        }
-        if (Date.now() >= deadline || signal.aborted) return { matches }
-        await new Promise((resolve) => setTimeout(resolve, Math.min(pause, Math.max(0, deadline - Date.now()))))
+          const reader = await reads.readerOf(access, found.flatMap((match) => viewLinkedIds(match.event)))
+          return found.map((match) => ({ ...match, event: viewedBy(match.event, reader) }))
+        })
+        const left = deadline - wallTime()
+        if (matches.length > 0 || left <= 0 || signal.aborted) return { matches }
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pause, left)))
       }
     },
     async ack(caller, { id, ...body }) {
       const { principal } = (await identityOf(caller))
       ownWatchers(principal)
-      const result = await ack(queueOf(principal.id) as unknown as QueueSession, id, body, { now: Date.now() })
+      const result = await ack(queueOf(principal.id) as unknown as QueueSession, id, body, { now: writer.time() })
       if (result === 'gone') throw notFound(`no match ${id} is waiting for this token`, 'no_match')
       if (result === 'stale') throw new HttpError(409, 'stale_lease', 'that lease ran out, and the match was pulled again')
       return { ok: true }
@@ -1238,7 +1259,7 @@ function build(options: A2Options, binding: BoardBinding) {
       // This board's own sync gets its inbox delivered here.
       if (ownSync(caller)) return { items: [] }
       const { principal } = (await needSync(caller, 'pull from an inbox', true))
-      const leased = await pullInbox(queueOf(principal.id) as unknown as QueueSession, key, { access: principal.access, limit: limit ?? 10, now: Date.now() })
+      const leased = await pullInbox(queueOf(principal.id) as unknown as QueueSession, key, { access: principal.access, limit: limit ?? 10, now: writer.time() })
       return {
         items: leased.map(({ id, thread, lease, attempt, event }) => {
           const item = event as { event: PlatformEvent; raw: unknown }
@@ -1249,7 +1270,7 @@ function build(options: A2Options, binding: BoardBinding) {
 
     async inboxAck(caller, { id, lease, error }) {
       const { principal } = (await needSync(caller, 'ack an inbox event', true))
-      const result = await ack(queueOf(principal.id) as unknown as QueueSession, id, { lease, error }, { now: Date.now() })
+      const result = await ack(queueOf(principal.id) as unknown as QueueSession, id, { lease, error }, { now: writer.time() })
       if (result === 'gone') throw notFound(`no inbox event ${id} is waiting for this token`, 'no_item')
       if (result === 'stale') throw new HttpError(409, 'stale_lease', 'that lease ran out, and the event was pulled again')
       return { ok: true }
@@ -1488,6 +1509,8 @@ function build(options: A2Options, binding: BoardBinding) {
   const servers = [server, inboxServer, schedules.server, registry.server, tasks.server, watchers.server]
   return {
     methods,
+    writer,
+    currentCaller,
     schedules,
     work,
     trust: access.trust,
@@ -1508,6 +1531,18 @@ function build(options: A2Options, binding: BoardBinding) {
  * board()'s policy about and writes through board(). Nothing is built until board() binds it, and
  * nothing connects until the first call.
  */
+const serialized: ReadonlySet<Method> = new Set([
+  'createChannel', 'post', 'edit', 'delete', 'react', 'label', 'pause', 'resume',
+  'schedule', 'cancelSchedule', 'upload', 'registerOpsAgent', 'heartbeatOpsAgent', 'retireOpsAgent',
+  'issueOpsIntent', 'issueOpsRoleIntent', 'takeOpsIntent', 'reportOpsIntent',
+  'createTask', 'createTasks', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask',
+  'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'assignTask',
+  'setTaskNeeds', 'setTaskPriority', 'cancelTask', 'requestTaskAttention', 'answerTaskAttention',
+  'createGrant', 'createGrants', 'updateGrant', 'revokeGrant', 'createInvite', 'revokeInvite', 'redeemInvite',
+  'createSchema', 'register', 'ack', 'syncImport', 'syncReceipt', 'inboxPush', 'inboxNext', 'inboxAck',
+  'sendOperationalMessage', 'ackOperationalMessage', 'archiveOperationalMessage',
+])
+
 export function a2(options: A2Options) {
   let binding: BoardBinding | null = null
   let built: ReturnType<typeof build> | null = null
@@ -1523,11 +1558,22 @@ export function a2(options: A2Options) {
     await ran.work.ready()
     // The first call on an instance starts the schedules catching up, and doesn't wait. Only a call
     // that isn't a scheduler's delivery takes them over: an old instance's timers mustn't take them back.
-    ran.schedules.catchUp({ takeOver: !delivery.getStore() })
+    ran.writer.detached(() => ran.schedules.catchUp({ takeOver: !delivery.getStore() }))
     return ran
   }
   const methods = Object.fromEntries(
-    METHODS.map((name) => [name, async (caller: Caller, input: never, signal: AbortSignal) => ((await ready()).methods[name] as (...args: unknown[]) => unknown)(caller, input, signal)]),
+    METHODS.map((name) => [name, async (caller: Caller, input: never, signal: AbortSignal) => {
+      const ran = await ready()
+      const invoke = ran.methods[name] as (caller: Caller, input: never, signal: AbortSignal) => Promise<unknown>
+      if (!serialized.has(name)) return invoke(caller, input, signal)
+      // A queued claim must not acquire work after a pause/resume that invalidated its request.
+      if (caller.origin.claimEpoch === undefined && (name === 'claimTask' || (name === 'createTask' && (input as Protocol['createTask']['input']).claim))) {
+        const { status } = await ran.work.at()
+        caller = { ...caller, origin: { ...caller.origin, claimEpoch: status.pauseEpoch } }
+      }
+      return ran.writer.run(async (now) => invoke(await ran.currentCaller(caller, now), input, signal))
+        .catch(refuseMovedAccess)
+    }]),
   ) as unknown as ProtocolMethods
   const backend = {
     ...methods,

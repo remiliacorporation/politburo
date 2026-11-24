@@ -330,9 +330,10 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
   const [hovered, setHovered] = useState(false)
   const [labelsOpen, setLabelsOpen] = useState(false)
   const row = useRef<HTMLDivElement>(null)
-  const editing = useEditing() === m.id
+  const editingId = useEditing()
   const name = authorName(m)
   const canEdit = m.by.actor === options.me && options.viewer.may('post', m.channel)
+  const editing = canEdit && editingId === m.id
   const canLabel = !m.deleted && options.viewer.may('label', m.channel)
   const canReact = !m.deleted && options.viewer.may('react', m.channel)
   const replyAction = m.re === null && options.viewer.may('post', m.channel) ? 'reply in thread' : 'open thread'

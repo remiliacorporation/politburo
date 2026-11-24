@@ -1,0 +1,177 @@
+{
+  "case_id": "board-cli-messages-002-agent-refusals",
+  "description": "Refuse cycles, generation rewind and invalid GUI bindings",
+  "expected": {
+    "db": {
+      "agents": [
+        {
+          "agent_id": "worker-01",
+          "display_name": "worker-01",
+          "generation": 1,
+          "harness_key": null,
+          "last_seen_at": null,
+          "max_children": null,
+          "metadata_json": "{}",
+          "parent_agent_id": null,
+          "profile_key": "implementation-worker",
+          "session_ref": null,
+          "status": "idle",
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ],
+      "board_events": [
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 1,
+          "event_type": "role_profile_upserted",
+          "issue_key": null,
+          "payload_json": "{\"profile_key\": \"implementation-worker\", \"version\": 1}"
+        },
+        {
+          "actor": "operator",
+          "archived_at": null,
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "event_id": 2,
+          "event_type": "agent_upserted",
+          "issue_key": null,
+          "payload_json": "{\"agent_id\": \"worker-01\", \"generation\": 1, \"parent_agent_id\": null, \"status\": \"idle\"}"
+        }
+      ],
+      "board_meta": [
+        {
+          "key": "network_generation",
+          "value": "1"
+        },
+        {
+          "key": "network_state",
+          "value": "paused"
+        },
+        {
+          "key": "schema_version",
+          "value": "15"
+        }
+      ],
+      "role_profiles": [
+        {
+          "active": 1,
+          "context_policy": null,
+          "instructions_path": "roles/sprite.md",
+          "personality": null,
+          "profile_key": "implementation-worker",
+          "title": "Implementation worker",
+          "updated_at": "2026-01-01T00:00:00+00:00",
+          "version": 1
+        }
+      ]
+    },
+    "exit_code": 0,
+    "files": {},
+    "log_lines": [],
+    "prior_steps": [
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"db\": \"<WORK>/board.sqlite\",\n  \"ok\": true,\n  \"schema_version\": 15\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"ok\": true,\n  \"profiles\": [\n    {\n      \"profile_key\": \"implementation-worker\",\n      \"version\": 1\n    }\n  ]\n}\n"
+      },
+      {
+        "exit_code": 0,
+        "stderr": "",
+        "stdout": "{\n  \"agents\": [\n    \"worker-01\"\n  ],\n  \"ok\": true\n}\n"
+      },
+      {
+        "exit_code": 1,
+        "stderr": "agent hierarchy contains a cycle at worker-02\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "agent generation must be at least 2: worker-01\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "all user-facing GUI agents require Codex desktop\n",
+        "stdout": ""
+      }
+    ],
+    "stderr": "",
+    "stdout": "[\n  {\n    \"agent_id\": \"worker-01\",\n    \"child_count\": 0,\n    \"display_name\": \"worker-01\",\n    \"generation\": 1,\n    \"harness_key\": null,\n    \"harness_title\": null,\n    \"last_seen_at\": null,\n    \"max_children\": null,\n    \"metadata_json\": \"{}\",\n    \"parent_agent_id\": null,\n    \"profile_key\": \"implementation-worker\",\n    \"profile_title\": \"Implementation worker\",\n    \"queue_count\": 0,\n    \"session_ref\": null,\n    \"status\": \"idle\",\n    \"updated_at\": \"2026-01-01T00:00:00+00:00\"\n  }\n]\n"
+  },
+  "inputs": {
+    "kind": "cli-sequence",
+    "steps": [
+      {
+        "argv": [
+          "init"
+        ]
+      },
+      {
+        "argv": [
+          "profile-upsert"
+        ],
+        "stdin": "{\"instructions_path\": \"roles/sprite.md\", \"profile_key\": \"sprite\", \"title\": \"Implementation worker\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"profile_key\": \"sprite\", \"status\": \"idle\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "[{\"agent_id\": \"worker-02\", \"display_name\": \"worker-02\", \"parent_agent_id\": \"worker-01\", \"profile_key\": \"sprite\"}, {\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"parent_agent_id\": \"worker-02\", \"profile_key\": \"sprite\"}]"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"generation\": 1, \"profile_key\": \"sprite\", \"session_ref\": \"example-session\"}"
+      },
+      {
+        "argv": [
+          "agent-upsert"
+        ],
+        "stdin": "{\"agent_id\": \"worker-01\", \"display_name\": \"worker-01\", \"metadata\": {\"tier\": \"user-facing\"}, \"profile_key\": \"sprite\"}"
+      },
+      {
+        "argv": [
+          "agents"
+        ]
+      }
+    ],
+    "tables": [
+      "agents",
+      "board_events",
+      "board_meta",
+      "role_profiles"
+    ]
+  },
+  "matrix_row": "M81",
+  "notes": "The attempted batch introduces a child and makes the root its descendant; both writes roll back. Subsequent calls refuse a session change with the old generation and a non-desktop GUI binding.",
+  "setup": {
+    "files": {},
+    "now": "2026-01-01T00:00:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "board/board.py",
+      "board/attention.py",
+      "board/attention_response.py",
+      "board/delivery.py",
+      "board/projection.py",
+      "board/runtime.py",
+      "board/taxonomy.py",
+      "board/schema.sql"
+    ]
+  }
+}

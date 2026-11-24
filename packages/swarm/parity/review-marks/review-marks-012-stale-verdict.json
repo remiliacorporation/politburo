@@ -1,0 +1,87 @@
+{
+  "case_id": "review-marks-012-stale-verdict",
+  "description": "Validate structurally but do not accept a stale verdict",
+  "expected": {
+    "db_dump": {
+      "board_events": [],
+      "board_messages": [],
+      "execution_attempts": [],
+      "issues": [],
+      "pipeline_stages": [],
+      "review_marks": []
+    },
+    "exit_code": 0,
+    "files": {
+      "verdict.json": "{\"findings\": [], \"head\": \"bfb003c312c7625fdba81565a3166c5f96cf4aeb\", \"mac\": \"c55edfdd6da5d2fdf9cfa8a0bf59671fd5164951130e77c48609ad106d446d74\", \"pr\": 1, \"schema\": \"tigeryard.review-verdict.v1\", \"session\": \"example-reviewer-session\", \"task\": \"example-project\", \"verdict\": \"clean\"}\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\"valid\": true, \"errors\": []}\n",
+    "steps": [
+      {
+        "op": "validate",
+        "result": {
+          "exit_code": 0,
+          "stderr": "",
+          "stdout": "{\"valid\": true, \"errors\": []}\n",
+          "watcher": {
+            "github_writes": [],
+            "outcome": "waiting",
+            "outcomes": [
+              {
+                "outcome": "review_registered",
+                "task": "example-project"
+              },
+              {
+                "outcome": "review_rejected",
+                "reason": "stale_head",
+                "task": "example-project"
+              }
+            ],
+            "pending_comments": [],
+            "pending_messages": [
+              {
+                "actionable": true,
+                "body": "Remote task example-project: review verdict 56b8afb49cbd72b5cdcf69b441e7f335bdf9079e rejected (stale_head): it reviews bfb003c312c7625fdba81565a3166c5f96cf4aeb but the current head is 53a47dfdc197583d20625db8815d7cb38af4d648. It does not count toward the merge gate.",
+                "kind": "system"
+              }
+            ],
+            "phase": "active",
+            "ready_after_verdict": false,
+            "ready_before_verdict": false,
+            "review": null
+          }
+        }
+      }
+    ]
+  },
+  "inputs": {
+    "kind": "sequence",
+    "steps": [
+      {
+        "op": "validate",
+        "verdict": "clean",
+        "watch": "stale"
+      }
+    ]
+  },
+  "matrix_row": "M86",
+  "notes": "The CLI is not head-aware; the watcher defers the signed verdict for the registered head after observing a newer head.",
+  "setup": {
+    "attempts": [],
+    "files": {},
+    "issues": [],
+    "now": "2026-01-01T12:00:00Z",
+    "stages": []
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/reviews.py",
+      "board/schema.sql",
+      "supervisor/review.py",
+      "supervisor/review_verdict.py",
+      "supervisor/remote_watch.py"
+    ]
+  }
+}

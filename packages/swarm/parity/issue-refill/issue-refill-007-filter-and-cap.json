@@ -1,0 +1,446 @@
+{
+  "case_id": "issue-refill-007-filter-and-cap",
+  "description": "Filter duplicates, invalid evidence and low-ranked work",
+  "expected": {
+    "board_changes": {
+      "board_events": {
+        "deleted": [],
+        "upserted": [
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 2,
+            "event_type": "issue_imported",
+            "issue_key": "refill-001",
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "envelope_version": 1,
+              "priority": 3,
+              "reason": "0 ready for 2 free slots",
+              "reason_code": "issue_refill",
+              "version": 1
+            }
+          },
+          {
+            "actor": "coordinator",
+            "archived_at": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "event_id": 3,
+            "event_type": "refill_run",
+            "issue_key": null,
+            "payload_json": {
+              "actor_role": "coordinator",
+              "actor_type": "agent",
+              "base_sha": "example-base",
+              "dropped": 9,
+              "envelope_version": 1,
+              "errors": [],
+              "issues": [
+                "refill-001"
+              ],
+              "outcome": "written",
+              "reason": "0 ready for 2 free slots",
+              "reason_code": "issue_refill",
+              "trigger": "0 ready for 2 free slots"
+            }
+          }
+        ]
+      },
+      "board_messages": {
+        "deleted": [],
+        "upserted": [
+          {
+            "actionable": 1,
+            "archived_at": null,
+            "body": "refill added 1 issues: refill-001 (proposed)",
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "dedup_key": null,
+            "from_actor": "coordinator",
+            "issue_key": null,
+            "kind": "note",
+            "message_id": 1,
+            "payload_ref": null,
+            "priority": 100,
+            "status": "active",
+            "summary": "refill added 1 issues: refill-001 (proposed)",
+            "supersedes_message_id": null,
+            "to_agent": null,
+            "to_role": "coordinator",
+            "topic_key": "issue-refill",
+            "valid_until": null
+          }
+        ]
+      },
+      "board_meta": {
+        "deleted": [],
+        "upserted": []
+      },
+      "dependencies": {
+        "deleted": [],
+        "upserted": []
+      },
+      "issues": {
+        "deleted": [],
+        "upserted": [
+          {
+            "approved_scope": "Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\n\nProblem: The current implementation does not cover this case.\n\nWhere (default branch example-base):\n- src/export.py:2\n\nEvidence: The example inputs expose the missing branch of this routine.\n\nDone when: A regression test exercises the case and passes consistently.\n\nCategory: improvement. Lens: defects.",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-01T12:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "refill-001",
+            "issue_priority": 3,
+            "lane": "refill",
+            "last_activity_at": "2026-01-01T12:00:00+00:00",
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "Finish the partial export",
+            "updated_at": "2026-01-01T12:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          }
+        ]
+      }
+    },
+    "exit_code": 0,
+    "files": {
+      "refill.json": "{\"board_db\": \"<WORK>/board.sqlite\", \"max_new\": 1, \"repo_path\": \"<WORK>\", \"slots\": 2}\n"
+    },
+    "log_lines": [],
+    "runner_calls": [
+      [
+        "critic",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-defects",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-gaps",
+        "example-project",
+        1200
+      ],
+      [
+        "researcher-operability",
+        "example-project",
+        1200
+      ]
+    ],
+    "source_calls": [
+      [
+        "fetch_head",
+        "origin",
+        "main"
+      ],
+      [
+        "add_worktree",
+        "example-base"
+      ],
+      [
+        "pulls"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/cache.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/cache.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/queue.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "docs/queue.md"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/cache.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/export.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "src/queue.py"
+      ],
+      [
+        "file_lines",
+        "example-base",
+        "docs/queue.md"
+      ],
+      [
+        "remove_worktree",
+        "example-project"
+      ]
+    ],
+    "stderr": "",
+    "stdout": "{\n  \"outcome\": \"written\",\n  \"reason\": \"0 ready for 2 free slots\",\n  \"base_sha\": \"example-base\",\n  \"issues\": [\n    {\n      \"issue_key\": \"refill-001\",\n      \"title\": \"Finish the partial export\",\n      \"state\": \"proposed\",\n      \"lane\": \"refill\",\n      \"priority\": 3,\n      \"approved_scope\": \"Proposed scope (issue refill). Not approved: a person must promote this issue before any dispatch.\\n\\nProblem: The current implementation does not cover this case.\\n\\nWhere (default branch example-base):\\n- src/export.py:2\\n\\nEvidence: The example inputs expose the missing branch of this routine.\\n\\nDone when: A regression test exercises the case and passes consistently.\\n\\nCategory: improvement. Lens: defects.\",\n      \"depends_on\": [],\n      \"category\": \"improvement\",\n      \"lens\": \"defects\",\n      \"where\": [\n        \"src/export.py:2\"\n      ]\n    }\n  ],\n  \"dropped\": [\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:vague\",\n      \"reason\": \"vague: evidence\"\n    },\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:outside\",\n      \"reason\": \"location outside the repository\"\n    },\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:stale\",\n      \"reason\": \"quote not found: stale or already fixed\"\n    },\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:cache\",\n      \"reason\": \"duplicate of a board issue\"\n    },\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:docs\",\n      \"reason\": \"duplicate of a pull request\"\n    },\n    {\n      \"lens\": \"operability\",\n      \"id\": \"operability:nearby\",\n      \"reason\": \"duplicate of defects:queue\"\n    },\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:cache-test\",\n      \"reason\": \"critic: Not reproducible\"\n    },\n    {\n      \"lens\": \"defects\",\n      \"id\": \"defects:queue\",\n      \"reason\": \"over the cap of 1\"\n    },\n    {\n      \"lens\": \"gaps\",\n      \"id\": \"gaps:batch-doc\",\n      \"reason\": \"over the cap of 1\"\n    }\n  ],\n  \"errors\": []\n}\n"
+  },
+  "inputs": {
+    "argv": [
+      "--json"
+    ],
+    "kind": "cli",
+    "with_config": true
+  },
+  "matrix_row": "M85",
+  "notes": "A closed board issue, a closed pull request and a nearby higher-priority proposal each block a duplicate. Vague, escaped and stale proposals drop, and critic rejection plus the write cap leave one issue.",
+  "setup": {
+    "config": {
+      "max_new": 1,
+      "slots": 2
+    },
+    "files": {},
+    "issues": [
+      {
+        "issue_key": "example-closed",
+        "state": "done",
+        "title": "Guard an empty cache lookup"
+      }
+    ],
+    "network": "active",
+    "now": "2026-01-01T12:00:00Z",
+    "proposals": {
+      "defects": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "Short",
+          "id": "vague",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "outside",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "../example.py:1"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "stale",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return fallback_value",
+          "title": "Guard an empty cache lookup",
+          "where": [
+            "src/cache.py:2"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "queue",
+          "priority": 5,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return queue.pop()",
+          "title": "Bound queue processing",
+          "where": [
+            "src/queue.py:2"
+          ]
+        },
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "docs",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "Drain the queue after each batch.",
+          "title": "Document queue draining",
+          "where": [
+            "docs/queue.md:1"
+          ]
+        },
+        {
+          "category": "test",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "cache-test",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return entries[key]",
+          "title": "Exercise cache misses",
+          "where": [
+            "src/cache.py:2"
+          ]
+        },
+        {
+          "category": "improvement",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "export",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "return list(rows)",
+          "title": "Finish the partial export",
+          "where": [
+            "src/export.py:2"
+          ]
+        }
+      ],
+      "gaps": [
+        {
+          "category": "docs",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "batch-doc",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "Drain the queue after each batch.",
+          "title": "Explain batch boundaries",
+          "where": [
+            "docs/queue.md:1"
+          ]
+        }
+      ],
+      "operability": [
+        {
+          "category": "defect",
+          "changes_behavior": false,
+          "dependencies": [],
+          "done_when": "A regression test exercises the case and passes consistently.",
+          "evidence": "The example inputs expose the missing branch of this routine.",
+          "id": "nearby",
+          "priority": 3,
+          "problem": "The current implementation does not cover this case.",
+          "quote": "def drain(queue):",
+          "title": "Add a queue capacity check",
+          "where": [
+            "src/queue.py:1"
+          ]
+        }
+      ]
+    },
+    "pulls": [
+      {
+        "state": "CLOSED",
+        "title": "Document queue draining"
+      }
+    ],
+    "source_files": {
+      "docs/queue.md": "Drain the queue after each batch.\n",
+      "src/cache.py": "def get(key):\n    return entries[key]\n",
+      "src/export.py": "def export_rows(rows):\n    return list(rows)\n",
+      "src/queue.py": "def drain(queue):\n    return queue.pop()\n"
+    },
+    "verdicts": [
+      {
+        "changes_behavior": false,
+        "id": "defects:queue",
+        "keep": true,
+        "rank": 2
+      },
+      {
+        "changes_behavior": false,
+        "id": "defects:cache-test",
+        "keep": false,
+        "rank": 3,
+        "reason": "Not reproducible"
+      },
+      {
+        "changes_behavior": false,
+        "id": "defects:export",
+        "keep": true,
+        "rank": 1
+      },
+      {
+        "changes_behavior": false,
+        "id": "gaps:batch-doc",
+        "keep": true,
+        "rank": 3
+      },
+      {
+        "changes_behavior": false,
+        "id": "defects:invented",
+        "keep": true,
+        "rank": 0
+      }
+    ]
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "supervisor/refill.py",
+      "supervisor/test_refill.py",
+      "supervisor/usage_wake.py",
+      "board/board.py",
+      "board/schema.sql",
+      "docs/issue-refill.md",
+      "bin/tigeryard"
+    ]
+  }
+}

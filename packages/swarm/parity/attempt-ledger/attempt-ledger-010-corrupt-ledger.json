@@ -1,0 +1,69 @@
+{
+  "case_id": "attempt-ledger-010-corrupt-ledger",
+  "description": "Refuse both operations on a non-SQLite ledger file",
+  "expected": {
+    "exit_code": 1,
+    "files": {
+      "attempt_ledger.sqlite": "zlib+base64:eJzLyy9RSFTISU1JTy1SSEksSUxKLE7lAgBa4AfF",
+      "attempt_ledger.sqlite-journal": null,
+      "attempt_ledger.sqlite-shm": null,
+      "attempt_ledger.sqlite-wal": null
+    },
+    "ledger_mode": "0600",
+    "log_lines": [],
+    "stderr": "error: DatabaseError\nerror: DatabaseError\n",
+    "stdout": "",
+    "steps": [
+      {
+        "exit_code": 1,
+        "stderr": "error: DatabaseError\n",
+        "stdout": ""
+      },
+      {
+        "exit_code": 1,
+        "stderr": "error: DatabaseError\n",
+        "stdout": ""
+      }
+    ],
+    "symlinks": {}
+  },
+  "inputs": {
+    "collect": [
+      "attempt_ledger.sqlite",
+      "attempt_ledger.sqlite-journal",
+      "attempt_ledger.sqlite-wal",
+      "attempt_ledger.sqlite-shm"
+    ],
+    "kind": "sequence",
+    "steps": [
+      {
+        "argv": [
+          "list"
+        ],
+        "op": "cli"
+      },
+      {
+        "argv": [
+          "reconcile"
+        ],
+        "op": "cli"
+      }
+    ]
+  },
+  "matrix_row": "M84",
+  "notes": "Both CLI commands give path-free error classes; the corrupt bytes are preserved, not repaired. Recorded SQLite database bytes and their digests, when present, normalise only header offsets 92–99 (version-valid-for and SQLite writer version). Synthetic ledger writers use secure_delete=OFF regardless of the SQLite build default.",
+  "setup": {
+    "files": {
+      "attempt_ledger.sqlite": "not a ledger database\n"
+    },
+    "now": "2026-01-01T00:02:00+00:00"
+  },
+  "source": {
+    "commit": "4d938c186da10726bdd3989865cb893c23943723",
+    "modules": [
+      "supervisor/attempt_ledger.py",
+      "board/contracts.py",
+      "board/schema_guard.py"
+    ]
+  }
+}

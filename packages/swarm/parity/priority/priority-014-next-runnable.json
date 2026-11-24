@@ -1,0 +1,484 @@
+{
+  "case_id": "priority-014-next-runnable",
+  "description": "Next ranks only runnable work",
+  "expected": {
+    "db_dump": {
+      "issue_columns": [
+        "issue_key",
+        "title",
+        "state",
+        "lane",
+        "priority",
+        "issue_priority",
+        "approved_scope",
+        "blocker",
+        "controller",
+        "owner",
+        "provider",
+        "model",
+        "session_id",
+        "branch",
+        "worktree",
+        "base_sha",
+        "head_sha",
+        "packet_path",
+        "packet_sha256",
+        "lease_token",
+        "lease_expires_at",
+        "assignment_generation",
+        "last_activity_at",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": {
+        "agents": [
+          {
+            "agent_id": "controller-01",
+            "display_name": "Controller 01",
+            "generation": 1,
+            "harness_key": null,
+            "last_seen_at": null,
+            "max_children": 5,
+            "metadata_json": "{}",
+            "parent_agent_id": null,
+            "profile_key": "worker",
+            "session_ref": null,
+            "status": "idle",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "agent_id": "worker-01",
+            "display_name": "worker-01",
+            "generation": 1,
+            "harness_key": "synthetic-cli",
+            "last_seen_at": null,
+            "max_children": null,
+            "metadata_json": "{}",
+            "parent_agent_id": "controller-01",
+            "profile_key": "worker",
+            "session_ref": null,
+            "status": "idle",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "agent_id": "worker-02",
+            "display_name": "worker-02",
+            "generation": 1,
+            "harness_key": "synthetic-cli",
+            "last_seen_at": null,
+            "max_children": null,
+            "metadata_json": "{}",
+            "parent_agent_id": "controller-01",
+            "profile_key": "worker",
+            "session_ref": null,
+            "status": "idle",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "agent_id": "worker-03",
+            "display_name": "worker-03",
+            "generation": 1,
+            "harness_key": "synthetic-cli",
+            "last_seen_at": null,
+            "max_children": null,
+            "metadata_json": "{}",
+            "parent_agent_id": "controller-01",
+            "profile_key": "worker",
+            "session_ref": null,
+            "status": "idle",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "agent_id": "worker-04",
+            "display_name": "worker-04",
+            "generation": 1,
+            "harness_key": "synthetic-cli",
+            "last_seen_at": null,
+            "max_children": null,
+            "metadata_json": "{}",
+            "parent_agent_id": "controller-01",
+            "profile_key": "worker",
+            "session_ref": null,
+            "status": "idle",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          },
+          {
+            "agent_id": "worker-05",
+            "display_name": "worker-05",
+            "generation": 1,
+            "harness_key": "synthetic-cli",
+            "last_seen_at": null,
+            "max_children": null,
+            "metadata_json": "{}",
+            "parent_agent_id": "controller-01",
+            "profile_key": "worker",
+            "session_ref": null,
+            "status": "idle",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          }
+        ],
+        "board_meta": [
+          {
+            "key": "network_generation",
+            "value": "1"
+          },
+          {
+            "key": "network_state",
+            "value": "active"
+          },
+          {
+            "key": "schema_version",
+            "value": "15"
+          }
+        ],
+        "dependencies": [
+          {
+            "contract": null,
+            "depends_on": "example-prerequisite",
+            "issue_key": "example-blocked",
+            "kind": "outcome",
+            "resolved_at": null
+          }
+        ],
+        "harnesses": [
+          {
+            "active": 1,
+            "adapter": "synthetic.fake",
+            "capabilities_json": "{}",
+            "config_json": "{}",
+            "harness_key": "synthetic-cli",
+            "title": "Synthetic",
+            "updated_at": "2026-01-03T00:00:00+00:00"
+          }
+        ],
+        "issues": [
+          {
+            "approved_scope": "Synthetic scope",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": "controller-01",
+            "created_at": "2026-01-02T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-older",
+            "issue_priority": 4,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": "example-model",
+            "owner": "worker-01",
+            "packet_path": "<WORK>/packet.md",
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": "synthetic-cli",
+            "session_id": null,
+            "state": "authorized",
+            "title": "example-older",
+            "updated_at": "2026-01-02T00:00:00+00:00",
+            "version": 1,
+            "worktree": "<WORK>/worktrees/worker-01"
+          },
+          {
+            "approved_scope": "Synthetic scope",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": "controller-01",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-alpha",
+            "issue_priority": 4,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": "example-model",
+            "owner": "worker-03",
+            "packet_path": "<WORK>/packet.md",
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": "synthetic-cli",
+            "session_id": null,
+            "state": "authorized",
+            "title": "example-alpha",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": "<WORK>/worktrees/worker-03"
+          },
+          {
+            "approved_scope": "Synthetic scope",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": "controller-01",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-blocked",
+            "issue_priority": 5,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": "example-model",
+            "owner": "worker-05",
+            "packet_path": "<WORK>/packet.md",
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": "synthetic-cli",
+            "session_id": null,
+            "state": "authorized",
+            "title": "example-blocked",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": "<WORK>/worktrees/worker-05"
+          },
+          {
+            "approved_scope": "Synthetic scope",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": "controller-01",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-low",
+            "issue_priority": 2,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": "example-model",
+            "owner": "worker-04",
+            "packet_path": "<WORK>/packet.md",
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": "synthetic-cli",
+            "session_id": null,
+            "state": "authorized",
+            "title": "example-low",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": "<WORK>/worktrees/worker-04"
+          },
+          {
+            "approved_scope": "Synthetic scope",
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": "controller-01",
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-zeta",
+            "issue_priority": 4,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": "example-model",
+            "owner": "worker-02",
+            "packet_path": "<WORK>/packet.md",
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": "synthetic-cli",
+            "session_id": null,
+            "state": "authorized",
+            "title": "example-zeta",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": "<WORK>/worktrees/worker-02"
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-prerequisite",
+            "issue_priority": 3,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "proposed",
+            "title": "example-prerequisite",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          },
+          {
+            "approved_scope": null,
+            "assignment_generation": 1,
+            "base_sha": null,
+            "blocker": null,
+            "branch": null,
+            "controller": null,
+            "created_at": "2026-01-03T00:00:00+00:00",
+            "head_sha": null,
+            "issue_key": "example-ready",
+            "issue_priority": 5,
+            "lane": "unassigned",
+            "last_activity_at": null,
+            "lease_expires_at": null,
+            "lease_token": null,
+            "model": null,
+            "owner": null,
+            "packet_path": null,
+            "packet_sha256": null,
+            "priority": 100,
+            "provider": null,
+            "session_id": null,
+            "state": "ready",
+            "title": "example-ready",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1,
+            "worktree": null
+          }
+        ],
+        "role_profiles": [
+          {
+            "active": 1,
+            "context_policy": null,
+            "instructions_path": "role.md",
+            "personality": null,
+            "profile_key": "worker",
+            "title": "Worker",
+            "updated_at": "2026-01-03T00:00:00+00:00",
+            "version": 1
+          }
+        ]
+      },
+      "tables": [
+        "agent_commands",
+        "agent_observations",
+        "agents",
+        "board_events",
+        "board_messages",
+        "board_meta",
+        "convergence_goal_actions",
+        "convergence_goal_steps",
+        "convergence_goals",
+        "dependencies",
+        "execution_attempts",
+        "harnesses",
+        "issue_priority_legacy",
+        "issues",
+        "message_receipts",
+        "notification_attempts",
+        "pipeline_stages",
+        "qa_runs",
+        "review_marks",
+        "role_profiles",
+        "sqlite_sequence"
+      ]
+    },
+    "exit_code": 0,
+    "files": {
+      "controllers.json": "{\"limits\": {\"workers\": 5, \"workers_per_controller\": 5, \"reviews\": 1, \"qa\": 1}, \"poll_seconds\": 1, \"pipeline\": {\"repairs_per_issue\": 2}, \"scheduler\": {\"lease_seconds\": 900, \"reservation_ttl_seconds\": 60}}",
+      "packet.md": "Synthetic scope.\n"
+    },
+    "log_lines": [],
+    "stderr": "",
+    "stdout": "{\n  \"highest_priority\": 5,\n  \"highest_priority_label\": \"5 Critical\",\n  \"not_runnable_ahead\": [\n    {\n      \"blockers\": [\n        {\n          \"category\": \"dependency\",\n          \"code\": \"dependency_unresolved\",\n          \"expires_at\": null,\n          \"message\": \"Depends on example-prerequisite (outcome), which has no recorded resolution.\",\n          \"next_action\": \"Resolve the dependency edge with its recorded contract; reaching done is not enough.\",\n          \"observed_at\": \"2026-01-03T00:00:00+00:00\",\n          \"records\": [\n            \"dependency:example-blocked->example-prerequisite:outcome\",\n            \"issue:example-blocked\"\n          ],\n          \"responsible_role\": \"controller\",\n          \"severity\": \"hard\"\n        }\n      ],\n      \"issue_key\": \"example-blocked\",\n      \"priority\": 5,\n      \"priority_label\": \"5 Critical\",\n      \"readiness_time\": \"2026-01-03T00:00:00+00:00\",\n      \"tie_break_position\": 1\n    }\n  ],\n  \"not_runnable_count\": 1,\n  \"observed_at\": \"2026-01-03T00:00:00+00:00\",\n  \"operator_blocked_count\": 0,\n  \"order\": \"priority descending (5 Critical first), then readiness time, then issue key\",\n  \"runnable\": [\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-older\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-02T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 2,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    },\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-alpha\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-03T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 3,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    },\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-zeta\",\n      \"priority\": 4,\n      \"priority_label\": \"4 High\",\n      \"readiness_time\": \"2026-01-03T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 4,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    },\n    {\n      \"expected_version\": 1,\n      \"issue_key\": \"example-low\",\n      \"priority\": 2,\n      \"priority_label\": \"2 Low\",\n      \"readiness_time\": \"2026-01-03T00:00:00+00:00\",\n      \"required_action\": \"Claim through the board claim command with the issue's current version, --actor-type, --reason-code and --reason. Priority alone never authorizes a claim.\",\n      \"tie_break_position\": 5,\n      \"warnings\": [],\n      \"why_runnable\": \"Passed the scheduler eligibility query and every diagnosed gate in this snapshot.\"\n    }\n  ]\n}\n",
+    "steps": [
+      {
+        "db_changed": false,
+        "exit_code": 0
+      }
+    ]
+  },
+  "inputs": {
+    "commands": [
+      [
+        "next"
+      ]
+    ],
+    "kind": "cli"
+  },
+  "matrix_row": "M87",
+  "notes": "Critical with an unresolved dependency is reported ahead but not runnable; ready is excluded. Runnable items sort by level, readiness time and key, with no claim or reservation.",
+  "setup": {
+    "files": {
+      "controllers.json": "{\"limits\": {\"workers\": 5, \"workers_per_controller\": 5, \"reviews\": 1, \"qa\": 1}, \"poll_seconds\": 1, \"pipeline\": {\"repairs_per_issue\": 2}, \"scheduler\": {\"lease_seconds\": 900, \"reservation_ttl_seconds\": 60}}",
+      "packet.md": "Synthetic scope.\n"
+    },
+    "issues": [
+      {
+        "key": "example-older",
+        "level": 4,
+        "state": "authorized",
+        "updated_at": "2026-01-02T00:00:00+00:00"
+      },
+      {
+        "key": "example-zeta",
+        "level": 4,
+        "state": "authorized"
+      },
+      {
+        "key": "example-alpha",
+        "level": 4,
+        "state": "authorized"
+      },
+      {
+        "key": "example-low",
+        "level": 2,
+        "state": "authorized"
+      },
+      {
+        "key": "example-blocked",
+        "level": 5,
+        "state": "authorized"
+      },
+      {
+        "key": "example-ready",
+        "level": 5,
+        "state": "ready"
+      },
+      {
+        "key": "example-prerequisite"
+      }
+    ],
+    "now": "2026-01-03T00:00:00Z",
+    "queue": {
+      "assigned": [
+        "example-older",
+        "example-zeta",
+        "example-alpha",
+        "example-low",
+        "example-blocked"
+      ],
+      "dependencies": [
+        [
+          "example-blocked",
+          "example-prerequisite"
+        ]
+      ]
+    }
+  },
+  "source": {
+    "commit": "f79acf470b165d128c29614a88560f3a4d50ced3",
+    "modules": [
+      "board/priority.py",
+      "board/board.py",
+      "board/schema.sql",
+      "board/blockers.py",
+      "board/execution_schema.py",
+      "board/projection.py"
+    ]
+  }
+}
