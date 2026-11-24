@@ -5,8 +5,9 @@ import { stringify } from 'yaml'
 import { ConfigError, loadConfig, parseConfigText } from './config/load.ts'
 import { rolloutMain } from './rollout/rollout-cli.ts'
 import { skillsMain } from './skills/cli.ts'
+import { runSetup } from './sprite/cli.ts'
 
-const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]'
+const usage = 'usage: swarm config <show|validate> [--json] [--party FILE] [--repo FILE]\n       swarm trackers scan <repo> [--party FILE] [--repo FILE] [--json]\n       swarm skills sync --dir DIR [--party FILE] [--repo FILE] [--dry-run] [--force] [--json]\n       swarm capture <run|collect>\n       swarm mirror sync --repo owner/name [--json]\n       swarm overlap <work-id> --work FILE [--max-age-minutes N] [--json]\n       swarm rollout <add|notify|ack|stale|show> [--dir D] [--json]\n       swarm serve --help'
 
 class ReadError extends Error {}
 
@@ -36,6 +37,7 @@ function misuse(message: string): number {
 
 function main(args: string[]): number {
   const [command, action, ...flags] = args
+  if (command === 'setup') return runSetup(args.slice(1))
   if (
     (args.length === 1 && command === '--help') ||
     (args.length === 2 && command === 'config' && action === '--help')
@@ -99,6 +101,7 @@ function main(args: string[]): number {
 
 // One line per area: the loader returns run(argv): Promise<number>.
 const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<number> }>> = {
+  claims: () => import('./claims/cli.ts'),
   check: () => import('./checks/cli.ts'),
   watch: () => import('./watch/cli.ts'),
   trackers: () => import('./trackers/cli.ts'),
@@ -112,7 +115,10 @@ const subcommands: Record<string, () => Promise<{ run(argv: string[]): Promise<n
   mirror: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['mirror', ...argv]) }),
   overlap: async () => ({ run: async (argv) => (await import('./mirror/command.ts')).runMirrorCommand(['overlap', ...argv]) }),
   outcome: async () => ({ run: (argv) => import('./outcomes/cli.ts').then((mod) => mod.outcomeCommand(argv, console)) }),
+  setup: async () => ({ run: async (argv) => runSetup(argv) }),
 }
 const [subcommand, ...subargs] = process.argv.slice(2)
 const area = subcommand !== undefined && Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined
-process.exitCode = area ? await (await area()).run(subargs) : main(process.argv.slice(2))
+process.exitCode = subcommand === 'serve'
+  ? await (await import('./identity/serve.ts')).serveCommand(subargs)
+  : area ? await (await area()).run(subargs) : main(process.argv.slice(2))
