@@ -518,6 +518,30 @@ export function thread(state: State, root: string): Thread | null {
   return { root: view, replies, pending: state.pending.filter((post) => post.re === root) }
 }
 
+/** A letter the mail relay wrote for one reply: who sent it, and whether it is still pending. */
+export type LetterMail = { from: string; state: string; delivered: string | null }
+
+/**
+ * Letters for one task, by the reply they name. A letter is a message whose labels are
+ * `mail.task`, `mail.reply`, and `mail.state`. The newest view of each reply wins.
+ */
+export function lettersFor(state: State, taskId: string): Record<string, LetterMail> {
+  const found = new Map<string, { mail: LetterMail; version: number }>()
+  for (const message of Object.values(state.messages)) {
+    const view = shownMessage(state, message, '')
+    const reply = view.labels['mail.reply']
+    const status = view.labels['mail.state']
+    if (!reply || view.labels['mail.task'] !== taskId || !status) continue
+    const prior = found.get(reply)
+    if (prior && prior.version >= view.version) continue
+    found.set(reply, {
+      version: view.version,
+      mail: { from: view.labels['mail.from'] ?? '', state: status, delivered: view.labels['mail.delivered'] ?? null },
+    })
+  }
+  return Object.fromEntries([...found].map(([id, row]) => [id, row.mail]))
+}
+
 /** A view's filters, as the board's API takes them: `label` is `key`, `key=value`, or `key=a|b`. */
 export type Filter = { from?: string; label: string[]; text?: string }
 

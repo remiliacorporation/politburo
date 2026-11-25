@@ -157,7 +157,11 @@ Read and operate the board in your browser:
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
   full, with what you can do to it now. A claimed task's reply button is an
   envelope labelled send letter to whoever holds it, and the envelope flies
-  off when the reply goes. Other composers keep send. A task's thread, and a
+  off when the reply goes. Other composers keep send. A person's reply on
+  that claimed task is a letter: the word letter, an envelope, who it is from
+  and who holds the task, the reply set apart, and pending or delivered at a
+  time, from the letter's mail labels. An agent's note and a spawner's note
+  stay ordinary messages. A task's thread, and a
   workbench peek, have a Trace tab: every board event for that task, oldest
   first, with its time and who did it. Filter by kind, or copy the lines as
   text.
