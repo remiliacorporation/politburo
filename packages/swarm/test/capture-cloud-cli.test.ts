@@ -69,10 +69,11 @@ test('CLI issues, binds and serves a claim into the ledger', async (t) => {
   writeFileSync(envelopeFile, JSON.stringify(envelope))
   const issued = run('issue', '--book', bookFile, '--envelope', envelopeFile, '--ttl-hours', '1', '--json')
   assert.equal(issued.status, 0, issued.stderr)
-  const { capability } = JSON.parse(issued.stdout)
+  const { capability, token } = JSON.parse(issued.stdout)
   assert.match(capability, /^cap_\S+$/)
-  const bind = ['bind', '--book', bookFile, '--session', session]
-  const bound = runWithInput(`${capability}\nignored\n`, ...bind)
+  assert.match(token, /^tok_[A-Za-z0-9_-]+$/)
+  const bind = ['bind', '--book', bookFile]
+  const bound = runWithInput(`${capability}\n${session}\n`, ...bind)
   assert.equal(bound.status, 0, bound.stderr)
   const empty = run(...bind), flag = run(...bind, '--capability', 'not-a-secret')
   assert.deepEqual([empty.status, empty.stderr.trim()], [2, 'error: missing capability on stdin'])
@@ -224,7 +225,7 @@ test('CLI bind refuses terminal stdin', (t) => {
   const probe = spawnSync('script', ['-qec', 'exit 23', '/dev/null'], { timeout: 2_000 })
   if (probe.status !== 23) return t.skip('script with -qec is unavailable for a pseudo-terminal')
   const { bookFile } = paths(t)
-  const argv = [process.execPath, ...cli, 'bind', '--book', bookFile, '--session', session]
+  const argv = [process.execPath, ...cli, 'bind', '--book', bookFile]
   const command = argv.map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')
   const result = spawnSync('script', ['-qec', command, '/dev/null'], {
     cwd, input: 'not-a-capability\n', encoding: 'utf8', timeout: 5_000,
@@ -255,7 +256,8 @@ test('CLI --json errors are one document on stderr', (t) => {
   for (const [args, status, message] of [
     [[...issue, '/dev/null'], 1, 'cannot read envelope json'],
     [[...issue, envelopeFile], 1, 'invalid envelope'],
-    [['bind', '--session', session], 2, 'missing --book'],
+    [['bind'], 2, 'missing --book'],
+    [['bind', '--session', session], 2, 'invalid flags'],
     [['serve', '--book', bookFile, '--unknown'], 2, 'invalid flags'],
   ] as const) {
     const result = run(...args, '--json')
@@ -267,9 +269,9 @@ test('CLI --json errors are one document on stderr', (t) => {
 test('CLI bind validates arguments and the book without waiting for stdin', async (t) => {
   const { bookFile } = paths(t)
   for (const [args, status, message] of [
-    [['--book', bookFile, '--session', 'x'], 2, 'invalid session id'],
-    [['--session', session], 2, 'missing --book'],
-    [['--book', dirname(bookFile), '--session', session], 1, 'unsafe book file'],
+    [['--book', bookFile, '--session', 'x'], 2, 'invalid flags'],
+    [[], 2, 'missing --book'],
+    [['--book', dirname(bookFile)], 1, 'unsafe book file'],
   ] as const) {
     const child = spawn(process.execPath, [...cli, 'bind', ...args], { cwd, timeout: 2_000 })
     const closed = once(child, 'close')
@@ -285,7 +287,7 @@ test('CLI bind validates arguments and the book without waiting for stdin', asyn
 test('bind reports an unusable book directory without waiting for stdin', async (t) => {
   const { bookFile } = paths(t)
   const missing = join(dirname(bookFile), 'unavailable', 'book.json')
-  const child = spawn(process.execPath, [...cli, 'bind', '--book', missing, '--session', session], {
+  const child = spawn(process.execPath, [...cli, 'bind', '--book', missing], {
     cwd, timeout: 2_000, killSignal: 'SIGKILL',
   })
   const closed = once(child, 'close')
@@ -303,7 +305,7 @@ test('--json success output for listening and bound is one JSON document', async
   const issued = run('issue', '--book', bookFile, '--envelope', envelopeFile, '--ttl-hours', '1', '--json')
   assert.equal(issued.status, 0, issued.stderr)
   const { capability } = JSON.parse(issued.stdout)
-  const bound = runWithInput(`${capability}\n`, 'bind', '--book', bookFile, '--session', session, '--json')
+  const bound = runWithInput(`${capability}\n${session}\n`, 'bind', '--book', bookFile, '--json')
   assert.deepEqual([bound.status, bound.stdout, bound.stderr],
     [0, `${JSON.stringify({ bound: true })}\n`, ''])
   const child = spawn(process.execPath, [...cli, 'serve', '--book', bookFile, '--ledger', ledgerFile,
@@ -320,4 +322,54 @@ test('--json success output for listening and bound is one JSON document', async
   ])
   assert.equal(line, JSON.stringify({ listening: JSON.parse(line).listening }))
   assert.match(JSON.parse(line).listening, /^http:\/\/127\.0\.0\.1:[1-9]\d*$/)
+})
+
+// Catches putting the session id on argv, where it shows up in the process list.
+test('CLI bind reads the session id from stdin and rejects --session', async (t) => {
+  const { bookFile, envelopeFile } = paths(t)
+  writeFileSync(envelopeFile, JSON.stringify(envelope))
+  const issued = run('issue', '--book', bookFile, '--envelope', envelopeFile, '--ttl-hours', '1', '--json')
+  assert.equal(issued.status, 0, issued.stderr)
+  const { capability } = JSON.parse(issued.stdout)
+  const child = spawn(process.execPath, [...cli, 'bind', '--book', bookFile], { cwd, timeout: 5_000 })
+  const closed = once(child, 'close')
+  t.after(() => { child.kill('SIGKILL') })
+  const cmdline = readFileSync(`/proc/${child.pid}/cmdline`, 'utf8')
+  assert.equal(cmdline.includes(session), false, 'session id must not be on the process argv')
+  child.stdin.end(`${capability}\n${session}\n`)
+  const [code] = await closed
+  assert.equal(code, 0)
+  assert.equal(new Book({ file: bookFile }).bySession(session, Date.now())?.session, session)
+  const leaked = runWithInput(`${capability}\n${session}\n`, 'bind', '--book', bookFile, '--session', session)
+  assert.equal(leaked.status, 2, leaked.stderr)
+  assert.match(leaked.stderr, /invalid flags/)
+  assert.equal(new Book({ file: bookFile }).bySession(session, Date.now())?.session, session,
+    'a rejected --session must not rebind')
+})
+
+// Catches logging loopback while the socket is bound to every interface.
+test('CLI serve logs the address it actually bound', async (t) => {
+  const { bookFile, ledgerFile } = paths(t)
+  const child = spawn(process.execPath, [...cli, 'serve', '--book', bookFile, '--ledger', ledgerFile,
+    '--port', '0', '--unsafe-bind-all'], { cwd, timeout: 10_000, killSignal: 'SIGKILL' })
+  const closed = once(child, 'close')
+  t.after(async () => { child.kill('SIGKILL'); await closed })
+  const lines = createInterface({ input: child.stdout })
+  t.after(() => lines.close())
+  let stderr = ''
+  child.stderr.setEncoding('utf8').on('data', text => { stderr += text })
+  const [line] = await Promise.race([
+    once(lines, 'line', { signal: AbortSignal.timeout(5_000) }),
+    closed.then(([code]) => assert.fail(`serve exited before listening (${code}): ${stderr}`)),
+  ])
+  assert.match(line, /^listening\s+http:\/\/0\.0\.0\.0:[1-9]\d*$/)
+})
+
+// Catches help that still hides the stdin session and the logs bearer.
+test('CLI help says bind reads the session id from stdin and logs require a bearer', () => {
+  const result = spawnSync(process.execPath, ['src/cli.ts', '--help'], { cwd, encoding: 'utf8', timeout: 10_000 })
+  if (result.error) throw result.error
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /swarm capture-cloud bind reads the session id from stdin/)
+  assert.match(result.stdout, /requires Authorization: Bearer on POST \/v1\/logs/)
 })

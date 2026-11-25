@@ -31,6 +31,8 @@ const catalogLines = [
   '       swarm sprite routes [--party FILE] [--repo FILE]',
   '       swarm capture <run|collect>',
   '       swarm capture-cloud <serve|issue|bind>',
+  '       swarm capture-cloud bind reads the session id from stdin',
+  '       swarm capture-cloud serve requires Authorization: Bearer on POST /v1/logs',
   '       swarm mirror sync --repo owner/name [--json]',
   '       swarm mirror prs --board URL --repo owner/name [--json]',
   '       swarm gate check <pr-number> --board URL',

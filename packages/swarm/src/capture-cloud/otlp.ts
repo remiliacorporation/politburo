@@ -96,7 +96,8 @@ function read(body: unknown) {
   } catch { return undefined }
 }
 
-export async function acceptOtlp(body: unknown, accept: (sessionId: string, claim: unknown) => Promise<Outcome>): Promise<Outcome> {
+export async function acceptOtlp(body: unknown, accept: (sessionId: string, claim: unknown) => Promise<Outcome>,
+  authorizedSession?: string): Promise<Outcome> {
   const logs = object(read(body))?.resourceLogs
   if (!Array.isArray(logs)) return [400, 'invalid']
   // Preflight the record count before the first write.
@@ -104,6 +105,13 @@ export async function acceptOtlp(body: unknown, accept: (sessionId: string, clai
   for (const record of apiRequests(logs)) {
     if (records.length === 500) return [413, 'too_many_records']
     records.push(record)
+  }
+  // A token that matches none of the API records must not book a partial batch.
+  if (authorizedSession !== undefined) {
+    const decisive = records.filter(record => record.claim)
+    if (decisive.length > 0 && decisive.every(record => record.sessionId !== authorizedSession)) {
+      return [401, 'unauthorized']
+    }
   }
   let success: Outcome | undefined, firstReject: Outcome | undefined, unknown = 0, rejected = 0
   for (const { sessionId, claim } of records) {

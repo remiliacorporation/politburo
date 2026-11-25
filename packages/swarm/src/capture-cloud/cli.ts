@@ -12,7 +12,6 @@ const flags = {
   book: { type: 'string' }, ledger: { type: 'string' }, port: { type: 'string' },
   'unsafe-bind-all': { type: 'boolean' }, envelope: { type: 'string' },
   'ttl-hours': { type: 'string' }, json: { type: 'boolean' },
-  session: { type: 'string' },
 } as const
 
 const unsafeLedger = 'ledger path is not a safe regular file'
@@ -64,7 +63,7 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
   }
   const allowed = action === 'serve' ? ['ledger', 'port', 'unsafe-bind-all']
     : action === 'issue' ? ['envelope', 'ttl-hours']
-    : action === 'bind' ? ['session'] : undefined
+    : action === 'bind' ? [] : undefined
   if (!allowed) return fail('expected capture-cloud serve, issue, or bind', 2)
   let values
   try { ({ values } = parseArgs({ args, options: flags })) } catch { return fail('invalid flags', 2) }
@@ -75,7 +74,6 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
   if (!values.book) return fail('missing --book', 2)
   if (action === 'serve' && !values.ledger) return fail('missing --ledger', 2)
   if (action === 'issue' && !values.envelope) return fail('missing --envelope', 2)
-  if (action === 'bind' && !values.session) return fail('missing --session', 2)
   const port = Number(values.port ?? '8721')
   if (action === 'serve' && (!/^\d+$/.test(values.port ?? '8721') || port > 65535)) return fail('invalid --port', 2)
   const ttlMs = Number(values['ttl-hours']) * 3_600_000
@@ -83,9 +81,6 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
     return fail('invalid --ttl-hours', 2)
   }
 
-  if (action === 'bind' && !/^[A-Za-z0-9_-]{8,128}$/.test(values.session!)) {
-    return fail('invalid session id', 2)
-  }
   if (action === 'bind' && process.stdin.isTTY) {
     return fail('capability must be piped on stdin', 2)
   }
@@ -117,7 +112,7 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
           }
           process.on('SIGINT', stop)
           process.on('SIGTERM', stop)
-          const url = `http://127.0.0.1:${server.port}`
+          const url = `http://${server.host}:${server.port}`
           console.log(json ? JSON.stringify({ listening: url }) : `listening  ${url}`)
         })
       } finally { closeSync(fd) }
@@ -129,16 +124,23 @@ export async function captureCloud([action, ...args]: string[]): Promise<number>
       try { envelope = JSON.parse(readFileSync(values.envelope!, 'utf8')) } catch { return fail('cannot read envelope json') }
       if (!validateEnvelope(envelope)) return fail('invalid envelope')
       const result = book.issue(envelope, { ttlMs })
-      // Stdout is the dispatcher's capability handoff channel.
+      // Stdout is the dispatcher's handoff: the capability and the logs token.
       const output = json ? JSON.stringify(result)
-        : `capability  ${result.capability}\nexpires  ${result.expiresAt}`
+        : `capability  ${result.capability}\ntoken  ${result.token}\nexpires  ${result.expiresAt}`
       try { await deliverCapability(output) } catch { return fail('cannot deliver capability') }
     } else {
-      let capability: string | undefined
+      let capability: string | undefined, sessionId: string | undefined
       const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
-      try { for await (const line of lines) { capability = line; break } } finally { lines.close() }
+      try {
+        for await (const line of lines) {
+          if (capability === undefined) capability = line
+          else { sessionId = line; break }
+        }
+      } finally { lines.close() }
       if (!capability) return fail('missing capability on stdin', 2)
-      book.bind(capability, values.session!)
+      if (!sessionId) return fail('missing session id on stdin', 2)
+      if (!/^[A-Za-z0-9_-]{8,128}$/.test(sessionId)) return fail('invalid session id', 2)
+      book.bind(capability, sessionId)
       console.log(json ? JSON.stringify({ bound: true }) : 'bound')
     }
     return 0

@@ -52,6 +52,15 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     if (!cap && !otlp) return send(404, 'not_found')
     const globalRetry = globalLimit('global').retry
     if (globalRetry) return respond(req, res, limited(globalRetry))
+    let otlpEntry: BookEntry | undefined
+    if (otlp) {
+      // Charge probes before the credential check so a missing token is not a free flood.
+      const addressRetry = addressLimit(address).retry
+      if (addressRetry) return respond(req, res, limited(addressRetry), true)
+      const presented = bearer(req)
+      otlpEntry = presented ? book.byLogsToken(presented, now()) : undefined
+      if (!otlpEntry?.session) return send(401, 'unauthorized')
+    }
     if (cap) {
       // Charge probes before lookup, without sharing a valid capability's allowance.
       const addressRetry = addressLimit(address).retry
@@ -86,12 +95,13 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
       try { body = JSON.parse(text) } catch { return send(400, 'invalid') }
       return respond(req, res, await accept(body, entry, received))
     }
-    const addressRetry = addressLimit(address).retry
-    if (addressRetry) return respond(req, res, limited(addressRetry), true)
     const result = await acceptOtlp(text, async (sessionId, claim) => {
-      const match = book.bySession(sessionId, now())
-      return match ? accept(claim, match, received, `session:${sessionId}`, limited) : [404, 'unknown_envelope']
-    })
+      // An invalid claim is rejected before attribution, and never booked.
+      if (!validateClaim(claim)) return accept(claim, otlpEntry!, received)
+      // The bearer authorizes one envelope. Another session id in the batch is not that credential.
+      if (!otlpEntry?.session || sessionId !== otlpEntry.session) return [404, 'unknown_envelope']
+      return accept(claim, otlpEntry, received, `session:${sessionId}`, limited)
+    }, otlpEntry?.session ?? undefined)
     respond(req, res, result, true)
   }
 
@@ -169,8 +179,15 @@ export function createReceiver({ book, ledger, now = Date.now, host = '127.0.0.1
     })
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('missing listening port')
-    return { port: address.port, close: () => new Promise<void>((resolve, reject) =>
+    const hostText = address.family === 'IPv6' ? `[${address.address}]` : address.address
+    return { port: address.port, host: hostText, close: () => new Promise<void>((resolve, reject) =>
       server.close(error => error ? reject(error) : resolve())) }
   }
   return { handle, listen }
+}
+
+function bearer(req: IncomingMessage): string | undefined {
+  const header = req.headers.authorization
+  if (typeof header !== 'string') return undefined
+  return /^Bearer ([A-Za-z0-9_-]+)$/.exec(header)?.[1]
 }

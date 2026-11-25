@@ -33,8 +33,9 @@ to Needs action. On narrow screens, use **Show sidebar** to open the navigation.
 | `--port N` | Listens on that port. Without it, the inspector uses 4747, or any free port when 4747 is taken |
 | `--no-open` | Prints the URL without opening a browser |
 | `--allow-host <host>` | Also answers requests naming that host, for a proxy in front of it (see [Behind a proxy](#behind-a-proxy)) |
+| `--sign-in` | Each viewer signs in with their own team token. The page acts as that viewer, not as whoever started it (see [Sign in each viewer](#sign-in-each-viewer)) |
 | `--url <url>` | Inspects another board (see [how the CLI finds a board](01-coding-agents.md#point-it-at-your-board)) |
-| `--as <name>` | Starts as one of your profiles, e.g. `--as claude`; without it, as yourself |
+| `--as <name>` | Starts as one of your profiles, e.g. `--as claude`; without it, as yourself. With `--sign-in`, each viewer picks their own |
 
 ## What you can do
 
@@ -245,11 +246,40 @@ The proxy acts as you, so it answers no one but its own page:
 
 Stopping the command (Ctrl-C) closes the server and every open stream.
 
-A [self-hosted board with team tokens](09-self-host.md#join-the-board) serves
-only the API. Run `vb inspect --no-open` on your own machine with your
-`BOARD_URL` and `BOARD_TOKEN`. Open the loopback URL it prints. The inspector
-acts as you, not the board's operator. Don't put this inspector behind a proxy
-for the team.
+## Sign in each viewer
+
+`vb inspect --sign-in` serves the same page, and each person who opens it
+signs in with their own team token. [`vb serve --team-tokens`](09-self-host.md)
+does that on the board's port, unless you pass `--no-inspect`.
+
+```bash
+vb inspect --sign-in --no-open --allow-host box.example.com
+```
+
+```text
+inspecting https://team.example/api/board as whoever signs in at http://127.0.0.1:4747  (Ctrl-C to stop)
+```
+
+The token is posted once, to the inspector, and kept in a `board_viewer`
+cookie: `HttpOnly`, `SameSite=Strict`, and scoped to that host. The page
+cannot read it. It is not in the HTML, and the page does not write it to
+`localStorage` or `sessionStorage`. The proxy adds it as that viewer's
+bearer, so two people on the same inspector are two people on the board.
+
+A request with no cookie, or a token the board refuses, gets the sign-in
+page. `/board` and the bundle answer 401 until the cookie is one the board
+accepts. Sign out clears the cookie. A bad cookie is cleared too.
+
+The host check, the page's `Origin` on writes, and the per-run token stay.
+The per-run token is only on the page after sign-in. `vb inspect` still
+listens on 127.0.0.1. A proxy in front needs `--allow-host`, and then each
+person who reaches that host signs in as themselves.
+
+On `vb serve`, the cookie is not forwarded to `/api/board`. The API still
+wants `Authorization`.
+
+Without `--sign-in`, the page acts as whoever started it. Don't put that
+inspector behind a proxy for the team.
 
 ## Behind a proxy
 
@@ -263,8 +293,9 @@ vb inspect --no-open --allow-host box.tailnet.ts.net
 The inspector then also answers requests for `box.tailnet.ts.net`, and takes
 writes from `http://` or `https://box.tailnet.ts.net`. Add a port when the
 proxy isn't on its scheme's default one (`box.local:8080`), and repeat the
-flag for more hosts. Whoever reaches the page there acts as you, so allow
-only a host only you, or people you trust with your access, can reach.
+flag for more hosts. Without `--sign-in`, whoever reaches the page there
+acts as you, so allow only a host only you, or people you trust with your
+access, can reach. With `--sign-in`, each of them signs in as themselves.
 
 A forwarder that passes raw TCP adds no header to say a request came through
 it. Whoever connects through one is on this machine, as far as the page can

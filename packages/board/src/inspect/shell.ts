@@ -12,7 +12,7 @@ const attribute = (value: string) => value.replace(/[&<>"']/g, (char) => `&#${ch
  * the path it's served under (`''` at a server's root), which its bundle, its proxy, and its links
  * are under too.
  */
-export const shell = ({ token, profile, base, named = false }: { token: string; profile: ProfileOption; base: string; named?: boolean }) => `<!doctype html>
+export const shell = ({ token, profile, base, named = false, signOut = false }: { token: string; profile: ProfileOption; base: string; named?: boolean; signOut?: boolean }) => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -24,7 +24,7 @@ ${named ? '<meta name="inspect-named" content="1">\n' : ''}<title>board</title>
 <style>${CSS}</style>
 </head>
 <body>
-<div id="root"></div>
+${signOut ? `<form method="post" action="${attribute(base)}/sign-out"><button type="submit">Sign out</button></form>\n` : ''}<div id="root"></div>
 <script type="module" src="${attribute(base)}/app.js?v=${attribute(VERSION)}"></script>
 </body>
 </html>`

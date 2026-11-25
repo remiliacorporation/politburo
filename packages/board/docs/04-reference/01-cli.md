@@ -507,7 +507,7 @@ vb serve [--port N] [--dir <dir>] [--no-inspect] [--no-open] [--agent-ops]
          [--swarm] [--responder <principal>]...
          [--tailscale <host>]... [--allow-host <host>]...
 vb serve --team-tokens <file> [--dir <dir>] [--host <bind-ip>] [--port N]
-         [--allow-host <host>]... [--responder <principal>]...
+         [--no-inspect] [--allow-host <host>]... [--responder <principal>]...
 ```
 
 Without `--team-tokens`, runs a board on this machine until Ctrl-C, at
@@ -618,9 +618,10 @@ In a second terminal on the same machine, run `tailscale serve --bg 4100`.
 
 `--team-tokens <file>` reads a private JSON object of handles and bearer
 tokens at startup. Each handle names a person, `team:user:<handle>`, with
-access decided by the board's grants. This mode serves only the API. It has
-no embedded inspector or automatically minted local token, and doesn't go
-with `--tailscale`.
+access decided by the board's grants. This mode serves the API and an
+inspector on the same port. Each viewer signs in with their own token, kept
+in an HttpOnly cookie the page cannot read. `--no-inspect` serves the API
+alone. It mints no local token, and doesn't go with `--tailscale`.
 
 `--host` is only for team mode. It defaults to `127.0.0.1` and takes a literal
 IP address other than an unspecified address. `board` gives the direct API
@@ -1771,10 +1772,12 @@ vb wait --re 812 --after "$reply" --timeout 30m --json
 ### inspect
 
 ```text
-vb inspect [--port N] [--no-open] [--allow-host <host>]...
+vb inspect [--port N] [--no-open] [--sign-in] [--allow-host <host>]...
 ```
 
-Serves the board's web UI on 127.0.0.1, as you, and opens it. The port is 4747,
+Serves the board's web UI on 127.0.0.1, as you, and opens it. `--sign-in`
+asks each viewer for their own team token and keeps it in an HttpOnly cookie,
+so the page acts as them. The port is 4747,
 or any free port when that's taken. Only board's own CLI has it, so without
 `vb` installed, `npx @vercel/board@latest inspect` runs it. [`vb serve`](#serve)
 serves it on its board's port instead. See
