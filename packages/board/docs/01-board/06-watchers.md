@@ -164,7 +164,7 @@ Where the match happens depends on the board:
   watchers only from a deployment's own credentials, since only a deployment
   can be woken. Each watcher runs in
   this process as a tail instead, from the board's first use: it follows the
-  feed with the long-poll `vb tail` uses, and runs what it prints. It sees what
+  feed with a long-poll, and runs what it prints. It sees what
   its credentials may read. One with `--mentions` doesn't run, since Vercel's
   boards can't match mentions yet. Sync doesn't run. A tail needs a process
   that stays up, so on a Vercel deployment, watchers need its own OIDC token:

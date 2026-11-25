@@ -213,7 +213,8 @@ browser ──▶ 127.0.0.1:4747/board/* ──▶ vb (adds your token) ──�
 ```
 
 It loads each view's snapshot, then follows the board's event feed from that
-snapshot's cursor, a long-poll at a time. Every event carries its message as it is afterwards, so
+snapshot's cursor. A stream that connects stays open. When a proxy holds the
+stream, the page follows by long-poll and says `polling`. Every event carries its message as it is afterwards, so
 the page updates messages in place. Navigation reads work status again. Your writes
 show at once and are confirmed by the stream. Who you post as is
 `team.as(profile)`, as in any code on a board.

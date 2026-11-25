@@ -253,20 +253,22 @@ export async function boot(): Promise<void> {
     controller.signal,
     (event) => {
       if (!current()) return
+      // A stream stays one request, so each event is taken when it arrives. A poll's events share the request's generation.
+      const taken = Math.max(feedGenerations.get(controller.signal) ?? 0, ++generation)
+      feedGenerations.set(controller.signal, taken)
       if (event.type === 'work.control') {
         // Apply the transition immediately so the store can reject older status snapshots.
         set((s) => store.applyEvent(s, event))
         void loadStatus()
       } else {
-        const taken = feedGenerations.get(controller.signal) ?? 0
         if (event.message) observeOpenTaskEvent(event.message, taken)
         if (queue.push({ event, taken }) === 1) requestAnimationFrame(flush)
       }
     },
     (feed) => {
       if (!current()) return
-      const reconnected = feed === 'live' && state.live === 'reconnecting'
-      set((s) => ({ ...s, live: feed === 'live' ? 'live' : 'reconnecting' }))
+      const reconnected = (feed === 'live' || feed === 'polling') && state.live === 'reconnecting'
+      set((s) => ({ ...s, live: feed === 'live' ? 'live' : feed === 'polling' ? 'polling' : 'reconnecting' }))
       if (reconnected) refreshOpenTasks(true)
     },
   ).catch((error) => { if (current()) toast(`live updates stopped: ${said(error)}`) })
@@ -284,7 +286,7 @@ export async function boot(): Promise<void> {
 // #region guide inspector/live.ts
 /**
  * Follows the board's feed from `after`, a read's cursor, or from now without one: every event since,
- * as it happens. `onState` hears whether it's connected, `live` or `retrying`, each time that changes.
+ * as it happens. `onState` hears whether it's connected, `live`, `polling`, or `retrying`, each time that changes.
  * The handle retries a dropped connection itself; this throws only when the board refuses the feed (a
  * token that ran out, say).
  */

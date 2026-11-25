@@ -379,12 +379,13 @@ it('does not render a deleted task from the first list snapshot', async () => {
       return response
     }
     if (routePath(request) !== '/events') return send()
-    if (deletionDelivered) consumed.resolve()
     const response = await send()
-    if (response.ok) {
-      const { events } = await response.clone().json() as { events: { type: string; message?: { id: string } }[] }
-      deletionDelivered ||= events.some((event) => event.type === 'message.deleted' && event.message?.id === task.id)
-    }
+    if (response.ok) feedEvents(response, (event) => {
+      if (event.type === 'message.deleted' && event.message?.id === task.id) {
+        deletionDelivered = true
+        consumed.resolve()
+      }
+    })
     return response
   } })
   await sampled.promise
@@ -434,12 +435,13 @@ it('revalidates on window focus and does not re-admit a revoked row from a delay
   let delivered = false
   await open('/', { token, transport: async (request, send) => {
     if (routePath(request) !== '/events') return send()
-    if (delivered) queued.resolve() // The next poll starts after the previous events were queued for paint.
     const response = await send()
-    if (response.ok) {
-      const page = await response.clone().json() as { events: { message?: { id: string; text: string } }[] }
-      delivered ||= page.events.some(({ message }) => message?.id === task.id && message.text === 'Private work, edited')
-    }
+    if (response.ok) feedEvents(response, (event) => {
+      if (event.message?.id === task.id && event.message.text === 'Private work, edited') {
+        delivered = true
+        queued.resolve()
+      }
+    })
     return response
   } })
   const row = await vi.waitFor(() => link('Private work', lane('Open decisions')))
@@ -676,10 +678,7 @@ const taskRead = { timeout: 5000 }
 function seeTaskEvent(type: string, seen: () => void) {
   return async (request: Request, forward: (request: Request) => Promise<Response>) => {
     const response = await forward(request)
-    if (routePath(request) === '/events' && response.ok) {
-      const page = await response.clone().json() as { events: { type: string }[] }
-      if (page.events.some((event) => event.type === type)) seen()
-    }
+    if (routePath(request) === '/events' && response.ok) feedEvents(response, (event) => { if (event.type === type) seen() })
     return response
   }
 }
@@ -865,11 +864,25 @@ it('revalidates task access when the feed reconnects after a failed poll', async
   const { client, open, secret, publicTask, revoke } = await revocableTasks()
   let dropNext = false
   await open('/tasks?state=ready', { transport: async (request, send) => {
-    if (routePath(request) === '/events' && dropNext) {
-      dropNext = false
-      return Response.json({ error: { code: 'unavailable', message: 'connection lost' } }, { status: 503 })
-    }
-    return send()
+    if (routePath(request) !== '/events') return send()
+    const response = await send()
+    if (!response.ok || !response.body) return response
+    const reader = response.body.getReader()
+    return new Response(new ReadableStream({
+      async pull(controller) {
+        if (dropNext) {
+          dropNext = false
+          controller.error(new Error('connection lost'))
+          return
+        }
+        const next = await reader.read()
+        if (next.done) {
+          controller.close()
+          return
+        }
+        controller.enqueue(next.value)
+      },
+    }), { status: response.status, headers: response.headers })
   } })
   await vi.waitFor(() => expect(taskRowIds()).toEqual([publicTask.id, secret.id]), taskRead)
   await vi.waitFor(() => expect(document.querySelector('.live')?.textContent).toBe('live'), taskRead)
@@ -1089,15 +1102,10 @@ it('does not let a reaction from an overlapping poll restore an omitted Handoff'
   await open('/handoffs', { transport: async (request, send) => {
     if (routePath(request) !== '/events') return send()
     const result = send()
-    if (Number(new URL(request.url).searchParams.get('wait')) > 0) polling.resolve()
+    if (isFeed(request)) polling.resolve()
     const response = await result
-    if (!response.ok) return response
-    const { events } = await response.clone().json() as { events: { type: string }[] }
-    if (events.some(({ type }) => type === 'reaction.added')) {
-      sampled.resolve()
-      await release.promise
-    }
-    return response
+    if (!response.ok || !response.body) return response
+    return holdFeedEvent(response, 'reaction.added', sampled.resolve, release.promise)
   } })
   await vi.waitFor(() => expect(runnableTitles()).toContain('Private task'))
   await polling.promise
@@ -1118,7 +1126,7 @@ it('does not let a reaction from an overlapping poll restore an omitted Handoff'
   } finally { frame.mockRestore() }
 })
 
-it('does not apply a retained Handoff edit from a poll dispatched before its accepted read', async () => {
+it('shows a handoff edit when the stream delivers it, and leaves the revoked task out', async () => {
   const { client, open, publicTask, revoke } = await revocableTasks()
   const polling = gate()
   const list = gate()
@@ -1138,15 +1146,10 @@ it('does not apply a retained Handoff edit from a poll dispatched before its acc
     }
     if (routePath(request) !== '/events') return send()
     const result = send()
-    if (Number(new URL(request.url).searchParams.get('wait')) > 0) polling.resolve()
+    if (isFeed(request)) polling.resolve()
     const response = await result
-    if (!response.ok) return response
-    const { events } = await response.clone().json() as { events: { type: string }[] }
-    if (events.some(({ type }) => type === 'message.edited')) {
-      sampled.resolve()
-      await deliver.promise
-    }
-    return response
+    if (!response.ok || !response.body) return response
+    return holdFeedEvent(response, 'message.edited', sampled.resolve, deliver.promise)
   } })
   await vi.waitFor(() => expect(runnableTitles()).toContain('Private task'))
   await polling.promise
@@ -1165,7 +1168,7 @@ it('does not apply a retained Handoff edit from a poll dispatched before its acc
     await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0))
     frame.mockRestore()
     await act(async () => { for (const flush of frames) flush(performance.now()) })
-    expect(runnableTitles()).toEqual(['Shared task'])
+    expect(runnableTitles()).toEqual(['Edited during the older poll'])
   } finally { frame.mockRestore() }
   recheck.resolve()
   await vi.waitFor(() => expect(runnableTitles()).toEqual(['Edited during the older poll']))
@@ -1640,7 +1643,8 @@ it('drops a late status read after a profile switch', async () => {
     await switchProfile('editor')
     releaseOld.resolve()
     await reading
-    expect(page.getState().status).toEqual({ paused: false, pauseEpoch: 0 })
+    // The stream already carried the resume. The late status read does not put the pause back.
+    expect(page.getState().status).toEqual({ paused: false, pauseEpoch: 1 })
     releaseNew.resolve()
     await vi.waitFor(() => expect(page.getState().status).toEqual({ paused: false, pauseEpoch: 1 }))
   } finally {
@@ -2005,7 +2009,72 @@ const attentionRead = (r: Request) => r.method === 'GET' && r.url.endsWith('/att
 const answerWrite = (r: Request) => r.method === 'POST' && r.url.endsWith('/answer')
 const isFeed = (r: Request) => {
   const url = new URL(r.url)
-  return url.pathname.endsWith('/events') && Number(url.searchParams.get('wait')) > 0
+  return url.pathname.endsWith('/events') && (Number(url.searchParams.get('wait')) > 0 || (r.headers.get('accept') ?? '').includes('text/event-stream'))
+}
+
+/** Passes the feed through, and holds the first chunk of `type` until `release`. The page is already reading. */
+function holdFeedEvent(response: Response, type: string, seen: () => void, release: Promise<void>): Response {
+  const content = response.headers.get('content-type') ?? ''
+  if (!content.includes('text/event-stream') || !response.body) {
+    void response.clone().json().then(async (page: { events?: { type: string }[] }) => {
+      if (page.events?.some((event) => event.type === type)) {
+        seen()
+        await release
+      }
+    }).catch(() => {})
+    return response
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let held = false
+  return new Response(new ReadableStream({
+    async pull(controller) {
+      const { value, done } = await reader.read()
+      if (done) {
+        controller.close()
+        return
+      }
+      if (!held && decoder.decode(value, { stream: true }).includes(`"type":"${type}"`)) {
+        held = true
+        seen()
+        await release
+      }
+      controller.enqueue(value)
+    },
+  }), { status: response.status, headers: response.headers })
+}
+
+/** Events in one feed response: a finished JSON page, or the data lines of a stream as they arrive. */
+function feedEvents(response: Response, each: (event: { type: string; message?: { id: string; text?: string } }) => void) {
+  const type = response.headers.get('content-type') ?? ''
+  if (!type.includes('text/event-stream')) {
+    void response.clone().json().then((page: { events?: { type: string; message?: { id: string; text?: string } }[] }) => {
+      for (const event of page.events ?? []) each(event)
+    }).catch(() => {})
+    return
+  }
+  const body = response.clone().body
+  if (!body) return
+  void (async () => {
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) return
+        buffer += decoder.decode(value, { stream: true })
+        let boundary = buffer.indexOf('\n\n')
+        while (boundary !== -1) {
+          const block = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).replace(/^ /, '')).join('\n')
+          if (data) each(JSON.parse(data) as { type: string; message?: { id: string; text?: string } })
+          boundary = buffer.indexOf('\n\n')
+        }
+      }
+    } catch { /* the page stopped reading */ }
+  })()
 }
 const gate = () => {
   const g = Promise.withResolvers<void>()

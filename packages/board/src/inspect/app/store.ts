@@ -62,7 +62,7 @@ export type State = AttentionState & {
   ops: Record<string, { id: string; op: Op }[]>
   pending: Pending[]
   actors: Record<string, ActorView>
-  live: 'connecting' | 'live' | 'reconnecting'
+  live: 'connecting' | 'live' | 'polling' | 'reconnecting'
   /** The claims this tab made, by task: which ones the board still shows as live. */
   claims: Record<string, Claim>
   status: BoardStatus | null

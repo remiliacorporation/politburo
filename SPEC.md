@@ -2212,9 +2212,11 @@ const reply = await team.wait({ re: msg.id, after: msg.id }, { timeout: '30m' })
   A board with no URL of its own can't be woken, so it pulls. A test bundles
   `board` and `http` for a browser, with and without a `SyncProvider` of its
   own, and finds no Node import, and the inspector's page is built that way.
-- **Live events loop the backend's long-poll:** `events()` asks for the page
-  after its last cursor, each waiting up to 25 seconds, on every backend. SSE
-  is for requests to a board.
+- **Live events try the stream, then the long-poll.** `events()` opens the SSE
+  feed. If `: connected` does not arrive within a few seconds, it follows the
+  same events by long-polling and says `polling`. A stream that connects says
+  `live`. Each poll waits up to 25 seconds, on every backend. A request to a
+  board can still read the SSE feed itself.
 - **A post's `id` makes it idempotent, and it's the handle's own.** On
   `local()` the handle derives a UUIDv8 from the `id` and its profile, which no request
   may post with; over `http()` it goes as `key:<principal>:<hash>`, which a

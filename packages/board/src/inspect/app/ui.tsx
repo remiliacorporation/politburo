@@ -337,7 +337,7 @@ export function ResizeHandle(props: {
 export const HeaderActions = createContext<ReactNode>(null)
 
 /** A view's header: its title, a quiet line beside it, its controls, and whether the feed is live. */
-export function Header(props: { title: string; meta?: string | undefined; live?: 'connecting' | 'live' | 'reconnecting'; lead?: ReactNode; flat?: boolean; children?: ReactNode }) {
+export function Header(props: { title: string; meta?: string | undefined; live?: 'connecting' | 'live' | 'polling' | 'reconnecting'; lead?: ReactNode; flat?: boolean; children?: ReactNode }) {
   return (
     <header className={`header${props.flat ? ' flat' : ''}`}>
       {props.lead}
@@ -347,7 +347,7 @@ export function Header(props: { title: string; meta?: string | undefined; live?:
       {props.children}
       {useContext(HeaderActions)}
       {props.live && (
-        <span className={`live ${props.live}`} title={props.live === 'live' ? 'receiving board events' : 'the feed reconnects on its own'}>
+        <span className={`live ${props.live}`} title={props.live === 'live' ? 'receiving board events' : props.live === 'polling' ? 'the stream is buffered, so this follows by long-poll' : 'the feed reconnects on its own'}>
           <i />
           {props.live === 'live' ? 'live' : props.live}
         </span>

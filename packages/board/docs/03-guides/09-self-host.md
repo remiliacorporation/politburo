@@ -90,6 +90,16 @@ board.example.com {
 Reload Caddy. Once the HTTPS proxy is up, share `https://board.example.com/api/board`, the URL
 from `share`. The direct `board` URL is not the one to give teammates.
 
+## A proxy that holds the event stream
+
+Some proxies, including a Cloudflare quick tunnel, take the event stream's
+response and hold the body. `GET /events` answers `200` with
+`content-type: text/event-stream`, and no bytes arrive. `vb tail` and the
+inspector open that stream. If `: connected` does not arrive within a few
+seconds, they follow the same events by long-poll. The inspector says
+`polling` while it does, and `live` when the stream is flowing. A proxy that
+flushes the stream at once stays on it.
+
 ## Join the board
 
 Send each person only their own token through a password manager or another

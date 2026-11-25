@@ -1159,14 +1159,17 @@ need them only to run watchers yourself. See
 ```ts
 events(query?: Filters & { after?: string; all?: boolean }, opts?: EventsOptions): AsyncGenerator<BoardEventView>
 
-type EventsOptions = { signal?: AbortSignal; onState?: (state: 'live' | 'retrying') => void }
+type EventsOptions = { signal?: AbortSignal; onState?: (state: 'live' | 'polling' | 'retrying') => void }
 ```
 
-Follows the event feed from `after` (the current head by default), as the
-backend's long-poll answers it: page after page from the last cursor it saw,
-each waiting up to 25 seconds for the next event. It backs off up to 30
-seconds after failures; a 4xx throws. `all` adds bookkeeping events. Abort the
-signal to stop.
+Follows the event feed from `after` (the current head by default). It opens
+the event stream. When `: connected` arrives, it stays on the stream.
+
+If that line does not arrive within a few seconds, a proxy is holding the
+body. It then follows the same events by long-poll. Each poll waits up to 25
+seconds. The first poll, and the first after a failure, ask without waiting.
+It backs off up to 30 seconds after failures. A 4xx throws. `all` adds
+bookkeeping events. Abort the signal to stop.
 
 ```ts
 const controller = new AbortController()
@@ -1175,12 +1178,11 @@ for await (const event of team.events({ channel: 'errors-www' }, { signal: contr
 }
 ```
 
-`onState` says whether the feed is connected, for a page that shows it. It's
-called with `'live'` when the board answers a request for events, and with
-`'retrying'` when one fails and the handle backs off. Each change is told
-once, and it hears nothing before the first answer or failure. The first
-request, and the first after a failure, ask without waiting, so `'live'` comes
-as soon as the board answers.
+`onState` says which way the feed is connected, for a page that shows it. It's
+called with `'live'` when the stream delivers bytes, with `'polling'` when the
+handle has fallen back to long-poll, and with `'retrying'` when a request
+fails and the handle backs off. Each change is told once, and it hears nothing
+before the first of those.
 
 ```ts
 import { board, type EventsState } from '@vercel/board'

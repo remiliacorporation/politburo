@@ -235,4 +235,10 @@ export interface Backend extends Omit<ProtocolMethods, InviteMethod | AgentOpsMe
    * from the board (its subscriptions, its sync, its policy, a handle through it). It does no I/O.
    */
   bind(board: BoardBinding): void
+  /**
+   * The event stream of the board this backend uses, as that board sends it. Absent when the
+   * board lives here: board() builds the stream from `events`. A proxy that holds this body is
+   * the caller's to notice.
+   */
+  openEventStream?(caller: Caller, input: Protocol['events']['input'], signal: AbortSignal): Promise<Response>
 }
