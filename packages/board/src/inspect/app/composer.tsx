@@ -1,4 +1,4 @@
-import { Clock, CloudOff, FileText, ListTodo, Paperclip, Tag, X } from 'lucide-react'
+import { Clock, CloudOff, FileText, ListTodo, Mail, Paperclip, Tag, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { ATTACHMENT_BYTES_MAX, ATTACHMENTS_PER_MESSAGE_MAX } from '../../contract/schemas.ts'
 import type { ScheduleTiming } from '../../server/index.default.ts'
@@ -72,6 +72,11 @@ export function Composer(props: {
   fileDraft?: [File[], Dispatch<SetStateAction<File[]>>]
   onSend: (send: Send) => void
   onEditLast?: () => void
+  /**
+   * Set on a reply to a claimed task: the send button is an envelope labelled for this holder,
+   * and it flies off as the reply goes. Other composers leave it unset.
+   */
+  letterTo?: string
 }) {
   const [text, setText] = useState(() => readDraft(props.scope))
   const [channel, setChannel] = useState(props.channel ?? '')
@@ -85,6 +90,10 @@ export function Composer(props: {
   const [assignee, setAssignee] = useState('')
   const tasking = props.tasks
   const asTask = tasking !== undefined && task
+  const letter = props.letterTo !== undefined && !asTask && !later
+  const [flying, setFlying] = useState(false)
+  const flight = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(flight.current), [])
   const [noSync, setNoSync] = useState(false)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [labelsOpen, setLabelsOpen] = useState(false)
@@ -150,6 +159,11 @@ export function Composer(props: {
     setHold('')
     setDetail(false)
     setTask(props.tasks?.always ?? false)
+    if (letter) {
+      setFlying(true)
+      window.clearTimeout(flight.current)
+      flight.current = window.setTimeout(() => setFlying(false), 400)
+    }
   }
 
   const wrap = (el: HTMLTextAreaElement, marker: string) => {
@@ -378,8 +392,14 @@ export function Composer(props: {
             </Panel>
           )}
           <span className="hint">enter to send · shift+enter for a new line</span>
-          <button className="send" disabled={!canSend} onMouseDown={(event) => event.preventDefault()} onClick={send}>
-            {asTask ? 'start task' : later ? 'schedule' : 'send'}
+          <button
+            className={`send${letter ? ' letter' : ''}${flying ? ' flying' : ''}`}
+            disabled={!canSend}
+            aria-label={letter ? `send letter to ${props.letterTo}` : undefined}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={send}
+          >
+            {letter ? <Mail size={16} strokeWidth={1.75} aria-hidden="true" /> : asTask ? 'start task' : later ? 'schedule' : 'send'}
           </button>
         </div>
       </div>

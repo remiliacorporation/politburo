@@ -903,38 +903,46 @@ export function itemNames(): readonly string[] {
   return [...itemFaces.keys()].sort()
 }
 
-/**
- * The species in a mob id `<serial>-<SPECIES><n>` (`317-CAT`, `21-BEE2`). The suffix is the
- * allocator's: empty, or 2 and up. Null when the id is not that shape or the species is unknown.
- */
-export function speciesOfMob(id: string): string | null {
-  const match = /^([1-9][0-9]*)-([A-Z]+[0-9]*)$/.exec(id)
-  if (!match) return null
-  return named(match[2]!, speciesByLength)
+/** The mob or sprite id at the end of an actor id (`team:user:311-bee`) or a handle as written. */
+function idTail(id: string): string {
+  const plus = id.lastIndexOf('+')
+  if (plus >= 0) return id.slice(plus + 1)
+  const colon = id.lastIndexOf(':')
+  return colon >= 0 ? id.slice(colon + 1) : id
 }
 
 /**
- * The item in a sprite id `<mob-id>.<ITEM><n>` (`317-CAT.PICKAXE`, `21-BEE2.AXE3`). Null when
- * the mob id or the item does not parse.
+ * The species in a mob id `<serial>-<SPECIES><n>` (`317-CAT`, `21-BEE2`, `team:user:311-bee`).
+ * The suffix is the allocator's: empty, or 2 and up. Case does not matter. Null when the id is
+ * not that shape or the species is unknown.
+ */
+export function speciesOfMob(id: string): string | null {
+  const match = /^([1-9][0-9]*)-([A-Za-z]+[0-9]*)$/.exec(idTail(id))
+  if (!match) return null
+  return named(match[2]!.toUpperCase(), speciesByLength)
+}
+
+/**
+ * The item in a sprite id `<mob-id>.<ITEM><n>` (`317-CAT.PICKAXE`, `311-bee.pickaxe`). Null when
+ * the mob id or the item does not parse. An actor id may end in the sprite id.
  */
 export function itemOfSprite(id: string): string | null {
-  const match = /^([1-9][0-9]*-[A-Z]+[0-9]*)\.([A-Z]+[0-9]*)$/.exec(id)
+  const match = /^([1-9][0-9]*-[A-Za-z]+[0-9]*)\.([A-Za-z]+[0-9]*)$/.exec(idTail(id))
   if (!match || speciesOfMob(match[1]!) === null) return null
-  return named(match[2]!, itemsByLength)
+  return named(match[2]!.toUpperCase(), itemsByLength)
 }
 
 /**
  * The icon for a displayed actor name, when that name is a mob id or a sprite id.
- * `317-CAT via julian` is the cat; `21-BEE2.AXE` is the axe. Anything else is null.
- * The match is case-insensitive because a board handle can be lowercase.
+ * `317-CAT via julian` is the cat; `team:user:311-bee.pickaxe` is the pickaxe. Anything else is null.
+ * The match is case-insensitive because a board handle can be lowercase. The name itself is not rewritten.
  */
 export function actorIcon(name: string): { label: string; svg: string } | null {
   const head = name.split(' via ')[0]?.trim() ?? ''
   if (head === '') return null
-  const token = head.toUpperCase()
-  const item = itemOfSprite(token)
+  const item = itemOfSprite(head)
   if (item) return { label: item, svg: iconFor(item, 16) }
-  const species = speciesOfMob(token)
+  const species = speciesOfMob(head)
   if (species) return { label: species, svg: iconFor(species, 16) }
   return null
 }

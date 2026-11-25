@@ -131,6 +131,12 @@ describe('inspector button styles', () => {
     }
   })
 
+  it('does not fly the letter off when motion is reduced', () => {
+    const icon = 'button.send.letter.flying svg.lucide-mail'
+    expect(styleOf(icon)('animation')).toContain('letter-away')
+    expect(styleOf(icon, false, true)('animation')).toBe('none')
+  })
+
   it('keeps the pressed bevel but disables movement and animation in reduced motion', () => {
     for (const control of [...controls, 'button']) {
       for (const state of pressed) {

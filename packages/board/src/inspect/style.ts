@@ -493,6 +493,9 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .pane .composer-footer .hint { display: none; }
 .pane .composer-footer .send { margin-left: auto; }
 .send { height: 30px; padding: 0 12px; font-weight: 600; white-space: nowrap; }
+.send.letter { display: inline-flex; align-items: center; justify-content: center; width: 30px; padding: 0; }
+.send.letter.flying:disabled { opacity: 1; }
+.send.letter.flying .lucide-mail { animation: letter-away 400ms ease-in forwards; }
 .button-sounds { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
 .button-sounds input { accent-color: var(--action); }
 .send.small { height: 28px; padding: 0 10px; }
@@ -614,7 +617,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
   transform: translate(1px, 1px);
 }
 @media (prefers-reduced-motion: reduce) {
-  button, .send, .act, .tool { transition: none; animation: none; }
+  button, .send, .act, .tool, .send.letter.flying .lucide-mail { transition: none; animation: none; }
   :is(.send, .act, .tool, .tab-actions button, .home-view button, .header > .tool):not(:disabled, [aria-disabled='true']):is(:active, [aria-pressed='true']) {
     transform: none;
   }
@@ -855,4 +858,9 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .home-queue h2 { padding-bottom: 1px; }
 .handoff { padding-block: 2px; }
 .handoff-line { margin-bottom: 0; }
+
+/* A reply to the agent who holds a task leaves as a letter. */
+@keyframes letter-away {
+  to { transform: translate(18px, -28px) rotate(-18deg); opacity: 0; }
+}
 `

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { expect, it } from 'vitest'
-import { iconFor, itemNames, itemOfSprite, speciesNames, speciesOfMob } from '../src/inspect/app/icons.ts'
+import { actorIcon, iconFor, itemNames, itemOfSprite, speciesNames, speciesOfMob } from '../src/inspect/app/icons.ts'
 
 type Pools = {
   names: {
@@ -61,7 +61,7 @@ it('parses a mob id to its species and a sprite id to its item', () => {
   expect(speciesOfMob('317-CATX')).toBeNull()
   expect(speciesOfMob('CAT')).toBeNull()
   expect(speciesOfMob('01-CAT')).toBeNull()
-  expect(speciesOfMob('21-bee2')).toBeNull()
+  expect(speciesOfMob('21-bee2')).toBe('BEE')
 
   expect(itemOfSprite('317-CAT.PICKAXE')).toBe('PICKAXE')
   expect(itemOfSprite('21-BEE2.AXE')).toBe('AXE')
@@ -79,6 +79,29 @@ it('parses a mob id to its species and a sprite id to its item', () => {
   expect(itemOfSprite('PICKAXE')).toBeNull()
   expect(iconFor(speciesOfMob('21-BEE2') ?? '')).toBe(iconFor('BEE'))
   expect(iconFor('BEE2')).toBe(iconFor('not-a-name'))
+})
+
+it('reads a mob or sprite id in any case, including the tail of an actor id', () => {
+  for (const id of ['311-bee', '311-BEE', 'team:user:311-bee', 'vercel:user:311-BEE']) {
+    expect(speciesOfMob(id), id).toBe('BEE')
+  }
+  for (const id of ['311-bee.pickaxe', '311-BEE.PICKAXE', 'team:user:311-bee.pickaxe']) {
+    expect(itemOfSprite(id), id).toBe('PICKAXE')
+    expect(speciesOfMob(id), id).toBeNull()
+  }
+  expect(speciesOfMob('rival-bee')).toBeNull()
+  expect(speciesOfMob('team:user:rival-bee')).toBeNull()
+  expect(speciesOfMob('BEE')).toBeNull()
+  expect(speciesOfMob('team:user:311-nope')).toBeNull()
+  expect(itemOfSprite('team:user:311-bee.nope')).toBeNull()
+  expect(itemOfSprite('rival-bee.pickaxe')).toBeNull()
+  const written = 'team:user:311-bee'
+  const mark = actorIcon(written)
+  expect(mark?.label).toBe('BEE')
+  expect(mark?.svg).toBe(iconFor('BEE', 16))
+  expect(actorIcon('team:user:311-bee.pickaxe')?.label).toBe('PICKAXE')
+  expect(actorIcon('rival-bee')).toBeNull()
+  expect(actorIcon(`${written} via julian`)?.label).toBe('BEE')
 })
 
 const STEEL = '#c5ccd4'
