@@ -14,10 +14,37 @@ const down = (): Response => {
   throw new TypeError('fetch failed')
 }
 
+/** A stream that says it is connected and then stays open until the caller stops. */
+function heldConnected(signal: AbortSignal | undefined) {
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(': connected\n\n'))
+      const stop = () => { try { controller.close() } catch { /* already closed */ } }
+      if (signal?.aborted) stop()
+      else signal?.addEventListener('abort', stop, { once: true })
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } })
+}
+
+/** A stream that connects and then drops, the way a proxy can reset a live feed. */
+function connectedThenDrop() {
+  let sent = false
+  return new Response(new ReadableStream({
+    pull(controller) {
+      if (!sent) {
+        sent = true
+        controller.enqueue(new TextEncoder().encode(': connected\n\n'))
+        return
+      }
+      controller.error(new Error('dropped'))
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } })
+}
+
 /**
  * A board elsewhere, as its `/events` behaves: `scripted` answers come first, in turn. After them
- * a poll that asks without waiting is answered at once with nothing new, and one that waits, or a
- * stream, is held open until it's aborted: a quiet board. `waits` is what each poll asked for.
+ * a stream says `: connected` and stays open, and a poll that asks without waiting is answered at
+ * once with nothing new. A poll that waits is held until it's aborted. `waits` is what each poll asked for.
  */
 function remote(scripted: (() => Response)[] = []) {
   const waits: (string | null)[] = []
@@ -27,7 +54,8 @@ function remote(scripted: (() => Response)[] = []) {
     if (!stream) waits.push(url.searchParams.get('wait'))
     const answer = scripted.shift()
     if (answer) return answer()
-    if (!stream && (url.searchParams.get('wait') ?? '0') === '0') return Response.json({ events: [], cursor: url.searchParams.get('after') ?? '1' })
+    if (stream) return heldConnected(init?.signal ?? undefined)
+    if ((url.searchParams.get('wait') ?? '0') === '0') return Response.json({ events: [], cursor: url.searchParams.get('after') ?? '1' })
     return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
   }) as typeof globalThis.fetch
   return { fetch, waits }
@@ -45,47 +73,85 @@ function follow(events: (opts: { signal: AbortSignal; onState: (state: EventsSta
 }
 
 describe('events, told whether it is connected', () => {
-  it("is live as soon as the board answers, on a quiet board too, and hears nothing before", async () => {
+  it('is live as soon as the stream says it is connected, and does not long-poll', async () => {
     const { fetch, waits } = remote()
     const team = board({ backend: http(URL_, { fetch }) })
     const feed = follow((opts) => team.events({ all: true, after: '1' }, opts))
     await vi.waitFor(() => expect(feed.states).toEqual(['live']))
-    // The first poll asked without waiting, which is how it knew; the one held open now waits for news.
-    await vi.waitFor(() => expect(waits).toEqual(['0', '25']))
+    expect(waits).toEqual([])
     await feed.stop()
     expect(feed.states).toEqual(['live'])
   })
 
-  it('is retrying while polls fail, and live again as soon as the board is back, not a long-poll later', async () => {
+  it('is retrying while the stream cannot be reached, and live again as soon as it connects', async () => {
     const { fetch, waits } = remote([down, down])
     const team = board({ backend: http(URL_, { fetch }) })
     const feed = follow((opts) => team.events({ all: true, after: '1' }, opts))
     // Each change once: a board that can't be reached is never live, and the second failure isn't news.
     await vi.waitFor(() => expect(feed.states).toEqual(['retrying', 'live']), { timeout: 5000 })
-    // Every poll until the board answered asked without waiting; the retry wasn't held for a quiet board's 25 seconds.
-    await vi.waitFor(() => expect(waits).toEqual(['0', '0', '0', '25']))
+    // The retry opened the stream again. It did not sit out a quiet board's 25 second poll.
+    expect(waits).toEqual([])
     await feed.stop()
   }, 10_000)
 
-  it('asks without waiting again after a feed that was live fails', async () => {
-    const quiet = () => Response.json({ events: [], cursor: '1' })
-    const { fetch, waits } = remote([quiet, down])
+  it('reconnects a stream that drops, without waiting out a long-poll', async () => {
+    const { fetch, waits } = remote([connectedThenDrop])
     const team = board({ backend: http(URL_, { fetch }) })
     const feed = follow((opts) => team.events({ all: true, after: '1' }, opts))
-    // The held poll drops; the retry is answered at once, though the board has nothing new to say.
     await vi.waitFor(() => expect(feed.states).toEqual(['live', 'retrying', 'live']), { timeout: 5000 })
-    await vi.waitFor(() => expect(waits).toEqual(['0', '25', '0', '25']))
+    expect(waits).toEqual([])
     await feed.stop()
   }, 10_000)
 
-  it('yields the events an answer carries, and goes on from its cursor', async () => {
-    const { fetch } = remote([() => Response.json({ events: [event], cursor: '2' })])
+  it('yields the events a stream carries, and goes on from its cursor', async () => {
+    const body = `: connected\n\nid: 2\nevent: board\ndata: ${JSON.stringify(event)}\n\n`
+    const { fetch, waits } = remote([() => new Response(body, { headers: { 'content-type': 'text/event-stream' } })])
     const team = board({ backend: http(URL_, { fetch }) })
     const feed = follow((opts) => team.events({ all: true, after: '1' }, opts))
     await vi.waitFor(() => expect(feed.seen).toMatchObject([{ type: 'channel.created', cursor: '2' }]))
     await feed.stop()
     expect(feed.states).toEqual(['live'])
+    expect(waits).toEqual([])
   })
+
+  it('long-polls when a proxy buffers the stream and no connected line arrives', async () => {
+    let streams = 0
+    const waits: (string | null)[] = []
+    const afters: (string | null)[] = []
+    const hang = (init?: RequestInit) => new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
+    const delivered = `id: 2\nevent: board\ndata: ${JSON.stringify(event)}\n\n`
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input))
+      const stream = new Headers(init?.headers).get('accept') === 'text/event-stream'
+      if (stream) {
+        streams += 1
+        // The first body carries one event and then ends, with no `: connected` line.
+        // The next body is what a buffering proxy holds open.
+        if (streams === 1) return new Response(delivered, { headers: { 'content-type': 'text/event-stream' } })
+        return new Response(new ReadableStream(), { status: 200, headers: { 'content-type': 'text/event-stream' } })
+      }
+      // A poll before the buffered stream was given up is not the fallback.
+      if (streams < 2) return hang(init)
+      waits.push(url.searchParams.get('wait'))
+      afters.push(url.searchParams.get('after'))
+      const cursor = url.searchParams.get('after')
+      if ((url.searchParams.get('wait') ?? '0') === '0') {
+        // An event the stream already yielded comes back when the poll has no cursor past it.
+        if (cursor !== '2') return Response.json({ events: [event], cursor: '2' })
+        return Response.json({ events: [], cursor: '2' })
+      }
+      return hang(init)
+    }) as typeof globalThis.fetch
+    const team = board({ backend: http(URL_, { fetch }) })
+    const feed = follow((opts) => team.events({ all: true, after: '1' }, opts))
+    await vi.waitFor(() => expect(feed.seen).toMatchObject([{ type: 'channel.created', cursor: '2' }]), { timeout: 8000 })
+    await vi.waitFor(() => expect(feed.states).toEqual(['live', 'polling']), { timeout: 8000 })
+    expect(waits[0]).toBe('0')
+    // The first poll carries the cursor the stream already delivered.
+    expect(afters[0]).toBe('2')
+    expect(feed.seen).toHaveLength(1)
+    await feed.stop()
+  }, 12_000)
 
   it('tells a client on the stream the same: retrying when it fails, live when the stream opens', async () => {
     const stream = () => new Response(`id: 2\nevent: board\ndata: ${JSON.stringify(event)}\n\n`, { headers: { 'content-type': 'text/event-stream' } })

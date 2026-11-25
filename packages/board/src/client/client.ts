@@ -271,19 +271,19 @@ const messageBody = (input: string | PostOptions | ReplyOptions) => {
   return attachments?.length ? { ...rest, attachments: attachments.map((a) => (typeof a === 'string' ? a : a.id)) } : rest
 }
 
-/** Whether live events are flowing: `live` once the board has answered a request for them, `retrying` once one failed and it's backing off. */
-export type EventsState = 'live' | 'retrying'
+/** Whether live events are flowing: `live` on an open stream, `polling` when a held stream fell back to long-poll, `retrying` once a request failed and it's backing off. */
+export type EventsState = 'live' | 'polling' | 'retrying'
 
 /**
  * What following events takes: a `signal` that stops it, and `onState`, told each time the feed
- * goes live or starts retrying. It hears nothing before the first answer or failure.
+ * goes live, falls back to long-poll, or starts retrying. It hears nothing before the first of those.
  */
 export type EventsOptions = {
   signal?: AbortSignal
   onState?: (state: EventsState) => void
 }
 
-/** Tells `onState` each change, once: `live` when the board answers, `retrying` when a request fails. It never guesses. */
+/** Tells `onState` each change, once. It never guesses: nothing is said before a stream opens, a poll is answered, or a request fails. */
 export function eventsState(onState: EventsOptions['onState']) {
   let current: EventsState | null = null
   const tell = (next: EventsState) => {
@@ -291,7 +291,7 @@ export function eventsState(onState: EventsOptions['onState']) {
     current = next
     onState?.(next)
   }
-  return { answered: () => tell('live'), failed: () => tell('retrying') }
+  return { answered: () => tell('live'), polling: () => tell('polling'), failed: () => tell('retrying') }
 }
 
 export type WaitOptions = {
@@ -302,6 +302,10 @@ export type WaitOptions = {
 
 /** How long one request for a ready task is held, in seconds, as one for the next event is. */
 const CLAIM_WAIT_S = 25
+/** How long a handle's live events wait for the next, in seconds, before asking again. */
+const EVENTS_WAIT_S = 25
+/** How long to wait for `: connected` before treating the stream as held by a proxy. */
+const STREAM_OPEN_MS = 3_000
 /** How soon a claim that waits asks again, when the board answered without holding the request. */
 const CLAIM_AGAIN_MS = 1000
 
@@ -1025,7 +1029,11 @@ export function createBoardClient(options: ClientOptions) {
     inboxAck: (key: string, id: string, body: { lease: string; error?: string }) =>
       call<{ ok: true }>('POST', `/inbox/${path(key)}/${path(id)}/ack`, { body }),
 
-    /** Live events. Reconnects from the last seen index whenever the stream closes, and tells `onState` whether it's live or retrying. */
+    /**
+     * Live events. Opens the event stream, and follows by long-poll when a proxy holds the body
+     * (no `: connected` line within a few seconds). A stream that connects stays on the stream.
+     * Tells `onState` `live`, `polling`, or `retrying`.
+     */
     async *events(
       query: Filters & { after?: string; all?: boolean; last?: number } = {},
       opts: EventsOptions = {},
@@ -1034,8 +1042,37 @@ export function createBoardClient(options: ClientOptions) {
       const { last, ...rest } = query
       let after = query.after
       let failures = 0
+      /** A held stream stays on long-poll for the rest of this follow. A stream that connected and then ended is tried again. */
+      let polling = false
+      /** Whether a long-poll has been answered since the feed started, or since it last failed. */
+      let pollAnswered = false
       const state = eventsState(opts.onState)
+      const backoff = async () => {
+        state.failed()
+        await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, 500 * 2 ** failures++)))
+      }
       while (!opts.signal?.aborted) {
+        if (polling) {
+          let page: EventsPage
+          try {
+            page = await poll((after === undefined && last !== undefined ? { ...rest, last } : { ...rest, ...(after !== undefined ? { after } : {}), wait: pollAnswered ? EVENTS_WAIT_S : 0 }) as Parameters<typeof poll>[0], opts.signal)
+          } catch (error) {
+            if (opts.signal?.aborted) return
+            if (error instanceof BoardError && (error.status === 501 || (error.status >= 400 && error.status < 500))) throw error
+            pollAnswered = false
+            await backoff()
+            continue
+          }
+          failures = 0
+          pollAnswered = true
+          state.polling()
+          for (const event of page.events) {
+            yield event
+            if (opts.signal?.aborted) return
+          }
+          after = page.cursor
+          continue
+        }
         let response: Response
         try {
           response = await raw('GET', `/events${queryString({ ...filtersQuery(rest), ...(after === undefined && last !== undefined ? { last } : {}), after })}`, {
@@ -1045,23 +1082,66 @@ export function createBoardClient(options: ClientOptions) {
         } catch (error) {
           if (opts.signal?.aborted) return
           // A refusal isn't an outage: what the board doesn't do (501) is said, as what the caller got wrong is, and not retried.
-      if (error instanceof BoardError && (error.status === 501 || (error.status >= 400 && error.status < 500))) throw error
-          state.failed()
-          await new Promise((r) => setTimeout(r, Math.min(30_000, 500 * 2 ** failures++)))
+          if (error instanceof BoardError && (error.status === 501 || (error.status >= 400 && error.status < 500))) throw error
+          await backoff()
           continue
         }
-        failures = 0
-        state.answered()
+        const type = response.headers.get('content-type') ?? ''
+        if (!response.body || !type.includes('text/event-stream')) {
+          // A board that answered the stream request with one JSON page is already long-polling.
+          if (type.includes('application/json')) {
+            try {
+              const page = await response.json() as EventsPage
+              if (Array.isArray(page.events) && typeof page.cursor === 'string') {
+                failures = 0
+                pollAnswered = true
+                polling = true
+                state.polling()
+                for (const event of page.events) {
+                  yield event
+                  if (opts.signal?.aborted) return
+                }
+                after = page.cursor
+                continue
+              }
+            } catch { /* not an events page: follow by long-poll */ }
+            polling = true
+            continue
+          }
+          await response.body?.cancel().catch(() => {})
+          polling = true
+          continue
+        }
+        let opened = false
+        const open = new AbortController()
+        const timer = setTimeout(() => open.abort(), STREAM_OPEN_MS)
+        const signal = opts.signal ? AbortSignal.any([opts.signal, open.signal]) : open.signal
+        const mark = () => {
+          if (opened) return
+          opened = true
+          clearTimeout(timer)
+          failures = 0
+          state.answered()
+        }
         try {
-          for await (const message of parseSse(response.body!, opts.signal)) {
+          for await (const message of parseSse(response.body, signal, mark)) {
             if (message.id !== undefined) after = message.id
             if (message.event === 'board' && message.data) yield JSON.parse(message.data) as BoardEventView
+            if (opts.signal?.aborted) return
           }
-        } catch (error) {
+        } catch {
           if (opts.signal?.aborted) return
-          state.failed()
-          await new Promise((r) => setTimeout(r, Math.min(30_000, 500 * 2 ** failures++)))
+          if (!opened) {
+            polling = true
+            continue
+          }
+          await backoff()
+          continue
+        } finally {
+          clearTimeout(timer)
         }
+        // A body that closed before `: connected` is the same as one a proxy never flushed.
+        if (!opened) polling = true
       }
     },
 

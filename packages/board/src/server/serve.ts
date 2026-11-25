@@ -1279,6 +1279,19 @@ export async function createServe(context: BoardContext): Promise<Serve> {
    * `access` says now holds, and a token that runs out ends it.
    */
   async function sse(caller: Caller, query: Protocol['events']['input'], request: Request, identify: (() => Promise<Caller>) | null): Promise<Response> {
+    // A board elsewhere already speaks the stream. Pass its bytes through: a proxy that holds them
+    // then holds this response too, and the handle can notice and long-poll instead.
+    if (backend.openEventStream) {
+      const upstream = await backend.openEventStream(caller, query, request.signal)
+      const type = upstream.headers.get('content-type') ?? ''
+      if (!upstream.ok || type.includes('application/json')) return upstream
+      if (type.includes('text/event-stream') && upstream.body) {
+        return new Response(upstream.body, {
+          headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive' },
+        })
+      }
+      await upstream.body?.cancel().catch(() => {})
+    }
     // The first page now, so a bad cursor or a refusal answers as an error instead of a stream.
     // The feed's newest events (`last`) are the stream's first page, and it goes on from their cursor.
     const { last, ...following } = query

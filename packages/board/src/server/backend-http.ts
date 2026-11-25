@@ -373,6 +373,12 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
     return response.json()
   }
 
+  /** The remote's event stream, bytes unchanged, so a proxy that holds the body is visible to the handle. */
+  function openEventStream(caller: Caller, input: Protocol['events']['input'], signal: AbortSignal): Promise<Response> {
+    if ('identity' in caller) throw new HttpError(404, 'not_found', `this board uses ${remote}, and answers nothing itself`)
+    return clientOf(caller).request(`${routes.events.path}${queryString({ ...input })}`, { headers: { accept: 'text/event-stream' }, signal })
+  }
+
   const methods: ProtocolMethods = {
     ...(Object.fromEntries(METHODS.map((method) => [method, (caller: Caller, input: Record<string, unknown>, signal: AbortSignal) => remoteCall(method, caller, input, signal)])) as unknown as ProtocolMethods),
     // The board it uses is what a handle here asks about. board() answers a request's itself.
@@ -407,6 +413,7 @@ export function createHttp(url: string | undefined, options: HttpOptions, enviro
 
   const backend = {
     ...methods,
+    openEventStream,
     // Who may do what on the board it uses is that board's to say: a board here answers nothing itself.
     routes: [],
     // The log is the board it uses'.
