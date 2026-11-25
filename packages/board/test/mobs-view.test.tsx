@@ -139,6 +139,7 @@ it('maps seeded mobs by party and repo, with heads, sprites, holds, and a cell l
   expect(catCard.textContent).toContain('holds rdn-9 Fix the gate')
   expect(catCard.textContent).toMatch(/expires in \d+m/)
   expect(catCard.textContent).toContain('PR #12')
+  expect(catCard.querySelector('.mob-state')?.textContent).toBe('running')
   expect(catCard.textContent).toContain('running')
   expect(catCard.textContent).toContain('21-CAT.PICKAXE')
   const head = catCard.querySelector('img.pixel')
@@ -150,6 +151,7 @@ it('maps seeded mobs by party and repo, with heads, sprites, holds, and a cell l
 
   const creeper = card('41-CREEPER')!
   expect(creeper.textContent).toContain('class hostile')
+  expect(creeper.querySelector('.mob-state')?.textContent).toBe('stalled')
   expect(creeper.textContent).toContain('stalled')
   expect(creeper.textContent).toContain('CI failed')
   expect(creeper.textContent).toContain('holds rdn-4 Raid the mirror')
@@ -165,6 +167,7 @@ it('maps seeded mobs by party and repo, with heads, sprites, holds, and a cell l
   expect(fox.textContent).toContain('class unknown')
   expect(fox.textContent).toContain('holds nothing')
   expect(fox.textContent).toContain('no claim')
+  expect(fox.querySelector('.mob-state')?.textContent).toBe('idle')
   expect(fox.textContent).toContain('idle')
   expect(fox.textContent).toContain('no sprites')
 

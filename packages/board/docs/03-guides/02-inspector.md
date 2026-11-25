@@ -128,8 +128,12 @@ Read and operate the board in your browser:
   message, the card uses the default pools. A species in neither is unknown.
   Party and repo come from the task the mob holds. The card names that task,
   how long the claim has left, and the pull request when the task is labeled
-  `pr.number`. It says running, stalled, or idle. Stalled is the workbench's
-  Repair rule: a lapsed claim, stale evidence, failed CI, a rejected review,
+  `pr.number`. Running, stalled, and idle are a badge that says the word.
+  Cards sit in a grid, about three across on a laptop and one on a phone,
+  with the 64 px head on the left and those facts beside it. Sprites are a
+  row of 16 px tool icons. The page is padded like the other workbench views.
+  Stalled is the workbench's Repair rule: a lapsed claim, stale evidence,
+  failed CI, a rejected review,
   a stale source, or a conflicting overlap. A sprite (`21-CAT.PICKAXE`) is
   listed under its mob with a 16 px tool icon. Cards are grouped by party,
   then by repo. Select the id to open that mob's Cell. The page only reads.
