@@ -117,7 +117,7 @@ export function asksPerson(root: TaskRoot): boolean {
   const { task } = root
   return task.state === 'blocked' && !task.parked &&
     (task.blocked?.kind === 'needs_input' || task.blocked?.kind === 'awaiting_approval') &&
-    task.attentionStatus !== 'pending' && task.attentionStatus !== 'stale'
+    task.attentionStatus !== 'pending'
 }
 
 /** Supply the read's state to account for attention answers already seen by the inspector. */
