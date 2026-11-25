@@ -35,30 +35,37 @@ function fixture(t: TestContext, tick = 0) {
   const initial = Date.parse('2026-11-22T12:01:00Z')
   let time = initial, server: Awaited<ReturnType<ReturnType<typeof createReceiver>['listen']>> | undefined
   const now = () => (time += tick), book = new Book({ file: bookFile, now })
+  let logsToken = ''
   const bind = (id: string, ttlMs = 3_600_000, execution_id = envelope.trace.execution_id) => {
-    const { capability } = book.issue({ ...envelope, trace: { ...envelope.trace, execution_id } }, { ttlMs })
-    book.bind(capability, id)
-    return capability
+    const issued = book.issue({ ...envelope, trace: { ...envelope.trace, execution_id } }, { ttlMs })
+    book.bind(issued.capability, id)
+    logsToken ||= issued.token
+    return issued.capability
   }
   bind(session)
   t.after(async () => { await server?.close(); rmSync(dir, { recursive: true, force: true }) })
   const raw = () => existsSync(file) ? readFileSync(file, 'utf8') : ''
-  return { initial, bind, book, file, raw, advance: (ms: number) => { time += ms },
+  return { initial, bind, book, file, raw, token: logsToken, advance: (ms: number) => { time += ms },
     rows: (): SpendRecord[] => raw().trim().split('\n').filter(Boolean).map(line => JSON.parse(line)),
     async listen(ledger = jsonlLedger(file)) {
       await server?.close()
       server = await createReceiver({ book: new Book({ file: bookFile, now }), ledger, now }).listen(0)
       const url = `http://127.0.0.1:${server.port}/v1/logs`
       return async (data: unknown, init: RequestInit & { duplex?: 'half' } = {}) => {
-        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data), signal: AbortSignal.timeout(5_000), ...init })
+        const named = init.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+          ? init.headers as Record<string, string> : {}
+        const headers: Record<string, string> = { 'Content-Type': 'application/json', ...named }
+        if (!('authorization' in named) && !('Authorization' in named)) headers.authorization = `Bearer ${logsToken}`
+        const { headers: _headers, ...rest } = init
+        const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(data),
+          signal: AbortSignal.timeout(5_000), ...rest })
         return { status: res.status, body: await res.text(), retry: res.headers.get('retry-after') }
       }
     } }
 }
 
 // Catches keeping non-API logs or sensitive attributes, bad projection, and trusting payload attribution.
-test('OTLP canary books only API usage without authorization', async (t) => {
+test('OTLP canary books only API usage for the token envelope', async (t) => {
   const f = fixture(t), post = await f.listen()
   assert.deepEqual(await post(canary), ok)
   assert.equal(f.rows().length, 2, 'only API requests belong in the ledger')
@@ -75,6 +82,7 @@ test('OTLP canary books only API usage without authorization', async (t) => {
     { input_total: null, input_uncached: 7, output: 4, cache_read: null, cache_write: null, reasoning: null },
   ])
   for (const secret of ['private-prompt', 'private-tool', email, 'private-extra']) assert.ok(!f.raw().includes(secret), `ledger leaked ${secret}`)
+  assert.equal(f.raw().includes(f.token), false, 'ledger leaked the logs token')
 })
 
 // Catches double booking a retry before or after restarting the receiver.
@@ -91,15 +99,15 @@ test('OTLP replay is idempotent across restart', async (t) => {
 })
 
 // Catches treating an unbound, expired, or revoked session as usable or revealing which one it is.
-test('OTLP unusable sessions give the same 404; other events are ignored', async (t) => {
+test('OTLP unusable sessions give the same 401; other events are ignored', async (t) => {
   const f = fixture(t), post = await f.listen()
   f.bind('expired-session', 1)
   f.book.revoke(f.bind('revoked-session'))
   f.advance(1)
   for (const id of ['unbound-session', 'expired-session', 'revoked-session']) {
-    assert.deepEqual(await post(payload(undefined, id)), { ...ok, status: 404, body: '{"error":"unknown_envelope"}' }, id)
+    assert.deepEqual(await post(payload(undefined, id)), error(401, 'unauthorized'), id)
   }
-  assert.deepEqual(await post(payload(batch(0, 25), 'unbound-session')), error(404, 'unknown_envelope'))
+  assert.deepEqual(await post(payload(batch(0, 25), 'unbound-session')), error(401, 'unauthorized'))
   const ignored = payload([log('tool', {}, 'claude_code.tool_result')], 'unbound-session')
   for (let i = 0; i < 16; i++) assert.deepEqual(await post(ignored), ok)
   assert.equal((await post(ignored)).status, 429, 'address allowance is charged once per request')
@@ -260,7 +268,7 @@ test('OTLP mixed batches report permanent rejects without losing valid records',
   assert.equal(f.rows().length, 3)
 })
 
-test('OTLP stops on rate limit but continues past a record-capped session', async (t) => {
+test('OTLP stops on rate limit and does not book another session past the cap', async (t) => {
   const f = fixture(t), post = await f.listen()
   f.bind('other-session', 3_600_000, 'exec-other')
   const other = log('other', { 'ccr.session.id': 'other-session' })
@@ -272,9 +280,8 @@ test('OTLP stops on rate limit but continues past a record-capped session', asyn
   f.advance(4_000)
   assert.deepEqual(await post(payload(batch(5_000, 1))), error(422, 'record_cap'))
   assert.equal(f.rows().length, 5_000)
-  assert.deepEqual(await post(payload([...batch(5_000, 1), other])), partial(1))
-  assert.equal(f.rows().length, 5_001)
-  assert.equal(f.rows().at(-1)?.envelope?.trace.execution_id, 'exec-other')
+  assert.deepEqual(await post(payload([...batch(5_000, 1), other])), error(422, 'record_cap'))
+  assert.equal(f.rows().length, 5_000, 'a logs token must not book another session')
 })
 
 test('OTLP rejects over 500 API requests before booking any', async (t) => {
@@ -294,4 +301,14 @@ test('OTLP ledger write failure is retryable', async (t) => {
   rmSync(f.file, { recursive: true })
   assert.deepEqual(await post(payload()), ok)
   assert.equal(f.rows().length, 1)
+})
+
+// Catches booking spend when POST /v1/logs has no credential or the wrong one.
+test('OTLP /v1/logs rejects a missing or wrong token and books nothing', async (t) => {
+  const f = fixture(t), post = await f.listen()
+  const missing = await post(canary, { headers: { authorization: '' } })
+  const wrong = await post(canary, { headers: { authorization: 'Bearer wrong-token' } })
+  assert.deepEqual([missing.status, wrong.status, f.rows().length], [401, 401, 0])
+  assert.deepEqual(await post(canary), ok)
+  assert.equal(f.rows().length, 2)
 })

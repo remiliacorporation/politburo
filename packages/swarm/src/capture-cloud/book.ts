@@ -10,6 +10,8 @@ export interface BookEntry {
   issuedAt: string
   expiresAt: string
   session: string | null
+  /** Presented as `Authorization: Bearer` on `POST /v1/logs`. Absent on books issued before the token. */
+  logsToken?: string
   revoked: boolean
 }
 
@@ -78,6 +80,7 @@ export class Book {
   #version: string | undefined
   #entries = new Map<string, BookEntry>()
   #sessions = new Map<string, string>()
+  #tokens = new Map<string, string>()
 
   constructor(opts: { file?: string; now?: () => number } = {}) {
     if (opts.file !== undefined) this.#file = opts.file
@@ -108,7 +111,11 @@ export class Book {
     }
     this.#entries = new Map(Object.entries(JSON.parse(text)))
     this.#sessions.clear()
-    for (const [cap, entry] of this.#entries) if (entry.session) this.#sessions.set(entry.session, cap)
+    this.#tokens.clear()
+    for (const [cap, entry] of this.#entries) {
+      if (entry.session) this.#sessions.set(entry.session, cap)
+      if (entry.logsToken) this.#tokens.set(entry.logsToken, cap)
+    }
     this.#version = version
   }
 
@@ -159,18 +166,20 @@ export class Book {
     }
     this.#entries.set(cap, entry)
     if (entry.session) this.#sessions.set(entry.session, cap)
+    if (entry.logsToken) this.#tokens.set(entry.logsToken, cap)
   }
 
-  issue(envelope: Envelope, { ttlMs }: { ttlMs: number }): { capability: string; expiresAt: string } {
+  issue(envelope: Envelope, { ttlMs }: { ttlMs: number }): { capability: string; token: string; expiresAt: string } {
     if (!Number.isInteger(ttlMs) || ttlMs <= 0 || ttlMs > 86_400_000) throw new BookError('invalid ttl')
     if (!validateEnvelope(envelope)) throw new BookError('invalid envelope')
     return this.#mutate(() => {
       const capability = `cap_${randomBytes(24).toString('base64url')}`
+      const token = `tok_${randomBytes(24).toString('base64url')}`
       const now = this.#now()
       const expiresAt = new Date(now + ttlMs).toISOString()
       this.#save(capability, { envelope: structuredClone(envelope), issuedAt: new Date(now).toISOString(),
-        expiresAt, session: null, revoked: false })
-      return { capability, expiresAt }
+        expiresAt, session: null, logsToken: token, revoked: false })
+      return { capability, token, expiresAt }
     })
   }
 
@@ -200,6 +209,11 @@ export class Book {
   bySession(sessionId: string, now: number): BookEntry | undefined {
     this.#refresh()
     return this.#live(this.#sessions.get(sessionId) ?? '', now)
+  }
+
+  byLogsToken(token: string, now: number): BookEntry | undefined {
+    this.#refresh()
+    return this.#live(this.#tokens.get(token) ?? '', now)
   }
 
   revoke(capability: string): void {
