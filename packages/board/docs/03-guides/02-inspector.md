@@ -155,9 +155,12 @@ Read and operate the board in your browser:
   for, what it waits for, and how it ended. The Tasks view lists open tasks
   oldest first, by state, channel, label, owner, and who they're for
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
-  full, with what you can do to it now. A task's thread, and a workbench peek,
-  have a Trace tab: every board event for that task, oldest first, with its
-  time and who did it. Filter by kind, or copy the lines as text.
+  full, with what you can do to it now. A claimed task's reply button is an
+  envelope labelled send letter to whoever holds it, and the envelope flies
+  off when the reply goes. Other composers keep send. A task's thread, and a
+  workbench peek, have a Trace tab: every board event for that task, oldest
+  first, with its time and who did it. Filter by kind, or copy the lines as
+  text.
 - **Answer requests.** Attention (`/attention`) lists tasks held for a
   decision, oldest first. The sidebar counts open requests and marks refusals
   you haven't seen.
