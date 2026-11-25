@@ -2,7 +2,7 @@
 
 This page is the entry point for anyone about to work on `packages/swarm`. It says what
 the swarm layer is, what is on `main` today, which rulings came after the other design
-notes were written, and where to begin. It describes `main` at `be34f98f` (2026-11-23).
+notes were written, and where to begin.
 Where this page and the code disagree, the code wins: fix this page.
 
 ## What it is
@@ -48,7 +48,7 @@ The notes in this directory are dated 2026-11-22 and carry `status: proposed`. T
    Rejected: Slack as the jockey's channel.
 2. **Much of the layer predates ruling 1** and rebuilds these by hand: `src/watch`,
    `src/watcher`, `src/mirror`, `src/mail/message.ts`. Expect them to shrink. Ask before
-   extending them.
+   extending them. Claims already moved: `src/claims` is a rule on board tasks and leases.
 3. **A claim lasts four hours**, and that is the board lease's length. The outcomes a
    claim may end in are listed in the work item. A claim that ends with none of them is
    released, the party is docked, and it may not reclaim for 15 minutes.
@@ -70,43 +70,57 @@ The notes in this directory are dated 2026-11-22 and carry `status: proposed`. T
 
 ## What is on main
 
+This section describes `main` at `f6110335` (2026-11-24). `swarm --help` is the current
+list of commands; trust it over this table.
+
 ```bash
-node packages/swarm/src/cli.ts config validate
+node packages/swarm/dist/cli.js config validate
 ```
 
 ```text
 valid
 ```
 
-`swarm config show` prints the merged config tree. `--party FILE` and `--repo FILE` layer
-a party's and a repo's values over `src/config/defaults.json`. `swarm check` and
-`swarm watch` import the runtime, so run `pnpm build` first.
+Build first: `pnpm --filter @remilia/politburo-swarm... build`. Each area has a page in
+[`packages/swarm/docs`](../packages/swarm/docs) where one exists; the party config keys are in
+[the party config reference](../packages/swarm/docs/party-config-reference.md).
 
-| Directory | Holds | State |
+| Directory under `src/` | Holds | Command |
 | --- | --- | --- |
-| `src/config` | Schema, defaults, loader. `swarm config show`, `validate` | Works. Most keys are not yet read by other code. |
-| `src/skills`, `skills/` | Agent skills generated from the party config. `swarm skills sync` | Works. The one reader of party config. |
-| `src/tags.ts`, `registry/tags.json` | The repo tag registry. `swarm tags check`, `swarm work id`, and `swarm skills plan-mob` read it unless `--registry FILE` is set | Works. The shipped list is one jockey's repos. |
-| `src/trackers` | Read-only GitHub Issues and Linear adapters, work-item merge. `swarm trackers scan` | Works. No beads adapter. |
-| `src/mirror` | Every PR, branch and issue of a repo, and pull request state on open tasks | `swarm mirror sync` and `swarm mirror prs` |
-| `src/mail` | Message contract, inbox, relay between boards, send | Library only. Stricter than the file mail it replaces. |
-| `src/classifier` | The packet compiled for the adviser model, and its audit | Library only. No classifier call on main. |
-| `src/identity` | Cloudflare Access assertions mapped to board people | Library only. No domain configured. |
-| `src/lifecycle` | Stages, evidence gate, action journal, launch recovery | Shadow or off. |
-| `src/capture` | Spend record types and the ledger writer | Library only. |
-| `src/checks` | Check lock, check-and-push, retire check. `swarm check` | Works. Needs GitHub. |
-| `src/gate` | `swarm gate check` reads the plb task labelled `pr.number` for that pull request (or a result that names it, when none does) and GitHub checks for that head. A task labelled `fix.of` for the pull request is not that task | Works. Read-only. |
-| `src/watch`, `src/watcher` | Stall, slowdown and PR alerts; the status loop | Shadow. Needs GitHub. |
-| `sprite/` | `pi` helpers and the model router | Linux only (`setsid`, `/proc`). The model order is one jockey's accounts. |
-| `parity/` | Temporary parity cases | Deleted after cutover. |
+| `config` | Schema, defaults, loader. `--party FILE` and `--repo FILE` layer over the defaults | `swarm config` |
+| `party` | Party registry, roles, members, jockeys | `swarm party` |
+| `tags`, `tags.ts` | The repo tag registry, replaceable with `--registry FILE` | `swarm tags check` |
+| `skills` | Agent skills generated from the party config | `swarm skills sync` |
+| `sprite` | Sprite tiers and model routes read from party config | `swarm sprite routes` |
+| `commands` | One module per `swarm` subcommand, serial and name allocation among them | `swarm alloc` and the rest |
+| `work`, `outcomes`, `claims` | Work ids and links, the outcomes contract, the claim rule on board tasks | `swarm work`, `swarm overlap` |
+| `trackers` | Read-only GitHub Issues, Linear and beads adapters, work-item merge | `swarm trackers` |
+| `mirror` | Every PR, branch and issue of a repo mirrored to its board, and pull request state on open tasks | `swarm mirror sync`, `swarm mirror prs` |
+| `mail` | Message contract, inbox, relay between boards, the file bridge | `swarm mail send` (not listed by `--help`) |
+| `secretary`, `classifier`, `digest` | Model-free routing in shadow, the classifier questions in shadow, notices and the exception digest | `swarm classifier` |
+| `cutover`, `rollout` | Moving a mail tag from files to a board and back; the rollout ledger | `swarm cutover` (not listed by `--help`), `swarm rollout` |
+| `ledger`, `capture`, `capture-claude`, `capture-cloud`, `usage` | The spend ledger, spend from sprite logs and usage events, the cloud receiver, the usage stop | `swarm ledger`, `swarm capture`, `swarm capture-cloud` |
+| `scoring` | Score rules, leaderboard, scorecard, history | `swarm score` |
+| `identity` | Cloudflare Access assertions mapped to board people | `swarm serve` |
+| `lifecycle` | Stages, evidence gate, action journal, launch recovery | none |
+| `gate` | One merge verdict for a PR head: the task labelled `pr.number` for that pull request, plus GitHub checks. A task labelled `fix.of` is not that task | `swarm gate check` |
+| `checks`, `watch`, `watcher` | Check lock and check-and-push; stall, slowdown and PR alerts. Need GitHub | `swarm check`, `swarm watch` |
 
-Reviewed and merged, but into branches that have not reached `main`: the work board UI
-(`/work`, its filters, the three scopes), the mail file bridge, the cutover tool and its
-rollback fix, the sprite supervisor, spend capture from
-sprite logs, and the score command. Do not build on them until each lands.
+Outside `src/`: `sprite/` holds the `pi` helper scripts (Linux only), `skills/` the skill
+sources, `examples/` a party file for people, and `parity/` temporary cases that are
+deleted after the cutover. The work board is in the inspector at `/work`
+(`packages/board/src/inspect`).
 
-Not built: the secretary service beyond drafts, the classifier questions, the claim rule,
-the spend limits, the beads adapter, a local walkthrough, a party config reference.
+Known gaps:
+
+- **Tests on macOS.** Cases that need Linux (`/proc`, `setsid`) are skipped on a Mac. CI
+  runs them on Linux.
+- **Shadow means it records what it would do and does nothing.** The secretary, the
+  classifier and the watch service are in shadow. No mail tag has moved to a board.
+- **One shared board, office network only.** A party board and a repo board run on an
+  office host. Ask the repo owner for the address and your own token. The live feed needs
+  the office network or an SSH port-forward.
+- **The work board reads only.** It has no create, claim or complete controls; use `vb tasks`.
 
 ## Where to begin
 
@@ -118,8 +132,10 @@ the spend limits, the beads adapter, a local walkthrough, a party config referen
    [board additions](swarm-board-additions.md), [reuse](swarm-reuse.md),
    [the host runbook](host-runbook.md). [Architecture](swarm-architecture.md) is the
    oldest and is partly replaced; its tier and authority text stands.
-2. Run a local board with [LOCAL-DEVELOPMENT.md](../LOCAL-DEVELOPMENT.md). It needs no
-   swarm services.
+2. Follow [the walkthrough](../docs/walkthrough.md): a local board, a party file and one
+   task from claim to done. Then [the contributor quickstart](../docs/contributing-quickstart.md)
+   and [starter items](../docs/starter-items.md). To add a tracker, a classifier question or
+   a relay target, read [extension points](../docs/extension-points.md).
 3. Pick work that touches one directory. Good first areas: wire a config key to the code
    that should read it; replace a hand-built mechanism with board's own (ruling 1); move a
    value fixed to one setup into party config (ruling 6).
