@@ -19,6 +19,7 @@ import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
+import { listedRepos, repoLabel, reposOf } from './repos.ts'
 import { cellHasThread, isWorkRoute, workScope } from './work-scope.ts'
 import { Work } from './work-view.tsx'
 
@@ -249,13 +250,17 @@ export function App() {
   const current = route(where.path)
   // The tab says which board too, so two inspectors side by side tell apart.
   const named = boardWords(state.discovery).name
-  const title = isWorkRoute(current) ? workScope(current, where.params, board.swarmRecords(), named).title
+  const scopeTitle = isWorkRoute(current) ? workScope(current, where.params, board.swarmRecords(), named).title
     : current.view === 'channel' ? `#${current.channel}`
     : current.view === 'settings' ? `${current.section} · settings`
     : current.view === 'missing' ? 'nothing here'
     : current.view === 'needs' ? 'Needs action'
     : current.view === 'handoffs' ? 'HANDOFFS'
     : current.view
+  const listedRepo = current.view === 'repo'
+    ? reposOf(state.channels, listedRepos(state.messages)).find((repo) => repo.tag === current.repo)
+    : undefined
+  const title = listedRepo ? repoLabel(listedRepo) : scopeTitle
   useEffect(() => { document.title = `${title} · ${named}` }, [title, named])
 
   const known = useMemo(() => knownLabels(state), [state.messages])

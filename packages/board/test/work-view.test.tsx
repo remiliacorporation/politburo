@@ -49,9 +49,10 @@ async function workBoard() {
     },
     client,
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
-    async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void, respond?: (request: Request) => Promise<Response | undefined> | Response | undefined) {
+    async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void, respond?: (request: Request) => Promise<Response | undefined> | Response | undefined, keepUrl = false) {
       browser.setViewport({ width: 1280, height: 900 })
-      browser.setURL(`http://work-${++visit}.test${address.startsWith('/') ? address : `/work${address}`}`)
+      if (!keepUrl) browser.setURL(`http://work-${++visit}.test${address.startsWith('/') ? address : `/work${address}`}`)
+      root?.unmount()
       const html = new DOMParser().parseFromString(shell({ token: 'inspector-test', base: '', profile: null, named: false }), 'text/html')
       document.head.replaceChildren(...html.head.querySelectorAll('meta, style'))
       document.body.innerHTML = '<div id="root"></div>'
@@ -1046,6 +1047,47 @@ it('shows every repo on one board: a repo on each row, a sidebar entry per repo,
   })
   link('all repos', repoNav()!)!.click()
   await vi.waitFor(() => expect(titles()).toHaveLength(3))
+})
+
+it('folds a repo’s channels from its row and keeps that for the board', async () => {
+  const { client, open } = await workBoard()
+  await client.post('config/repos', JSON.stringify([{ tag: 'rdn', name: 'RemiDarkNET', repo: 'acme/darknet' }, { tag: 'plb', name: 'Politburo' }]))
+  await client.tasks.create('rdn/backlog', { text: 'Audit the profile client' })
+  await client.tasks.create('plb/issues', { text: 'Show the repo on each row' })
+  await open('/work')
+  const channel = (tag: string, path: string) => repoEntry(tag)?.querySelector(`a[href="/c/${path}"] .name`)
+  await vi.waitFor(() => expect(channel('rdn', 'rdn/backlog')?.textContent).toBe('#backlog'))
+  const toggle = () => repoEntry('rdn')?.querySelector<HTMLButtonElement>('button[aria-expanded]')
+  flushSync(() => toggle()!.click())
+  expect(toggle()?.getAttribute('aria-expanded')).toBe('false')
+  expect(channel('rdn', 'rdn/backlog')).toBeNull()
+  expect(channel('plb', 'plb/issues')?.textContent).toBe('#issues')
+  // A later task in the same repo does not open it again.
+  await client.tasks.create('rdn/backlog', { text: 'A later task' })
+  await vi.waitFor(() => expect(titles()).toContain('A later task'))
+  expect(channel('rdn', 'rdn/backlog')).toBeNull()
+  await open('/work', undefined, undefined, undefined, true)
+  await vi.waitFor(() => {
+    expect(repoEntry('rdn')?.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('false')
+    expect(repoEntry('rdn')?.querySelector('a[href="/c/rdn/backlog"]')).toBeNull()
+  })
+  flushSync(() => repoEntry('rdn')!.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+  expect(repoEntry('rdn')?.querySelector('a[href="/c/rdn/backlog"] .name')?.textContent).toBe('#backlog')
+  const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('full') })
+  try {
+    flushSync(() => repoEntry('rdn')!.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click())
+    expect(repoEntry('rdn')?.querySelector('a[href="/c/rdn/backlog"]')).toBeNull()
+  } finally {
+    setItem.mockRestore()
+  }
+})
+
+it('names the repo, not its tag, in the tab on /r/<tag>', async () => {
+  const { client, open } = await workBoard()
+  await client.post('config/repos', JSON.stringify([{ tag: 'rdn', name: 'RemiDarkNET', repo: 'acme/darknet' }]))
+  await client.tasks.create('rdn/backlog', { text: 'Audit the profile client' })
+  await open('/r/rdn')
+  await vi.waitFor(() => expect(document.title).toBe(`RemiDarkNET · ${boardAddress.host}`))
 })
 
 it('filters the queue by repo and counts each repo in Health', async () => {
