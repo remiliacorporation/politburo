@@ -170,7 +170,7 @@ function PauseControl({ paused }: { paused: boolean }) {
 export function App() {
   const state = board.useBoard()
   const where = useLocation()
-  const now = useNow(state.openTaskRoots)
+  const now = useNow(state)
   const [failed, setFailed] = useState<string | null>(null)
   const sidebar = useSidebar()
   const pane = usePane()

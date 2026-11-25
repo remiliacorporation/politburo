@@ -97,7 +97,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
   const { params } = useLocation()
   const records = board.swarmRecords()
   const viewer = useMemo(() => state.openTaskMe && board.viewerOf(state.openTaskMe), [state.openTaskMe])
-  const now = useNow(state.openTaskRoots)
+  const now = useNow(state)
   // Counts per repo, from the same rules as the work board. A tag the board does not list is not a row.
   const counts = useMemo(() => {
     const out = new Map<string | null, { needs: number; running: number; pull: number }>()
@@ -109,7 +109,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
       out.set(row.repo, entry)
     }
     return out
-  }, [state.openTaskRoots, state.attention, state.messages, state.channels, viewer, records, now])
+  }, [state.openTaskRoots, state.attention, state.messages, state.seenProgress, state.channels, viewer, records, now])
   const shown = new Set<string | null>(repos.map(({ tag }) => tag))
   shown.add(null)
   const needsAll = [...counts].reduce((sum, [tag, { needs }]) => sum + (shown.has(tag) ? needs : 0), 0)

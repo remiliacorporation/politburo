@@ -732,12 +732,12 @@ function refreshOpenTasks(revalidate = false) {
   const needsMe = needsVisit ? handle.me().then((me) => ({ me }), (error: unknown) => ({ error })) : undefined
   void (async () => {
     try {
-      const fetched: MessageView[] = []
+      const fetched: { message: MessageView; last: MessageView | null }[] = []
       let after: string | undefined
       for (;;) {
         const page = await listTasks({ ...query, ...(after ? { after } : {}) })
         if (!current()) return
-        fetched.push(...page.tasks.map(({ message }) => message))
+        fetched.push(...page.tasks.map(({ message, last }) => ({ message, last: last ?? null })))
         if (page.tasks.length < PAGE) break
         if (!page.cursor || page.cursor === after) throw new Error('could not finish reading tasks: the cursor did not advance')
         set((s) => ({ ...s, tasksLoading: fetched.length }))
@@ -748,16 +748,18 @@ function refreshOpenTasks(revalidate = false) {
       const me = snapshot?.me ?? await handle.me()
       if (!current()) return
       const viewer = viewerOf(me)
-      const roots = fetched.flatMap((root) => {
+      const roots = fetched.flatMap(({ message: root }) => {
         const observed = read.observed.get(root.id)
         const latest = observed && observed.version > root.version ? observed : root
         return store.isTask(latest) && !latest.deleted && viewer.may('read', latest.channel) &&
           read.taken > (state.threadDenials.get(latest.id) ?? -1) &&
           (query.state === 'all' || store.OPEN_STATES.includes(latest.task.state)) ? [latest] : []
       })
-      acceptTaskRead(roots, me)
+      const kept = new Set(roots.map((root) => root.id))
+      const replies = fetched.flatMap(({ message, last }) => last && kept.has(message.id) ? [last] : [])
+      acceptTaskRead(roots, replies, me)
     } catch (error) {
-      if (current()) acceptTaskRead([], null, error)
+      if (current()) acceptTaskRead([], [], null, error)
     } finally {
       await needsMe
       if (openTaskRead === read) {
@@ -767,7 +769,7 @@ function refreshOpenTasks(revalidate = false) {
     }
   })()
 
-  function acceptTaskRead(roots: MessageView[], me: Me | null, error?: unknown) {
+  function acceptTaskRead(roots: MessageView[], replies: MessageView[], me: Me | null, error?: unknown) {
     openTaskEpoch++
     acceptedTaskGeneration = read.taken
     const openTaskRoots = Object.fromEntries(roots.map((root) => [root.id, root]))
@@ -782,7 +784,7 @@ function refreshOpenTasks(revalidate = false) {
           ((!query.channel || store.inChannel(view.channel, query.channel)) &&
             (query.state === 'all' || store.OPEN_STATES.includes(view.task.state)))) omitted.add(view.id)
       }
-      const next = store.merge(store.evictThreads(s, omitted, evictedAt), roots, read.taken)
+      const next = store.merge(store.evictThreads(s, omitted, evictedAt), [...roots, ...replies], read.taken)
       // Hide omitted or revoked task content until the pane's own fresh read answers.
       const hide = id !== undefined && root && !Object.hasOwn(openTaskRoots, id) &&
         ((me && !viewerOf(me).may('read', root.channel)) || Object.hasOwn(s.openTaskRoots, id))
