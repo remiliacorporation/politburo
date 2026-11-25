@@ -1434,7 +1434,9 @@ $ vb tasks work/ --state all --limit 2
   exact `key=value`: the list's `key=a|b` and bare `key` are misuse there.
 - **`--binding <JSON>`** records [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work)
   on an ID or `--ready` claim, including `run` and `create --claim`. It is
-  a JSON object, not a filename, and does not go with `--file`.
+  a JSON object, not a filename, and does not go with `--file`. `owner` and
+  `controller` left out are the claimant. A missing, wrong, or unknown field
+  is named in the error.
 - **`--priority <level>`** on `create` takes `lowest`, `low`, `normal`, `high`,
   or `urgent`. The default is `normal`. A list with any non-normal priority
   adds a priority column. `show` always shows it. JSON includes `task.priority`
@@ -1516,7 +1518,7 @@ What can go wrong, by `reason`:
 | `command_not_found` | `run`'s command couldn't start. The task is released | 1 |
 | `claim_too_wide` | on Vercel's board, `--ready` with `--from` would look in more than 200 places, its channels times the owners it takes from: name fewer owners, or a smaller subtree | 1 |
 | `channel_tree_too_large` | on Vercel's board, `--ready` named a subtree with more than 50 channels you may claim in, or a list more than 50 for a caller that doesn't read the whole board: name a channel, or a smaller subtree | 1 |
-| `invalid_binding` | `--binding` isn't a valid assignment JSON object | 2 |
+| `invalid_binding` | `--binding` isn't a JSON object, or names its missing, wrong, or unknown fields | 2 |
 | `binding_mismatch` | a retry gives a different binding from the live claim | 1 |
 | `handoff_conflict` | `--supersedes` doesn't match the latest handoff, or was given for the first handoff | 1 |
 | `no_task_authority` | the board doesn't support parking, bound claims, or handoffs | 1 |

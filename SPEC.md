@@ -4244,8 +4244,9 @@ type TaskBindingInput = {
 }
 ```
 
-The board requires an authenticated claimant and checks that `owner` matches
-its principal and exact actor. A local board's in-process handle cannot make
+The CLI fills `owner` and `controller` from the claimant when the JSON leaves
+them out. The board requires an authenticated claimant and checks that `owner`
+matches its principal and exact actor. A local board's in-process handle cannot make
 a bound claim. This is the owner of the claim, not
 `task.owner`, which still owns the task. The controller and other metadata
 are the claimant's attestations. The controller's actor must belong to the
