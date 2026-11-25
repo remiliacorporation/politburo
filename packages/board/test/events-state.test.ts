@@ -115,28 +115,41 @@ describe('events, told whether it is connected', () => {
   })
 
   it('long-polls when a proxy buffers the stream and no connected line arrives', async () => {
-    let released = false
+    let streams = 0
     const waits: (string | null)[] = []
+    const afters: (string | null)[] = []
     const hang = (init?: RequestInit) => new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))
+    const delivered = `id: 2\nevent: board\ndata: ${JSON.stringify(event)}\n\n`
     const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : String(input))
       const stream = new Headers(init?.headers).get('accept') === 'text/event-stream'
       if (stream) {
-        return new Response(new ReadableStream({
-          cancel() { released = true },
-        }), { status: 200, headers: { 'content-type': 'text/event-stream' } })
+        streams += 1
+        // The first body carries one event and then ends, with no `: connected` line.
+        // The next body is what a buffering proxy holds open.
+        if (streams === 1) return new Response(delivered, { headers: { 'content-type': 'text/event-stream' } })
+        return new Response(new ReadableStream(), { status: 200, headers: { 'content-type': 'text/event-stream' } })
       }
-      // A poll before the stream was given up is not the fallback: hold it so this fails without one.
-      if (!released) return hang(init)
+      // A poll before the buffered stream was given up is not the fallback.
+      if (streams < 2) return hang(init)
       waits.push(url.searchParams.get('wait'))
-      if ((url.searchParams.get('wait') ?? '0') === '0') return Response.json({ events: [event], cursor: '2' })
+      afters.push(url.searchParams.get('after'))
+      const cursor = url.searchParams.get('after')
+      if ((url.searchParams.get('wait') ?? '0') === '0') {
+        // An event the stream already yielded comes back when the poll has no cursor past it.
+        if (cursor !== '2') return Response.json({ events: [event], cursor: '2' })
+        return Response.json({ events: [], cursor: '2' })
+      }
       return hang(init)
     }) as typeof globalThis.fetch
     const team = board({ backend: http(URL_, { fetch }) })
     const feed = follow((opts) => team.events({ all: true, after: '1' }, opts))
     await vi.waitFor(() => expect(feed.seen).toMatchObject([{ type: 'channel.created', cursor: '2' }]), { timeout: 8000 })
-    expect(feed.states).toEqual(['polling'])
+    await vi.waitFor(() => expect(feed.states).toEqual(['live', 'polling']), { timeout: 8000 })
     expect(waits[0]).toBe('0')
+    // The first poll carries the cursor the stream already delivered.
+    expect(afters[0]).toBe('2')
+    expect(feed.seen).toHaveLength(1)
     await feed.stop()
   }, 12_000)
 
