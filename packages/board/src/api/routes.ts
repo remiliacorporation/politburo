@@ -1359,6 +1359,8 @@ export const routes = {
   claimReadyTask: { method: 'POST', path: '/tasks/claim', body: ClaimReadyTaskBody },
   /** Claims a task: `label` in its channel. Its answer's `claim` goes on what the claim does next. */
   claimTask: { method: 'POST', path: '/tasks/:id/claim', body: ClaimTaskBody },
+  /** Every board event about a task and its thread, oldest first, renewals and delivery included. */
+  taskEvents: { method: 'GET', path: '/tasks/:id/events' },
   /** What a claim does, with its `epoch` and `token`: 409 `claim_lost` once it's over. */
   renewTask: { method: 'POST', path: '/tasks/:id/renew', body: RenewTaskBody },
   releaseTask: { method: 'POST', path: '/tasks/:id/release', body: ReleaseTaskBody },

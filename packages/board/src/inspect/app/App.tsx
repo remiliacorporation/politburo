@@ -7,6 +7,7 @@ import { setEditing } from './chrome.ts'
 import { Composer } from './composer.tsx'
 import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
+import { Mobs } from './mobs-view.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
@@ -14,10 +15,12 @@ import { here, isTypingTarget, Link, navigate, RelativeTime, route, useLocation,
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
+import { Trace } from './trace.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, nameOf, pauseBanner, profilesOf, stateNow, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
 import { listedRepos, repoLabel, reposOf } from './repos.ts'
 import { cellHasThread, isWorkRoute, workScope } from './work-scope.ts'
@@ -310,7 +313,7 @@ export function App() {
   const control = current.view !== 'cell' && viewer.manages && viewer.person && viewer.profile === null && state.status
     ? <PauseControl key={viewer.actor} paused={state.status.paused} /> : null
   const headerActions = <>
-    {(narrow ? !nav : sidebar.collapsed) && <span className="meta" title={state.me.actor}>acting as {shownName(state.me)}</span>}
+    {(narrow ? !nav : sidebar.collapsed) && <span className="meta" title={state.me.actor}>acting as <ActorName name={shownName(state.me)} /></span>}
     {state.statusRefused && <span className="meta" title={state.statusRefused}>{state.statusRefused}</span>}
     {control}
   </>
@@ -346,6 +349,7 @@ export function App() {
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
             {isWorkRoute(current) && <Work key={`${identity}:${where.path}`} route={current} state={state} now={now} lead={expand} />}
+            {current.view === 'mobs' && <Mobs key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
             {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} now={now} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}
@@ -512,6 +516,8 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
   useEffect(() => {
     void board.loadSynced(id).then(setSynced)
   }, [id])
+  const [tab, setTab] = useState<'thread' | 'trace'>('thread')
+  useEffect(() => { setTab('thread') }, [id])
   const scheduled = threadSchedules(state, id)
   const platforms = Object.fromEntries((state.discovery?.sync ?? []).map((entry) => [entry.key, entry.platform]))
   const names = namesOf(state)
@@ -539,6 +545,12 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       </Header>
       <div className="view-body">
       {t && !readOnly && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
+      {t && isTask(t.root) && (
+        <nav className="tabs plain" aria-label="task">
+          <button type="button" className="tab" aria-current={tab === 'thread' ? 'page' : undefined} onClick={() => setTab('thread')}>thread</button>
+          <button type="button" className="tab" aria-current={tab === 'trace' ? 'page' : undefined} onClick={() => setTab('trace')}>trace</button>
+        </nav>
+      )}
       {t && (synced.length > 0 || scheduled.length > 0) && (
         <dl className="facts thread-facts" {...nativeMenu}>
           {synced.length > 0 && (
@@ -575,6 +587,9 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           ))}
         </dl>
       )}
+      {t && isTask(t.root) && tab === 'trace' ? (
+        <Trace id={id} stamp={`${t.root.version}:${t.replies.at(-1)?.id ?? ''}:${t.replies.at(-1)?.version ?? ''}`} />
+      ) : (
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
         {!t ? (
           <p className={refused === null ? 'empty' : 'error'}>{refused ?? 'loading…'}</p>
@@ -588,6 +603,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           </>
         )}
       </Feed>
+      )}
       {t && viewer.may('post', t.root.channel) && (
         <Composer
           scope={`thread:${id}`}

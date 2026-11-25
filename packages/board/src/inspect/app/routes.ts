@@ -12,6 +12,7 @@ export type Route =
   | { view: 'work' }
   | { view: 'repo'; repo: string }
   | { view: 'tasks' }
+  | { view: 'mobs' }
   | { view: 'attention' }
   | { view: 'channel'; channel: string }
   | { view: 'settings'; section: Section; open: string | null }
@@ -33,6 +34,7 @@ export function route(path: string): Route {
   if (/^\/r\/[a-z][a-z0-9]{1,15}$/.test(decoded)) return { view: 'repo', repo: decoded.slice(3) }
   if (decoded === '/tasks') return { view: 'tasks' }
   if (decoded === '/attention') return { view: 'attention' }
+  if (decoded === '/mobs') return { view: 'mobs' }
   if (decoded.startsWith('/c/') && decoded.length > 3) return { view: 'channel', channel: decoded.slice(3) }
   const [, settings, section, ...rest] = decoded.split('/')
   if (settings === 'settings' && (SECTIONS as readonly string[]).includes(section ?? 'access'))

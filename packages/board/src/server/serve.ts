@@ -178,6 +178,7 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
     case 'synced':
     case 'cancelSchedule':
     case 'unblockTask':
+    case 'taskEvents':
     case 'taskAttention':
     case 'schema':
     case 'attachment':

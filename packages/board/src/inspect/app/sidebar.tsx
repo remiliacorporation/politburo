@@ -9,6 +9,7 @@ import { Avatar } from './message.tsx'
 import { Link, useLocation, useNow, type Route } from './nav.tsx'
 import { openTasks, type State } from './store.ts'
 import { ContextMenuArea, MenuItem } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { boardWords, shownName } from './words.ts'
 import { listedRepos, REPO_LIST_CHANNEL, repoLabel, repoOfChannel, reposOf } from './repos.ts'
 import { repoPartyOf, workScopeUrl } from './work-scope.ts'
@@ -186,6 +187,9 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           )
         })}
         <h2>parties</h2>
+        <Link to="/mobs" className="item" current={current.view === 'mobs'}>
+          <span>mobs</span>
+        </Link>
         <Link to={workScopeUrl('/presidium', params, repoParty)} className="item" current={current.view === 'presidium'} title={repoView.subtitle}>
           <LayoutGrid size={14} aria-hidden="true" />
           <span>{repoView.label}</span>
@@ -228,7 +232,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
         </Link>
         <div className="whoami" title={state.me!.actor}>
           <Avatar name={shownName(state.me!)} size={24} />
-          <span className="as">acting as {shownName(state.me!)}</span>
+          <span className="as">acting as <ActorName name={shownName(state.me!)} /></span>
         </div>
       </div>
       </div>

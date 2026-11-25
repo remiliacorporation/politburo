@@ -2145,6 +2145,42 @@ async function hold(client: ReturnType<typeof createBoardClient>, text: string, 
   return { id: task.id, attention, request }
 }
 
+it('shows a mob icon before a message author, the sidebar, and an attention asker', async () => {
+  const { api, open } = await workbench({ attentionResponders: responders })
+  const token = await personToken('317-CAT', BOARD_URL)
+  const cat = createBoardClient({
+    url: BOARD_URL, token, profile: null,
+    fetch: (input, init) => api.fetch(new Request(input, init)),
+  })
+  await cat.post('work', 'The cat wrote this')
+  const { id } = await hold(cat, 'Need a decision', 'Ship the barn?')
+  const mark = (scope: ParentNode, label: string) => scope.querySelector(`svg[role="img"][aria-label="${label}"]`)
+  await open('/c/work', { token })
+  await vi.waitFor(() => {
+    const message = [...document.querySelectorAll('main .message')].find((el) => el.textContent?.includes('The cat wrote this'))
+    expect(message?.querySelector('.author')?.textContent).toContain('317-CAT')
+    expect(mark(message!.querySelector('.author')!, 'CAT')).not.toBeNull()
+    const acting = document.querySelector('.whoami')!
+    expect(acting.textContent).toContain('acting as 317-CAT')
+    expect(mark(acting, 'CAT')).not.toBeNull()
+  })
+  await open(`/c/work?thread=${id}`)
+  await vi.waitFor(() => {
+    const card = document.querySelector('.task-card')
+    expect(card?.textContent).toContain('317-CAT')
+    expect(mark(card!, 'CAT')).not.toBeNull()
+    expect(document.querySelector('.whoami')?.textContent).toContain('acting as u_reader')
+    expect(document.querySelector('.whoami svg')).toBeNull()
+  })
+  await open('/attention')
+  await vi.waitFor(() => {
+    const row = decision(id)
+    expect(row.textContent).toContain('by 317-CAT')
+    expect(row.textContent).toContain('Ship the barn?')
+    expect(mark(row, 'CAT')).not.toBeNull()
+  })
+})
+
 it.each([
   ['upcoming', -45_000, '45s left'],
   ['past', 45_000, '45s ago'],
@@ -2614,4 +2650,31 @@ it('keeps the answering overlay after HTTP success until the real feed confirms'
   feed.resolve()
   await vi.waitFor(() => expect(decision(a.id).textContent).toContain('answered · Ship it'))
   expect(inboxCount()).toBeUndefined()
+})
+
+it('lists the task trace in the thread pane, oldest first', async () => {
+  const { client, open } = await workbench()
+  const { task } = await client.tasks.create('work', { text: 'Trace the letter' })
+  await client.tasks.block(task.id, 'approve the wording', { kind: 'needs_input' })
+  await client.tasks.unblock(task.id)
+  const claim = await client.tasks.claim(task.id)
+  await claim.complete('the barn is up')
+  await open(`/?thread=${task.id}`)
+  await vi.waitFor(() => expect(threadPane()?.textContent).toContain('Trace the letter'))
+  flushSync(() => [...threadPane()!.querySelectorAll('button')].find((button) => button.textContent === 'trace')!.click())
+  await vi.waitFor(() => {
+    const lines = [...threadPane()!.querySelectorAll('.trace-row')].map((row) => row.textContent ?? '')
+    const created = lines.findIndex((line) => line.includes('created'))
+    const blocked = lines.findIndex((line) => line.includes('blocked needs_input: approve the wording'))
+    const unblocked = lines.findIndex((line) => line.includes('unblocked'))
+    const completed = lines.findIndex((line) => line.includes('completed the barn is up'))
+    expect(created).toBeGreaterThanOrEqual(0)
+    expect(created).toBeLessThan(blocked)
+    expect(blocked).toBeLessThan(unblocked)
+    expect(unblocked).toBeLessThan(completed)
+    expect(threadPane()!.querySelectorAll('.trace-files').length).toBe(lines.length)
+  })
+  flushSync(() => [...threadPane()!.querySelectorAll('button')].find((button) => button.textContent === 'thread')!.click())
+  expect(threadPane()?.textContent).toContain('Trace the letter')
+  expect(threadPane()?.querySelector('.trace')).toBeNull()
 })

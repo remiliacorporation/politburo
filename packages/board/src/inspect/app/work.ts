@@ -124,9 +124,14 @@ export function asksPerson(root: TaskRoot): boolean {
     task.attentionStatus !== 'pending'
 }
 
+/** The workbench's group for a task, and the reason it shows. */
+export function workPlacement(root: TaskRoot, obs: Observation | null | undefined, viewer: Viewer | null, now: number, state = initialState): [WorkGroup, string] {
+  return classify(root, obs, viewer, now, state)
+}
+
 /** Supply the read's state to account for attention answers already seen by the inspector. */
 export function groupOf(root: TaskRoot, obs: Observation | null | undefined, viewer: Viewer | null, now: number, state = initialState): WorkGroup {
-  return classify(root, obs, viewer, now, state)[0]
+  return workPlacement(root, obs, viewer, now, state)[0]
 }
 
 /** A claim with nothing new on its thread for longer than this is repair. */

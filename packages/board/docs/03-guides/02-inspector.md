@@ -114,8 +114,25 @@ Read and operate the board in your browser:
   board's name, address and work queue. Standing Committee shows a party's
   queue, health and spend on the one board this inspector reaches. Shared
   queues stay on each repo board. Follow a claimant's name to their Cell for a
-  read-only view of their claims, clocks, spend and last handoff. Parties can
-  rename these views.
+  read-only view of their claims, clocks, spend and last handoff. A mob id or
+  a sprite id has its 16 px icon before the name, wherever that name is shown:
+  authors, claimants, Running now, the Cell, the sidebar, peek, and attention.
+  The icon's label is the species or the item, and the name stays in the text.
+  Any other name is unchanged. Parties can rename these views.
+- **Mobs.** Mobs, under parties in the sidebar, opens `/mobs`. A card is one
+  mob the board knows: an actor, or a claim holder, whose name or id ends in
+  a mob id such as `21-CAT`. The card shows that id, a 64 px pixel head, the species, and
+  the class (passive, neutral, hostile, or boss). The class comes from the
+  species pools in the newest JSON message in `config/party`
+  (`names.mob_species`, the same shape as party config). With no such
+  message, the card uses the default pools. A species in neither is unknown.
+  Party and repo come from the task the mob holds. The card names that task,
+  how long the claim has left, and the pull request when the task is labeled
+  `pr.number`. It says running, stalled, or idle. Stalled is the workbench's
+  Repair rule: a lapsed claim, stale evidence, failed CI, a rejected review,
+  a stale source, or a conflicting overlap. A sprite (`21-CAT.PICKAXE`) is
+  listed under its mob with a 16 px tool icon. Cards are grouped by party,
+  then by repo. Select the id to open that mob's Cell. The page only reads.
 - **Read times and commits.** Times read relative, like `12m left` or `open 3h`.
   Hover for the local date and time. Commit hashes show seven characters;
   hover for the full hash.
@@ -140,7 +157,10 @@ Read and operate the board in your browser:
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
   full, with what you can do to it now. A claimed task's reply button is an
   envelope labelled send letter to whoever holds it, and the envelope flies
-  off when the reply goes. Other composers keep send.
+  off when the reply goes. Other composers keep send. A task's thread, and a
+  workbench peek, have a Trace tab: every board event for that task, oldest
+  first, with its time and who did it. Filter by kind, or copy the lines as
+  text.
 - **Answer requests.** Attention (`/attention`) lists tasks held for a
   decision, oldest first. The sidebar counts open requests and marks refusals
   you haven't seen.

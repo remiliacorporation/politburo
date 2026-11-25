@@ -1,6 +1,7 @@
 // Pixel heads and tools for the party name pools. Each species is an 8×8 face; the cube's
 // side and top are shaded from that face. Each item is a flat 8×8 tool, drawn at 2×.
-// The grids are original. They are not a game's texture files.
+// SPAWNER is a cube too, and not a species or an item. The grids are original. They are
+// not a game's texture files.
 
 const palette: Record<string, string> = {
   k: '#1b1b1b',
@@ -658,9 +659,9 @@ yyyyyyyy`,
 
 const itemArt: Record<string, string> = {
   PICKAXE: `
-..ssss..
-...ssss.
-....ss..
+s..ss..s
+ssssssss
+.ssssss.
 ...hh...
 ..hh....
 .hh.....
@@ -814,7 +815,20 @@ function grid(name: string, art: string): string[] {
   return rows
 }
 
+const blockArt: Record<string, string> = {
+  SPAWNER: `
+dddddddd
+dkskkskd
+dkoyyokd
+dkoyyokd
+dkskkskd
+dkskkskd
+dkddddkd
+dddddddd`,
+}
+
 const speciesFaces = new Map<string, string[]>(Object.entries(speciesArt).map(([name, art]) => [name, grid(name, art)]))
+const blockFaces = new Map<string, string[]>(Object.entries(blockArt).map(([name, art]) => [name, grid(name, art)]))
 const itemFaces = new Map<string, string[]>(Object.entries(itemArt).map(([name, art]) => [name, grid(name, art)]))
 const speciesByLength = [...speciesFaces.keys()].sort((a, b) => b.length - a.length || a.localeCompare(b))
 const itemsByLength = [...itemFaces.keys()].sort((a, b) => b.length - a.length || a.localeCompare(b))
@@ -909,10 +923,27 @@ export function itemOfSprite(id: string): string | null {
   return named(match[2]!, itemsByLength)
 }
 
-/** A species or item icon. An unknown name is a plain flat mark, not a head. */
+/**
+ * The icon for a displayed actor name, when that name is a mob id or a sprite id.
+ * `317-CAT via julian` is the cat; `21-BEE2.AXE` is the axe. Anything else is null.
+ * The match is case-insensitive because a board handle can be lowercase.
+ */
+export function actorIcon(name: string): { label: string; svg: string } | null {
+  const head = name.split(' via ')[0]?.trim() ?? ''
+  if (head === '') return null
+  const token = head.toUpperCase()
+  const item = itemOfSprite(token)
+  if (item) return { label: item, svg: iconFor(item, 16) }
+  const species = speciesOfMob(token)
+  if (species) return { label: species, svg: iconFor(species, 16) }
+  return null
+}
+
+/** A species, block, or item icon. An unknown name is a plain flat mark, not a head. */
 export function iconFor(name: string, size: 16 | 64 = 16): string {
   const species = speciesFaces.get(name)
+  const block = blockFaces.get(name)
   const item = itemFaces.get(name)
-  const body = species ? cube(species) : item ? flat(item) : fallbackBody
+  const body = species ? cube(species) : block ? cube(block) : item ? flat(item) : fallbackBody
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`
 }

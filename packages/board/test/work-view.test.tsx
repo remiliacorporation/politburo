@@ -697,6 +697,59 @@ it('opens peek from the URL with absolute claim time, tracker badges and overlap
   })
 })
 
+it('lists the task trace in peek, oldest first, and copies the filtered lines', async () => {
+  const { create, client, open } = await workBoard()
+  const { task } = await create('plb-133', 'Trace the barn')
+  await client.reply(task.id, 'the notes')
+  await client.label(task.id, { set: { 'review.verdict': 'pass', 'review.head': 'abc123', 'pr.number': '12' } })
+  const { actor } = await client.me()
+  const claim = await client.tasks.claim(task.id, {
+    binding: {
+      controller: { principal: actor, actor },
+      owner: { principal: actor, actor },
+      provider: 'fixture-provider',
+      model: 'fixture-model',
+      session: 'sess-1',
+      branch: 'plb/plb-133',
+      worktree: 'worktrees/plb-133',
+      baseCommit: 'a'.repeat(40),
+    },
+  })
+  await claim.renew()
+  await claim.release()
+  await open(`?peek=${task.id}`)
+  await vi.waitFor(() => expect(peek()?.querySelector('h2')?.textContent).toBe('Trace the barn'))
+  flushSync(() => [...peek()!.querySelectorAll('button')].find((button) => button.textContent === 'trace')!.click())
+  const rows = () => [...peek()!.querySelectorAll('.trace-row')]
+  await vi.waitFor(() => {
+    const lines = rows().map((row) => row.textContent ?? '')
+    const letter = lines.findIndex((line) => line.includes('letter Trace the barn'))
+    const claimed = lines.findIndex((line) => line.includes('claimed agent fixture-provider model fixture-model session sess-1 branch plb/plb-133'))
+    expect(letter).toBeGreaterThanOrEqual(0)
+    expect(letter).toBeLessThan(claimed)
+    expect(lines.some((line) => line.includes('review.verdict pass'))).toBe(true)
+    expect(lines.some((line) => line.includes('review.head abc123'))).toBe(true)
+    expect(lines.some((line) => line.includes('pr.number 12'))).toBe(true)
+    expect(lines.some((line) => line.includes('renewed'))).toBe(true)
+    expect(lines.some((line) => line.includes('released'))).toBe(true)
+    expect(lines.some((line) => line.includes('reply the notes'))).toBe(true)
+    expect(rows().every((row) => row.querySelector('time')?.dateTime && row.querySelector('.trace-actor')?.textContent && row.querySelector('.trace-files'))).toBe(true)
+  })
+  const select = peek()!.querySelector<HTMLSelectElement>('select[aria-label="trace kind"]')!
+  flushSync(() => {
+    select.value = 'review'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(rows().map((row) => row.getAttribute('data-kind'))).toEqual(['review', 'review'])
+  const written: string[] = []
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { written.push(text) } } })
+  flushSync(() => peek()!.querySelector<HTMLButtonElement>('button[aria-label="copy trace"]')!.click())
+  await vi.waitFor(() => expect(written[0]).toContain('review.verdict pass'))
+  expect(written[0]).toContain('review.head abc123')
+  expect(written[0]).not.toContain('the notes')
+  expect(written[0]).toContain(rows()[0]!.querySelector('time')!.dateTime)
+})
+
 it('shows loading then the task-list refusal in Queue and peek without presenting an empty Home', async () => {
   const { create, open } = await workBoard()
   const { task } = await create(1, 'Task the reader cannot load')
@@ -1189,6 +1242,56 @@ it('shows the board\'s words when the answer\'s unblock is refused', async () =>
   const thread = await client.thread(task.id)
   expect(thread.replies.find((message) => message.re === task.id)?.text).toBe('The first one')
   expect(thread.message.task).toMatchObject({ state: 'blocked', blocked: { kind: 'needs_input' } })
+})
+
+it('shows a species or item icon before a mob or sprite name, and leaves other names plain', async () => {
+  const { create, actor, open } = await workBoard()
+  const cat = await actor('317-CAT')
+  const axe = await actor('21-BEE2.AXE')
+  const plain = await actor('u_plain')
+  const { task: painted } = await create('plb-127', 'Paint the cow')
+  const { task: sharpened } = await create('plb-128', 'Sharpen the axe')
+  const { task: filed } = await create('plb-129', 'File the notes')
+  await cat.tasks.claim(painted.id)
+  await axe.tasks.claim(sharpened.id)
+  await plain.tasks.claim(filed.id)
+  const mark = (scope: ParentNode, label: string) => scope.querySelector(`svg[role="img"][aria-label="${label}"]`)
+  const running = () => document.querySelector('#work-running')!
+  await open()
+  await vi.waitFor(() => {
+    const head = (name: string) => [...running().querySelectorAll('h4')].find((heading) => heading.textContent === name)
+    const catHead = head('317-CAT')
+    const axeHead = head('21-BEE2.AXE')
+    const plainHead = head('u_plain')
+    expect(catHead).toBeDefined()
+    expect(axeHead).toBeDefined()
+    expect(plainHead).toBeDefined()
+    expect(mark(catHead!, 'CAT')).not.toBeNull()
+    expect(mark(axeHead!, 'AXE')).not.toBeNull()
+    expect(mark(axeHead!, 'BEE')).toBeNull()
+    expect(plainHead!.querySelector('svg')).toBeNull()
+    expect(mark(row('Paint the cow'), 'CAT')).not.toBeNull()
+    expect(row('File the notes').querySelector('svg')).toBeNull()
+    expect(row('Paint the cow').textContent).toContain('317-CAT')
+  })
+  flushSync(() => row('Paint the cow').querySelector('button')!.click())
+  await vi.waitFor(() => {
+    expect(mark(peek()!, 'CAT')).not.toBeNull()
+    expect(peek()!.textContent).toContain('317-CAT')
+  })
+  const cell = [...row('Paint the cow').querySelectorAll<HTMLAnchorElement>('a')].find((anchor) => anchor.pathname.startsWith('/cell/'))!
+  expect(mark(cell, 'CAT')).not.toBeNull()
+  expect(cell.textContent).toBe('317-CAT')
+  flushSync(() => cell.click())
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Cell')
+    expect(titles()).toEqual(['Paint the cow'])
+    const main = document.querySelector('main')!
+    expect(main.textContent).toContain('317-CAT')
+    expect(mark(main, 'CAT')).not.toBeNull()
+    expect(main.textContent).not.toContain('Sharpen the axe')
+    expect(main.textContent).not.toContain('File the notes')
+  })
 })
 
 function setField(el: HTMLInputElement | HTMLTextAreaElement, value: string) {

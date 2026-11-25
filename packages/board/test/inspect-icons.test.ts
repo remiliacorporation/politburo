@@ -81,6 +81,52 @@ it('parses a mob id to its species and a sprite id to its item', () => {
   expect(iconFor('BEE2')).toBe(iconFor('not-a-name'))
 })
 
+const STEEL = '#c5ccd4'
+const WOOD = '#5c3a22'
+
+function flatCells(svg: string, fill: string): { x: number; y: number }[] {
+  const cells: { x: number; y: number }[] = []
+  for (const rect of svg.matchAll(/<rect x="(\d+)" y="(\d+)" width="2" height="2" fill="(#[0-9a-f]{6})"\/>/g)) {
+    if (rect[3] !== fill) continue
+    cells.push({ x: Number(rect[1]) / 2, y: Number(rect[2]) / 2 })
+  }
+  return cells
+}
+
+it('draws SPAWNER as its own cube, crisp at 16 px and 64 px', () => {
+  const fallback = iconFor('not-a-name')
+  const icon = iconFor('SPAWNER')
+  expect(icon).not.toBe(fallback)
+  expect(rects(icon)).toBeGreaterThan(64)
+  expect(speciesNames()).not.toContain('SPAWNER')
+  expect(itemNames()).not.toContain('SPAWNER')
+  for (const size of [16, 64] as const) {
+    const svg = iconFor('SPAWNER', size)
+    expect(svg).toContain(`width="${size}"`)
+    expect(svg).toContain(`height="${size}"`)
+    expect(svg).toContain('viewBox="0 0 16 16"')
+    expect(svg).toContain('shape-rendering="crispEdges"')
+    expect(svg).not.toMatch(/\d\.\d/)
+  }
+})
+
+it('draws the pickaxe head on both sides of the handle', () => {
+  const steel = flatCells(iconFor('PICKAXE'), STEEL)
+  const wood = flatCells(iconFor('PICKAXE'), WOOD)
+  const top = Math.min(...wood.map((cell) => cell.y))
+  const handle = wood.filter((cell) => cell.y === top)
+  const left = Math.min(...handle.map((cell) => cell.x))
+  const right = Math.max(...handle.map((cell) => cell.x))
+  const center = (left + right) / 2
+  const onLeft = steel.filter((cell) => cell.x < center).length
+  const onRight = steel.filter((cell) => cell.x > center).length
+  expect(steel.some((cell) => cell.x < left)).toBe(true)
+  expect(steel.some((cell) => cell.x > right)).toBe(true)
+  expect(onLeft).toBeGreaterThan(0)
+  expect(onRight).toBeGreaterThan(0)
+  expect(Math.abs(onLeft - onRight)).toBeLessThanOrEqual(1)
+})
+
 it('keeps species heads and item tools crisp at 16 px and 64 px', () => {
   for (const size of [16, 64] as const) {
     for (const name of ['COW', 'PICKAXE', 'not-a-name']) {

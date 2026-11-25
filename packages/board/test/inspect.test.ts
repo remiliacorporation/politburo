@@ -53,6 +53,7 @@ describe('inspector navigation', () => {
     expect(route('/presidium')).toEqual({ view: 'presidium' })
     expect(route('/party/blue')).toEqual({ view: 'party', party: 'blue' })
     expect(route('/cell/local%3Auser%3Areader%2Bworker')).toEqual({ view: 'cell', cell: 'local:user:reader+worker' })
+    expect(route('/mobs')).toEqual({ view: 'mobs' })
     for (const path of ['/unknown-scope/blue', '/party/', '/cell/', '/cell/%ZZ']) {
       expect(route(path), path).toEqual({ view: 'missing' })
     }

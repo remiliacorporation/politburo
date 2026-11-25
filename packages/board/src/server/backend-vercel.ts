@@ -3763,6 +3763,33 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       // it to make the batch, and its key says whether it has: a retry goes through the middleware once more on the way.
       throw notFound(`no batch of yours has id ${id}`, 'batch_not_found')
     },
+    async taskEvents(caller, { id }, signal) {
+      const who = whoOf(caller)
+      const found = await messageIn(who, id, signal)
+      if (found.message.sequence !== 1 || !found.message.task) throw notFound(`${id} isn't a task`, 'not_a_task')
+      const path = await onBoard(who, '/changes')
+      const filters = { re: id, all: true as const }
+      const narrow = await narrowOf(who, {})
+      const events: BoardEventView[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < 40; page++) {
+        const read = await reading<{ events: ApiChange[]; cursor: string; caughtUp?: boolean }>(who, path, {
+          query: { ...inChannel(found.channel), include: 'message', ...(cursor !== undefined ? { cursor } : {}) },
+          signal,
+        })
+        for (const change of read.events) {
+          if (change.threadId !== found.thread.id) continue
+          const given = change.currentMessage
+            ? { message: change.currentMessage, thread: found.thread }
+            : { message: found.message, thread: found.thread }
+          const event = await eventOf(who, change, found.channel.name, change.cursor ?? read.cursor, filters, narrow, given)
+          if (event) events.push(event)
+        }
+        cursor = read.cursor
+        if (read.caughtUp ?? read.events.length === 0) break
+      }
+      return { events }
+    },
     async claimTask(caller, { id, lease, hold, token: sent }, signal) {
       if (hold !== undefined) noClaimHold()
       const who = whoOf(caller)

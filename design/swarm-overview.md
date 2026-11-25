@@ -90,6 +90,7 @@ a party's and a repo's values over `src/config/defaults.json`. `swarm check` and
 | `src/trackers` | Read-only GitHub Issues and Linear adapters, work-item merge. `swarm trackers scan` | Works. No beads adapter. |
 | `src/mirror` | Every PR, branch and issue of a repo, and pull request state on open tasks | `swarm mirror sync` and `swarm mirror prs` |
 | `src/mail` | Message contract, inbox, relay between boards, send | Library only. Stricter than the file mail it replaces. |
+| `src/mail/task-relay.ts` | `swarm mail relay` writes each new person reply on a claimed plb task as one letter in `mail/<handle>` | Works. The claimant and the spawner's own notes are left. A delivered letter shows `delivered to <handle>` on the reply's thread. |
 | `src/classifier` | The packet compiled for the adviser model, and its audit | Library only. No classifier call on main. |
 | `src/identity` | Cloudflare Access assertions mapped to board people | Library only. No domain configured. |
 | `src/lifecycle` | Stages, evidence gate, action journal, launch recovery | Shadow or off. |

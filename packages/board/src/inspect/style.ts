@@ -280,6 +280,9 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
 .body { min-width: 0; }
 .meta-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .author { color: var(--bright); font-weight: 600; }
+.actor-name { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.actor-icon { display: inline-flex; flex: none; width: 16px; height: 16px; }
+.actor-icon svg { display: block; }
 .where { color: var(--faint); font-size: 12px; }
 .where a { color: var(--accent); cursor: default; }
 .where a:hover { text-decoration: underline; }
@@ -543,6 +546,11 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .work-answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .work-answer textarea { min-width: 16rem; }
 .work-peek h2 { margin: 0; font-size: 1rem; }
+.trace-tools { display: flex; gap: 12px; align-items: center; padding: 8px 20px; }
+.trace { list-style: none; margin: 0; padding: 0 20px 12px; display: grid; gap: 8px; }
+.trace-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) 16px; gap: 8px; align-items: baseline; }
+.trace-files { min-width: 16px; min-height: 1px; }
+.trace-row time, .trace-row .trace-actor { color: var(--muted); white-space: nowrap; }
 .work-view button { box-shadow: none; }
 @media (min-width: 64rem) {
   .with-peek .work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 28%); gap: 16px; align-items: start; }
@@ -802,6 +810,15 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 60; }
 .toast { max-width: 420px; padding: 8px 12px; background: var(--bg); box-shadow: 0 4px 12px var(--shadow); color: var(--bright); }
+
+.mob-map h2 { margin: 16px 0 0; padding-bottom: 2px; border-bottom: 1px solid var(--hairline); font-size: 1rem; color: var(--bright); }
+.mob-map h3 { margin: 12px 0 0; font-size: 13px; font-weight: 500; color: var(--muted); }
+.mob-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 12px; row-gap: 2px; margin-top: 12px; }
+.mob-card p { margin: 0; }
+.mob-card .pixel { grid-row: 1 / span 8; width: 64px; height: 64px; image-rendering: pixelated; }
+.mob-sprites { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.mob-sprites li { display: flex; align-items: center; gap: 6px; }
+.mob-sprites img { width: 16px; height: 16px; image-rendering: pixelated; }
 
 /* --- a touch device: iOS zooms in on a focused field whose text is under
    16px, so every field gets 16px there; important so it beats each field's

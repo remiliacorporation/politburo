@@ -62,6 +62,12 @@ export type State = AttentionState & {
   ops: Record<string, { id: string; op: Op }[]>
   pending: Pending[]
   actors: Record<string, ActorView>
+  /** Whether the actor list has been answered, including a refusal. */
+  actorsLoaded: boolean
+  /** What the board answered instead of its actor list, when it refused. */
+  actorsRefused: string | null
+  /** What the board answered instead of `config/party`, when it refused. A missing channel is not a refusal. */
+  partyConfigRefused: string | null
   live: 'connecting' | 'live' | 'polling' | 'reconnecting'
   /** The claims this tab made, by task: which ones the board still shows as live. */
   claims: Record<string, Claim>
@@ -109,6 +115,9 @@ export const initialState: State = {
   ops: {},
   pending: [],
   actors: {},
+  actorsLoaded: false,
+  actorsRefused: null,
+  partyConfigRefused: null,
   live: 'connecting',
   claims: {},
   status: null,
