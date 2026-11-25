@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createBoardClient } from '../src/client/client.ts'
+import { ActorName } from '../src/inspect/app/actor-name.tsx'
 import { shell } from '../src/inspect/shell.ts'
 import { BOARD_URL, localBoard, personToken } from './harness.ts'
 
@@ -182,6 +183,45 @@ it('maps seeded mobs by party and repo, with heads, sprites, holds, and a cell l
     expect(document.querySelector('main')!.textContent).not.toContain('Port the ledger')
   })
   expect(writes).toEqual([])
+})
+
+it('maps a lowercase handle as it was written, with its head and sprite', async () => {
+  const { mob, open } = await mobBoard()
+  await (await mob('311-bee')).post('rdn/work', 'bee is here')
+  await (await mob('311-bee.pickaxe')).post('rdn/work', 'sprite on the bee')
+  await open('/mobs')
+  const bee = await vi.waitFor(() => {
+    expect(document.querySelector('main')!.textContent).not.toContain('no mobs')
+    const found = card('311-bee')
+    expect(found).toBeTruthy()
+    return found!
+  })
+  expect(document.body.textContent).not.toContain('311-BEE')
+  expect(bee.textContent).toContain('species BEE')
+  expect(bee.textContent).toContain('311-bee.pickaxe')
+  expect(bee.querySelector('img.pixel')?.getAttribute('width')).toBe('64')
+  expect(svgWidth(bee.querySelector('img.pixel'))).toContain('width="64"')
+  const tool = bee.querySelector('.mob-sprites img')
+  expect(tool?.getAttribute('width')).toBe('16')
+  expect(svgWidth(tool)).toContain('width="16"')
+})
+
+it('draws a name icon for a lowercase actor id and leaves the name as written', () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const mounted = createRoot(host)
+  const written = 'team:user:311-bee'
+  flushSync(() => mounted.render(<ActorName name={written} />))
+  expect(host.textContent).toBe(written)
+  expect(host.querySelector('svg')?.getAttribute('aria-label')).toBe('BEE')
+  flushSync(() => mounted.render(<ActorName name="team:user:311-bee.pickaxe" />))
+  expect(host.textContent).toBe('team:user:311-bee.pickaxe')
+  expect(host.querySelector('svg')?.getAttribute('aria-label')).toBe('PICKAXE')
+  flushSync(() => mounted.render(<ActorName name="rival-bee" />))
+  expect(host.textContent).toBe('rival-bee')
+  expect(host.querySelector('svg')).toBeNull()
+  mounted.unmount()
+  host.remove()
 })
 
 it('uses the default species pools when the board has no party config', async () => {
