@@ -1203,6 +1203,9 @@ export async function loadWatchers() {
   }
 }
 
+/** Every board event for a task, oldest first. */
+export const taskTrace = (id: string) => team.tasks.events(id)
+
 /** Where a thread is synced: each target, and the platform's link to its copy there. Nothing, on a board that syncs nothing. */
 export async function loadSynced(id: string): Promise<SyncedView['targets']> {
   if ((state.discovery?.sync ?? []).length === 0) return []

@@ -797,6 +797,8 @@ export function createBoardClient(options: ClientOptions) {
       /** Holds a task for a decision on the given snapshot. A claimed task needs its live claim proof. */
       ask: (id: string, request: RequestAttentionBody) =>
         call<Protocol['requestTaskAttention']['output']>('POST', `/tasks/${path(id)}/attention`, { body: request, claim: request.claim !== undefined }),
+      /** Every board event about a task and its thread, oldest first, renewals and delivery included. */
+      events: (id: string) => call<Protocol['taskEvents']['output']>('GET', `/tasks/${path(id)}/events`),
       /** Reads the current request, if any. */
       attention: (id: string) => call<Protocol['taskAttention']['output']>('GET', `/tasks/${path(id)}/attention`),
       /** Records a responder's choice and routes the task together. */

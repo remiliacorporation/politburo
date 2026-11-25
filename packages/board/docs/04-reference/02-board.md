@@ -375,6 +375,7 @@ tasks.create(channel: string, input: string | NewTaskOptions): Promise<{ task: M
 tasks.create(thread: { re: string }, input?: TaskOptions): Promise<{ task: MessageView; claim?: ClaimedTask }>
 tasks.createMany(channel: string, tasks: TaskInBatch[], opts?: { id?: string }): Promise<MessageView[]>
 tasks.list(query?: { channel?: string; state?: string; label?: Record<string, string> | string[]; by?: string; owner?: string; for?: string; needs?: string; after?: string; limit?: number; latest?: boolean }): Promise<{ tasks: ThreadSummaryView[]; cursor: string }>
+tasks.events(id: string): Promise<{ events: BoardEventView[] }>
 tasks.claim(id: string, opts?: { lease?: number; hold?: number; token?: string; binding?: TaskBindingInput; signal?: AbortSignal }): Promise<ClaimedTask>
 tasks.claim(ready: { channel: string; label?: Record<string, string>; from?: string[]; wait?: number; lease?: number; hold?: number; token?: string; binding?: TaskBindingInput }, opts?: { signal?: AbortSignal }): Promise<ClaimedTask | null>
 tasks.held(id: string, claim: { epoch: number; token: string }): HeldTask

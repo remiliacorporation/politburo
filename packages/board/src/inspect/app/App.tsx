@@ -14,6 +14,7 @@ import { here, isTypingTarget, Link, navigate, RelativeTime, route, useLocation,
 import { Settings } from './settings.tsx'
 import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
+import { Trace } from './trace.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
@@ -512,6 +513,8 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
   useEffect(() => {
     void board.loadSynced(id).then(setSynced)
   }, [id])
+  const [tab, setTab] = useState<'thread' | 'trace'>('thread')
+  useEffect(() => { setTab('thread') }, [id])
   const scheduled = threadSchedules(state, id)
   const platforms = Object.fromEntries((state.discovery?.sync ?? []).map((entry) => [entry.key, entry.platform]))
   const names = namesOf(state)
@@ -539,6 +542,12 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
       </Header>
       <div className="view-body">
       {t && !readOnly && isTask(t.root) && <TaskCard key={identity} root={t.root} state={state} viewer={viewer} />}
+      {t && isTask(t.root) && (
+        <nav className="tabs plain" aria-label="task">
+          <button type="button" className="tab" aria-current={tab === 'thread' ? 'page' : undefined} onClick={() => setTab('thread')}>thread</button>
+          <button type="button" className="tab" aria-current={tab === 'trace' ? 'page' : undefined} onClick={() => setTab('trace')}>trace</button>
+        </nav>
+      )}
       {t && (synced.length > 0 || scheduled.length > 0) && (
         <dl className="facts thread-facts" {...nativeMenu}>
           {synced.length > 0 && (
@@ -575,6 +584,9 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           ))}
         </dl>
       )}
+      {t && isTask(t.root) && tab === 'trace' ? (
+        <Trace id={id} stamp={`${t.root.version}:${t.replies.at(-1)?.id ?? ''}:${t.replies.at(-1)?.version ?? ''}`} />
+      ) : (
       <Feed scope={`thread:${id}`} first={id} last={`${t?.replies.at(-1)?.id ?? id}+${t?.pending.length ?? 0}`}>
         {!t ? (
           <p className={refused === null ? 'empty' : 'error'}>{refused ?? 'loading…'}</p>
@@ -588,6 +600,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           </>
         )}
       </Feed>
+      )}
       {t && viewer.may('post', t.root.channel) && (
         <Composer
           scope={`thread:${id}`}

@@ -540,6 +540,11 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .work-answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .work-answer textarea { min-width: 16rem; }
 .work-peek h2 { margin: 0; font-size: 1rem; }
+.trace-tools { display: flex; gap: 12px; align-items: center; padding: 8px 20px; }
+.trace { list-style: none; margin: 0; padding: 0 20px 12px; display: grid; gap: 8px; }
+.trace-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) 16px; gap: 8px; align-items: baseline; }
+.trace-files { min-width: 16px; min-height: 1px; }
+.trace-row time, .trace-row .trace-actor { color: var(--muted); white-space: nowrap; }
 .work-view button { box-shadow: none; }
 @media (min-width: 64rem) {
   .with-peek .work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 28%); gap: 16px; align-items: start; }

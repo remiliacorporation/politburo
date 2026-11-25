@@ -12,6 +12,7 @@ import { workScope, workScopeUrl, type WorkRoute } from './work-scope.ts'
 import { asksPerson, homeOf, labelsOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
 import { listedRepos, repoLabel, reposOf } from './repos.ts'
 import { boardWords } from './words.ts'
+import { Trace } from './trace.tsx'
 
 const RULES: Record<WorkGroup, string> = {
   needs: 'A person must answer a hold or a request, or fix a contract.',
@@ -438,7 +439,7 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
           {peekId !== null && (
             <aside ref={pane} id="work-peek" className="work-peek" data-work-row="peek" aria-label="Work peek" onBlur={(event) => release(event.relatedTarget)}>
               {readStatus !== null ? <p role="status" className={statusClass}>{readStatus}</p>
-                : peeked ? <Peek row={peeked} state={state} heading={heading} close={closePeek} />
+                : peeked ? <Peek key={peeked.root.id} row={peeked} state={state} heading={heading} close={closePeek} />
                 : <p role="status">no longer on the board</p>}
             </aside>
           )}
@@ -556,10 +557,16 @@ function Peek({ row, state, heading, close }: {
   row: WorkRow; state: State; heading: React.RefObject<HTMLHeadingElement | null>; close: () => void
 }) {
   const until = row.root.task.claim?.until
+  const [tab, setTab] = useState<'summary' | 'trace'>('summary')
   return (
     <>
       <h2 ref={heading} tabIndex={-1}>{row.title || `Task #${row.root.id}`}</h2>
       <button type="button" onClick={close}>close</button>
+      <nav className="tabs plain" aria-label="peek">
+        <button type="button" className="tab" aria-current={tab === 'summary' ? 'page' : undefined} onClick={() => setTab('summary')}>summary</button>
+        <button type="button" className="tab" aria-current={tab === 'trace' ? 'page' : undefined} onClick={() => setTab('trace')}>trace</button>
+      </nav>
+      {tab === 'trace' ? <Trace id={row.root.id} stamp={String(row.root.version)} /> : <>
       <p>{row.repo ?? 'no repo'} · {row.workId} · {workGroupTitle(row.group)} · {row.reason}</p>
       {canAnswer(row, state) && <Answer id={row.root.id} />}
       <p><PartyName party={row.party} /> · {row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</p>
@@ -569,6 +576,7 @@ function Peek({ row, state, heading, close }: {
       {row.trackers.length > 0 && <p><TrackerBadges trackers={row.trackers} /></p>}
       {row.overlapText && <p>{row.overlapText}</p>}
       <Link to={here({ thread: row.root.id })}>open thread</Link>
+      </>}
     </>
   )
 }
