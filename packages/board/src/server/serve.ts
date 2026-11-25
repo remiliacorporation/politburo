@@ -4,6 +4,7 @@ import {
   AckOperationalMessageBody,
   SendOperationalMessageBody,
   AssignTaskBody,
+  OfferTaskBody,
   AttentionAnswerBody,
   RequestAttentionBody,
   TaskNeedsBody,
@@ -272,6 +273,8 @@ async function inputOf(name: Method, request: Request, url: URL, params: Record<
       return { id, requestId: params.requestId ?? '', ...AttentionAnswerBody.parse(await body()) }
     case 'assignTask':
       return { id, ...AssignTaskBody.parse(await body()) }
+    case 'offerTask':
+      return { id, ...OfferTaskBody.parse(await body()) }
     case 'setTaskNeeds':
       return { id, ...TaskNeedsBody.parse(await body()) }
     case 'setTaskPriority':

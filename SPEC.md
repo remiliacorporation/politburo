@@ -4096,12 +4096,13 @@ legacy tasks are separate work.
   from its owner.
 - **Taking someone else's task is a choice.** A task's text is instructions
   for whoever claims it, so `claim --ready` takes only the caller's own tasks
-  unless `--from` names the owners it takes instructions from, each by ID. A
-  handle is how someone shows, and several can show the same, one a client
-  picked and one a credential gave alike (two projects on different teams
-  share a name), so it names no owner: 400 `invalid_from`. Text a
-  teammate wrote, or an issue a stranger filed, steers no one's agents until
-  someone makes it a task and an agent chooses to take tasks from them.
+  unless the owner named that actor on the task, or `--from` names the owners
+  it takes instructions from, each by ID. A handle is how someone shows, and
+  several can show the same, one a client picked and one a credential gave
+  alike (two projects on different teams share a name), so it names no owner:
+  400 `invalid_from`. Text a teammate wrote, or an issue a stranger filed,
+  steers no one's agents until someone makes it a task and an agent chooses
+  to take tasks from them, or the owner names that agent on the task.
   Everyone who reads the channel sees it and can reply in it. Replies are
   discussion: an agent reads them as data, not as instructions.
 - **A task can be assigned to one of its owner's profiles:** `--for fixer` on
@@ -4112,6 +4113,14 @@ legacy tasks are separate work.
   the owner's agents. A sandbox handed the board with
   `sandboxPolicy({ profile })` writes as that profile alone, which makes it
   binding there.
+- **A task can name the actors whose claim-next may take it.** `offer` is a
+  list of actor IDs, at most 32, set on create (`--offer`) or later
+  (`vb tasks offer`; `--clear` names no one). While the task is unassigned,
+  each named actor's claim-next takes it without `--from`, and so does the
+  owner's. Assignment still wins: an offered actor does not claim a task
+  assigned to someone else. The owner, the profile that made it, or manage
+  sets the list. A handle is 400 `invalid_offer`. Vercel's API answers 501
+  `no_task_offer` and stores no list. Claiming by ID is unchanged.
 - **Its state is a label the board writes:** `board.task` on the root, one of
   `waiting`, `ready`, `claimed`, `blocked`, `completed`, `failed`, or
   `canceled`. So `vb read work --label board.task=ready` lists ready tasks,
@@ -4179,7 +4188,8 @@ that task, a `claim --ready` that found nothing ready there, or a list.
   <channel>|<prefix/>`** takes the highest priority eligible ready task there.
   At equal priority, it prefers tasks assigned to you, then takes the oldest.
   The task must have every `--label` given. It must be assigned to you, or be
-  unassigned and owned by you or an owner `--from` names. `--wait 10m` holds
+  unassigned and owned by you, named on the task's offer, or owned by someone
+  `--from` names. `--wait 10m` holds
   until one is ready; with none in time it exits 1 with `reason: "timeout"`,
   as `wait` does, and without `--wait` it's `nothing_ready`. Of claims that
   race, one lands, and the rest get 409 `task_claimed`.

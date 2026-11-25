@@ -121,6 +121,14 @@ it('never shows a cached task outside the readable open list or a deleted task',
   expect(rows.map(({ workId }) => workId)).toEqual(['wp-1'])
 })
 
+it('lists a task another owner offered to the viewer as Ready to pull', () => {
+  const offered = task(7, { owner: 'local:user:spawner', by: 'local:user:spawner', offer: [actor] })
+  const withheld = task(8, { owner: 'local:user:spawner', by: 'local:user:spawner' })
+  const { groups } = projectWork(snapshot([offered, withheld]), null, viewer, now)
+  expect(groups.find(({ title }) => title === 'Ready to pull')?.rows.map(({ workId }) => workId)).toEqual(['wp-7'])
+  expect(groups.find(({ title }) => title === 'Waiting or parked')?.rows.map(({ workId }) => workId)).toEqual(['wp-8'])
+})
+
 it('lists Ready to pull in claim-next order without promoting work the viewer cannot claim', () => {
   const roots = [task(1, { priority: 'high' }), task(2, { priority: 'high', for: actor }),
     task(3, { priority: 'urgent' }), task(4, { priority: 'urgent', for: `${principal}+other` }), task(5)]

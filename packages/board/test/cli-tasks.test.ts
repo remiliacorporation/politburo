@@ -213,6 +213,25 @@ describe('vb tasks', () => {
     expect((await vb(['tasks', 'claim', '--ready', 'next', '--wait', 'a while'])).code).toBe(2)
   }, 60_000)
 
+  it("lets an actor named on the task claim it next without --from", async () => {
+    const agent = JSON.parse(await ok(['whoami', '--json'], await bo())) as { actor: string }
+    const offered = await create('agents', 'take this', ['--offer', agent.actor])
+    expect((await task(offered)).task?.offer).toEqual([agent.actor])
+    expect(await ok(['tasks', 'claim', '--ready', 'agents'], await bo())).toBe(`#${offered}  yours for 15m  take this\n`)
+
+    const mine = await create('agents', 'keep this')
+    const assigned = await create('agents', 'for fixer', ['--for', 'fixer', '--offer', agent.actor])
+    expect(failure(await vb(['tasks', 'claim', '--ready', 'agents', '--json'], await bo())).reason).toBe('nothing_ready')
+    expect((await task(assigned)).task).toMatchObject({ for: expect.stringContaining('+fixer'), offer: [agent.actor] })
+
+    expect(failure(await vb(['tasks', 'create', 'agents', 'nope', '--offer', 'bo', '--json'])).reason).toBe('invalid_offer')
+    expect(failure(await vb(['tasks', 'offer', mine, agent.actor, '--json'], await deployment())).reason).toBe('task_not_owned')
+
+    expect(await ok(['tasks', 'offer', mine, agent.actor])).toBe(`offered ${mine} to ${agent.actor}\n`)
+    expect(await ok(['tasks', 'claim', '--ready', 'agents'], await bo())).toBe(`#${mine}  yours for 15m  keep this\n`)
+    expect(await ok(['tasks', 'offer', assigned, '--clear'])).toBe(`offered ${assigned} to no one\n`)
+  }, 60_000)
+
   it("refuses the list's label filters on claim --ready and run --ready, which match one value exactly, with the claim of one", async () => {
     const worker = await create('roles', 'build it', ['--label', 'role=worker'])
     await create('roles', 'review it', ['--label', 'role=reviewer'])

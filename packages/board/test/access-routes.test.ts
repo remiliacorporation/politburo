@@ -222,6 +222,10 @@ const WALK: Record<RouteName, Walk> = {
     { method: 'POST', path: `/tasks/${secret.task}/assign`, body: { for: null }, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/assign`, body: { for: null }, status: 403 },
   ],
+  offerTask: ({ secret, open }) => [
+    { method: 'POST', path: `/tasks/${secret.task}/offer`, body: { offer: [] }, status: 404 },
+    { method: 'POST', path: `/tasks/${open.task}/offer`, body: { offer: [] }, status: 403 },
+  ],
   setTaskNeeds: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/needs`, body: { needs: [] }, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/needs`, body: { needs: [] }, status: 403 },

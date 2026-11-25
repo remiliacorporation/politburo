@@ -167,9 +167,11 @@ export const boardEvents = {
      * The thread rooted at `id` is a task, and `by.principal` owns it. It waits while it has `needs`,
      * until `task.ready` says they've all completed; with none, it's ready.
      */
-    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), priority: TaskPriority.optional(), by: Author, work: z.literal('proposed').optional() }),
+    'task.created': z.object({ ...Task, needs: z.array(MessageId).max(TASK_NEEDS_MAX), for: ActorId.nullable(), offer: z.array(ActorId).max(32).optional(), priority: TaskPriority.optional(), by: Author, work: z.literal('proposed').optional() }),
     /** Only actor `for` claims it now, or with null, anyone who may. */
     'task.assigned': z.object({ ...Task, for: ActorId.nullable(), by: Author }),
+    /** Replaces who may claim-next this task while it is unassigned, besides its owner. */
+    'task.offered': z.object({ ...Task, offer: z.array(ActorId).max(32), by: Author }),
     /** An epoch identifies a change made through a claim. */
     'task.priority_changed': z.object({ ...Task, priority: TaskPriority, epoch: Epoch.optional(), by: Author }),
     /**

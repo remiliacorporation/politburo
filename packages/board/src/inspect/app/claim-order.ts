@@ -12,16 +12,18 @@ export const lapsed = (root: TaskRoot, now: number) =>
   root.task.state === 'claimed' && root.task.claim !== null && Date.parse(root.task.claim.until) <= now
 
 /**
- * Whether the viewer's default claim-next can take this task now: its own pool (assigned to them, or
- * unassigned and theirs), where they may label, not parked, ready, a lapsed claim included. `from` is an
- * explicit per-claim choice, not a viewer setting, so tasks of other owners are never claimable here.
+ * Whether the viewer's default claim-next can take this task now: assigned to them, or unassigned and
+ * owned by them, or unassigned and naming them in `offer`. They must be able to label it. It is not
+ * parked, and it is ready, a lapsed claim included. `from` is an explicit per-claim choice, not a
+ * viewer setting, so another owner's task is claimable here only when that owner offered it.
  * What the page cannot know: a claim fenced by a pause is claimable again after resume while its lease
  * is unexpired, and the board's API doesn't say so, so such a task counts as held.
  */
 export function claimable(root: TaskRoot, viewer: Viewer, now: number): boolean {
   const { task, channel } = root
+  const offered = task.for === null && (task.offer ?? []).includes(viewer.actor)
   return !root.deleted && !task.parked && (task.state === 'ready' || lapsed(root, now)) && viewer.may('label', channel) &&
-    (assigned(root, viewer) || (task.for === null && task.owner === viewer.principal))
+    (assigned(root, viewer) || (task.for === null && (task.owner === viewer.principal || offered)))
 }
 
 /**

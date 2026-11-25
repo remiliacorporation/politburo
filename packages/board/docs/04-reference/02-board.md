@@ -390,6 +390,7 @@ tasks.scope(id: string, reason: string, opts?: { ifVersion?: number }): Promise<
 tasks.stage(id: string, stage: WorkStageTarget, reason: string, opts?: { ifVersion?: number }): Promise<MessageView>
 tasks.reopen(id: string, reason?: string, opts?: { ifVersion?: number }): Promise<MessageView>
 tasks.assign(id: string, actor: string | null): Promise<MessageView>
+tasks.offer(id: string, actors: readonly string[]): Promise<MessageView>
 tasks.needs(id: string, needs: string[]): Promise<MessageView>
 tasks.priority(id: string, priority: TaskPriority): Promise<MessageView>
 tasks.cancel(id: string, reason: string): Promise<MessageView>
@@ -419,14 +420,15 @@ if (claim) {
   thread as it is, files included.
   `TaskOptions` is `needs` (the IDs of the tasks it waits for, none of them
   canceled), `for` (the one actor of yours that claims it,
-  `<your principal>+<profile>`), `priority`, `claim`, `lease`, `token`, and
-  `binding`. A binding requires `claim: true`. You own the task.
+  `<your principal>+<profile>`), `offer` (actor IDs whose claim-next may take
+  it while it is unassigned, besides its owner), `priority`, `claim`, `lease`,
+  `token`, and `binding`. A binding requires `claim: true`. You own the task.
   `claim` comes back when it was made with `claim: true`. `priority` takes
   `lowest`, `low`, `normal`, `high`, or `urgent`, and defaults to `normal`.
 - **`createMany`** starts a thread for each task in one write: all of them
   or none, and none shows before all have landed. It answers their roots in
   the order given. A `TaskInBatch` is `text`, `labels`, `noSync`, and
-  `attachments` as `post` takes them, `for`, `priority`, and `needs`: a task's ID, or
+  `attachments` as `post` takes them, `for`, `offer`, `priority`, and `needs`: a task's ID, or
   `{ key }` for a task of the same call, which names itself with `key`. See
   [Several tasks at once](#several-tasks-at-once).
 - **`claim`** by ID throws a 409 when the task can't be claimed:
@@ -435,7 +437,8 @@ if (claim) {
   ready task. At equal priority, it prefers tasks assigned to you, then takes
   the oldest. The task must match the channel (`work`) or subtree (`work/`)
   and every label in `label`. It must be assigned to you, or unassigned and
-  owned by you or an owner `from` names by ID. A handle names no owner, since
+  owned by you, named in the task's `offer`, or an owner `from` names by ID.
+  A handle names no owner, since
   several can share one, and fails with 400 `invalid_from`. It answers `null`
   when nothing is ready, after waiting up to
   `wait` seconds. `lease` is seconds. `token` is the claim's token, your own
