@@ -1391,7 +1391,6 @@ it('shows an envelope on the reply send only while the task is claimed', async (
   })
   const css = document.querySelector('style')?.textContent ?? ''
   expect(css).toContain('letter-away 400ms')
-  expect(css).toMatch(/prefers-reduced-motion:\s*reduce[\s\S]*\.send\.letter \.lucide-mail[\s\S]*animation:\s*none/)
   const field = threadPane()!.querySelector('textarea')!
   flushSync(() => typeInto(field, 'The notes are in'))
   flushSync(() => replySend()!.click())

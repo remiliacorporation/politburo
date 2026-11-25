@@ -601,7 +601,7 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
   transform: translate(1px, 1px);
 }
 @media (prefers-reduced-motion: reduce) {
-  button, .send, .act, .tool, .send.letter .lucide-mail { transition: none; animation: none; }
+  button, .send, .act, .tool, .send.letter.flying .lucide-mail { transition: none; animation: none; }
   :is(.send, .act, .tool, .tab-actions button, .home-view button, .header > .tool):not(:disabled, [aria-disabled='true']):is(:active, [aria-pressed='true']) {
     transform: none;
   }
