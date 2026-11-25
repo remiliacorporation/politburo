@@ -9,10 +9,12 @@ import { fileURLToPath } from 'node:url'
 import { block, board } from '@vercel/board'
 import { local } from '@vercel/board/backend-local'
 import { parse, stringify } from 'yaml'
+import { macSkip } from './mac-skip.ts'
 import {
   createBridge, createInbox, createRelay, MAIL_SCHEMA, registerMailSchema, sendMail, type MailMessage,
 } from '../src/mail/index.ts'
 
+const needsCanonicalTmp = macSkip('needs a canonical temporary directory; macOS /var links to /private/var')
 const tag = 'plb'
 const inbox = 'inbox'
 const now = () => new Date('2026-11-21T00:00:00Z')
@@ -168,7 +170,7 @@ test('a fresh exporter does not recreate a consumed file for handled mail', asyn
   assert.deepEqual(JSON.parse(await readFile(join(dir, tag, '.bridge-exported.json'), 'utf8')), [message.id])
 })
 
-test('a failed record rename leaves the file for the next export to reconcile', async (t) => {
+test('a failed record rename leaves the file for the next export to reconcile', { skip: needsCanonicalTmp }, async (t) => {
   const { options, dir, send, admit, bridge, incoming } = await setup(t)
   const message = mail('unrecorded')
   const target = join(incoming, 'unrecorded.md')

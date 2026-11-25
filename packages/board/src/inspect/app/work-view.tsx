@@ -10,6 +10,7 @@ import { filterParams, filterWork, readFilter, SAVED_VIEWS } from './work-filter
 import { keyAction } from './work-keys.ts'
 import { workScope, workScopeUrl, type WorkRoute } from './work-scope.ts'
 import { homeOf, labelsOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
+import { listedRepos, repoLabel, reposOf } from './repos.ts'
 import { boardWords } from './words.ts'
 
 const RULES: Record<WorkGroup, string> = {
@@ -20,6 +21,13 @@ const RULES: Record<WorkGroup, string> = {
   pull: 'Ready to claim, with no park or blocking overlap.',
   waiting: 'Held, parked, or not ready to claim.',
   done: 'The task is completed, failed, or canceled.',
+}
+
+/** Switching repo keeps the saved view and the fixture preview, nothing else. */
+const repoUrl = (path: string, params: URLSearchParams) => {
+  const kept = new URLSearchParams()
+  for (const key of ['view', 'swarm']) if (params.get(key)) kept.set(key, params.get(key)!)
+  return kept.size ? `${path}?${kept}` : path
 }
 
 const rowOf = (node: Node | null) =>
@@ -43,7 +51,13 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
   const { params, thread } = useLocation()
   const records = board.swarmRecords()
   const where = boardWords(state.discovery)
-  const { party, partyId, title, subtitle } = workScope(route, params, records, where.name)
+  const scope_ = workScope(route, params, records, where.name)
+  const { party, partyId } = scope_
+  const repos = useMemo(() => reposOf(state.channels, listedRepos(state.messages)), [state.channels, state.messages])
+  const scopedRepo = route.view === 'repo' ? route.repo : undefined
+  const shownRepo = scopedRepo === undefined ? undefined : repos.find(({ tag }) => tag === scopedRepo)
+  const title = shownRepo ? repoLabel(shownRepo) : scope_.title
+  const subtitle = shownRepo?.name ? `${shownRepo.tag}${shownRepo.repo ? ` · ${shownRepo.repo}` : ''}` : scope_.subtitle
   const repoView = route.view === 'presidium'
   const cellView = route.view === 'cell'
   const allParties = params.get('parties') === 'all'
@@ -92,13 +106,13 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
   const projected = useMemo(() => projectWork(state, records, viewer, now), [state, records, viewer, now])
   const claimant = route.view === 'cell' ? route.cell : undefined
   const latest = useMemo(() => {
-    if (!unknownParty && scopedParty === null && claimant === undefined) return projected
+    if (!unknownParty && scopedParty === null && claimant === undefined && scopedRepo === undefined) return projected
     const groups = projected.groups.map((group) => ({
       ...group,
-      rows: unknownParty ? [] : filterWork(group.rows, { text: '', party: scopedParty ?? undefined, claimant }),
+      rows: unknownParty ? [] : filterWork(group.rows, { text: '', party: scopedParty ?? undefined, claimant, repo: scopedRepo }),
     }))
     return { groups, rows: groups.flatMap(({ rows }) => rows) }
-  }, [projected, unknownParty, scopedParty, claimant])
+  }, [projected, unknownParty, scopedParty, claimant, scopedRepo])
   const errors = new Set(viewer && latest === projected ? Object.values(state.openTaskAttentionRefusals) : [])
   const readStatus = state.tasksRefused ?? (state.tasksCounted ? null : 'loading…')
   const statusClass = state.tasksRefused === null ? undefined : 'error'
@@ -313,6 +327,12 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
             {allParties ? 'this party' : 'all parties'}
           </Link>}
         </div>}
+        {(route.view === 'work' || route.view === 'repo') && repos.length > 0 && <nav className="work-controls" aria-label="Repos">
+          <Link className="text-link" current={route.view === 'work'} to={repoUrl('/work', params)}>all repos</Link>
+          {repos.map((repo) => (
+            <Link key={repo.tag} className="text-link" current={scopedRepo === repo.tag} to={repoUrl(`/r/${repo.tag}`, params)}>{repoLabel(repo)}</Link>
+          ))}
+        </nav>}
         <nav className="work-controls" aria-label="Saved work views">
           {Object.entries(SAVED_VIEWS).map(([key, { title }]) => (
             <Link key={key} className="text-link" current={key === view} to={here({ params: { view: key } })}>{title}</Link>
@@ -456,7 +476,7 @@ function HomeSection({ id, title, empty, present, children }: {
   )
 }
 
-function Health({ health: { perParty, total } }: { health: ReturnType<typeof homeOf>['health'] }) {
+function Health({ health: { perRepo, perParty, total } }: { health: ReturnType<typeof homeOf>['health'] }) {
   const cells = (metrics: typeof total) => (
     <>
       <td>{metrics.active} / {metrics.openClaimLimit ?? 'limit unknown'}</td>
@@ -471,19 +491,27 @@ function Health({ health: { perParty, total } }: { health: ReturnType<typeof hom
   return (
     <table className="work-health">
       <thead><tr>
-        {['Party', 'Active / limit', 'Expiring', 'Stale', 'Review WIP', 'Tokens', 'Unknown', 'Overlaps'].map((label) => (
+        {['Scope', 'Active / limit', 'Expiring', 'Stale', 'Review WIP', 'Tokens', 'Unknown', 'Overlaps'].map((label) => (
           <th scope="col" key={label}>{label}</th>
         ))}
       </tr></thead>
-      <tbody>
+      {perRepo.length > 1 && <tbody aria-label="By repo">
+        {perRepo.map(({ repo, ...metrics }) => (
+          <tr key={`repo:${repo ?? ''}`}>
+            <th scope="row">{repo ?? 'no repo'}</th>
+            {cells({ ...metrics, openClaimLimit: undefined })}
+          </tr>
+        ))}
+      </tbody>}
+      <tbody aria-label="By party">
         {perParty.map(({ party, ...metrics }) => (
-          <tr key={party.id === null ? 'external' : `party:${party.id}`}>
+          <tr key={party.id === null ? 'no-party' : `party:${party.id}`}>
             <th scope="row"><PartyName party={party} /></th>
             {cells({ ...metrics, openClaimLimit: party.openClaimLimit })}
           </tr>
         ))}
       </tbody>
-      <tfoot><tr><th scope="row">Repo total</th>{cells(total)}</tr></tfoot>
+      <tfoot><tr><th scope="row">Total</th>{cells(total)}</tr></tfoot>
     </table>
   )
 }
@@ -495,7 +523,7 @@ function TrackerBadges({ trackers }: Pick<WorkRow, 'trackers'>) {
 }
 
 function PartyName({ party }: { party: Pick<NonNullable<WorkRow['party']>, 'name' | 'colour'> | null }) {
-  return <span style={party?.colour ? { borderLeft: `3px solid ${party.colour}`, paddingLeft: 4 } : undefined}>{party?.name ?? 'external'}</span>
+  return <span style={party?.colour ? { borderLeft: `3px solid ${party.colour}`, paddingLeft: 4 } : undefined}>{party?.name ?? 'no party'}</span>
 }
 
 function Peek({ row, state, heading, close }: {
@@ -506,7 +534,7 @@ function Peek({ row, state, heading, close }: {
     <>
       <h2 ref={heading} tabIndex={-1}>{row.title || `Task #${row.root.id}`}</h2>
       <button type="button" onClick={close}>close</button>
-      <p>{row.workId} · {workGroupTitle(row.group)} · {row.reason}</p>
+      <p>{row.repo ?? 'no repo'} · {row.workId} · {workGroupTitle(row.group)} · {row.reason}</p>
       <p><PartyName party={row.party} /> · {row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</p>
       {until && <p>claim until (board time) <time dateTime={until} title={until}>{until}</time></p>}
       <p>{row.prText}{row.prHead && <> · head <code title={row.prHead}>{row.prHead.slice(0, 7)}</code></>}</p>
@@ -526,6 +554,7 @@ export function Row({ row, state, area, detail, current, expanded, openPeek, cla
   return (
     <li data-task-id={root.id} data-work-row={`${area}:${root.id}`} tabIndex={0} aria-current={current || undefined}>
       <small>{row.priority}</small>
+      <small className="repo" title={row.repo ? `repo ${row.repo}` : 'no repo'}>{row.repo ?? 'no repo'}</small>
       <small>{row.workId}</small>
       <Link to={here({ thread: root.id })}>{row.title || `Task #${root.id}`}</Link>
       <small><PartyName party={party} /></small>

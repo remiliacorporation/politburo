@@ -353,7 +353,7 @@ function build(options: A2Options, binding: BoardBinding) {
       const pauseEpoch = status.pauseEpoch + (paused ? 1 : 0)
       const rows = await writer.outside(() => session.append.ifLastIndex(index, { type: 'work.control', payload: { paused, pauseEpoch, reason, by: author } }))
       await untilApplied(writes, rows)
-      return { paused, pauseEpoch }
+      return publicStatus({ ...status, paused, pauseEpoch, reason: paused ? reason : null, resumedAt: paused ? null : status.resumedAt })
     })
   }
 

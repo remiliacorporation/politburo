@@ -106,8 +106,15 @@ async function workbench(options: Parameters<typeof localBoard>[0] = {}) {
   }
 }
 
+/** A link by its words, leaving out a count badge beside them. */
+const linkText = (a: Element) => {
+  const words = a.cloneNode(true) as Element
+  for (const count of words.querySelectorAll('.count')) count.remove()
+  return words.textContent?.trim()
+}
+
 function link(text: string, inElement: ParentNode = document) {
-  const el = [...inElement.querySelectorAll('a')].find((a) => a.textContent?.trim() === text)
+  const el = [...inElement.querySelectorAll('a')].find((a) => linkText(a) === text)
   expect(el, `link: ${text}`).toBeDefined()
   return el!
 }
@@ -1693,7 +1700,7 @@ it('shows a pause that lands before the first channels cursor is captured', asyn
     expect(document.querySelector('.live')?.textContent).toBe('live')
     expect(document.querySelector('.pause-banner:not([hidden])')?.textContent).toBe('paused')
   })
-  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1 })
+  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1, reason: 'paused during boot' })
 })
 
 it('asks for a reason to Pause, shows the board’s refusal, and lets the manager try again', async () => {
@@ -1714,7 +1721,7 @@ it('asks for a reason to Pause, shows the board’s refusal, and lets the manage
   button('Pause').click()
   await submitReason('reason', 'rotate workers')
   await vi.waitFor(() => expect(document.querySelector('.pause-banner:not([hidden])')?.textContent).toContain('rotate workers'))
-  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1 })
+  expect(await client.status()).toEqual({ paused: true, pauseEpoch: 1, reason: 'rotate workers' })
 })
 
 it('shows live pause detail on every view and lets the manager resume with a reason', async () => {

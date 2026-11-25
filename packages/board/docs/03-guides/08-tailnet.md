@@ -132,8 +132,8 @@ error: The board at https://box.tailnet.ts.net/api/board has no Vercel project t
 ## Behind another proxy
 
 For people outside your tailnet, [self-host with team tokens](09-self-host.md).
-That mode serves only the API behind a TLS proxy. Don't combine it with
-`--tailscale`.
+That mode serves the API and an inspector behind a TLS proxy. Each viewer
+signs in with their team token. Don't combine it with `--tailscale`.
 
 On a board with neither mode, `--allow-host <host>` names a host another
 proxy serves the board on. It does not name visitors. The API there takes

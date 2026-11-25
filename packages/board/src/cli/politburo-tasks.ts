@@ -1,3 +1,4 @@
+import type { ZodError } from 'zod'
 import type { MessageView } from '../api/routes.ts'
 import { BoardError, type ClaimedTask, type TaskInBatch } from '../client/client.ts'
 import { createTasksInChunks, TasksInChunksError } from '../client/chunks.ts'
@@ -192,8 +193,50 @@ export async function attentionFrom(path: string) {
   return checked.data
 }
 
-/** Assignment metadata is JSON, never a filename. Report a bad flag without echoing its input. */
-export function bindingFlag() {
+const BINDING_FIELDS = ['controller', 'owner', 'provider', 'model', 'session', 'branch', 'worktree', 'baseCommit']
+
+function byBindingField(left: string, right: string): number {
+  const rank = (name: string) => {
+    const index = BINDING_FIELDS.indexOf(name.split('.')[0] ?? name)
+    return index === -1 ? BINDING_FIELDS.length : index
+  }
+  return rank(left) - rank(right) || left.localeCompare(right)
+}
+
+function series(names: readonly string[]): string {
+  const ordered = [...names].sort(byBindingField)
+  if (ordered.length < 2) return ordered[0] ?? ''
+  if (ordered.length === 2) return `${ordered[0]} and ${ordered[1]}`
+  return `${ordered.slice(0, -1).join(', ')}, and ${ordered.at(-1)}`
+}
+
+/** Field names only: a bad value can be a secret, and the input is not repeated. */
+function bindingMessage(error: ZodError): string {
+  const missing: string[] = []
+  const wrong: string[] = []
+  const unknown: string[] = []
+  for (const issue of error.issues) {
+    if (issue.code === 'unrecognized_keys') {
+      unknown.push(...issue.keys)
+      continue
+    }
+    const name = issue.path.map(String).join('.')
+    if (name === '') continue
+    const bucket = issue.code === 'invalid_type' && issue.message.includes('received undefined') ? missing : wrong
+    if (!bucket.includes(name)) bucket.push(name)
+  }
+  const parts: string[] = []
+  if (missing.length) parts.push(`missing ${series(missing)}`)
+  if (wrong.length) parts.push(`wrong ${series(wrong)}`)
+  if (unknown.length) parts.push(`unknown ${series(unknown)}`)
+  return parts.length === 0 ? '--binding takes a JSON object.' : `--binding: ${parts.join('; ')}.`
+}
+
+/**
+ * Assignment metadata is JSON, never a filename. `owner` and `controller` left out are the
+ * claimant; the board still checks `owner`. A bad flag names its fields and does not echo its input.
+ */
+export async function bindingFlag(): Promise<TaskBinding | undefined> {
   if (flags.binding === undefined) return undefined
   let value: unknown
   try {
@@ -201,10 +244,21 @@ export function bindingFlag() {
   } catch {
     throw usage('--binding takes a JSON object.', { reason: 'invalid_binding' })
   }
-  const binding = TaskBinding.safeParse(value)
-  if (!binding.success) throw usage('--binding takes a complete assignment.', {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw usage('--binding takes a JSON object.', { reason: 'invalid_binding' })
+  }
+  const record = { ...(value as Record<string, unknown>) }
+  const absent = (key: 'owner' | 'controller') => !Object.hasOwn(record, key) || record[key] === undefined
+  if (absent('owner') || absent('controller')) {
+    const me = await client().me()
+    const claimant = { principal: me.principal, actor: me.actor }
+    if (absent('owner')) record.owner = claimant
+    if (absent('controller')) record.controller = claimant
+  }
+  const binding = TaskBinding.safeParse(record)
+  if (!binding.success) throw usage(bindingMessage(binding.error), {
     reason: 'invalid_binding',
-    next: [{ instruction: 'Provide controller, owner, provider, model, session, branch, worktree, and a full baseCommit' }],
+    next: [{ instruction: 'controller and owner are {principal, actor}. baseCommit is a full lowercase Git SHA' }],
   })
   return binding.data
 }

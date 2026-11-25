@@ -2469,15 +2469,16 @@ behind `tailscale serve`, or serves just the API for a team with tokens.
   including `g1`, not a local owner. A host verifier checks the configured
   bearer tokens through `board()`'s usual policy; there is no new route or
   backend method. Restart to rotate or remove tokens. It does not mint a
-  local JWT, write a local token file, or serve the inspector, and cannot be
-  combined with `--tailscale`.
+  local JWT or write a local token file, and cannot be combined with
+  `--tailscale`. It serves the inspector on the board's port unless
+  `--no-inspect` is set. Each viewer signs in with their own team token.
 - **Team reach.** `--host` is only for team mode and defaults to `127.0.0.1`.
   It takes a literal, non-unspecified IP address. `board` prints the direct
   API URL; `share` prints `https://<proxy-host>/api/board` for each allowed
   proxy host. Neither prints credentials. Keep the upstream port private,
   with HTTP only on loopback or for a trusted proxy on the same machine.
-  Teammates send tokens over TLS, with `BOARD_URL` and `BOARD_TOKEN`, and run
-  `vb inspect` on their own machine. See [Self-host a board](packages/board/docs/03-guides/09-self-host.md).
+  Teammates send tokens over TLS, with `BOARD_URL` and `BOARD_TOKEN`, or sign
+  in once on the inspector the serve prints. See [Self-host a board](packages/board/docs/03-guides/09-self-host.md).
 
 **`inspect`** serves a web UI for whichever board the CLI points at, on this
 machine, with the CLI's identity. It's the board's own UI: every deployment gets
@@ -2504,7 +2505,11 @@ it, and nothing is hosted.
   since a caller behind a proxy that keeps `Host` can send `127.0.0.1`. A
   request target that's no URL is a 400. Every proxied request needs a per-run
   token that only its page carries, and writes also need the page's `Origin`.
-  Your credential for the board never leaves the CLI process.
+  Your credential for the board never leaves the CLI process. `--sign-in`
+  (and team mode's inspector) keeps each viewer's token in an HttpOnly,
+  SameSite=Strict cookie scoped to the inspector. The page never sees it.
+  A request with no cookie, or a token the board refuses, gets the sign-in
+  page, or 401 on the proxy and the bundle. Sign-out clears the cookie.
 - **No dependencies for users.** The page is a React bundle built into the
   package (about 250 KB gzipped), served from `node:http`.
 
@@ -4254,8 +4259,9 @@ type TaskBindingInput = {
 }
 ```
 
-The board requires an authenticated claimant and checks that `owner` matches
-its principal and exact actor. A local board's in-process handle cannot make
+The CLI fills `owner` and `controller` from the claimant when the JSON leaves
+them out. The board requires an authenticated claimant and checks that `owner`
+matches its principal and exact actor. A local board's in-process handle cannot make
 a bound claim. This is the owner of the claim, not
 `task.owner`, which still owns the task. The controller and other metadata
 are the claimant's attestations. The controller's actor must belong to the
@@ -5214,8 +5220,6 @@ report attests to what the harness observes, not to the runtime itself.
 
 - Credential-backed agent identities for sprites, separate from human
   members' profiles.
-- Share the inspector with invited members without proxying the owner's
-  credential.
 - **`linear()`:**
   - Teams are the keys.
   - An issue being created becomes a root labeled `issue=ENG-123`; comments

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
 import { claimOrder } from '../src/inspect/app/claim-order.ts'
+import { needsAction } from '../src/inspect/app/needs.ts'
 import { initialState, merge, type State, type TaskRoot, type Viewer } from '../src/inspect/app/store.ts'
 import { filterWork } from '../src/inspect/app/work-filter.ts'
 import { groupOf, homeOf, projectWork, type Observation, type SwarmRecords } from '../src/inspect/app/work.ts'
@@ -148,4 +149,40 @@ it('shows unknown spend and no PR without evidence, and flags recorded contract 
   expect(row('wp-2')?.group).toBe('needs')
   expect(row('wp-3')?.group).toBe('needs')
   expect(row('#4')?.group).toBe('pull')
+})
+
+it('does not invent a repo from a work id the board does not list', () => {
+  const relabel = (root: TaskRoot, workId: string, channel = root.channel): TaskRoot => ({
+    ...root, channel, labels: { ...root.labels, 'work.id': workId },
+  })
+  const wp = task(1)
+  const one = relabel(task(2), 'a-2')
+  const long = relabel(task(3), 'abcdefghijklmnopq-3')
+  const party = relabel(task(4), 'party-4', 'party/meet')
+  const named = relabel(task(5), 'rdn-5')
+  const onChannel = relabel(task(6), 'nope-6', 'rdn/backlog')
+  const bare = { ...task(7), channel: 'rdn', labels: { 'board.task': 'ready' } }
+  const state = snapshot([wp, one, long, party, named, onChannel, bare])
+  state.channels = { 'rdn/backlog': { path: 'rdn/backlog' } }
+  const repo = (id: string) => projectWork(state, null, viewer, now).rows.find((row) => row.workId === id)?.repo ?? null
+  expect(repo('wp-1')).toBeNull()
+  expect(repo('a-2')).toBeNull()
+  expect(repo('abcdefghijklmnopq-3')).toBeNull()
+  expect(repo('party-4')).toBeNull()
+  expect(repo('rdn-5')).toBe('rdn')
+  expect(repo('nope-6')).toBe('rdn')
+  expect(repo('#7')).toBeNull()
+})
+
+it('counts only an unanswered attention request as Needs you', () => {
+  const plain = task(1, { state: 'blocked', blocked: { kind: 'needs_input', reason: 'plain question' } })
+  const asked = task(2, { state: 'blocked', blocked: { kind: 'awaiting_approval', reason: 'approve?' }, attentionId: 'req' })
+  const state = snapshot([plain, asked])
+  expect(groupOf(plain, null, viewer, now, state)).toBe('waiting')
+  expect(groupOf(asked, null, viewer, now, state)).toBe('needs')
+  expect(needsAction(state, viewer, now).decisions.map(({ id }) => id)).toEqual(['2'])
+  const answered = snapshot([asked])
+  answered.attention[asked.id] = { answered: { id: 'req' } } as (typeof answered.attention)[string]
+  expect(groupOf(asked, { pr: { number: 7, state: 'open', checks: 'fail' } }, viewer, now, answered)).toBe('repair')
+  expect(needsAction(answered, viewer, now).decisions).toEqual([])
 })

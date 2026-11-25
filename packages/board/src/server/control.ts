@@ -58,7 +58,11 @@ export function createControl(log: A2Store, session: BoardSession, initiallyPaus
   }
 }
 
-export const publicStatus = ({ paused, pauseEpoch }: WorkState): Protocol['status']['output'] => ({ paused, pauseEpoch })
+export const publicStatus = ({ paused, pauseEpoch, reason }: WorkState): Protocol['status']['output'] => ({
+  paused,
+  pauseEpoch,
+  ...(paused && reason ? { reason } : {}),
+})
 
 /** Old requests cannot acquire work after even a very short pause followed by a resume. */
 export function workOpen(status: WorkState, epoch?: number): number {

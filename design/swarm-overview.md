@@ -88,20 +88,21 @@ a party's and a repo's values over `src/config/defaults.json`. `swarm check` and
 | `src/skills`, `skills/` | Agent skills generated from the party config. `swarm skills sync` | Works. The one reader of party config. |
 | `src/tags.ts`, `registry/tags.json` | The repo tag registry. `swarm tags check`, `swarm work id`, and `swarm skills plan-mob` read it unless `--registry FILE` is set | Works. The shipped list is one jockey's repos. |
 | `src/trackers` | Read-only GitHub Issues and Linear adapters, work-item merge. `swarm trackers scan` | Works. No beads adapter. |
-| `src/mirror` | Every PR, branch and issue of a repo mirrored to its board | Library only. No CLI on main. |
+| `src/mirror` | Every PR, branch and issue of a repo, and pull request state on open tasks | `swarm mirror sync` and `swarm mirror prs` |
 | `src/mail` | Message contract, inbox, relay between boards, send | Library only. Stricter than the file mail it replaces. |
 | `src/classifier` | The packet compiled for the adviser model, and its audit | Library only. No classifier call on main. |
 | `src/identity` | Cloudflare Access assertions mapped to board people | Library only. No domain configured. |
 | `src/lifecycle` | Stages, evidence gate, action journal, launch recovery | Shadow or off. |
 | `src/capture` | Spend record types and the ledger writer | Library only. |
 | `src/checks` | Check lock, check-and-push, retire check. `swarm check` | Works. Needs GitHub. |
+| `src/gate` | `swarm gate check` reads the plb task labelled `pr.number` for that pull request (or a result that names it, when none does) and GitHub checks for that head. A task labelled `fix.of` for the pull request is not that task | Works. Read-only. |
 | `src/watch`, `src/watcher` | Stall, slowdown and PR alerts; the status loop | Shadow. Needs GitHub. |
 | `sprite/` | `pi` helpers and the model router | Linux only (`setsid`, `/proc`). The model order is one jockey's accounts. |
 | `parity/` | Temporary parity cases | Deleted after cutover. |
 
 Reviewed and merged, but into branches that have not reached `main`: the work board UI
 (`/work`, its filters, the three scopes), the mail file bridge, the cutover tool and its
-rollback fix, the mirror CLI and overlap check, the sprite supervisor, spend capture from
+rollback fix, the sprite supervisor, spend capture from
 sprite logs, and the score command. Do not build on them until each lands.
 
 Not built: the secretary service beyond drafts, the classifier questions, the claim rule,

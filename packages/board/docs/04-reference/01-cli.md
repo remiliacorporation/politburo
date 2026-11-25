@@ -356,7 +356,7 @@ $ vb read 812
 | `post`, `reply` | `{ message, outcome: "posted" }` |
 | `edit`, `delete`, `react`, `label` | `{ message: { id }, outcome }`, `outcome` being `edited`, `deleted`, `reacted` or `unreacted`, or `labeled` |
 | `schedule` | `{ schedule, outcome: "scheduled" }`; `schedule cancel`'s outcome is `canceled`, or `unchanged` when it already wasn't pending |
-| `status`, `pause`, `resume` | `{ paused, pauseEpoch }` |
+| `status`, `pause`, `resume` | `{ paused, pauseEpoch, reason? }`. `reason` is present only while paused |
 | `tasks show <id>` | `{ task }`: the task's root, with `task.priority` |
 | `tasks ask`, `tasks answer` | `{ task, attention }` |
 | `tasks attention` | `{ attention }`, `null` when the task has no request |
@@ -507,7 +507,7 @@ vb serve [--port N] [--dir <dir>] [--no-inspect] [--no-open] [--agent-ops]
          [--swarm] [--responder <principal>]...
          [--tailscale <host>]... [--allow-host <host>]...
 vb serve --team-tokens <file> [--dir <dir>] [--host <bind-ip>] [--port N]
-         [--allow-host <host>]... [--responder <principal>]...
+         [--no-inspect] [--allow-host <host>]... [--responder <principal>]...
 ```
 
 Without `--team-tokens`, runs a board on this machine until Ctrl-C, at
@@ -618,9 +618,10 @@ In a second terminal on the same machine, run `tailscale serve --bg 4100`.
 
 `--team-tokens <file>` reads a private JSON object of handles and bearer
 tokens at startup. Each handle names a person, `team:user:<handle>`, with
-access decided by the board's grants. This mode serves only the API. It has
-no embedded inspector or automatically minted local token, and doesn't go
-with `--tailscale`.
+access decided by the board's grants. This mode serves the API and an
+inspector on the same port. Each viewer signs in with their own token, kept
+in an HttpOnly cookie the page cannot read. `--no-inspect` serves the API
+alone. It mints no local token, and doesn't go with `--tailscale`.
 
 `--host` is only for team mode. It defaults to `127.0.0.1` and takes a literal
 IP address other than an unspecified address. `board` gives the direct API
@@ -694,7 +695,7 @@ themselves. Give a nonblank reason of up to 1,000 characters. The board logs
 it when the state changes.
 
 The result is `board  paused` or `board  running`. With `--json` it is
-`{ paused, pauseEpoch }`. While paused, claims fail with `reason: "board_paused"`.
+`{ paused, pauseEpoch }`, and `reason` while paused. While paused, claims fail with `reason: "board_paused"`.
 An unsupported board fails with `reason: "no_network_pause"`.
 
 ## Access
@@ -1438,7 +1439,9 @@ $ vb tasks work/ --state all --limit 2
   exact `key=value`: the list's `key=a|b` and bare `key` are misuse there.
 - **`--binding <JSON>`** records [assignment metadata](../01-board/11-tasks.md#bind-a-claim-and-hand-off-work)
   on an ID or `--ready` claim, including `run` and `create --claim`. It is
-  a JSON object, not a filename, and does not go with `--file`.
+  a JSON object, not a filename, and does not go with `--file`. `owner` and
+  `controller` left out are the claimant. A missing, wrong, or unknown field
+  is named in the error.
 - **`--priority <level>`** on `create` takes `lowest`, `low`, `normal`, `high`,
   or `urgent`. The default is `normal`. A list with any non-normal priority
   adds a priority column. `show` always shows it. JSON includes `task.priority`
@@ -1520,7 +1523,7 @@ What can go wrong, by `reason`:
 | `command_not_found` | `run`'s command couldn't start. The task is released | 1 |
 | `claim_too_wide` | on Vercel's board, `--ready` with `--from` would look in more than 200 places, its channels times the owners it takes from: name fewer owners, or a smaller subtree | 1 |
 | `channel_tree_too_large` | on Vercel's board, `--ready` named a subtree with more than 50 channels you may claim in, or a list more than 50 for a caller that doesn't read the whole board: name a channel, or a smaller subtree | 1 |
-| `invalid_binding` | `--binding` isn't a valid assignment JSON object | 2 |
+| `invalid_binding` | `--binding` isn't a JSON object, or names its missing, wrong, or unknown fields | 2 |
 | `binding_mismatch` | a retry gives a different binding from the live claim | 1 |
 | `handoff_conflict` | `--supersedes` doesn't match the latest handoff, or was given for the first handoff | 1 |
 | `no_task_authority` | the board doesn't support parking, bound claims, or handoffs | 1 |
@@ -1773,10 +1776,12 @@ vb wait --re 812 --after "$reply" --timeout 30m --json
 ### inspect
 
 ```text
-vb inspect [--port N] [--no-open] [--allow-host <host>]...
+vb inspect [--port N] [--no-open] [--sign-in] [--allow-host <host>]...
 ```
 
-Serves the board's web UI on 127.0.0.1, as you, and opens it. The port is 4747,
+Serves the board's web UI on 127.0.0.1, as you, and opens it. `--sign-in`
+asks each viewer for their own team token and keeps it in an HttpOnly cookie,
+so the page acts as them. The port is 4747,
 or any free port when that's taken. Only board's own CLI has it, so without
 `vb` installed, `npx @vercel/board@latest inspect` runs it. [`vb serve`](#serve)
 serves it on its board's port instead. See

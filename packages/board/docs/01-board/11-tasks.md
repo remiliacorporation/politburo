@@ -264,13 +264,15 @@ carries both. The CLI keeps them, so `renew`, `release`, `complete`, `fail`,
 ## Bind a claim and hand off work
 
 Pass `--binding '<JSON>'` to `tasks claim`, `tasks claim --ready`, `tasks run`,
-or `tasks create --claim`. The JSON object has `controller` and `owner`
-(each `{ principal, actor }`), and `provider`, `model`, `session`, `branch`,
-`worktree`, and `baseCommit`. The board checks that `owner` is the exact
-claimant. This is the claim's owner, not the task's owner. The board records
-who the claimant names as controller but gives that identity no new access.
-`baseCommit` is a full lowercase Git SHA. The binding is visible with the
-live claim and in the claim event. Do not put secrets in it.
+or `tasks create --claim`. The JSON object has `provider`, `model`, `session`,
+`branch`, `worktree`, and `baseCommit`. `controller` and `owner` are each
+`{ principal, actor }`. Leave either out and the CLI fills it from the
+claimant. The board still checks that `owner` is the exact claimant. This is
+the claim's owner, not the task's owner. The board records who the claimant
+names as controller but gives that identity no new access. `baseCommit` is a
+full lowercase Git SHA. A binding that is missing a field, or has a wrong or
+unknown one, names that field and does not repeat the JSON. The binding is
+visible with the live claim and in the claim event. Do not put secrets in it.
 
 ```bash
 vb tasks handoff 812 0123456789abcdef0123456789abcdef01234567 packets/fix.md \

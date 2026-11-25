@@ -162,6 +162,11 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
   border-radius: 4px;
 }
 .sidebar .item:hover { background: var(--shade-hover); color: var(--bright); }
+.sidebar .item.nested { padding-left: 26px; }
+.sidebar .item.repo .count { font-variant-numeric: tabular-nums; }
+.sidebar .repo-line { display: flex; align-items: center; gap: 2px; }
+.sidebar .repo-line .item { flex: 1; min-width: 0; }
+.sidebar .fold { width: 20px; height: 20px; flex-shrink: 0; display: grid; place-items: center; color: var(--faint); }
 .sidebar .item[aria-current='page'] { background: var(--selected); color: var(--accent); font-weight: 700; }
 .sidebar .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar .item.unread { color: var(--bright); font-weight: 600; }

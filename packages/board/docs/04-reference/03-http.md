@@ -473,8 +473,9 @@ See [Messages](../01-board/04-messages.md).
 
 ### Network pause
 
-All three control routes answer 200 `{ paused: boolean, pauseEpoch: number }`,
-with no wrapper. `GET /control` is available to any admitted caller. The two
+All three control routes answer 200 `{ paused: boolean, pauseEpoch: number, reason?: string }`,
+with no wrapper. `reason` is present only while paused, and it is the note on
+that pause. `GET /control` is available to any admitted caller. The two
 writes require a verified person with `manage` in every channel, without a
 profile and subject to `x-board-can`. The body takes only `reason`, a nonblank
 string of up to 1,000 characters.
