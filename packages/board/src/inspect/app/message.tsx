@@ -14,6 +14,7 @@ import { Ago } from './nav.tsx'
 import { LabelValue } from './sha.tsx'
 import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type Pending, type ReplySummary, type State, type Viewer } from './store.ts'
 import { TaskLine } from './task.tsx'
+import { ActorName } from './actor-name.tsx'
 import { absoluteTime, authorName, fileSize, shownName, timingWords } from './words.ts'
 import { ContextMenuArea, EmojiPicker, fieldMenu, LabelEditor, Panel, Menu, MenuEmojiRow, MenuItem, MenuSeparator, nativeMenu, type KnownLabels } from './ui.tsx'
 
@@ -390,7 +391,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
           {!continued && (
             <div className="meta-line">
               <span className="author" {...nativeMenu}>
-                {name}
+                <ActorName name={name} />
               </span>
               <Ago iso={m.createdAt} />
               {m.noSync && options.syncConfigured && <span className="badge">board only</span>}
@@ -520,7 +521,7 @@ export function PendingRow({ post, me, continued = false }: { post: Pending; me:
       <div className="body">
         {!continued && (
           <div className="meta-line">
-            <span className="author">{shownName(me)}</span>
+            <span className="author"><ActorName name={shownName(me)} /></span>
             <span className="time">{status}</span>
             {post.later && (
               <span className="badge">

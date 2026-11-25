@@ -12,6 +12,7 @@ import { LabelValue } from './sha.tsx'
 import { nameOf, placesUnder, readFilter, taskScope, tasks, taskState, TASK_FILTER_STATES, type State, type TaskFilter, type TaskRoot, type Viewer } from './store.ts'
 import { Lease, Needs, StateMark } from './task.tsx'
 import { Header, nativeMenu, Panel, Suggest, type KnownLabels } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { firstLine } from './words.ts'
 
 const PRIORITIES = [...TaskPriority.options].reverse()
@@ -71,13 +72,15 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
   const scopeRows = accepted ? tasks(state, { state: 'all', label: [] }, now) : []
   const owners = [...new Set(scopeRows.map(({ task }) => task.owner))]
   const assignees = [...new Set(scopeRows.flatMap(({ task }) => task.for ? [task.for] : []))]
-  const chips: { key: string; text: string; drop: Record<string, string | string[] | null> }[] = [
-    ...(filter.state !== 'open' ? [{ key: 'state', text: `state ${filter.state}`, drop: { state: null } }] : []),
-    ...(filter.channel ? [{ key: 'channel', text: `in #${filter.channel}`, drop: { channel: null } }] : []),
-    ...(priority ? [{ key: 'priority', text: `priority ${priority}`, drop: { priority: null } }] : []),
-    ...filter.label.map((label) => ({ key: `label:${label}`, text: describe(label), drop: { label: filter.label.filter((l) => l !== label) } })),
-    ...(filter.owner ? [{ key: 'owner', text: `owner ${nameOf(state, filter.owner)}`, drop: { owner: null } }] : []),
-    ...(filter.for ? [{ key: 'for', text: `for ${nameOf(state, filter.for)}`, drop: { for: null } }] : []),
+  const ownerName = filter.owner ? nameOf(state, filter.owner) : ''
+  const forName = filter.for ? nameOf(state, filter.for) : ''
+  const chips: { key: string; text: string; label: ReactNode; drop: Record<string, string | string[] | null> }[] = [
+    ...(filter.state !== 'open' ? [{ key: 'state', text: `state ${filter.state}`, label: `state ${filter.state}`, drop: { state: null } }] : []),
+    ...(filter.channel ? [{ key: 'channel', text: `in #${filter.channel}`, label: `in #${filter.channel}`, drop: { channel: null } }] : []),
+    ...(priority ? [{ key: 'priority', text: `priority ${priority}`, label: `priority ${priority}`, drop: { priority: null } }] : []),
+    ...filter.label.map((label) => ({ key: `label:${label}`, text: describe(label), label: describe(label), drop: { label: filter.label.filter((l) => l !== label) } })),
+    ...(filter.owner ? [{ key: 'owner', text: `owner ${ownerName}`, label: <>owner <ActorName name={ownerName} /></>, drop: { owner: null } }] : []),
+    ...(filter.for ? [{ key: 'for', text: `for ${forName}`, label: <>for <ActorName name={forName} /></>, drop: { for: null } }] : []),
   ]
   // Tasks on their way, and any the board refused, with why.
   const pending = state.pending.filter((post) => post.task !== undefined && post.re === null)
@@ -95,7 +98,7 @@ export function Tasks(props: { state: State; viewer: Viewer; now: number; lead: 
         ))}
         {chips.map((chip) => (
           <span key={chip.key} className="label">
-            {chip.text}
+            {chip.label}
             <button title={`remove ${chip.text}`} onClick={() => setFilter(chip.drop)}>
               <X size={11} />
             </button>
@@ -251,10 +254,10 @@ function TaskRow({ root, state, now, open }: { root: TaskRoot; state: State; now
       <span className="task-now">
         {current === 'claimed' && task.claim && (
           <>
-            {nameOf(state, task.claim.actor)} · <Lease until={task.claim.until} now={now} />
+            <ActorName name={nameOf(state, task.claim.actor)} /> · <Lease until={task.claim.until} now={now} />
           </>
         )}
-        {current === 'ready' && (task.state === 'claimed' ? 'claim ended' : task.for ? `for ${nameOf(state, task.for)}` : '')}
+        {current === 'ready' && (task.state === 'claimed' ? 'claim ended' : task.for ? <>for <ActorName name={nameOf(state, task.for)} /></> : '')}
         {current === 'waiting' && (
           <>
             needs <Needs ids={task.needs} state={state} now={now} />
@@ -292,7 +295,7 @@ function TaskFilterButton(props: { filter: TaskFilter; channels: string[]; owner
     <div className="segments">
       {['', ...ids].map((id) => (
         <button key={id || 'any'} className={`segment${(filter[name] ?? '') === id ? ' on' : ''}`} title={id} onClick={() => setFilter({ [name]: id || null })}>
-          {id ? nameOf(state, id) : 'anyone'}
+          {id ? <ActorName name={nameOf(state, id)} /> : 'anyone'}
         </button>
       ))}
     </div>

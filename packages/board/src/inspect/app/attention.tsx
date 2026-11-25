@@ -3,8 +3,9 @@ import { keyAction, selectionAfter, type Selection } from './attention-keys.ts'
 import * as board from './board.ts'
 import { Ago, here, Link, RelativeTime, useTypeToFocus } from './nav.tsx'
 import { attentionFor, attentionRows, NO_ATTENTION } from './attention-store.ts'
-import type { State, TaskRoot, Viewer } from './store.ts'
+import { nameOf, type State, type TaskRoot, type Viewer } from './store.ts'
 import { Header } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { ago, firstLine, left } from './words.ts'
 
 export function Attention({ state, viewer, lead, now }: { state: State; viewer: Viewer; lead: ReactNode; now: number }) {
@@ -70,6 +71,7 @@ function AttentionRow({ root, state, viewer, now, selected, onSelect }: { root: 
     <article id={`attention-${root.id}`} className="attention-row" aria-current={selected ? 'true' : undefined} onClick={onSelect}>
       <div className="attention-meta">
         <span>#{root.channel}</span>
+        {attention?.by && <span>by <ActorName name={nameOf(state, attention.by.actor)} /></span>}
         <Ago iso={root.createdAt} />
         <span className="attention-status" role="status">
           {answering !== null ? `answering ${answering}` : chosen ? `answered · ${chosen.label}` : attention?.status}

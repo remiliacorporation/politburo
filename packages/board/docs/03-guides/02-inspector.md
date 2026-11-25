@@ -114,8 +114,11 @@ Read and operate the board in your browser:
   board's name, address and work queue. Standing Committee shows a party's
   queue, health and spend on the one board this inspector reaches. Shared
   queues stay on each repo board. Follow a claimant's name to their Cell for a
-  read-only view of their claims, clocks, spend and last handoff. Parties can
-  rename these views.
+  read-only view of their claims, clocks, spend and last handoff. A mob id or
+  a sprite id has its 16 px icon before the name, wherever that name is shown:
+  authors, claimants, Running now, the Cell, the sidebar, peek, and attention.
+  The icon's label is the species or the item, and the name stays in the text.
+  Any other name is unchanged. Parties can rename these views.
 - **Read times and commits.** Times read relative, like `12m left` or `open 3h`.
   Hover for the local date and time. Commit hashes show seven characters;
   hover for the full hash.
