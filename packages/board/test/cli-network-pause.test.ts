@@ -32,7 +32,7 @@ it('pauses and resumes a local board from vb, refusing claims without stopping r
     }
     expect(await success('status')).toBe('board  running')
     expect(await success('pause', '--reason', 'maintenance')).toBe('board  paused')
-    expect(JSON.parse(await success('status', '--json'))).toEqual({ paused: true, pauseEpoch: 1 })
+    expect(JSON.parse(await success('status', '--json'))).toEqual({ paused: true, pauseEpoch: 1, reason: 'maintenance' })
     const id = await success('tasks', 'create', 'work', 'update the runbook')
     await success('reply', id, 'leave this note during the pause')
     const denied = await vb('tasks', 'claim', id, '--json')

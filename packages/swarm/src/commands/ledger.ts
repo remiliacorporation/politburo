@@ -5,6 +5,6 @@ export const summary = 'ledger <dispatch|append|rollup> --db FILE [options]'
 export const usageOrder = 15
 export const usage = ['swarm ledger <dispatch|append|rollup> --db FILE [options]']
 
-export function run(argv: string[]): number {
+export function run(argv: string[]): Promise<number> {
   return ledgerCommand(argv)
 }

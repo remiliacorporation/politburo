@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util'
+import { stopIfPaused } from '../pause.ts'
 import { SpriteNotFinished } from './collect.ts'
 import { jsonlLedger } from './ledger.ts'
 import { defaultSpriteDir, executionId, recordSprite, SpriteLaunchFailed, supervise, validSpriteName } from './supervise.ts'
@@ -63,6 +64,10 @@ export async function captureMain(args: string[]): Promise<number> {
   const restarts = count(values.restarts, 0, 0)
   const maxSeconds = count(values['max-seconds'], 2400, 1)
   if (restarts === null || maxSeconds === null) return misuse('invalid --restarts or --max-seconds')
+  if (action === 'run') {
+    const stopped = await stopIfPaused()
+    if (stopped !== null) return stopped
+  }
 
   try {
     const id = values.execution ?? executionId()

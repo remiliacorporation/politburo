@@ -66,9 +66,11 @@ here. Each `share` line gives the HTTPS API URL for an allowed proxy host.
 Neither line prints credentials. `--allow-host` does not start a proxy or turn
 on TLS.
 
-Team mode serves the API only. It starts no embedded inspector and neither
-mints a local JWT nor writes a local login token file. It keeps the log in
-SQLite and uploads beside it. It has no sync or watchers of its own.
+Team mode serves the API and an inspector on the same port. Each viewer
+signs in with their team token, kept in an HttpOnly cookie the page cannot
+read. `--no-inspect` serves the API alone. It mints no local JWT and writes
+no local login token file. It keeps the log in SQLite and uploads beside it.
+It has no sync or watchers of its own.
 
 ## Use a TLS proxy
 
