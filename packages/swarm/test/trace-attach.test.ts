@@ -154,6 +154,103 @@ test('a second attach keeps the earlier file', async (t) => {
   assert.deepEqual(bodies.sort(), ['first file\n', 'second file\n'])
 })
 
+test('attach redacts indented headers and env names that contain a secret word', async (t) => {
+  const { team, url, dir, run } = await fixture(t)
+  const task = await team.tasks.create('work', 'headers')
+  const path = join(dir, 'headers.txt')
+  const source = `kept line
+COLOR=blue
+MONKEY=banana
+Content-Type: text/plain
+  Authorization: Bearer hunter2
+Cookie: session=hunter2
+Set-Cookie: id=hunter2; HttpOnly
+Proxy-Authorization: Basic hunter2
+\tX-Api-Key: hunter2 extra
+X-Auth-Token: hunter2 extra
+AUTHORIZATION=hunter2
+CREDENTIALS=hunter2
+COOKIE=hunter2
+SESSIONID=hunter2
+PASSWORDFILE=hunter2
+`
+  const redacted = `kept line
+COLOR=blue
+MONKEY=banana
+Content-Type: text/plain
+  Authorization: [redacted]
+Cookie: [redacted]
+Set-Cookie: [redacted]
+Proxy-Authorization: [redacted]
+\tX-Api-Key: [redacted]
+X-Auth-Token: [redacted]
+AUTHORIZATION=[redacted]
+CREDENTIALS=[redacted]
+COOKIE=[redacted]
+SESSIONID=[redacted]
+PASSWORDFILE=[redacted]
+`
+  writeFileSync(path, source)
+  const ran = await run(['trace', 'attach', task.task.id, '--kind', 'log', '--file', path, '--board', url])
+  assert.equal(ran.stderr, '')
+  assert.equal(ran.status, 0)
+  const thread = await team.thread(task.task.id)
+  const reply = thread.replies.find((message) => message.labels['trace.kind'] === 'log')
+  assert.ok(reply)
+  const body = await textOf(team, reply.attachments![0]!.id)
+  assert.equal(body, redacted)
+  assert.equal(body.includes('hunter2'), false)
+})
+
+test('attach redacts a secret in the file name and in --source', async (t) => {
+  const { team, url, dir, run } = await fixture(t)
+  const task = await team.tasks.create('work', 'name')
+  const path = join(dir, 'notes-ghp_abcdefghijklmnopqrstuvwxyz0123456789.log')
+  writeFileSync(path, 'plain log\n')
+  const source = 'https://example.test/build?token=plain-token-value'
+  const ran = await run(['trace', 'attach', task.task.id, '--kind', 'log', '--file', path, '--source', source, '--board', url])
+  assert.equal(ran.status, 0)
+  assert.equal(ran.stderr, '')
+  const thread = await team.thread(task.task.id)
+  const reply = thread.replies.find((message) => message.labels['trace.kind'] === 'log')
+  assert.ok(reply)
+  assert.equal(reply.attachments?.[0]?.name, 'notes-[redacted].log')
+  assert.equal(reply.text, 'notes-[redacted].log')
+  assert.equal(reply.labels['trace.source'], 'https://example.test/build?token=[redacted]')
+  assert.equal(ran.stdout.includes('ghp_'), false)
+  assert.equal(ran.stdout.includes('plain-token-value'), false)
+  assert.equal(reply.text.includes('ghp_'), false)
+  assert.equal(reply.labels['trace.source']!.includes('plain-token-value'), false)
+  assert.equal(await textOf(team, reply.attachments![0]!.id), 'plain log\n')
+})
+
+test('attach redacts the password in a URL with userinfo', async (t) => {
+  const { team, url, dir, run } = await fixture(t)
+  const task = await team.tasks.create('work', 'url')
+  const path = join(dir, 'db.txt')
+  const source = `kept line
+https://example.test/job/1
+postgres://user:hunter2@db.example/app
+https://reader:s3cret@example.test/db
+`
+  const redacted = `kept line
+https://example.test/job/1
+postgres://user:[redacted]@db.example/app
+https://reader:[redacted]@example.test/db
+`
+  writeFileSync(path, source)
+  const ran = await run(['trace', 'attach', task.task.id, '--kind', 'log', '--file', path, '--board', url])
+  assert.equal(ran.stderr, '')
+  assert.equal(ran.status, 0)
+  const thread = await team.thread(task.task.id)
+  const reply = thread.replies.find((message) => message.labels['trace.kind'] === 'log')
+  assert.ok(reply)
+  const body = await textOf(team, reply.attachments![0]!.id)
+  assert.equal(body, redacted)
+  assert.equal(body.includes('hunter2'), false)
+  assert.equal(body.includes('s3cret'), false)
+})
+
 test('trace attach rejects a bad kind and a missing file', async (t) => {
   const { url, run } = await fixture(t)
   const kind = await run(['trace', 'attach', '1', '--kind', 'note', '--file', 'missing.txt', '--board', url])

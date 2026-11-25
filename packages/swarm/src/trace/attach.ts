@@ -91,11 +91,12 @@ export async function attachCommand(argv: string[]): Promise<number> {
       console.error('error: not a task')
       return 1
     }
-    const name = basename(path)
+    const name = redactTrace(basename(path))
+    const sourceLabel = origin ? redactTrace(origin) : undefined
     const attachment = await team.upload({ data: new Uint8Array(Buffer.from(redacted, 'utf8')), name })
     const message = await team.reply(id, {
       text: name,
-      labels: { 'trace.kind': kind, ...(origin ? { 'trace.source': origin } : {}) },
+      labels: { 'trace.kind': kind, ...(sourceLabel ? { 'trace.source': sourceLabel } : {}) },
       attachments: [attachment],
     })
     console.log(`attached  ${message.id}  ${kind}  ${name}`)

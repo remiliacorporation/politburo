@@ -1,18 +1,29 @@
-const SECRET_NAME = /(?:token|secret|password|passwd|credential|auth)(?:_|$)|(?:^|_)key(?:_|$)/i
+const SECRET_NAME = /auth|credential|cookie|session|secret|token|password|passwd|(?:^|_)key(?:_|$)/i
 
 function keepBreak(value: string): string {
   return value.endsWith('\r') ? '[redacted]\r' : '[redacted]'
 }
 
+/** A header whose value is a credential: Authorization, Cookie, X-Api-Key, and the same kind of name. */
+function secretHeader(name: string): boolean {
+  const normalized = name.toLowerCase()
+  if (normalized.includes('authorization') || normalized.includes('cookie') || /api[-_]?key/.test(normalized)) return true
+  return normalized.split('-').some((part) => /^(?:key|token|secret|password|passwd|auth|session|credential)$/.test(part))
+}
+
 /** Replaces secrets with `[redacted]` and leaves every other character as it was. */
 export function redactTrace(text: string): string {
   const withoutKeys = text.replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g, '[redacted]')
-  const withoutHeaders = withoutKeys.replace(/^(authorization\s*:\s*)(.*)$/gim, (_line, prefix: string) => `${prefix}[redacted]`)
+  const withoutHeaders = withoutKeys.replace(/^([ \t]*)([A-Za-z][A-Za-z0-9-]*)([ \t]*:[ \t]*)(.*)$/gm, (line, indent: string, name: string, sep: string, value: string) => {
+    if (!secretHeader(name)) return line
+    return `${indent}${name}${sep}${keepBreak(value)}`
+  })
   const withoutEnv = withoutHeaders.replace(/^([ \t]*(?:export[ \t]+)?)([A-Za-z_][A-Za-z0-9_]*)([ \t]*=[ \t]*)(.*)$/gm, (line, lead: string, name: string, eq: string, value: string) => {
     if (!SECRET_NAME.test(name)) return line
     return `${lead}${name}${eq}${keepBreak(value)}`
   })
-  let withoutShapes = withoutEnv
+  const withoutUrls = withoutEnv.replace(/([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+):([^@\s/]+)@/gi, '$1:[redacted]@')
+  let withoutShapes = withoutUrls
   for (const shape of [
     /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}\b/g,
     /\bgithub_pat_[A-Za-z0-9_]{16,}\b/g,
