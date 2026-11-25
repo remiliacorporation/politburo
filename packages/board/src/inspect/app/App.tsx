@@ -16,7 +16,7 @@ import { Sidebar } from './sidebar.tsx'
 import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
-import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
+import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, nameOf, pauseBanner, profilesOf, stateNow, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
 import { listedRepos, repoLabel, reposOf } from './repos.ts'
@@ -597,6 +597,7 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
           known={props.known}
           syncConfigured={options.syncConfigured}
           mayLabel={() => viewer.may('label', t.root.channel)}
+          {...(isTask(t.root) && stateNow(t.root.task, props.now) === 'claimed' && t.root.task.claim ? { letterTo: nameOf(state, t.root.task.claim.actor) } : {})}
           onSend={({ text, noSync, labels, files, later }) => void board.send({ channel: t.root.channel, re: id, text, noSync, labels, files, ...(later ? { later } : {}) })}
           onEditLast={() => {
             const mine = lastOwn([t.root, ...t.replies], state.me!.actor)

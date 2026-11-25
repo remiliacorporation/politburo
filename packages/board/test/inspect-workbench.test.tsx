@@ -1351,6 +1351,54 @@ it('typing over Handoffs focuses the open thread reply', async () => {
   expect(document.activeElement).toBe(reply)
 })
 
+const replySend = () => threadPane()?.querySelector('button.send') ?? null
+const channelSend = () => document.querySelector('main button.send')
+const holder = () => [...(threadPane()?.querySelectorAll('.task-head span') ?? [])].find((el) => el.textContent?.startsWith('by '))?.textContent?.slice(3)
+
+it('labels a reply send as a letter to the claimant, and only while the task is claimed', async () => {
+  const { api, as, open } = await workbench()
+  const { task } = await api.tasks.create('work', { text: 'Write the letter' })
+  await open(`/c/work?thread=${task.id}`)
+  await vi.waitFor(() => {
+    expect(replySend()?.textContent).toBe('send')
+    expect(replySend()?.getAttribute('aria-label')).toBeNull()
+    expect(channelSend()?.textContent).toBe('send')
+  })
+  await as('worker').tasks.claim(task.id)
+  await vi.waitFor(() => {
+    const name = holder()
+    expect(name).toBeTruthy()
+    expect(replySend()?.getAttribute('aria-label')).toBe(`send letter to ${name}`)
+    expect(channelSend()?.textContent).toBe('send')
+    expect(channelSend()?.getAttribute('aria-label')).toBeNull()
+  })
+})
+
+it('shows an envelope on the reply send only while the task is claimed', async () => {
+  const { api, as, open } = await workbench()
+  const { task } = await api.tasks.create('work', { text: 'Write the letter' })
+  await open(`/c/work?thread=${task.id}`)
+  const mail = (button: Element | null) => button?.querySelector('svg.lucide-mail') ?? null
+  await vi.waitFor(() => {
+    expect(replySend()).not.toBeNull()
+    expect(mail(replySend())).toBeNull()
+    expect(mail(channelSend())).toBeNull()
+  })
+  await as('worker').tasks.claim(task.id)
+  await vi.waitFor(() => {
+    expect(mail(replySend())).not.toBeNull()
+    expect(mail(channelSend())).toBeNull()
+  })
+  const css = document.querySelector('style')?.textContent ?? ''
+  expect(css).toContain('letter-away 400ms')
+  expect(css).toMatch(/prefers-reduced-motion:\s*reduce[\s\S]*\.send\.letter \.lucide-mail[\s\S]*animation:\s*none/)
+  const field = threadPane()!.querySelector('textarea')!
+  flushSync(() => typeInto(field, 'The notes are in'))
+  flushSync(() => replySend()!.click())
+  expect(replySend()?.classList.contains('flying')).toBe(true)
+  await vi.waitFor(() => expect(threadPane()?.textContent).toContain('The notes are in'))
+})
+
 it('renders the author’s initial without loading their supplied avatar', async () => {
   const { as, open } = await workbench()
   const author = as({ name: 'Reviewer', avatar: 'https://images.example.test/avatar.png' })
