@@ -57,7 +57,7 @@ export const METHODS: readonly Method[] = [
   'status', 'pause', 'resume',
   'schedule', 'schedules', 'cancelSchedule',
   ...AGENT_OPS_METHODS,
-  'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
+  'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'offerTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
   'requestTaskAttention', 'taskAttention', 'answerTaskAttention',
   ...WORK_EVIDENCE_METHODS,
   'grants', 'createGrant', 'createGrants', 'updateGrant', 'explain', 'revokeGrant', 'schemas', 'schema', 'createSchema', 'upload', 'attachment', 'uploadStart', 'uploadFinish', 'watchers', 'register', 'matches', 'ack', 'events',

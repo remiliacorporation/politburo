@@ -1006,6 +1006,37 @@ export const blockTask = (id: string, reason: string, kind?: string) =>
     return mine ? held(id).block(reason, kind ? { kind } : {}) : team.tasks.block(id, reason, kind ? { kind } : {})
   })
 export const unblockTask = (id: string) => work(id, () => team.tasks.unblock(id))
+
+/**
+ * Answers a plain hold from the workbench: the viewer's reply in the thread, then the hold
+ * lifted. One action. A refusal is the board's own words. The hold stays if the reply did not post.
+ */
+export async function answerHold(id: string, text: string): Promise<string | null> {
+  const words = text.trim()
+  if (!words) return null
+  const as = identity
+  try {
+    const reply = await team.reply(id, { text: words })
+    if (as !== identity) return null
+    let task: MessageView
+    try {
+      task = await team.tasks.unblock(id)
+    } catch (error) {
+      if (as !== identity) return null
+      set((s) => store.merge(s, [reply]))
+      return said(error)
+    }
+    if (as !== identity) return null
+    set((s) => ({
+      ...store.merge(s, [reply, task]),
+      openTaskRoots: Object.hasOwn(s.openTaskRoots, task.id) ? store.newest(s.openTaskRoots, [task]) : s.openTaskRoots,
+    }))
+    return null
+  } catch (error) {
+    if (as !== identity) return null
+    return said(error)
+  }
+}
 export async function reopenTask(id: string): Promise<boolean> {
   const root = state.messages[id]
   if (!store.isTask(root) || root.task.work) return false

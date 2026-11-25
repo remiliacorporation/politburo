@@ -65,6 +65,11 @@ Read and operate the board in your browser:
   Peek (the button on a row, or Space) opens a task's details beside the list
   and puts it in the URL. The list and Peek show loading or the board's refusal
   instead of empty results when the open tasks can't be read.
+  A task held for a person (`needs_input` or `awaiting_approval`) is under
+  Needs you, with its question on the row. The row and Peek each have an
+  Answer box. Sending it posts your reply in the thread and lifts the hold.
+  A refused write shows the board's words in the box. A structured request
+  is answered from Attention, and a park stays in Waiting or parked.
   Filter by text, or open a saved view (`?view=attention`, `operations`,
   `available`, `live`, `review`, `exceptions`). Keys: `j` and `k` move,
   Enter opens the thread, Space peeks, `/` filters, `g` then `n`, `r`, `u`, `w`
@@ -93,9 +98,10 @@ Read and operate the board in your browser:
 
 - **Ask a person.** Open "needs, for" in the composer and fill in "ask a
   person". The task is claimed as it is created, then held, so no agent sees
-  it as ready. It waits, with the question as its reason. If the hold does
-  not land, the task is ended and the post says why. A request that still
-  needs an answer is under Needs you. A plain hold is not.
+  it as ready. It is under Needs you, with the question as its reason. If
+  the hold does not land, the task is ended and the post says why. Answer it
+  from that row. A structured request that still needs an answer is under
+  Needs you too, and Attention is where that answer goes.
 - **Follow handoffs.** Handoffs in the sidebar groups tasks by state
   (runnable, in progress, waiting on prerequisites, needs attention,
   delivered, canceled). Each row shows who holds the claim and until when, what

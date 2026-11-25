@@ -2233,7 +2233,7 @@ async function agents(args: string[]): Promise<number> {
 
 /** What `tasks` does to a task, by the word after it: any other word is a channel to list. */
 const TASK_EVIDENCE_VERBS = new Set(['submit', 'evidence', 'attest', 'override', 'resolve'])
-const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'needs', 'priority', 'show', 'cancel', ...TASK_EVIDENCE_VERBS])
+const TASK_VERBS = new Set(['create', 'claim', 'run', 'renew', 'release', 'complete', 'fail', 'block', 'ask', 'attention', 'answer', 'unblock', 'park', 'unpark', 'handoff', 'scope', 'stage', 'reopen', 'assign', 'offer', 'needs', 'priority', 'show', 'cancel', ...TASK_EVIDENCE_VERBS])
 const TASK_READS = new Set(['show', 'attention', 'evidence'])
 // Evidence verbs take a task ID. A bare word still names the channel to list.
 const isTaskVerb = (word: string, target: string | undefined) =>
@@ -2457,6 +2457,7 @@ async function tasks(args: string[]): Promise<number> {
       ...(priority !== undefined ? { priority } : {}),
       ...(flags.needs?.length ? { needs: flags.needs.map((id) => taskId(id)) } : {}),
       ...(flags.for ? { for: profileActor((await board.me()).principal, flags.for) } : {}),
+      ...(flags.offer?.length ? { offer: flags.offer } : {}),
       ...(claimFlag() ? { claim: true } : {}),
       ...(lease !== undefined ? { lease } : {}),
       ...(binding !== undefined ? { binding } : {}),
@@ -2828,6 +2829,16 @@ async function tasks(args: string[]): Promise<number> {
       const task = await board.tasks.assign(id, profile === undefined ? null : profileActor(owner ?? (await board.me()).principal, profile))
       if (flags.json) result({ task, outcome: profile === undefined ? 'unassigned' : 'assigned' })
       else out(profile === undefined ? `unassigned ${messageRef(id)}` : `assigned ${messageRef(id)} to ${profile.toLowerCase()}`)
+      return 0
+    }
+    case 'offer': {
+      const actors = rest.slice(1)
+      if (flags.clear && actors.length > 0) throw usage(`Actors are who may claim ${ref(id)}, and --clear for no one: pass one of them.`)
+      if (!flags.clear && actors.length === 0) throw usage("Missing the actors who may claim it, by ID, or --clear for no one.", { reason: 'missing_arguments' })
+      const task = await board.tasks.offer(id, actors)
+      const offer = task.task?.offer ?? []
+      if (flags.json) result({ task, outcome: 'offered' })
+      else out(offer.length ? `offered ${messageRef(id)} to ${offer.join(' ')}` : `offered ${messageRef(id)} to no one`)
       return 0
     }
     case 'needs': {

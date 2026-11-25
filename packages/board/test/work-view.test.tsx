@@ -58,6 +58,7 @@ async function workBoard(expiresIn = '1h') {
     },
     client,
     fresh: async () => clientFor(await personToken('u_reader', BOARD_URL, expiresIn)),
+    raw: api.fetch.bind(api),
     actor: async (id: string) => clientFor(await personToken(id, BOARD_URL)),
     async open(address = '', openTasksResponse?: () => Promise<Response>, seed?: (records: SwarmRecords) => void, respond?: (request: Request) => Promise<Response | undefined> | Response | undefined, keepUrl = false) {
       browser.setViewport({ width: 1280, height: 900 })
@@ -1114,20 +1115,80 @@ it('filters the queue by repo and counts each repo in Health', async () => {
   })
 })
 
-it('does not count a plain hold as Needs you', async () => {
+it('answers a needs_input hold from the Needs you row: the reply is the viewer\'s and the row leaves', async () => {
   const { client, open } = await workBoard()
   const { task } = await client.tasks.create('rdn/backlog', { text: 'Decide the screenshot rule' })
   await client.tasks.block(task.id, 'Should logic-only PRs skip the screenshot?', { kind: 'needs_input' })
   await open('/work')
-  await vi.waitFor(() => {
-    const waitingOn = document.querySelector('#work-queue-waiting')?.closest('section')
-    expect(waitingOn?.textContent).toContain('Decide the screenshot rule')
-    expect(waitingOn?.textContent).toContain('Should logic-only PRs skip the screenshot?')
-    expect(document.querySelector('#work-needs')?.textContent).toContain('nothing needs you')
-    expect(sidebar().querySelector('a[href="/"] .count')).toBeNull()
+  const box = await vi.waitFor(() => {
+    const needs = document.querySelector('#work-needs')
+    expect(needs?.textContent).toContain('Decide the screenshot rule')
+    expect(needs?.textContent).toContain('Should logic-only PRs skip the screenshot?')
+    const area = needs?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')
+    expect(area).toBeTruthy()
+    return area!
   })
-  visitScope('/')
-  await vi.waitFor(() => expect(document.querySelector('main')?.textContent).toContain('nothing needs anyone'))
+  setField(box, 'Yes, skip them')
+  flushSync(() => box.closest('form')!.querySelector('button')!.click())
+  await vi.waitFor(() => expect(document.querySelector('#work-needs')?.textContent).toContain('nothing needs you'))
+  const thread = await client.thread(task.id)
+  expect(thread.replies.find((message) => message.re === task.id)).toMatchObject({ text: 'Yes, skip them', by: { actor: (await client.me()).actor } })
+  expect(thread.message.task).toMatchObject({ state: 'ready', blocked: null })
+})
+
+it('answers an awaiting_approval hold from Peek', async () => {
+  const { client, open } = await workBoard()
+  const { task } = await client.tasks.create('rdn/backlog', { text: 'Approve the deploy' })
+  await client.tasks.block(task.id, 'Ship this build?', { kind: 'awaiting_approval' })
+  await open('/work')
+  const peekButton = await vi.waitFor(() => {
+    const needs = document.querySelector('#work-needs')
+    expect(needs?.textContent).toContain('Ship this build?')
+    const button = needs?.querySelector<HTMLButtonElement>('button[aria-expanded]')
+    expect(button).toBeTruthy()
+    return button!
+  })
+  flushSync(() => peekButton.click())
+  const box = peek()?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')
+  expect(box).toBeTruthy()
+  setField(box!, 'Ship it')
+  flushSync(() => box!.closest('form')!.querySelector('button')!.click())
+  await vi.waitFor(() => {
+    expect(document.querySelector('#work-needs')?.textContent).toContain('nothing needs you')
+    expect(peek()?.querySelector('textarea[aria-label="Answer"]')).toBeNull()
+  })
+  const thread = await client.thread(task.id)
+  expect(thread.replies.find((message) => message.re === task.id)?.text).toBe('Ship it')
+  expect(thread.message.task?.state).toBe('ready')
+})
+
+it('shows the board\'s words when the answer\'s unblock is refused', async () => {
+  const { client, open, raw } = await workBoard()
+  const { task } = await client.tasks.create('work', { text: 'Decide the rule', labels: { 'work.id': 'wp-9', party: 'blue' } })
+  await client.tasks.block(task.id, 'Which rule?', { kind: 'needs_input' })
+  const token = await personToken('u_reader', BOARD_URL)
+  await open('/work', undefined, undefined, async (request) => {
+    const url = new URL(request.url)
+    if (request.method !== 'POST' || !url.pathname.endsWith('/unblock')) return undefined
+    const headers = new Headers()
+    headers.set('authorization', `Bearer ${token}`)
+    headers.set('x-board-can', '*=read')
+    headers.set('content-type', 'application/json')
+    return raw(new Request(`${BOARD_URL}${url.pathname.slice('/board'.length)}`, { method: 'POST', headers, body: '{}' }))
+  })
+  const box = await vi.waitFor(() => {
+    const area = document.querySelector<HTMLTextAreaElement>('#work-needs textarea[aria-label="Answer"]')
+    expect(area).toBeTruthy()
+    return area!
+  })
+  setField(box, 'The first one')
+  flushSync(() => box.closest('form')!.querySelector('button')!.click())
+  await vi.waitFor(() => {
+    expect(document.querySelector('#work-needs')?.textContent).toContain(`#${task.id} is someone else's task`)
+  })
+  const thread = await client.thread(task.id)
+  expect(thread.replies.find((message) => message.re === task.id)?.text).toBe('The first one')
+  expect(thread.message.task).toMatchObject({ state: 'blocked', blocked: { kind: 'needs_input' } })
 })
 
 function setField(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -1170,10 +1231,11 @@ it('starts a task for a person from the composer: held with the question, never 
 
   visitScope('/work')
   await vi.waitFor(() => {
-    const waitingOn = document.querySelector('#work-queue-waiting')?.closest('section')
-    expect(waitingOn?.textContent).toContain('Decide the screenshot rule')
-    expect(waitingOn?.textContent).toContain('Keep the screenshot rule for logic-only PRs?')
-    expect(document.querySelector('#work-needs')?.textContent).toContain('nothing needs you')
+    const needs = document.querySelector('#work-needs')
+    expect(needs?.textContent).toContain('Decide the screenshot rule')
+    expect(needs?.textContent).toContain('Keep the screenshot rule for logic-only PRs?')
+    expect(needs?.querySelector('textarea[aria-label="Answer"]')).toBeTruthy()
+    expect(document.querySelector('#work-queue-waiting')?.closest('section')?.textContent ?? '').not.toContain('Decide the screenshot rule')
   })
   // On the board itself, not just on the page. Claim-next was already waiting and did not take it.
   const page = await client.tasks.list({ channel: 'rdn/backlog' })

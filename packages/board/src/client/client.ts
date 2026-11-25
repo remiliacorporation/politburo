@@ -201,6 +201,8 @@ export type TaskOptions = {
   priority?: TaskPriority
   needs?: string[]
   for?: string | null
+  /** Actors, by ID, whose claim-next may take this task while it is unassigned, besides its owner. */
+  offer?: string[]
   claim?: boolean
   lease?: number
   token?: string
@@ -224,6 +226,8 @@ export type TaskInBatch = Required<Pick<PostOptions, 'text'>> &
     priority?: TaskPriority
     needs?: (string | { key: string })[]
     for?: string | null
+    /** Actors, by ID, whose claim-next may take this task while it is unassigned, besides its owner. */
+    offer?: string[]
   }
 
 /**
@@ -506,8 +510,8 @@ export function createBoardClient(options: ClientOptions) {
    * Claims task `target`, or with `{ channel }` the highest priority eligible ready task in that
    * channel (`work`) or subtree (`work/`). At equal priority, it prefers tasks assigned to you,
    * then takes the oldest. It has every label in `label` and is assigned to you, or unassigned
-   * and owned by you or an owner `from` names by ID (400 `invalid_from` for a handle, which
-   * several can share). It needs `label` where the task is. A task by ID that can't be claimed
+   * and owned by you, named on the task's `offer`, or an owner `from` names by ID (400 `invalid_from`
+   * for a handle, which several can share). It needs `label` where the task is. A task by ID that can't be claimed
    * throws a 409 (`task_claimed`, `task_waiting`, ...); a channel with nothing ready answers
    * null, after waiting up to `wait` seconds for one. `lease` is how long you hold it, in seconds,
    * the board's default without one: a board says how short and how long one may be, and the
@@ -813,6 +817,11 @@ export function createBoardClient(options: ClientOptions) {
         taskWrite(id, 'stage', { stage, reason, ifVersion: await taskVersion(id, opts.ifVersion) }),
       /** Assigns a task to one of its owner's actors (`<owner>+<profile>`), the only one that claims it then, or with null to anyone who may. */
       assign: (id: string, actor: string | null) => taskWrite(id, 'assign', { for: actor }),
+      /**
+       * Replaces who may claim-next this task while it is unassigned, besides its owner. Each actor
+       * is an ID. An empty list names no one. 501 `no_task_offer` where the board keeps no offer list.
+       */
+      offer: (id: string, actors: readonly string[]) => taskWrite(id, 'offer', { offer: [...actors] }),
       /**
        * Replaces what a task waits for, by their IDs: it waits for those now, and is ready once they've all completed, or
        * at once with none. For its owner, while no one holds it and it isn't finished. One that would make it wait for

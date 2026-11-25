@@ -32,6 +32,11 @@ export type Task = {
   by: string
   /** The one actor that claims it, or null when anyone who may does. */
   for: string | null
+  /**
+   * Actors, by ID, whose claim-next may take this task while it is unassigned, besides its owner.
+   * Empty when the owner named no one. Missing on a task folded before offers existed.
+   */
+  offer?: string[]
   /** The tasks it waits for, by their roots' IDs. */
   needs: number[]
   /** How many times it's been claimed: a claim's writes carry the epoch it was made at. */
@@ -236,7 +241,7 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       // A thread becomes a task once, at its root, while the root is there.
       if (!message || message.deleted || message.re !== null || message.task) return undefined
       const { needs, by, work, priority = DEFAULT_TASK_PRIORITY } = event.payload
-      message.task = { state: work || needs.length > 0 ? 'waiting' : 'ready', owner: by.principal, by: by.actor, for: event.payload.for, priority, needs: [...needs], epoch: 0, claim: null, blocked: null, result: null, reason: null }
+      message.task = { state: work || needs.length > 0 ? 'waiting' : 'ready', owner: by.principal, by: by.actor, for: event.payload.for, offer: [...(event.payload.offer ?? [])], priority, needs: [...needs], epoch: 0, claim: null, blocked: null, result: null, reason: null }
       if (work) message.task.work = { stage: work, scopedRevision: null }
       return labeled(message)
     }
@@ -270,6 +275,7 @@ function foldMessage(state: MessagesState, event: BoardEvent): Message | undefin
       return message && foldEvidence(message, event) ? message : undefined
     }
     case 'task.assigned':
+    case 'task.offered':
     case 'task.priority_changed':
     case 'task.needs_changed':
     case 'task.ready':
@@ -328,6 +334,13 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' |
       if (task.for === event.payload.for) return false
       task.for = event.payload.for
       return true
+    case 'task.offered': {
+      const next = [...event.payload.offer]
+      const now = task.offer ?? []
+      if (now.length === next.length && now.every((actor, at) => actor === next[at])) return false
+      task.offer = next
+      return true
+    }
     case 'task.priority_changed': {
       const { priority, epoch } = event.payload
       if (task.state === 'completed' || task.state === 'failed' || task.state === 'canceled') return false

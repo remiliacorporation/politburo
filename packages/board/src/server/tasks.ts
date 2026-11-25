@@ -27,6 +27,8 @@ export const LEASE_MIN_S = 30
 export const LEASE_CAP_S = 3600
 /** How many owners one claim takes tasks from on this board, beside its caller. */
 const FROM_MAX = 32
+/** How many actors one task may name for claim-next, beside its owner. */
+const OFFER_MAX = 32
 /** The board's own author for derived task events that carry a `by`. */
 const TASKS_AUTHOR = { actor: 'board:tasks', principal: 'board:tasks', profile: null }
 
@@ -82,7 +84,7 @@ function atAppend<T>(verdict: (now: number) => T, now: number) {
 
 /** What a claim's own writes show: the `epoch` and `token` its claim answered. */
 type Proof = { epoch: number; token: string }
-type Start = Pick<Protocol['createTask']['input'], 'needs' | 'for' | 'priority' | 'claim' | 'lease' | 'token' | 'binding' | 'id'>
+type Start = Pick<Protocol['createTask']['input'], 'needs' | 'for' | 'offer' | 'priority' | 'claim' | 'lease' | 'token' | 'binding' | 'id'>
 
 const conflict = (code: string, message: string) => new HttpError(409, code, message)
 const notATask = (id: number) => notFound(`#${id} isn't a task`, 'not_a_task')
@@ -680,6 +682,31 @@ export function createTasks(options: {
   }
 
   /**
+   * The actors a task's `offer` names, sorted and without duplicates. Each is an actor ID: a handle
+   * is how someone shows, and several can show the same, so it names no one who may take the task.
+   */
+  function offeredActors(values: readonly string[] | undefined): string[] {
+    if (!values?.length) return []
+    if (values.length > OFFER_MAX) throw badRequest(`offer: a task names at most ${OFFER_MAX} actors`, 'invalid_offer')
+    const seen = new Set<string>()
+    const offer: string[] = []
+    for (const actor of values) {
+      if (!isId(actor) || actor.length > 256) throw badRequest(`offer: ${actor} is a handle, which several can share: name the actor by ID`, 'invalid_offer')
+      if (seen.has(actor)) continue
+      seen.add(actor)
+      offer.push(actor)
+    }
+    offer.sort()
+    return offer
+  }
+
+  /** `offer` on `task.created` when the owner named someone, and nothing when they named no one. */
+  const offerField = (values: readonly string[] | undefined) => {
+    const offer = offeredActors(values)
+    return offer.length > 0 ? { offer } : {}
+  }
+
+  /**
    * Claims the highest priority ready task the caller can take. At equal priority, prefer tasks
    * assigned to the caller, then take the oldest within the same assignment group.
    */
@@ -715,7 +742,8 @@ export function createTasks(options: {
         const { task } = candidate
         if (scopers && (!current.readable(candidate.channel) || !current.can('label', candidate.channel))) continue
         const assigned = assignedTo(task, identity)
-        if (!assigned && !(task.for === null && owners.has(task.owner))) continue
+        const offered = task.for === null && (task.offer ?? []).includes(identity.actor.id)
+        if (!assigned && !(task.for === null && (owners.has(task.owner) || offered))) continue
         const rank = priorityRank(task.priority)
         if (rank < best || (rank === best && (bestAssigned || !assigned)) || !(await readyAt(task, now, pauseEpoch))) continue
         root = candidate
@@ -781,7 +809,7 @@ export function createTasks(options: {
           position,
           events: (root) => {
             const about = { id: root.id, thread: root.thread }
-            const events: Events = [{ type: 'task.created', payload: { ...about, needs: needs.ids, for: assigned, priority: input.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }]
+            const events: Events = [{ type: 'task.created', payload: { ...about, needs: needs.ids, for: assigned, ...offerField(input.offer), priority: input.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }]
             if (!scopers && needs.ids.length > 0 && !waits) events.push({ type: 'task.ready', payload: about })
             if (workEpoch !== undefined) {
               const taken = claiming(root, null, identity, input.lease, token, workEpoch, binding, now)
@@ -834,7 +862,7 @@ export function createTasks(options: {
      * those are new, so it waits. Refused before anything is read: an assignee that isn't its
      * owner's, a `key` two tasks have or none has, and tasks that wait for each other.
      */
-    startingMany(identity: Identity, tasks: readonly { key?: string | undefined; needs?: readonly BatchNeed[] | undefined; for?: string | null | undefined; priority?: TaskPriority | undefined }[]): AlongEach {
+    startingMany(identity: Identity, tasks: readonly { key?: string | undefined; needs?: readonly BatchNeed[] | undefined; for?: string | null | undefined; offer?: readonly string[] | undefined; priority?: TaskPriority | undefined }[]): AlongEach {
       const { principal, author } = identity
       const assigned = tasks.map((task) => ownActor(principal.id, task.for))
       const plan = batchPlan(tasks)
@@ -855,7 +883,7 @@ export function createTasks(options: {
             roots.map((root, at): Events => {
               const about = { id: root.id, thread: root.thread }
               const waitsFor = [...needs[at]!.ids, ...inside[at]!.map((other) => roots[other]!.id)]
-              return [{ type: 'task.created', payload: { ...about, needs: waitsFor, for: assigned[at]!, priority: tasks[at]!.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }, ...(readied[at] ? [{ type: 'task.ready' as const, payload: about }] : [])]
+              return [{ type: 'task.created', payload: { ...about, needs: waitsFor, for: assigned[at]!, ...offerField(tasks[at]!.offer), priority: tasks[at]!.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }, ...(readied[at] ? [{ type: 'task.ready' as const, payload: about }] : [])]
             }),
         }
       }
@@ -886,7 +914,7 @@ export function createTasks(options: {
         if (input.claim && waits) throw conflict('task_waiting', `#${id} would wait for ${needs.ids.map((need) => `#${need}`).join(', ')}: it wasn't made a task`)
         if (input.claim && assigned !== null && assigned !== actor.id) throw conflict('task_assigned', `#${id} would be assigned to ${assigned}: it wasn't made a task`)
         const about = { id, thread: found.thread }
-        const events: Events = [{ type: 'task.created', payload: { ...about, needs: needs.ids, for: assigned, priority: input.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }]
+        const events: Events = [{ type: 'task.created', payload: { ...about, needs: needs.ids, for: assigned, ...offerField(input.offer), priority: input.priority ?? DEFAULT_TASK_PRIORITY, by: author, ...initialWork } }]
         if (!scopers && needs.ids.length > 0 && !waits) events.push({ type: 'task.ready', payload: about })
         if (pauseEpoch !== undefined) {
           const claimed = claiming(found, null, identity, input.lease, token, pauseEpoch, binding, now)
@@ -1324,6 +1352,27 @@ export function createTasks(options: {
         }
         if (finished(found.task)) throw conflict('task_finished', `#${id} is ${found.task.state}`)
         return found.task.for === assigned ? [] : [{ type: 'task.assigned', payload: { id, thread: found.thread, for: assigned, by: identity.author } }]
+      })
+      return { task: await shown(identity, root) }
+    },
+
+    /**
+     * Replaces who may claim-next this task while it is unassigned, besides its owner. An empty
+     * list names no one. Assignment still decides when `for` is set. A claim it has stays.
+     */
+    async offer(identity: Identity, id: number, actors: readonly string[]): Promise<{ task: MessageView }> {
+      const offer = offeredActors(actors)
+      const task = await taskOf(identity.principal.access, id)
+      if (!task.task.work) owns(identity, task)
+      const root = await changeScoperTask(identity, id, async (found, position, _access, now) => {
+        if (found.task.work) {
+          if (!beforeHandoff(found.task)) throw invalidStage(found, 'offer')
+          if (stateNow(found.task, now, await epochAt(position)) === 'claimed') throw conflict('task_claimed', `#${id} is claimed: release the claim before changing who may take it`)
+        }
+        if (finished(found.task)) throw conflict('task_finished', `#${id} is ${found.task.state}`)
+        const nowOffer = [...(found.task.offer ?? [])].sort()
+        if (nowOffer.length === offer.length && nowOffer.every((actor, at) => actor === offer[at])) return []
+        return [{ type: 'task.offered', payload: { id, thread: found.thread, offer, by: identity.author } }]
       })
       return { task: await shown(identity, root) }
     },

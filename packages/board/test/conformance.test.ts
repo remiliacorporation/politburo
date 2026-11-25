@@ -219,7 +219,7 @@ describe('the conformance kit', () => {
     // Every grant it made is gone, the ones that closed a pattern to everyone included.
     expect((await client.grants()).map((grant) => grant.id)).toEqual(['g1', 'g2', 'g3'])
     expect([...new Set(report.checks.map((check) => check.group))]).toEqual(['core', 'network-pause', 'paging', 'search', 'schedules', 'tasks', 'grants', 'invites', 'schemas', 'attachments', 'watchers', 'sync', 'agents', 'operational-inbox'])
-    expect(report.checks.filter((check) => check.group === 'tasks').map((check) => check.status)).toEqual(Array.from({ length: 26 + TASK_AUTHORITY.length }, () => 'passed'))
+    expect(report.checks.filter((check) => check.group === 'tasks').map((check) => check.status)).toEqual(Array.from({ length: 27 + TASK_AUTHORITY.length }, () => 'passed'))
     expect(report.checks.filter((check) => TASK_AUTHORITY.includes(check.name)).map((check) => check.status)).toEqual(TASK_AUTHORITY.map(() => 'passed'))
     expect(agentChecks(report).map(({ status }) => status)).toEqual(['passed', 'passed'])
     expect((await client.agents.list('conformance')).agents.map(({ status }) => status)).toEqual(['disabled', 'disabled'])
@@ -383,6 +383,7 @@ describe('the conformance kit', () => {
       [NARROWED[0], NO_CAN],
       ...HEADERS.map((name) => [name, NO_HEADERS]),
       OWN_PROFILES,
+      ['lets a named actor claim an unassigned task without naming its owner', NO_INVITE_TOKEN],
       [TASKS_OWNED, NO_HEADERS],
       [NARROWED[1], NO_CAN],
       [NARROWED[2], NO_CAN],
@@ -819,6 +820,7 @@ describe('the conformance kit', () => {
     expect(report.checks.filter((check) => check.status !== 'passed').map((check) => [check.group, check.status, check.detail])).toEqual([
       ['schedules', 'skipped', "not kept here: this board has no scheduler, so it can't send later"],
       ['schedules', 'skipped', "not kept here: this board has no scheduler, so it can't send later"],
+      ['tasks', 'skipped', NO_INVITE_TOKEN],
       ['grants', 'skipped', NO_ROLES[1]],
       ['grants', 'skipped', NO_APPS[1]],
       ['grants', 'skipped', LOCKED_OUT[1]],
@@ -846,7 +848,7 @@ describe('the conformance kit', () => {
     expect(report.ok).toBe(true)
     const tasks = report.checks.filter((check) => check.group === 'tasks')
     expect(tasks.map((check) => check.name)).toEqual(expect.arrayContaining(TASK_AUTHORITY))
-    expect(tasks).toHaveLength(26 + TASK_AUTHORITY.length)
+    expect(tasks).toHaveLength(27 + TASK_AUTHORITY.length)
     // The one that needs no task route is about labels, which a board has either way.
     expect(tasks.filter((check) => check.status !== 'skipped').map((check) => check.name)).toEqual([])
     expect([...new Set(tasks.map((check) => check.detail))]).toEqual(['not kept here: this board keeps no tasks'])

@@ -3,7 +3,11 @@ import { captureCloud } from '../capture-cloud/cli.ts'
 export const name = 'capture-cloud'
 export const summary = 'capture-cloud <serve|issue|bind>'
 export const usageOrder = 65
-export const usage = ['swarm capture-cloud <serve|issue|bind>']
+export const usage = [
+  'swarm capture-cloud <serve|issue|bind>',
+  'swarm capture-cloud bind reads the session id from stdin',
+  'swarm capture-cloud serve requires Authorization: Bearer on POST /v1/logs',
+]
 
 export function run(argv: string[]): Promise<number> {
   return captureCloud(argv)

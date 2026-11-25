@@ -37,6 +37,7 @@ describe('local()', () => {
       // A local board has neither a viewer's cap nor apps. This run doesn't check shared locks,
       // cross-team grants, or joined caller access, and the agent registry is off by default.
       expect(report.checks.filter((check) => check.status !== 'passed').map((check) => [check.status, check.name])).toEqual([
+        ['skipped', 'lets a named actor claim an unassigned task without naming its owner'],
         ['skipped', 'caps a person by their team role, so a viewer reads but neither posts nor manages'],
         ['skipped', 'names an app by its slug or client ID, keeps it by client ID, and every app as a group'],
         ['skipped', 'lets a member grant on a pattern after a lock under it'],

@@ -121,6 +121,14 @@ it('never shows a cached task outside the readable open list or a deleted task',
   expect(rows.map(({ workId }) => workId)).toEqual(['wp-1'])
 })
 
+it('lists a task another owner offered to the viewer as Ready to pull', () => {
+  const offered = task(7, { owner: 'local:user:spawner', by: 'local:user:spawner', offer: [actor] })
+  const withheld = task(8, { owner: 'local:user:spawner', by: 'local:user:spawner' })
+  const { groups } = projectWork(snapshot([offered, withheld]), null, viewer, now)
+  expect(groups.find(({ title }) => title === 'Ready to pull')?.rows.map(({ workId }) => workId)).toEqual(['wp-7'])
+  expect(groups.find(({ title }) => title === 'Waiting or parked')?.rows.map(({ workId }) => workId)).toEqual(['wp-8'])
+})
+
 it('lists Ready to pull in claim-next order without promoting work the viewer cannot claim', () => {
   const roots = [task(1, { priority: 'high' }), task(2, { priority: 'high', for: actor }),
     task(3, { priority: 'urgent' }), task(4, { priority: 'urgent', for: `${principal}+other` }), task(5)]
@@ -166,11 +174,12 @@ it('does not invent a repo from a work id the board does not list', () => {
   expect(repo('#7')).toBeNull()
 })
 
-it('counts only an unanswered attention request as Needs you', () => {
+it('counts a plain hold and an unanswered attention request as Needs you', () => {
   const plain = task(1, { state: 'blocked', blocked: { kind: 'needs_input', reason: 'plain question' } })
   const asked = task(2, { state: 'blocked', blocked: { kind: 'awaiting_approval', reason: 'approve?' }, attentionId: 'req' })
   const state = snapshot([plain, asked])
-  expect(groupOf(plain, null, viewer, now, state)).toBe('waiting')
+  expect(groupOf(plain, null, viewer, now, state)).toBe('needs')
+  expect(projectWork(state, null, viewer, now).rows.find(({ workId }) => workId === 'wp-1')?.reason).toBe('plain question')
   expect(groupOf(asked, null, viewer, now, state)).toBe('needs')
   expect(needsAction(state, viewer, now).decisions.map(({ id }) => id)).toEqual(['2'])
   const answered = snapshot([asked])

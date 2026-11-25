@@ -395,6 +395,7 @@ const TAGGED_MAX = 200
 const notSupported = (what: string, instead?: string) => new HttpError(501, 'not_supported', `Vercel's boards don't support ${what} yet${instead ? `: ${instead}` : ''}`)
 const noClaimHold = () => { throw new HttpError(501, 'no_claim_hold', "Vercel's boards don't support a hard end for claims") }
 const noTaskAttention = () => { throw new HttpError(501, 'no_task_attention', "Vercel's boards don't support task attention") }
+const noTaskOffer = () => { throw new HttpError(501, 'no_task_offer', "Vercel's boards don't let a task name who may claim it yet") }
 
 /** What credentials may do when the API doesn't say: read, post, react, and label everywhere, as any it lets in. */
 const DEFAULT_CAN: AccessSummary = { '*': ['read', 'post', 'react', 'label'] }
@@ -1565,6 +1566,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
     owner: task.owner,
     by: task.by,
     for: task.for,
+    offer: [],
     needs: task.needs.map((thread) => idAt(thread, 1)),
     epoch: task.epoch,
     claim: task.claim ? { actor: task.claim.actor, until: iso(task.claim.until) } : null,
@@ -3662,6 +3664,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       return { tasks, cursor: last ? idAt(last.id, 1) : none.cursor }
     },
     async createTask(caller, input, signal) {
+      if (input.offer?.length) noTaskOffer()
       const who = whoOf(caller)
       const token = input.claim ? (input.token ?? newClaimToken()) : null
       const spec = taskSpec(input, token)
@@ -3706,6 +3709,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       return { task: root, claim: { epoch: task.epoch, token, until: iso(task.claim.until) } }
     },
     async createTasks(caller, input, signal) {
+      if (input.tasks.some((task) => task.offer?.length)) noTaskOffer()
       const who = whoOf(caller)
       // A task waits for one that's there by its thread, and for another of the batch by its key, which the API resolves:
       // each named once, the ones that were there first, as a board keeps them. The API tells a repeat by their order too.
@@ -3855,6 +3859,7 @@ export function createVercel(options: VercelOptions, environment: VercelEnvironm
       const who = whoOf(caller)
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/reopen`, {}, { id, signal })) }
     },
+    offerTask: async () => noTaskOffer(),
     async assignTask(caller, { id, for: actor }, signal) {
       const who = whoOf(caller)
       return { task: await rootOf(who, await taskWrite(who, `${await taskPath(who, id, signal)}/assign`, { for: actor }, { id, signal })) }
