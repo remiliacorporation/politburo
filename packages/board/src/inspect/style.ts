@@ -537,6 +537,8 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .work-health :is(th, td) { text-align: left; padding: 2px 10px 2px 0; }
 .work-view.with-peek, .work-peek { overflow-anchor: none; }
 .work-peek { min-width: 0; overflow-wrap: anywhere; }
+.work-answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.work-answer textarea { min-width: 16rem; }
 .work-peek h2 { margin: 0; font-size: 1rem; }
 .work-view button { box-shadow: none; }
 @media (min-width: 64rem) {

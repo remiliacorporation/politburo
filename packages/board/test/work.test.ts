@@ -166,11 +166,12 @@ it('does not invent a repo from a work id the board does not list', () => {
   expect(repo('#7')).toBeNull()
 })
 
-it('counts only an unanswered attention request as Needs you', () => {
+it('counts a plain hold and an unanswered attention request as Needs you', () => {
   const plain = task(1, { state: 'blocked', blocked: { kind: 'needs_input', reason: 'plain question' } })
   const asked = task(2, { state: 'blocked', blocked: { kind: 'awaiting_approval', reason: 'approve?' }, attentionId: 'req' })
   const state = snapshot([plain, asked])
-  expect(groupOf(plain, null, viewer, now, state)).toBe('waiting')
+  expect(groupOf(plain, null, viewer, now, state)).toBe('needs')
+  expect(projectWork(state, null, viewer, now).rows.find(({ workId }) => workId === 'wp-1')?.reason).toBe('plain question')
   expect(groupOf(asked, null, viewer, now, state)).toBe('needs')
   expect(needsAction(state, viewer, now).decisions.map(({ id }) => id)).toEqual(['2'])
   const answered = snapshot([asked])
