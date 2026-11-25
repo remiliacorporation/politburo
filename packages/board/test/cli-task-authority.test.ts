@@ -116,3 +116,45 @@ it('uses a saved assignment claim across CLI processes, refuses a profile operat
     }
   })
 }, 45_000)
+
+it('names the missing, wrong, and unknown binding fields and does not echo the value', async () => {
+  await authority(async (vb) => {
+    const run = (...args: string[]) => vb(['tasks', ...args, '--json'])
+    const id = success(await run('create', 'work', 'name the binding fields')).task.id as string
+    const bad = await run('claim', id, '--as', 'worker', '--binding', JSON.stringify({
+      owner: binding.owner,
+      controller: { principal: ADA, actor: 'vercel:user:someone' },
+      model: 'fixture-model',
+      session: 'session-1',
+      branch: 'topic/review',
+      worktree: '/fixture/review',
+      baseCommit: 'abc',
+      extra: true,
+    }))
+    failure(bad, 2, 'invalid_binding')
+    const message = json(bad.stderr).message as string
+    expect(message).toBe('--binding: missing provider; wrong controller and baseCommit; unknown extra.')
+    expect(message.includes('abc'), 'the error should not repeat the binding value').toBe(false)
+  })
+}, 45_000)
+
+it('fills owner and controller from the claimant and still rejects a different owner', async () => {
+  await authority(async (vb) => {
+    const run = (...args: string[]) => vb(['tasks', ...args, '--json'])
+    const id = success(await run('create', 'work', 'fill the binding')).task.id as string
+    const { owner: _owner, controller: _controller, ...rest } = binding
+    const claimed = success(await run('claim', id, '--as', 'worker', '--binding', JSON.stringify(rest)))
+    expect(claimed.task.task.claim.binding).toEqual({
+      ...rest,
+      owner: { principal: ADA, actor: `${ADA}+worker` },
+      controller: { principal: ADA, actor: `${ADA}+worker` },
+    })
+    const other = success(await run('create', 'work', 'reject another owner')).task.id as string
+    const refused = await run('claim', other, '--as', 'worker', '--binding', JSON.stringify({
+      ...binding,
+      owner: { principal: 'vercel:user:u_other', actor: 'vercel:user:u_other' },
+    }))
+    failure(refused, 1, 'permission_denied')
+    expect(json(refused.stderr).message).toContain('--binding has the wrong owner')
+  })
+}, 45_000)

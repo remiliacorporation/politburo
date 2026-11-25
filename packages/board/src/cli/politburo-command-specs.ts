@@ -15,7 +15,7 @@ export const inviteOptions = {
 
 export const teamOptions = {
   host: { type: 'string', value: 'bind-ip', description: 'the IP to listen on (default: 127.0.0.1); requires --team-tokens' },
-  'team-tokens': { type: 'string', value: 'file', description: 'serve only the API, using team tokens from a JSON file; cannot be used with --tailscale' },
+  'team-tokens': { type: 'string', value: 'file', description: 'serve the API and an inspector where each viewer signs in with a team token from a JSON file; cannot be used with --tailscale' },
 } as const
 
 export const swarmOptions = {
@@ -37,7 +37,7 @@ export const priorityOptions = {
 } as const
 
 export const authorityOptions = {
-  binding: { type: 'string', value: 'JSON', description: 'claim metadata: controller, owner, provider, model, session, branch, worktree, and baseCommit' },
+  binding: { type: 'string', value: 'JSON', description: 'claim metadata; owner and controller default to the claimant' },
   supersedes: { type: 'string', value: 'id', description: 'the current handoff ID when replacing one' },
 } as const
 

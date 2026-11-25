@@ -33,7 +33,7 @@ import { AGENT_WRITES, agentConflictRecovery, doingAgents, formatAgent, missingA
 import { checkConformance, inviteFailure, outputText, redactCredentials, runInvite, runJoin } from './politburo-invites.ts'
 import { boardStatus, doingInbox, inbox, portFlag } from './politburo-operations.ts'
 import { AttentionAnswerBody } from '../contract/attention.ts'
-import { attentionFrom, createPlan, doingTasks, heldBy, priorityOf, readyLabels, resetTaskBoard } from './politburo-tasks.ts'
+import { attentionFrom, bindingFlag, createPlan, doingTasks, heldBy, priorityOf, readyLabels, resetTaskBoard } from './politburo-tasks.ts'
 
 // Internal live bindings for the fork's command modules. They read these only when called.
 export { cli, client, connection, current, doing, failureOf, flags, io, isMessageRef, labelPairs, messageId, messageRef, named, onSameBoard, onThisBoard, ordered, out, profileFlag, ref, rerun, rerunWithout, result, seconds, sent, setSentLength, specOf, stateCommand, stopOn, taskId, typed, usage, vercelBoard }
@@ -1066,6 +1066,8 @@ function failureOf(error: unknown, hold: TaskHold = 'unknown'): Failure {
               ? [{ instruction: 'Pass a token it accepts in BOARD_TOKEN' }]
               : [{ instruction: 'Log in again', argv: ['vercel', 'login'] }],
     )
+  if (status === 403 && message === 'the binding owner must be the verified claimant')
+    return theirs('permission', 'permission_denied', `You can't ${doing()}. --binding has the wrong owner.`, refusedRecoveries())
   if (status === 403) return theirs('permission', 'permission_denied', `You can't ${doing()}.`, refusedRecoveries())
   if (status === 404) {
     const thing = missing()
@@ -2261,23 +2263,6 @@ function seconds(flag: 'wait' | 'lease' | 'ttl'): number | undefined {
 /** `--claim`, on `tasks create`: a flag there (`optionsFor`), where a grant's takes a value. */
 const claimFlag = () => (flags as { claim?: unknown }).claim === true
 
-/** Assignment metadata is JSON, never a filename. Report a bad flag without echoing its input. */
-function bindingFlag() {
-  if (flags.binding === undefined) return undefined
-  let value: unknown
-  try {
-    value = JSON.parse(flags.binding)
-  } catch {
-    throw usage('--binding takes a JSON object.', { reason: 'invalid_binding' })
-  }
-  const binding = TaskBinding.safeParse(value)
-  if (!binding.success) throw usage('--binding takes a complete assignment.', {
-    reason: 'invalid_binding',
-    next: [{ instruction: 'Provide controller, owner, provider, model, session, branch, worktree, and a full baseCommit' }],
-  })
-  return binding.data
-}
-
 /**
  * The profile this run writes as, as an actor's ID has it: `--as`'s, or the environment's
  * (`BOARD_PROFILE`), or null as yourself. `vb()`'s board is a handle that already is someone, so
@@ -2465,7 +2450,7 @@ async function tasks(args: string[]): Promise<number> {
     const lease = seconds('lease')
     if (lease !== undefined && !claimFlag()) throw usage('--lease is how long a claim holds the task: pass --claim too.')
     if (flags.binding !== undefined && !claimFlag()) throw usage('--binding on tasks create needs --claim.')
-    const binding = bindingFlag()
+    const binding = await bindingFlag()
     const priority = flags.priority === undefined ? undefined : priorityOf(flags.priority, '--priority')
     const { board, claims } = tasksOn()
     const about = {
@@ -2513,7 +2498,7 @@ async function tasks(args: string[]): Promise<number> {
   if (verb === 'claim') {
     if (rest.length > 1) throw usage(`tasks claim takes one ${flags.ready ? 'channel' : 'task'}: ${rest[1]} is one too many.`)
     if (!flags.ready && rest[0] === undefined) throw usage('Missing the task to claim: its ID, or --ready and a channel.', { reason: 'missing_arguments' })
-    const binding = bindingFlag()
+    const binding = await bindingFlag()
     const { board, claims } = tasksOn()
     const claim = await claimFor(board, claims, rest[0], 'claim', binding)
     if (typeof claim === 'number') return claim
@@ -2532,7 +2517,7 @@ async function tasks(args: string[]): Promise<number> {
     if (!flags.ready && before[0] === undefined) throw usage('Missing the task to run it on: its ID, or --ready and a channel.', { reason: 'missing_arguments' })
     // It runs a command on this machine, and holds every other call for as long as it runs.
     if (io.board) throw usage("tasks run isn't available in-process: it runs a command on this machine.", { reason: 'not_available', next: [] })
-    const binding = bindingFlag()
+    const binding = await bindingFlag()
     const { board, claims } = tasksOn()
     const claim = await claimFor(board, claims, before[0], 'run', binding)
     if (typeof claim === 'number') return claim

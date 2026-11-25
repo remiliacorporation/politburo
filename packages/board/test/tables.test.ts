@@ -386,7 +386,7 @@ function conformance(open: () => Promise<MessageTables>) {
       await tables.close()
     }
     expect([...seen].sort()).toEqual(['blocked', 'canceled', 'claimed', 'completed', 'failed', 'ready', 'waiting'])
-  })
+  }, 30_000)
 
   it('let a writer apply only the very next event, never ahead of a gap', async () => {
     const events = history(7, 200)

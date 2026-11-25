@@ -335,7 +335,7 @@ it('runs a work queue from invitation to handoff, pause, and follow-up', async (
     }
     await cp(config, beforePause, { recursive: true })
     expect(await admin.text(['pause', '--reason', 'smoke'])).toBe('board  paused')
-    expect(await admin.json(['status'])).toEqual({ paused: true, pauseEpoch: 1 })
+    expect(await admin.json(['status'])).toEqual({ paused: true, pauseEpoch: 1, reason: 'smoke' })
     await worker.refuses(['tasks', 'claim', low], 'board_paused')
     expect(await admin.text(['resume', '--reason', 'ok'])).toBe('board  running')
     expect(await worker.text(['tasks', 'claim', low, '--lease', '5m'], claimFiles)).toBe(`#${low}  yours for 5m  ${lowText}`)

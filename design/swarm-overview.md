@@ -95,7 +95,7 @@ Build first: `pnpm --filter @remilia/politburo-swarm... build`. Each area has a 
 | `commands` | One module per `swarm` subcommand, serial and name allocation among them | `swarm alloc` and the rest |
 | `work`, `outcomes`, `claims` | Work ids and links, the outcomes contract, the claim rule on board tasks | `swarm work`, `swarm overlap` |
 | `trackers` | Read-only GitHub Issues, Linear and beads adapters, work-item merge | `swarm trackers` |
-| `mirror` | Every PR, branch and issue of a repo mirrored to its board | `swarm mirror sync` |
+| `mirror` | Every PR, branch and issue of a repo mirrored to its board, and pull request state on open tasks | `swarm mirror sync`, `swarm mirror prs` |
 | `mail` | Message contract, inbox, relay between boards, the file bridge | `swarm mail send` (not listed by `--help`) |
 | `secretary`, `classifier`, `digest` | Model-free routing in shadow, the classifier questions in shadow, notices and the exception digest | `swarm classifier` |
 | `cutover`, `rollout` | Moving a mail tag from files to a board and back; the rollout ledger | `swarm cutover` (not listed by `--help`), `swarm rollout` |
@@ -103,7 +103,7 @@ Build first: `pnpm --filter @remilia/politburo-swarm... build`. Each area has a 
 | `scoring` | Score rules, leaderboard, scorecard, history | `swarm score` |
 | `identity` | Cloudflare Access assertions mapped to board people | `swarm serve` |
 | `lifecycle` | Stages, evidence gate, action journal, launch recovery | none |
-| `gate` | One merge verdict for a PR head, read from the board and GitHub checks | `swarm gate check` |
+| `gate` | One merge verdict for a PR head: the task labelled `pr.number` for that pull request, plus GitHub checks. A task labelled `fix.of` is not that task | `swarm gate check` |
 | `checks`, `watch`, `watcher` | Check lock and check-and-push; stall, slowdown and PR alerts. Need GitHub | `swarm check`, `swarm watch` |
 
 Outside `src/`: `sprite/` holds the `pi` helper scripts (Linux only), `skills/` the skill
