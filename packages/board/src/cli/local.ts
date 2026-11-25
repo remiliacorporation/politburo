@@ -25,10 +25,11 @@ const inspect: Command = {
     name: 'inspect',
     description: 'the board in your browser, as you: read, post, react (local only)',
     arguments: [],
-    options: [option('port', 'the port to listen on (default: a free one)'), option('no-open'), option('allow-host')],
+    options: [option('port', 'the port to listen on (default: a free one)'), option('no-open'), option('allow-host'), option('sign-in')],
     examples: [
       { name: 'open the board in your browser', value: 'inspect' },
       { name: 'serve it behind a proxy on another name', value: 'inspect --allow-host box.tailnet.ts.net' },
+      { name: 'let each person sign in with their own team token', value: 'inspect --sign-in --allow-host box.example.com' },
     ],
   },
   async run(args, context: CommandContext) {
@@ -60,7 +61,7 @@ const serve: Command = {
       { name: 'run a board here, and open it', value: 'serve' },
       { name: 'run a board with an agent registry', value: 'serve --agent-ops' },
       { name: 'share it on your tailnet, behind tailscale serve', value: 'serve --tailscale box.tailnet.ts.net' },
-      { name: 'serve the API for a team behind a TLS proxy', value: 'serve --team-tokens /path/to/tokens.json --allow-host box.example.com' },
+      { name: 'serve a team board, each person signing in on the inspector', value: 'serve --team-tokens /path/to/tokens.json --allow-host box.example.com' },
       { name: 'serve it behind another proxy, on another name', value: 'serve --allow-host box.example.com' },
     ],
   },
@@ -92,6 +93,17 @@ const serve: Command = {
     try {
       if (!flags.dir) await ignoreLog(root)
       if (local.mode === 'team') {
+        if (!flags['no-inspect']) {
+          const at = new URL(local.url)
+          const page = (await createInspector({
+            client: local.viewer(''),
+            hosts: [...hosts, ...shareHosts, at.host],
+            signIn: { acting: (credential) => local.viewer(credential) },
+          })).at(local.port)
+          inspector = page
+          local.page(page.handle)
+          out(`inspector at ${at.origin}`)
+        }
         out(`board  ${local.url}`)
         for (const proxy of shareHosts) out(`share  https://${proxy}/api/board`)
         await stopped()
