@@ -1235,6 +1235,46 @@ export async function loadWatchers() {
 /** Every board event for a task, oldest first. */
 export const taskTrace = (id: string) => team.tasks.events(id)
 
+const TRACE_FILE_KINDS = new Set(['transcript', 'log', 'ci'])
+
+export type TraceAttachment = {
+  id: string
+  name: string
+  kind: 'transcript' | 'log' | 'ci'
+  source: string | null
+}
+
+/** Trace files on a task's thread, in the order they were attached. The bytes stay on the board. */
+export async function taskTraceFiles(id: string): Promise<TraceAttachment[]> {
+  const files: TraceAttachment[] = []
+  const root = await team.thread(id)
+  const take = (message: { labels: Record<string, string>; attachments?: { id: string; name: string }[] }) => {
+    const kind = message.labels['trace.kind']
+    if (!kind || !TRACE_FILE_KINDS.has(kind)) return
+    for (const file of message.attachments ?? []) {
+      files.push({ id: file.id, name: file.name, kind: kind as TraceAttachment['kind'], source: message.labels['trace.source'] ?? null })
+    }
+  }
+  take(root.message)
+  let after = id
+  const seen = new Set<string>()
+  for (;;) {
+    const page = await team.thread(id, { after, limit: 500 })
+    for (const message of page.replies) take(message)
+    if (page.replies.length < 500) break
+    const last = page.replies.at(-1)
+    if (!last || seen.has(last.id)) break
+    seen.add(last.id)
+    after = last.id
+  }
+  return files
+}
+
+/** The text of one trace file, read through this page's board handle. */
+export async function traceFileText(id: string): Promise<string> {
+  return await (await team.download(id)).text()
+}
+
 /** Where a thread is synced: each target, and the platform's link to its copy there. Nothing, on a board that syncs nothing. */
 export async function loadSynced(id: string): Promise<SyncedView['targets']> {
   if ((state.discovery?.sync ?? []).length === 0) return []
