@@ -57,7 +57,7 @@ export const METHODS: readonly Method[] = [
   'status', 'pause', 'resume',
   'schedule', 'schedules', 'cancelSchedule',
   ...AGENT_OPS_METHODS,
-  'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'offerTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
+  'tasks', 'createTask', 'createTasks', 'createdTasks', 'claimReadyTask', 'claimTask', 'taskEvents', 'renewTask', 'releaseTask', 'completeTask', 'failTask', 'blockTask', 'unblockTask', 'parkTask', 'unparkTask', 'handoffTask', 'reopenTask', 'scopeTask', 'stageTask', 'assignTask', 'offerTask', 'setTaskNeeds', 'setTaskPriority', 'cancelTask',
   'requestTaskAttention', 'taskAttention', 'answerTaskAttention',
   ...WORK_EVIDENCE_METHODS,
   'grants', 'createGrant', 'createGrants', 'updateGrant', 'explain', 'revokeGrant', 'schemas', 'schema', 'createSchema', 'upload', 'attachment', 'uploadStart', 'uploadFinish', 'watchers', 'register', 'matches', 'ack', 'events',
@@ -70,7 +70,7 @@ export const METHODS: readonly Method[] = [
 export const ATTENTION_METHODS: ReadonlySet<Method> = new Set(['requestTaskAttention', 'taskAttention', 'answerTaskAttention'])
 
 /** The ordinary task methods: a backend that keeps no tasks answers each with 501 `no_tasks`. */
-export const TASK_METHODS = METHODS.filter((name) => !ATTENTION_METHODS.has(name) && (name === 'tasks' || name.includes('Task')))
+export const TASK_METHODS = METHODS.filter((name) => !ATTENTION_METHODS.has(name) && (name === 'tasks' || name === 'taskEvents' || name.includes('Task')))
 
 const boundTaskRoutes = (Object.keys(boundTaskPaths) as (keyof typeof boundTaskPaths)[]).map((name) => ({ name, definition: { ...routes[name], path: boundTaskPaths[name] } }))
 

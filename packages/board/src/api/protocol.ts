@@ -62,6 +62,7 @@ import type {
   Discovery,
   DeleteBody,
   EditBody,
+  BoardEventView,
   EventsPage,
   CreateGrantsBody,
   GrantBody,
@@ -268,6 +269,8 @@ export type Protocol = {
   ack: { input: Id & Input<typeof AckBody>; output: { ok: true } }
   /** Long-polls with `wait`. board() serves SSE from it, so a backend has one way to read events. */
   events: { input: Input<typeof EventsQuery>; output: EventsPage }
+  /** Every board event about a task and its thread, oldest first. 404 `message_not_found` or `not_a_task`. */
+  taskEvents: { input: Id; output: { events: BoardEventView[] } }
   /** Typing in the platform threads the message's thread is synced to: needs `post` there. Answers the threads that took it. */
   typing: { input: Id & Input<typeof TypingBody>; output: { targets: string[] } }
   /** A platform channel or thread, read with sync entry `key`'s app where that sync runs: needs `manage` everywhere. */

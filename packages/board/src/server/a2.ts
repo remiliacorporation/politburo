@@ -25,7 +25,7 @@ import { SYNC, type Backend, type BackendRoute, type BoardBinding, type Caller, 
 import { BoardError } from '../client/client.ts'
 import { attachmentBody, attachmentNotFound, finishUpload, ownUpload, readUpload, startUpload, writeUpload, type BlobStore, type Uploader } from './blob.ts'
 import { badRequest, duplicateId, forbidden, HttpError, noAgentOps, notFound, textTooLong, toErrorResponse } from './errors.ts'
-import { eventView, foldEvent, indexOf, lastFeed, loadBefore, OWN_CODE, pollFeed, readableFilter, ref, toMessageFilter, verifiedRecord, view, viewedBy, viewLinkedIds, viaOfRecord } from './feed.ts'
+import { concernedMessageId, eventView, FeedProjection, foldEvent, indexOf, lastFeed, loadBefore, OWN_CODE, pollFeed, readableFilter, ref, toMessageFilter, verifiedRecord, view, viewedBy, viewLinkedIds, viaOfRecord } from './feed.ts'
 import { createReads, tablesConsumer } from './reads.ts'
 import { createdBy, createSchedules, type Schedule } from './schedules.ts'
 import { createControl, publicStatus } from './control.ts'
@@ -983,6 +983,40 @@ function build(options: A2Options, binding: BoardBinding) {
       const feed = { session, reads, after, filters: query, all: query.all ?? false, me: { id: actor.id, handle: actor.handle }, actors, access: principal.access }
       const { events, cursor } = query.last !== undefined ? await lastFeed(feed, query.last, signal) : await pollFeed(feed, (query.wait ?? 0) * 1000, signal)
       return { events, cursor: ref(cursor) }
+    },
+    async taskEvents(caller, { id }, signal) {
+      const { principal, actor } = await identityOf(caller)
+      const at = messageAt(id)
+      const root = await reads.message(at, signal)
+      if (!root || !principal.access.readable(root.channel)) throw notFound(`message not found: #${at}`, 'message_not_found')
+      if (root.re !== null || !root.task) throw notFound(`not a task: #${at}`, 'not_a_task')
+      const [{ messages, cursor: head }, { state: actors }] = await Promise.all([
+        reads.thread(root.id, signal),
+        session.state(actorsReducer),
+      ])
+      const ids = new Set(messages.map((message) => message.id))
+      const feed = new FeedProjection({
+        session, reads, after: undefined, filters: {}, all: true, me: { id: actor.id, handle: actor.handle }, actors, access: principal.access,
+      })
+      const events: Protocol['taskEvents']['output']['events'] = []
+      let primed = false
+      for (let start = root.id; start <= head; ) {
+        const end = Math.min(head, start + 199)
+        const rows = (await session.history({ gte: start, lte: end })) as BoardEvent[]
+        if (!primed) {
+          await feed.preload(rows, root.id - 1)
+          primed = true
+        }
+        for (const event of rows) {
+          if (signal?.aborted) return { events }
+          const concerned = concernedMessageId(event)
+          if (concerned === null || !ids.has(concerned)) continue
+          const item = await feed.step(event, signal)
+          if (item.view) events.push(item.view)
+        }
+        start = end + 1
+      }
+      return { events }
     },
 
     async typing(caller, { id, status }, signal) {

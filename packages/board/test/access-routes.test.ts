@@ -147,6 +147,10 @@ const WALK: Record<RouteName, Walk> = {
     { method: 'POST', path: '/tasks/claim', body: { channel: 'secret/' }, status: 403 },
     { method: 'POST', path: '/tasks/claim', body: { channel: 'open' }, status: 403 },
   ],
+  taskEvents: ({ secret, open }) => [
+    { method: 'GET', path: `/tasks/${secret.task}/events`, status: 404 },
+    { method: 'GET', path: `/tasks/${open.task}/events`, status: 200, check: (body) => expect(body.events.length).toBeGreaterThan(0) },
+  ],
   claimTask: ({ secret, open }) => [
     { method: 'POST', path: `/tasks/${secret.task}/claim`, body: {}, status: 404 },
     { method: 'POST', path: `/tasks/${open.task}/claim`, body: {}, status: 403 },

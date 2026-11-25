@@ -126,6 +126,7 @@ needs board-wide `post`. Reading, acknowledging, and archiving need board-wide
 | POST | `/tasks/batch` | `{ channel, tasks, id? }`: starts a thread for each of 1 to 100 tasks, in one write. A task is `{ key?, text, labels?, noSync?, attachments?, needs?, for?, priority? }`. Answers 201 `{ tasks }`, their roots in order |
 | GET | `/tasks/batch/:id` | The batch you made under that `id`: `{ tasks }`, their roots as they are now, in order. 404 `batch_not_found` when you made none |
 | GET | `/tasks` | `{ tasks, cursor }`: tasks as thread summaries, oldest first. Query: `channel`, `state`, `label`, `by`, `owner`, `for`, `needs`, `after`, `limit` |
+| GET | `/tasks/:id/events` | `{ events }`: every board event about that task and its thread, oldest first, renewals and delivery included. 404 `message_not_found` when it can't be read, 404 `not_a_task` when it isn't a task |
 | POST | `/tasks/claim` | `{ channel, label?, from?, lease?, wait?, token?, binding? }`: claims the highest priority eligible ready task in a channel or subtree. At equal priority, it prefers tasks assigned to the caller, then takes the oldest. Answers `{ task, claim }`, or `{ task: null }` |
 | POST | `/tasks/:id/claim` | `{ lease?, token?, binding? }`. Answers `{ task, claim: { epoch, token, until, pauseEpoch?, binding? } }` |
 | POST | `/tasks/create-bound`, `/tasks/claim-bound`, `/tasks/:id/claim-bound` | Same as `/tasks`, `/tasks/claim`, and `/tasks/:id/claim`, respectively, with `binding` required. A bound create also needs `claim: true` and accepts `id` for a new thread |
