@@ -1351,8 +1351,8 @@ it('typing over Handoffs focuses the open thread reply', async () => {
   expect(document.activeElement).toBe(reply)
 })
 
-const replySend = () => threadPane()?.querySelector('button.send') ?? null
-const channelSend = () => document.querySelector('main button.send')
+const replySend = () => threadPane()?.querySelector<HTMLButtonElement>('button.send') ?? null
+const channelSend = () => document.querySelector<HTMLButtonElement>('main button.send')
 const holder = () => [...(threadPane()?.querySelectorAll('.task-head span') ?? [])].find((el) => el.textContent?.startsWith('by '))?.textContent?.slice(3)
 
 it('labels a reply send as a letter to the claimant, and only while the task is claimed', async () => {
