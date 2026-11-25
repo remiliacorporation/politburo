@@ -19,6 +19,7 @@ import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
 import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, pauseBanner, profilesOf, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
 import { listedRepos, repoLabel, reposOf } from './repos.ts'
 import { cellHasThread, isWorkRoute, workScope } from './work-scope.ts'
@@ -171,7 +172,7 @@ function PauseControl({ paused }: { paused: boolean }) {
 export function App() {
   const state = board.useBoard()
   const where = useLocation()
-  const now = useNow(state.openTaskRoots)
+  const now = useNow(state)
   const [failed, setFailed] = useState<string | null>(null)
   const sidebar = useSidebar()
   const pane = usePane()
@@ -311,7 +312,7 @@ export function App() {
   const control = current.view !== 'cell' && viewer.manages && viewer.person && viewer.profile === null && state.status
     ? <PauseControl key={viewer.actor} paused={state.status.paused} /> : null
   const headerActions = <>
-    {(narrow ? !nav : sidebar.collapsed) && <span className="meta" title={state.me.actor}>acting as {shownName(state.me)}</span>}
+    {(narrow ? !nav : sidebar.collapsed) && <span className="meta" title={state.me.actor}>acting as <ActorName name={shownName(state.me)} /></span>}
     {state.statusRefused && <span className="meta" title={state.statusRefused}>{state.statusRefused}</span>}
     {control}
   </>

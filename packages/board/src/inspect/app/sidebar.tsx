@@ -9,6 +9,7 @@ import { Avatar } from './message.tsx'
 import { Link, useLocation, useNow, type Route } from './nav.tsx'
 import { openTasks, type State } from './store.ts'
 import { ContextMenuArea, MenuItem } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { boardWords, shownName } from './words.ts'
 import { listedRepos, REPO_LIST_CHANNEL, repoLabel, repoOfChannel, reposOf } from './repos.ts'
 import { repoPartyOf, workScopeUrl } from './work-scope.ts'
@@ -97,7 +98,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
   const { params } = useLocation()
   const records = board.swarmRecords()
   const viewer = useMemo(() => state.openTaskMe && board.viewerOf(state.openTaskMe), [state.openTaskMe])
-  const now = useNow(state.openTaskRoots)
+  const now = useNow(state)
   // Counts per repo, from the same rules as the work board. A tag the board does not list is not a row.
   const counts = useMemo(() => {
     const out = new Map<string | null, { needs: number; running: number; pull: number }>()
@@ -109,7 +110,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
       out.set(row.repo, entry)
     }
     return out
-  }, [state.openTaskRoots, state.attention, state.messages, state.channels, viewer, records, now])
+  }, [state.openTaskRoots, state.attention, state.messages, state.seenProgress, state.channels, viewer, records, now])
   const shown = new Set<string | null>(repos.map(({ tag }) => tag))
   shown.add(null)
   const needsAll = [...counts].reduce((sum, [tag, { needs }]) => sum + (shown.has(tag) ? needs : 0), 0)
@@ -231,7 +232,7 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
         </Link>
         <div className="whoami" title={state.me!.actor}>
           <Avatar name={shownName(state.me!)} size={24} />
-          <span className="as">acting as {shownName(state.me!)}</span>
+          <span className="as">acting as <ActorName name={shownName(state.me!)} /></span>
         </div>
       </div>
       </div>

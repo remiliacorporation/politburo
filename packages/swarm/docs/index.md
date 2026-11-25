@@ -4,6 +4,7 @@ Command notes:
 
 - [Allocate serials and names](alloc.md)
 - [Instruction provenance](instruction.md)
+- [Task mail](mail.md)
 - [Capture ledger](capture.md)
 - [Cutover](cutover.md)
 - [Spend ledger](ledger.md)

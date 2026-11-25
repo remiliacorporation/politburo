@@ -97,7 +97,11 @@ function classify(root: TaskRoot, obs: Observation | null | undefined, viewer: V
   if (obs?.sourceStale) return ['repair', 'source stale']
   if (task.state === 'claimed' && overlap) return ['repair', `conflicting ${overlap.kind}`]
   if (obs?.pr?.state === 'open' && obs.pr.checks === 'pass' && !held) return ['review', 'checks pass, review needed']
-  if (task.state === 'claimed' && task.claim) return ['running', obs?.leaseLive ? 'claim active' : 'claimed; liveness not confirmed']
+  if (task.state === 'claimed' && task.claim) {
+    const at = progressAt(state, root)
+    if (Number.isFinite(at) && now - at > PROGRESS_IDLE_MS) return ['repair', `no progress for ${ago(new Date(at).toISOString(), now)}`]
+    return ['running', obs?.leaseLive ? 'claim active' : 'claimed; liveness not confirmed']
+  }
   if (task.state === 'ready' && !held && !overlap) {
     if (viewer && !claimable(root, viewer, now)) return ['waiting', 'not available to your claim-next']
     return ['pull', 'ready to claim']
@@ -128,6 +132,45 @@ export function workPlacement(root: TaskRoot, obs: Observation | null | undefine
 /** Supply the read's state to account for attention answers already seen by the inspector. */
 export function groupOf(root: TaskRoot, obs: Observation | null | undefined, viewer: Viewer | null, now: number, state = initialState): WorkGroup {
   return workPlacement(root, obs, viewer, now, state)[0]
+}
+
+/** A claim with nothing new on its thread for longer than this is repair. */
+export const PROGRESS_IDLE_MS = 60 * 60_000
+
+type ClockState = Pick<State, 'messages' | 'seenProgress' | 'openTaskRoots'>
+
+/** The newest reply, root edit, or label change the page can time. */
+export function progressAt(state: ClockState, root: TaskRoot): number {
+  let at = Date.parse(root.createdAt)
+  at = later(at, root.editedAt)
+  // The board records a label change on the message, so a reload still has its time.
+  at = later(at, root.labeledAt)
+  at = later(at, state.seenProgress[root.id])
+  for (const message of Object.values(state.messages)) {
+    if (message.re !== root.id || message.deleted) continue
+    at = later(at, message.editedAt ?? message.createdAt)
+    at = later(at, message.labeledAt)
+  }
+  return at
+}
+
+function later(at: number, iso: string | null | undefined): number {
+  if (!iso) return at
+  const parsed = Date.parse(iso)
+  return Number.isFinite(parsed) ? Math.max(at, parsed) : at
+}
+
+/** When the page clock should read again, so a lease or an idle claim can change group. */
+export function nextWorkWake(state: ClockState, now: number): number {
+  let next = Infinity
+  for (const root of Object.values(state.openTaskRoots)) {
+    if (!isTask(root) || root.deleted || root.task.state !== 'claimed' || !root.task.claim) continue
+    const expiry = Date.parse(root.task.claim.until)
+    if (expiry > now) next = Math.min(next, expiry)
+    const idleAt = progressAt(state, root) + PROGRESS_IDLE_MS
+    if (idleAt > now) next = Math.min(next, idleAt)
+  }
+  return next
 }
 
 function claimText(claim: TaskRoot['task']['claim'], now: number): string | null {

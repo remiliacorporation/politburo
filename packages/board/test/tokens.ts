@@ -28,13 +28,13 @@ export const testAuth = {
   oidc: { [OIDC_ISS]: jwks },
 }
 
-async function sign(claims: Record<string, unknown>, issuer: string, audience = BOARD_URL) {
+async function sign(claims: Record<string, unknown>, issuer: string, audience = BOARD_URL, expiresIn = '1h') {
   return new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'test' })
     .setIssuer(issuer)
     .setAudience(audience)
     .setIssuedAt()
-    .setExpirationTime('1h')
+    .setExpirationTime(expiresIn)
     .sign(privateKey)
 }
 
@@ -46,7 +46,7 @@ export const testLocal = { issuer: LOCAL_ISS, jwks }
 export const localUserToken = (handle = 'julian', audience?: string) => sign({ sub: handle }, LOCAL_ISS, audience)
 
 /** A person: a development token for the board's own project. */
-export const personToken = (userId = 'u_julian', audience?: string) =>
+export const personToken = (userId = 'u_julian', audience?: string, expiresIn = '1h') =>
   sign(
     {
       sub: `owner:test:project:board:environment:development`,
@@ -59,6 +59,7 @@ export const personToken = (userId = 'u_julian', audience?: string) =>
     },
     VERCEL_ISS,
     audience,
+    expiresIn,
   )
 
 /** A deployment of some Vercel project. */

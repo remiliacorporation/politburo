@@ -280,6 +280,9 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
 .body { min-width: 0; }
 .meta-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .author { color: var(--bright); font-weight: 600; }
+.actor-name { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.actor-icon { display: inline-flex; flex: none; width: 16px; height: 16px; }
+.actor-icon svg { display: block; }
 .where { color: var(--faint); font-size: 12px; }
 .where a { color: var(--accent); cursor: default; }
 .where a:hover { text-decoration: underline; }

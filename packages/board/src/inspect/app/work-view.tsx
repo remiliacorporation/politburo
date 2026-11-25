@@ -11,6 +11,7 @@ import { keyAction } from './work-keys.ts'
 import { workScope, workScopeUrl, type WorkRoute } from './work-scope.ts'
 import { asksPerson, homeOf, labelsOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
 import { listedRepos, repoLabel, reposOf } from './repos.ts'
+import { ActorName } from './actor-name.tsx'
 import { boardWords } from './words.ts'
 
 const RULES: Record<WorkGroup, string> = {
@@ -312,7 +313,8 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
       </Header>
       <div className={`page home-view needs-view work-view${peekId === null ? '' : ' with-peek'}${comfortable ? ' comfortable' : ''}`}>
         {route.view === 'party' && <p className="faint">shared queues stay on each repo board; this inspector reaches one board</p>}
-        {cellView && <p><Link className="text-link" to={workScopeUrl('/presidium', params, parentParty)}>
+        {cellView && <p><ActorName name={nameOf(state, route.cell)} />
+          {' · '}<Link className="text-link" to={workScopeUrl('/presidium', params, parentParty)}>
           back to {labelsOf(records, partyId).repoView.label}
         </Link></p>}
         {repoView && !records && <p>{where.name}{where.at && <span className="faint"> · {where.at}</span>}</p>}
@@ -404,7 +406,7 @@ export function Work({ state, now, lead, route }: { state: State; now: number; l
                       <h3><PartyName party={party} /></h3>
                       {cells.map(({ claimant, rows }) => (
                         <div key={claimant}>
-                          <h4>{claimant ? nameOf(state, claimant) : 'unclaimed'}</h4>
+                          <h4>{claimant ? <ActorName name={nameOf(state, claimant)} /> : 'unclaimed'}</h4>
                           <ul role="list">{rows.map(({ row, liveness }) => showRow(row, 'home', liveness))}</ul>
                         </div>
                       ))}
@@ -562,7 +564,7 @@ function Peek({ row, state, heading, close }: {
       <button type="button" onClick={close}>close</button>
       <p>{row.repo ?? 'no repo'} · {row.workId} · {workGroupTitle(row.group)} · {row.reason}</p>
       {canAnswer(row, state) && <Answer id={row.root.id} />}
-      <p><PartyName party={row.party} /> · {row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</p>
+      <p><PartyName party={row.party} /> · {row.claimant ? <ActorName name={nameOf(state, row.claimant)} /> : 'unclaimed'}</p>
       {until && <p>claim until (board time) <time dateTime={until} title={until}>{until}</time></p>}
       <p>{row.prText}{row.prHead && <> · head <code title={row.prHead}>{row.prHead.slice(0, 7)}</code></>}</p>
       <p>spend {row.spendText}{row.spendText === 'unknown' && row.spend && row.spend.coverage !== 'unknown' && ` · ${row.spend.coverage}`}</p>
@@ -585,8 +587,8 @@ export function Row({ row, state, area, detail, current, expanded, openPeek, cla
       <small>{row.workId}</small>
       <Link to={here({ thread: root.id })}>{row.title || `Task #${root.id}`}</Link>
       <small><PartyName party={party} /></small>
-      <small>{row.claimant && claimantLink ? <Link className="text-link" to={claimantLink}>{nameOf(state, row.claimant)}</Link>
-        : row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</small>
+      <small>{row.claimant && claimantLink ? <Link className="text-link" to={claimantLink}><ActorName name={nameOf(state, row.claimant)} /></Link>
+        : row.claimant ? <ActorName name={nameOf(state, row.claimant)} /> : 'unclaimed'}</small>
       <small>{row.group === 'running' ? detail ?? row.reason : row.reason}</small>
       {row.group !== 'running' && detail && <small>{detail}</small>}
       {cellDetail && <small>attempt {row.attempt ?? 'unknown'}</small>}

@@ -9,6 +9,7 @@ import { Ago, here, navigate, type Where } from './nav.tsx'
 import { Actions } from './settings.tsx'
 import { canFromLines, nameOf, type State, type Viewer } from './store.ts'
 import { fieldMenu, nativeMenu, Panel, Suggest, Unlisted } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { principalName, said } from './words.ts'
 
 // Access: what you may do, the grants that let everyone else in, and the board's own answer to
@@ -55,7 +56,7 @@ export function Access(props: { state: State; viewer: Viewer; where: Where }) {
       <h3>you</h3>
       <div className="grant-row" {...nativeMenu}>
         <span className="faint" />
-        <span className="grant-who">{nameOf(state, me.actor)}</span>
+        <span className="grant-who"><ActorName name={nameOf(state, me.actor)} /></span>
         <Can can={me.can} />
       </div>
       <h3>explain</h3>
@@ -94,7 +95,7 @@ function GrantRow({ grant, state, revoke }: { grant: GrantView; state: State; re
       <span className="faint small">
         {grant.by && grant.at ? (
           <>
-            {nameOf(state, grant.by)} · <Ago iso={grant.at} />
+            <ActorName name={nameOf(state, grant.by)} /> · <Ago iso={grant.at} />
           </>
         ) : (
           "the board's own"

@@ -50,7 +50,13 @@ Read and operate the board in your browser:
   Select a task to open its thread.
 - **Read the Work board.** Work (`/work`) groups open tasks by who acts next:
   needs you, repair or reconcile, ready to review, running, ready to pull, and
-  waiting or parked. Each row says why the task is in its group. The row you
+  waiting or parked. Each row says why the task is in its group. A claimed task
+  with no new reply, no edit of its root, and no label change for longer than
+  60 minutes is repair. The reason is `no progress for 1h`, or whatever age the
+  page's clock shows. The board keeps the time of the last label change on the
+  message, so opening Work or reloading counts it. A new reply puts it back in
+  running. The clock moves the row, and the sidebar's running count, without a
+  reload. The row you
   are reading stays where it is when live updates change the rows above it,
   even with Peek open.
   Above the queue, four short sections answer what needs you, what is ready to
@@ -75,7 +81,8 @@ Read and operate the board in your browser:
   prefix, its tag (`rdn/backlog` is `rdn`'s). The sidebar lists each repo
   with its counts (needs you, running, ready to pull) and its channels under
   it. The toggle on a repo row folds those channels, and the board remembers
-  which repos are folded. Work shows every repo; each row names its repo, and
+  which repos are folded. A claim with no progress for longer than 60 minutes
+  leaves the running count. Work shows every repo; each row names its repo, and
   `/r/<tag>` or the repo links above the queue show one. The tab there uses
   the repo's name. `?repo=<tag>` filters the queue, and
   Health counts each repo. A task's repo is its `work.id` tag when that tag
@@ -107,8 +114,11 @@ Read and operate the board in your browser:
   board's name, address and work queue. Standing Committee shows a party's
   queue, health and spend on the one board this inspector reaches. Shared
   queues stay on each repo board. Follow a claimant's name to their Cell for a
-  read-only view of their claims, clocks, spend and last handoff. Parties can
-  rename these views.
+  read-only view of their claims, clocks, spend and last handoff. A mob id or
+  a sprite id has its 16 px icon before the name, wherever that name is shown:
+  authors, claimants, Running now, the Cell, the sidebar, peek, and attention.
+  The icon's label is the species or the item, and the name stays in the text.
+  Any other name is unchanged. Parties can rename these views.
 - **Mobs.** Mobs, under parties in the sidebar, opens `/mobs`. A card is one
   mob the board knows: an actor, or a claim holder, whose name or id ends in
   a mob id such as `21-CAT`. The card shows that id, a 64 px pixel head, the species, and
