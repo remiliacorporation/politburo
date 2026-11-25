@@ -103,11 +103,21 @@ function classify(root: TaskRoot, obs: Observation | null | undefined, viewer: V
     return ['pull', 'ready to claim']
   }
   if (task.parked) return ['waiting', 'parked']
+  // A plain hold for a person: the question is the reason, and Needs you is where it is answered.
+  if (asksPerson(root)) return ['needs', task.blocked?.reason || 'held for a person']
   if (held) return ['waiting', task.blocked?.reason || 'held']
   if (task.state === 'waiting' && task.needs.length > 0)
     return ['waiting', `waiting on ${task.needs.length} ${task.needs.length === 1 ? 'task' : 'tasks'}`]
   if (overlap) return ['waiting', `blocked by ${overlap.kind} overlap`]
   return ['waiting', task.state === 'claimed' ? 'claim details unknown' : 'not ready to claim']
+}
+
+/** A plain `needs_input` or `awaiting_approval` hold. A structured request is answered on its own route. */
+export function asksPerson(root: TaskRoot): boolean {
+  const { task } = root
+  return task.state === 'blocked' && !task.parked &&
+    (task.blocked?.kind === 'needs_input' || task.blocked?.kind === 'awaiting_approval') &&
+    task.attentionStatus !== 'pending' && task.attentionStatus !== 'stale'
 }
 
 /** Supply the read's state to account for attention answers already seen by the inspector. */

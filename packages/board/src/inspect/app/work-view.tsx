@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { attentionFor } from './attention-store.ts'
+import { attentionFor, needsAttentionAnswer } from './attention-store.ts'
 import * as board from './board.ts'
 import { useHoldPosition } from './hold-position.ts'
 import { Ago, here, isTypingTarget, Link, navigate, useLocation } from './nav.tsx'
@@ -9,17 +9,17 @@ import { Header } from './ui.tsx'
 import { filterParams, filterWork, readFilter, SAVED_VIEWS } from './work-filter.ts'
 import { keyAction } from './work-keys.ts'
 import { workScope, workScopeUrl, type WorkRoute } from './work-scope.ts'
-import { homeOf, labelsOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
+import { asksPerson, homeOf, labelsOf, projectWork, workGroupTitle, type WorkGroup, type WorkRow } from './work.ts'
 import { listedRepos, repoLabel, reposOf } from './repos.ts'
 import { boardWords } from './words.ts'
 
 const RULES: Record<WorkGroup, string> = {
-  needs: 'A person must answer a request or fix a contract.',
+  needs: 'A person must answer a hold or a request, or fix a contract.',
   repair: 'A claim, source, or piece of evidence needs repair.',
   review: 'An open PR has passing checks and no hold.',
   running: 'The board shows an unexpired claim.',
   pull: 'Ready to claim, with no park or blocking overlap.',
-  waiting: 'Held, parked, or not ready to claim.',
+  waiting: 'Parked, or not ready to claim.',
   done: 'The task is completed, failed, or canceled.',
 }
 
@@ -526,6 +526,32 @@ function PartyName({ party }: { party: Pick<NonNullable<WorkRow['party']>, 'name
   return <span style={party?.colour ? { borderLeft: `3px solid ${party.colour}`, paddingLeft: 4 } : undefined}>{party?.name ?? 'no party'}</span>
 }
 
+function canAnswer(row: WorkRow, state: State) {
+  return asksPerson(row.root) && !needsAttentionAnswer(state, row.root)
+}
+
+function Answer({ id }: { id: string }) {
+  const [text, setText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  return (
+    <form className="work-answer" onSubmit={(event) => {
+      event.preventDefault()
+      if (busy || text.trim() === '') return
+      setBusy(true)
+      setError(null)
+      void board.answerHold(id, text).then((refused) => {
+        setBusy(false)
+        if (refused) setError(refused)
+      })
+    }}>
+      <textarea aria-label="Answer" rows={2} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} />
+      <button type="submit" disabled={busy || text.trim() === ''}>answer</button>
+      {error && <p role="status" className="error">{error}</p>}
+    </form>
+  )
+}
+
 function Peek({ row, state, heading, close }: {
   row: WorkRow; state: State; heading: React.RefObject<HTMLHeadingElement | null>; close: () => void
 }) {
@@ -535,6 +561,7 @@ function Peek({ row, state, heading, close }: {
       <h2 ref={heading} tabIndex={-1}>{row.title || `Task #${row.root.id}`}</h2>
       <button type="button" onClick={close}>close</button>
       <p>{row.repo ?? 'no repo'} · {row.workId} · {workGroupTitle(row.group)} · {row.reason}</p>
+      {canAnswer(row, state) && <Answer id={row.root.id} />}
       <p><PartyName party={row.party} /> · {row.claimant ? nameOf(state, row.claimant) : 'unclaimed'}</p>
       {until && <p>claim until (board time) <time dateTime={until} title={until}>{until}</time></p>}
       <p>{row.prText}{row.prHead && <> · head <code title={row.prHead}>{row.prHead.slice(0, 7)}</code></>}</p>
@@ -574,6 +601,7 @@ export function Row({ row, state, area, detail, current, expanded, openPeek, cla
       <TrackerBadges trackers={row.trackers} />
       {row.overlapText && <small>{row.overlapText}</small>}
       <button type="button" aria-expanded={expanded} aria-controls={expanded ? 'work-peek' : undefined} onClick={(event) => openPeek(root.id, event.currentTarget)}>peek</button>
+      {canAnswer(row, state) && <Answer id={root.id} />}
     </li>
   )
 }
