@@ -41,8 +41,11 @@ export type Task = {
   needs: number[]
   /** How many times it's been claimed: a claim's writes carry the epoch it was made at. */
   epoch: number
-  /** Who holds it, until when. `token` is the SHA-256 of the claim's secret, hex. */
-  claim: { actor: string; principal?: string; until: string; holdUntil?: string; token: string; binding?: TaskBinding; pauseEpoch?: number } | null
+  /**
+   * Who holds it, until when. `at` is when this claim, or its latest renewal, landed.
+   * A fold from before the board kept that time leaves it out. `token` is the SHA-256 of the claim's secret, hex.
+   */
+  claim: { actor: string; principal?: string; until: string; at?: string; holdUntil?: string; token: string; binding?: TaskBinding; pauseEpoch?: number } | null
   evidence?: TaskEvidence
   releases?: Record<number, string>
   blocked: { kind: string | null; reason: string } | null
@@ -366,12 +369,13 @@ function foldTask(task: Task, event: Exclude<TaskEvent, { type: 'task.created' |
       if (task.state !== 'ready' || task.parked || !mayReady(task) || epoch !== task.epoch + 1) return false
       task.state = 'claimed'
       task.epoch = epoch
-      task.claim = { actor: by.actor, principal: by.principal, until, token, ...(holdUntil ? { holdUntil } : {}), ...(binding ? { binding } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }) }
+      task.claim = { actor: by.actor, principal: by.principal, until, at: iso(event.createdAt), token, ...(holdUntil ? { holdUntil } : {}), ...(binding ? { binding } : {}), ...(pauseEpoch === undefined ? {} : { pauseEpoch }) }
       return true
     }
     case 'task.renewed':
       if (!holds(task, event.payload.epoch)) return false
       task.claim!.until = event.payload.until
+      task.claim!.at = iso(event.createdAt)
       return true
     case 'task.released':
     case 'task.expired':

@@ -1394,17 +1394,17 @@ const minute = 60_000
 const runningCount = () => document.querySelector('.work-counts')?.textContent ?? ''
 const rdnCount = () => repoEntry('rdn')?.querySelector('.count')?.textContent
 
-it('shows a claim with no progress as repair, and a reply puts it back in running', async () => {
+it('keeps a claim running on its renewal after the reply is an hour old', async () => {
   const board = await workBoard('6h')
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   const start = Date.now()
   const { task } = await board.client.tasks.create('rdn/backlog', { text: 'Wait on approval' })
-  let held = await board.client.tasks.claim(task.id, { lease: 3600 })
+  const held = await board.client.tasks.claim(task.id, { lease: 3600 })
   vi.setSystemTime(start + 30 * minute)
   await board.client.reply(task.id, 'still on the approval')
   vi.setSystemTime(start + 40 * minute)
-  held = await held.renew(3600)
-  // The root is older than an hour. The reply is not, so the claim is still running.
+  await held.renew(3600)
+  // The root is older than an hour. The reply and the renewal are not.
   vi.setSystemTime(start + 70 * minute)
   await board.open('/work')
   await vi.waitFor(() => {
@@ -1414,25 +1414,17 @@ it('shows a claim with no progress as repair, and a reply puts it back in runnin
     expect(rdnCount()).toBe('0 · 1 · 0')
     expect(row('Wait on approval').textContent).not.toContain('no progress')
   })
-  // Moving the clock alone does not re-render. The page clock does, without a reload.
+  // The reply is an hour old. The renewal is not, so the claim stays running.
   vi.setSystemTime(start + 30 * minute + 61 * minute)
   expect(headings()).toContain('Running')
   expect(row('Wait on approval').textContent).not.toContain('no progress')
   await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
   await vi.waitFor(() => {
-    expect(headings()).toContain('Repair or reconcile')
-    expect(headings()).not.toContain('Running')
-    expect(row('Wait on approval').textContent).toContain('no progress for 1h')
-    expect(runningCount()).toContain('0 running')
-    expect(rdnCount()).toBe('0 · 0 · 0')
-  })
-  await (await board.fresh()).reply(task.id, 'approval landed')
-  await vi.waitFor(() => {
     expect(headings()).toContain('Running')
     expect(headings()).not.toContain('Repair or reconcile')
+    expect(row('Wait on approval').textContent).not.toContain('no progress')
     expect(runningCount()).toContain('1 running')
     expect(rdnCount()).toBe('0 · 1 · 0')
-    expect(row('Wait on approval').textContent).not.toContain('no progress')
   })
 }, 30_000)
 
@@ -1453,22 +1445,90 @@ it('treats a root edit or a label change as progress on a claim', async () => {
     expect(headings()).toEqual(['Running'])
     expect(rdnCount()).toBe('0 · 2 · 0')
   })
+  // An hour after the threads were posted, the renewals are still within the hour.
   vi.setSystemTime(start + 61 * minute)
   await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
   await vi.waitFor(() => {
-    expect(row('Wait on the edit').textContent).toContain('no progress for 1h')
-    expect(row('Wait on the label').textContent).toContain('no progress for 1h')
-    expect(rdnCount()).toBe('0 · 0 · 0')
+    expect(row('Wait on the edit').textContent).not.toContain('no progress')
+    expect(row('Wait on the label').textContent).not.toContain('no progress')
+    expect(headings()).toEqual(['Running'])
+    expect(rdnCount()).toBe('0 · 2 · 0')
   })
   const live = await board.fresh()
-  await live.edit(edited.id, 'Wait on the edit\nstill here')
+  await live.edit(edited.id, 'Edited and still here')
   await live.label(labeled.id, { set: { note: 'awake' } })
   await vi.waitFor(() => {
-    expect(row('Wait on the edit').textContent).not.toContain('no progress')
+    expect(row('Edited and still here').textContent).not.toContain('no progress')
     expect(row('Wait on the label').textContent).not.toContain('no progress')
     expect(headings()).toContain('Running')
     expect(headings()).not.toContain('Repair or reconcile')
     expect(rdnCount()).toBe('0 · 2 · 0')
+  })
+}, 30_000)
+
+it('counts a fresh claim and a renewal as progress on /mobs and in the sidebar', async () => {
+  const board = await workBoard('8h')
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  const start = Date.now()
+  const hour = 60 * minute
+  const { task } = await board.client.tasks.create('rdn/backlog', { text: 'Hold the gate' })
+  vi.setSystemTime(start + 3 * hour)
+  const mob = await board.actor('314-dolphin')
+  let held = await mob.tasks.claim(task.id, { lease: 3600 })
+  // The thread is 3h old. The claim is not, so the mob is running.
+  await board.open('/mobs')
+  const mobCard = () => [...document.querySelectorAll('main article')].find((card) => card.querySelector('a')?.textContent === '314-dolphin')
+  await vi.waitFor(() => {
+    expect(mobCard()?.textContent).toContain('running')
+    expect(mobCard()?.textContent).not.toContain('no progress')
+    expect(mobCard()?.textContent).not.toContain('stalled')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+  })
+  await board.open('/work')
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(row('Hold the gate').textContent).not.toContain('no progress')
+    expect(runningCount()).toContain('1 running')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+  })
+  // Fifty minutes later the thread is still the old one. The claim is not an hour old.
+  vi.setSystemTime(start + 3 * hour + 50 * minute)
+  expect(row('Hold the gate').textContent).not.toContain('no progress')
+  await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(row('Hold the gate').textContent).not.toContain('no progress')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+  })
+  const renewedAt = start + 3 * hour + 50 * minute
+  vi.setSystemTime(renewedAt)
+  held = await held.renew(3600)
+  // The claim is over an hour old. The renewal is not, and the page has not seen the event.
+  vi.setSystemTime(renewedAt + 59 * minute)
+  await board.open('/mobs')
+  await vi.waitFor(() => {
+    expect(mobCard()?.textContent).toContain('running')
+    expect(mobCard()?.textContent).not.toContain('no progress')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+  })
+  await board.open('/work')
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Running')
+    expect(headings()).not.toContain('Repair or reconcile')
+    expect(row('Hold the gate').textContent).not.toContain('no progress')
+    expect(runningCount()).toContain('1 running')
+    expect(rdnCount()).toBe('0 · 1 · 0')
+  })
+  // The renewal is past an hour, and so is its lease: the claim is repair, and the count drops.
+  vi.setSystemTime(renewedAt + 61 * minute)
+  await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
+  await vi.waitFor(() => {
+    expect(headings()).toContain('Repair or reconcile')
+    expect(headings()).not.toContain('Running')
+    expect(rdnCount()).toBe('0 · 0 · 0')
+    expect(runningCount()).toContain('0 running')
   })
 }, 30_000)
 

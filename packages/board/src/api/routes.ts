@@ -975,8 +975,11 @@ export type TaskView = Omit<Task, 'needs' | 'claim' | 'priority' | 'attention' |
   attentionStatus?: NonNullable<Task['attention']>['status']
   /** The tasks it waits for, by their IDs. */
   needs: string[]
-  /** Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so. */
-  claim: { actor: string; until: string; holdUntil?: string; binding?: TaskBinding } | null
+  /**
+   * Who holds it. One whose `until` has passed is over: the task is claimable, and `ready` once the board says so.
+   * `at` is when the claim, or its latest renewal, landed. A board that doesn't record it leaves it out.
+   */
+  claim: { actor: string; until: string; at?: string; holdUntil?: string; binding?: TaskBinding } | null
 }
 
 /** Assignment metadata attested by a claimant, not a grant of authority. */

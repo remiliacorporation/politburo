@@ -134,17 +134,18 @@ export function groupOf(root: TaskRoot, obs: Observation | null | undefined, vie
   return workPlacement(root, obs, viewer, now, state)[0]
 }
 
-/** A claim with nothing new on its thread for longer than this is repair. */
+/** A claim with no claim, renewal, reply, edit, or label change for longer than this is repair. */
 export const PROGRESS_IDLE_MS = 60 * 60_000
 
 type ClockState = Pick<State, 'messages' | 'seenProgress' | 'openTaskRoots'>
 
-/** The newest reply, root edit, or label change the page can time. */
+/** The newest claim, renewal, reply, root edit, or label change the page can time. */
 export function progressAt(state: ClockState, root: TaskRoot): number {
   let at = Date.parse(root.createdAt)
   at = later(at, root.editedAt)
-  // The board records a label change on the message, so a reload still has its time.
+  // The board records a label change, and when the claim or its latest renewal landed, so a reload still has those times.
   at = later(at, root.labeledAt)
+  at = later(at, root.task.claim?.at)
   at = later(at, state.seenProgress[root.id])
   for (const message of Object.values(state.messages)) {
     if (message.re !== root.id || message.deleted) continue
