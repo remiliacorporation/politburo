@@ -10,6 +10,7 @@ import { Schemas } from './schemas.tsx'
 import { mayCancelSchedule, nameOf, type State, type Viewer } from './store.ts'
 import { AskForm, Header, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, Unlisted } from './ui.tsx'
 
+import { ActorName } from './actor-name.tsx'
 import { cadence, firstLine, said, shownName, until } from './words.ts'
 
 // The board's configuration, apart from what's said on it: who gets in, what blocks can hold,
@@ -154,7 +155,7 @@ function Schedules({ state, viewer, now, all }: { state: State; viewer: Viewer; 
             ) : (
               <Link to={here({ thread: schedule.re })} className="text-link">reply in #{schedule.channel}</Link>
             )}
-            <span className="faint small">{shownName(schedule.author)}</span>
+            <span className="faint small"><ActorName name={shownName(schedule.author)} /></span>
             {schedule.state === 'pending' && mayCancelSchedule(viewer, schedule) ? (
               <button className="act quiet" type="button" onClick={() => void board.cancelSchedule(schedule.id)}>cancel</button>
             ) : (
@@ -182,7 +183,7 @@ function Watchers({ state }: { state: State }) {
         listed.items.map((registration) => (
           <section key={registration.owner} className="registration" {...nativeMenu}>
             <h3>
-              <b>{nameOf(state, registration.owner)}</b>
+              <b><ActorName name={nameOf(state, registration.owner)} /></b>
               {registration.path ? ` · woken at ${registration.path}${registration.branch ? ` (${registration.branch})` : ''}` : registration.url ? ` · woken at ${registration.url}` : ' · pulls on its own'}
             </h3>
             {Object.entries(registration.watch).map(([id, watcher]) => (

@@ -6,6 +6,7 @@ import { toast } from './chrome.ts'
 import { Ago, Link, navigate } from './nav.tsx'
 import { Actions } from './settings.tsx'
 import { nameOf, schemaFields, schemasByName, type State, type Viewer } from './store.ts'
+import { ActorName } from './actor-name.tsx'
 import { fieldMenu, nativeMenu, Panel, Suggest } from './ui.tsx'
 
 // The board's schema registry: what a message's blocks can hold. A version never changes, so a
@@ -46,7 +47,7 @@ export function Schemas(props: { state: State; viewer: Viewer; selected: string 
               <span className="schema-about" {...nativeMenu}>
                 {(open ?? latest).description ?? ''}
               </span>
-              <span className="faint small">{group.builtIn ? 'built in' : nameOf(state, latest.by ?? '')}</span>
+              <span className="faint small">{group.builtIn ? 'built in' : <ActorName name={nameOf(state, latest.by ?? '')} />}</span>
             </div>
             {open && <SchemaDetail schema={open} state={state} />}
           </section>
@@ -66,7 +67,7 @@ function SchemaDetail({ schema, state }: { schema: SchemaView; state: State }) {
       <p className="hint">
         {schema.builtIn ? 'built in' : schema.by && schema.at ? (
           <>
-            {nameOf(state, schema.by)} · <Ago iso={schema.at} />
+            <ActorName name={nameOf(state, schema.by)} /> · <Ago iso={schema.at} />
           </>
         ) : null}
         {' · '}

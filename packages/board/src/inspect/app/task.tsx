@@ -7,6 +7,7 @@ import { toast } from './chrome.ts'
 import { here, Link, RelativeTime } from './nav.tsx'
 import { isTask, moves, nameOf, profilesOf, stateNow, type State, type TaskRoot, type TaskState, type Viewer } from './store.ts'
 import { AskForm, Menu, MenuItem, MenuSeparator, nativeMenu, Panel, type AskProps } from './ui.tsx'
+import { ActorName } from './actor-name.tsx'
 import { firstLine, left, refusal } from './words.ts'
 
 // A task is a thread with a state, so it shows as one more line on its root: the state, who holds
@@ -81,12 +82,12 @@ export function TaskLine({ root, state }: { root: TaskRoot; state: State }) {
       <StateMark state={current} />
       {current === 'claimed' && task.claim && (
         <>
-          <span>by {nameOf(state, task.claim.actor)}</span>
+          <span>by <ActorName name={nameOf(state, task.claim.actor)} /></span>
           <Lease until={task.claim.until} />
         </>
       )}
       {lapsed && <span>lease ran out</span>}
-      {task.for && !finished && <span>for {nameOf(state, task.for)}</span>}
+      {task.for && !finished && <span>for <ActorName name={nameOf(state, task.for)} /></span>}
       {task.needs.length > 0 && !finished && (
         <span>
           needs <Needs ids={task.needs} state={state} />
@@ -273,21 +274,21 @@ export function TaskCard({ root, state, viewer }: { root: TaskRoot; state: State
         <StateMark state={current} />
         {current === 'claimed' && task.claim && (
           <>
-            <span>by {nameOf(state, task.claim.actor)}</span>
+            <span>by <ActorName name={nameOf(state, task.claim.actor)} /></span>
             <Lease until={task.claim.until} />
           </>
         )}
-        {lapsed && task.claim && <span>{nameOf(state, task.claim.actor)}'s lease ran out</span>}
+        {lapsed && task.claim && <span><ActorName name={nameOf(state, task.claim.actor)} />'s lease ran out</span>}
       </div>
       <dl className="facts" {...nativeMenu}>
         <dt>owner</dt>
-        <dd>{nameOf(state, task.owner)}</dd>
+        <dd><ActorName name={nameOf(state, task.owner)} /></dd>
         <dt>priority</dt>
         <dd>{task.priority}</dd>
         {task.for && (
           <>
             <dt>for</dt>
-            <dd>{nameOf(state, task.for)}</dd>
+            <dd><ActorName name={nameOf(state, task.for)} /></dd>
           </>
         )}
         {task.needs.length > 0 && (

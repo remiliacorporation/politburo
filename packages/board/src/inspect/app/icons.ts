@@ -909,6 +909,22 @@ export function itemOfSprite(id: string): string | null {
   return named(match[2]!, itemsByLength)
 }
 
+/**
+ * The icon for a displayed actor name, when that name is a mob id or a sprite id.
+ * `317-CAT via julian` is the cat; `21-BEE2.AXE` is the axe. Anything else is null.
+ * The match is case-insensitive because a board handle can be lowercase.
+ */
+export function actorIcon(name: string): { label: string; svg: string } | null {
+  const head = name.split(' via ')[0]?.trim() ?? ''
+  if (head === '') return null
+  const token = head.toUpperCase()
+  const item = itemOfSprite(token)
+  if (item) return { label: item, svg: iconFor(item, 16) }
+  const species = speciesOfMob(token)
+  if (species) return { label: species, svg: iconFor(species, 16) }
+  return null
+}
+
 /** A species or item icon. An unknown name is a plain flat mark, not a head. */
 export function iconFor(name: string, size: 16 | 64 = 16): string {
   const species = speciesFaces.get(name)

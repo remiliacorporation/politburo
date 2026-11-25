@@ -1181,6 +1181,56 @@ it('shows the board\'s words when the answer\'s unblock is refused', async () =>
   expect(thread.message.task).toMatchObject({ state: 'blocked', blocked: { kind: 'needs_input' } })
 })
 
+it('shows a species or item icon before a mob or sprite name, and leaves other names plain', async () => {
+  const { create, actor, open } = await workBoard()
+  const cat = await actor('317-CAT')
+  const axe = await actor('21-BEE2.AXE')
+  const plain = await actor('u_plain')
+  const { task: painted } = await create('plb-127', 'Paint the cow')
+  const { task: sharpened } = await create('plb-128', 'Sharpen the axe')
+  const { task: filed } = await create('plb-129', 'File the notes')
+  await cat.tasks.claim(painted.id)
+  await axe.tasks.claim(sharpened.id)
+  await plain.tasks.claim(filed.id)
+  const mark = (scope: ParentNode, label: string) => scope.querySelector(`svg[role="img"][aria-label="${label}"]`)
+  const running = () => document.querySelector('#work-running')!
+  await open()
+  await vi.waitFor(() => {
+    const head = (name: string) => [...running().querySelectorAll('h4')].find((heading) => heading.textContent === name)
+    const catHead = head('317-CAT')
+    const axeHead = head('21-BEE2.AXE')
+    const plainHead = head('u_plain')
+    expect(catHead).toBeDefined()
+    expect(axeHead).toBeDefined()
+    expect(plainHead).toBeDefined()
+    expect(mark(catHead!, 'CAT')).not.toBeNull()
+    expect(mark(axeHead!, 'AXE')).not.toBeNull()
+    expect(mark(axeHead!, 'BEE')).toBeNull()
+    expect(plainHead!.querySelector('svg')).toBeNull()
+    expect(mark(row('Paint the cow'), 'CAT')).not.toBeNull()
+    expect(row('File the notes').querySelector('svg')).toBeNull()
+    expect(row('Paint the cow').textContent).toContain('317-CAT')
+  })
+  flushSync(() => row('Paint the cow').querySelector('button')!.click())
+  await vi.waitFor(() => {
+    expect(mark(peek()!, 'CAT')).not.toBeNull()
+    expect(peek()!.textContent).toContain('317-CAT')
+  })
+  const cell = [...row('Paint the cow').querySelectorAll<HTMLAnchorElement>('a')].find((anchor) => anchor.pathname.startsWith('/cell/'))!
+  expect(mark(cell, 'CAT')).not.toBeNull()
+  expect(cell.textContent).toBe('317-CAT')
+  flushSync(() => cell.click())
+  await vi.waitFor(() => {
+    expect(mainTitle()).toBe('Cell')
+    expect(titles()).toEqual(['Paint the cow'])
+    const main = document.querySelector('main')!
+    expect(main.textContent).toContain('317-CAT')
+    expect(mark(main, 'CAT')).not.toBeNull()
+    expect(main.textContent).not.toContain('Sharpen the axe')
+    expect(main.textContent).not.toContain('File the notes')
+  })
+})
+
 function setField(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
   flushSync(() => {
     el.focus()
