@@ -186,6 +186,9 @@ export function Sidebar({ state, current, onHome, onCollapse }: { state: State; 
           )
         })}
         <h2>parties</h2>
+        <Link to="/mobs" className="item" current={current.view === 'mobs'}>
+          <span>mobs</span>
+        </Link>
         <Link to={workScopeUrl('/presidium', params, repoParty)} className="item" current={current.view === 'presidium'} title={repoView.subtitle}>
           <LayoutGrid size={14} aria-hidden="true" />
           <span>{repoView.label}</span>

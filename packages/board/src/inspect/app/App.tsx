@@ -7,6 +7,7 @@ import { setEditing } from './chrome.ts'
 import { Composer } from './composer.tsx'
 import { Feed, Toasts } from './feed.tsx'
 import { Home } from './home.tsx'
+import { Mobs } from './mobs-view.tsx'
 import { NeedsAction } from './needs-action.tsx'
 import { HomeEmblem } from './home-emblem.tsx'
 import { Messages, Pendings, type RowOptions } from './message.tsx'
@@ -346,6 +347,7 @@ export function App() {
               <Channel key={current.channel} channel={current.channel} state={state} options={options} known={known} lead={expand} filters={filters} />
             )}
             {isWorkRoute(current) && <Work key={`${identity}:${where.path}`} route={current} state={state} now={now} lead={expand} />}
+            {current.view === 'mobs' && <Mobs key={identity} state={state} now={now} lead={expand} />}
             {current.view === 'tasks' && <Tasks key={identity} state={state} viewer={viewer} now={now} lead={expand} where={where} known={known} />}
             {current.view === 'attention' && <Attention key={identity} state={state} viewer={viewer} lead={expand} now={now} />}
             {current.view === 'settings' && <Settings state={state} viewer={viewer} now={now} lead={expand} where={where} section={current.section} open={current.open} />}

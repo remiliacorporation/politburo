@@ -800,6 +800,15 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 60; }
 .toast { max-width: 420px; padding: 8px 12px; background: var(--bg); box-shadow: 0 4px 12px var(--shadow); color: var(--bright); }
 
+.mob-map h2 { margin: 16px 0 0; padding-bottom: 2px; border-bottom: 1px solid var(--hairline); font-size: 1rem; color: var(--bright); }
+.mob-map h3 { margin: 12px 0 0; font-size: 13px; font-weight: 500; color: var(--muted); }
+.mob-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 12px; row-gap: 2px; margin-top: 12px; }
+.mob-card p { margin: 0; }
+.mob-card .pixel { grid-row: 1 / span 8; width: 64px; height: 64px; image-rendering: pixelated; }
+.mob-sprites { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.mob-sprites li { display: flex; align-items: center; gap: 6px; }
+.mob-sprites img { width: 16px; height: 16px; image-rendering: pixelated; }
+
 /* --- a touch device: iOS zooms in on a focused field whose text is under
    16px, so every field gets 16px there; important so it beats each field's
    own size, whatever its selector. A desktop keeps the sizes above. --- */

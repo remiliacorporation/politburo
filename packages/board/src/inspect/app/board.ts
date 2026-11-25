@@ -276,8 +276,15 @@ export async function boot(): Promise<void> {
   void loadStatus()
   // Who's who, for the names of a task's owner and holder; and the open tasks, for their count.
   void handle.actors().then((actors) => {
-    if (current()) set((s) => ({ ...s, actors: { ...Object.fromEntries(actors.map((actor) => [actor.id, actor])), ...s.actors } }))
-  }, () => {})
+    if (current()) set((s) => ({
+      ...s,
+      actorsLoaded: true,
+      actorsRefused: null,
+      actors: { ...Object.fromEntries(actors.map((actor) => [actor.id, actor])), ...s.actors },
+    }))
+  }, (error: unknown) => {
+    if (current()) set((s) => ({ ...s, actorsLoaded: true, actorsRefused: said(error) }))
+  })
   void loadSchemas()
   void loadSchedules()
   if (route(currentPath()).view !== 'needs' && openTaskRead?.identity !== identity) refreshOpenTasks()
@@ -324,6 +331,28 @@ function listingForCurrentHandle() {
 let listed = listingForCurrentHandle()
 
 export const loadChannel = (channel: string) => once(`channel:${channel}`, () => listed.load(channel))
+
+/** The newest messages in a config channel. A missing channel is empty; any other refusal is the board's words. */
+export function loadConfigChannel(channel: string): Promise<void> {
+  const as = identity
+  const handle = team
+  return handle.threads({ channel, limit: 50 }).then(
+    (page) => {
+      if (handle !== team || as !== identity) return
+      if (!('older' in page)) {
+        return handle.channel(channel).messages({ limit: 50 }).then((read) => {
+          if (handle === team && as === identity) set((s) => ({ ...store.merge(s, read.messages, ++generation), partyConfigRefused: null }))
+        })
+      }
+      set((s) => ({ ...store.mergeThreads(s, channel, page, 'first', ++generation), partyConfigRefused: null }))
+    },
+    (error: unknown) => {
+      if (handle !== team || as !== identity) return
+      if (error instanceof BoardError && (error.status === 404 || error.code === 'not_found')) return
+      set((s) => ({ ...s, partyConfigRefused: said(error) }))
+    },
+  )
+}
 
 export async function loadOlder(channel: string): Promise<boolean> {
   const as = identity
@@ -676,7 +705,7 @@ function taskQuery() {
   const channel = view === 'tasks' ? store.readFilter(new URLSearchParams(location.search)).channel : undefined
   // Work scopes share one open-task read, so a later read can drop a task it omits.
   // Tasks and Handoffs read every state.
-  const work = view === 'work' || view === 'presidium' || view === 'party' || view === 'cell' || view === 'needs'
+  const work = view === 'work' || view === 'presidium' || view === 'party' || view === 'cell' || view === 'needs' || view === 'mobs'
   const all = !work && (view === 'tasks' || view === 'handoffs' || state.taskScope === store.taskScope())
   const stateFilter = all ? 'all' : 'open'
   return { state: stateFilter, ...(channel ? { channel } : {}) } as const
