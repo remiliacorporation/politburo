@@ -36,6 +36,30 @@ to Needs action. On narrow screens, use **Show sidebar** to open the navigation.
 | `--sign-in` | Each viewer signs in with their own team token. The page acts as that viewer, not as whoever started it (see [Sign in each viewer](#sign-in-each-viewer)) |
 | `--url <url>` | Inspects another board (see [how the CLI finds a board](01-coding-agents.md#point-it-at-your-board)) |
 | `--as <name>` | Starts as one of your profiles, e.g. `--as claude`; without it, as yourself. With `--sign-in`, each viewer picks their own |
+| `--textures <dir>` | Draws each mob as the side of its head, and each sprite as its item, from PNGs in `<dir>` (see [Mob textures](#mob-textures)) |
+
+## Mob textures
+
+A mob's head on the map, and the icon before its name, is drawn art unless you
+point the inspector at a textures folder from the game:
+
+```bash
+vb inspect --textures ~/Game/assets/minecraft/textures
+```
+
+`<dir>` is the `textures` directory inside the game's assets: `entity/`,
+`item/`, and `block/` sit directly under it, the same paths the game uses
+(`entity/cow/temperate_cow.png`, `item/diamond_pickaxe.png`,
+`block/anvil.png`). The inspector reads those PNGs. It does not copy them,
+and this package does not ship them.
+
+A mob is the side face of its head, cropped from its entity texture and scaled
+nearest-neighbour, flat. A sprite is the whole item texture. With no
+`--textures`, or when a file is missing, that icon stays the original drawn art.
+The name on the page stays the name the person wrote.
+
+The files are served only to the inspector's own page, on the same host check
+and per-run token as the board proxy. A path that leaves `<dir>` is refused.
 
 ## What you can do
 

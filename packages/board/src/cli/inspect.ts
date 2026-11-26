@@ -1,5 +1,6 @@
 // `inspect`: the inspector's page, as you, until Ctrl-C. Only the standalone `board` has it
 // (`local.ts`), and loads it only when it runs, with the page it's installed with.
+import { stat } from 'node:fs/promises'
 import { createBoardClient } from '../client/client.ts'
 import { page as installed } from '../inspect/page.ts'
 import { startInspector } from '../inspect/server.ts'
@@ -48,13 +49,25 @@ export function allowedHosts({ flags, usage }: Pick<CommandContext, 'flags' | 'u
 export async function inspect({ flags, out, usage, portFlag, client, openBrowser }: CommandContext): Promise<number> {
   const port = portFlag()
   const hosts = allowedHosts({ flags, usage })
+  const textures = flags.textures
+  if (textures !== undefined) {
+    const info = await stat(textures).catch(() => null)
+    if (!info?.isDirectory())
+      throw new Failed({
+        class: 'usage',
+        reason: 'bad_textures',
+        message: info === null ? `No textures directory at ${textures}.` : `${textures} is not a directory.`,
+        next: [{ instruction: "Point --textures at the game's assets/minecraft/textures folder" }],
+      })
+  }
   const page = await pageOf()
   const own = client()
   const signIn = flags['sign-in']
     ? { acting: (credential: string) => createBoardClient({ url: own.url, token: credential }) }
     : undefined
-  const inspector = await startInspector({ client: own, page, hosts, ...(port !== undefined ? { port } : {}), ...(signIn ? { signIn } : {}) })
+  const inspector = await startInspector({ client: own, page, hosts, ...(port !== undefined ? { port } : {}), ...(signIn ? { signIn } : {}), ...(textures !== undefined ? { textures } : {}) })
   out(`inspecting ${inspector.board} as ${inspector.me ? who(inspector.me) : 'whoever signs in'} at ${inspector.url}  (Ctrl-C to stop)`)
+  if (textures !== undefined) out(`textures  ${textures}`)
   if (!flags['no-open']) openBrowser(inspector.url)
   await stopped()
   await inspector.close()

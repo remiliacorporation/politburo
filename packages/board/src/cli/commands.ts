@@ -103,6 +103,7 @@ export const options = {
   'no-open': { type: 'boolean', description: "don't open the browser" },
   'sign-in': { type: 'boolean', description: 'each viewer signs in with their own team token, kept in a cookie the page cannot read' },
   'allow-host': { type: 'string', multiple: true, value: 'host', description: 'also answer requests for this host, from a proxy in front: whoever reaches it there acts as you' },
+  textures: { type: 'string', value: 'dir', description: "read mob and item PNGs from this directory, laid out like the game's textures (entity/, item/, block/). The files stay there" },
   tailscale: { type: 'string', multiple: true, value: 'host', description: "also answer requests for this host, the board's name on your tailnet behind tailscale serve: whoever Tailscale says is calling is a person on the board" },
   in: { type: 'string', value: 'duration', description: 'once, this long from now, e.g. 90s, 5m, 1d' },
   at: { type: 'string', value: 'time', description: 'at a time: once, or with --every, the first' },

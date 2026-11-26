@@ -1,5 +1,5 @@
-import { useEffect, type ReactNode } from 'react'
-import { iconFor } from './icons.ts'
+import { useEffect, useState, type ReactNode } from 'react'
+import { iconFor, paintedIcon } from './icons.ts'
 import * as board from './board.ts'
 import { Link, useLocation } from './nav.tsx'
 import { mobRoster, PARTY_CONFIG_CHANNEL, poolsFromMessages, refusedPools, type MobCard } from './mobs.ts'
@@ -7,14 +7,25 @@ import type { State } from './store.ts'
 import { Header } from './ui.tsx'
 import { workScopeUrl } from './work-scope.ts'
 
-function iconSrc(name: string, size: 16 | 64): string {
-  return `data:image/svg+xml,${encodeURIComponent(iconFor(name, size))}`
+function Pixel({ name, size }: { name: string; size: 16 | 64 }) {
+  const [svg, setSvg] = useState(() => iconFor(name, size))
+  useEffect(() => {
+    let live = true
+    setSvg(iconFor(name, size))
+    void paintedIcon(name, size).then((next) => {
+      if (live) setSvg(next)
+    })
+    return () => {
+      live = false
+    }
+  }, [name, size])
+  return <img className={size === 64 ? 'pixel' : undefined} alt="" width={size} height={size} src={`data:image/svg+xml,${encodeURIComponent(svg)}`} />
 }
 
 function Card({ mob, params }: { mob: MobCard; params: URLSearchParams }) {
   return (
     <article className="mob-card">
-      <img className="pixel" alt="" width={64} height={64} src={iconSrc(mob.species, 64)} />
+      <Pixel name={mob.species} size={64} />
       <Link className="text-link" to={workScopeUrl(`/cell/${encodeURIComponent(mob.actorId)}`, params)}>{mob.id}</Link>
       <p>species {mob.species}</p>
       <p>class {mob.className}</p>
@@ -41,7 +52,7 @@ function Card({ mob, params }: { mob: MobCard; params: URLSearchParams }) {
         <ul className="mob-sprites">
           {mob.sprites.map((sprite) => (
             <li key={sprite.id}>
-              <img alt="" width={16} height={16} src={iconSrc(sprite.item, 16)} />
+              <Pixel name={sprite.item} size={16} />
               <span>{sprite.id}</span>
             </li>
           ))}
