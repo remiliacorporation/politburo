@@ -168,7 +168,9 @@ Read and operate the board in your browser:
   stay ordinary messages. A task's thread, and a
   workbench peek, have a Trace tab: every board event for that task, oldest
   first, with its time and who did it. Filter by kind, or copy the lines as
-  text.
+  text. The same tab lists trace files attached on the thread, under
+  transcript, log, or ci. Open one to read it with its line numbers and a
+  search. The page loads the file from the board.
 - **Answer requests.** Attention (`/attention`) lists tasks held for a
   decision, oldest first. The sidebar counts open requests and marks refusals
   you haven't seen.

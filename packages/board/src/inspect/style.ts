@@ -557,6 +557,14 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .trace-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) 16px; gap: 8px; align-items: baseline; }
 .trace-files { min-width: 16px; min-height: 1px; }
 .trace-row time, .trace-row .trace-actor { color: var(--muted); white-space: nowrap; }
+.trace-file-list { padding: 0 20px 8px; }
+.trace-file-list h3 { margin: 8px 0 4px; font-size: 12px; font-weight: 500; }
+.trace-file-list ul { list-style: none; margin: 0; padding: 0; }
+.trace-reader { padding: 0 20px 16px; }
+.trace-reader input { width: 16rem; }
+.trace-reader-lines { list-style: none; margin: 8px 0 0; padding: 0; font-family: ui-monospace, monospace; }
+.trace-reader-lines li { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: 8px; }
+.trace-line-no { color: var(--muted); text-align: right; }
 .work-view button { box-shadow: none; }
 @media (min-width: 64rem) {
   .with-peek .work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 28%); gap: 16px; align-items: start; }
