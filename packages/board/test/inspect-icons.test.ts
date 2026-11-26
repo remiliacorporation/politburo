@@ -196,12 +196,12 @@ it('crops the side of the head and keeps the original art when the file is not a
     rgba[beside + 2] = 0
     rgba[beside + 3] = 255
   }
-  const painted = await paintIcon('COW', rgbaPng(width, height, rgba), 8)
+  const painted = await paintIcon('COW', rgbaPng(width, height, rgba), 16)
   expect(painted).not.toBeNull()
   expect(painted).toContain('fill="#ff0000"')
   expect(painted).not.toContain('#0000ff')
   expect(painted).not.toContain('#00ff00')
-  expect(painted).not.toBe(iconFor('COW', 8))
+  expect(painted).not.toBe(iconFor('COW', 16))
   expect(await paintIcon('COW', new Uint8Array([1, 2, 3]), 16)).toBeNull()
   expect(await paintIcon('COW', rgbaPng(2, 2, new Uint8Array(16).fill(255)), 16)).toBeNull()
   expect(await paintedIcon('COW', 16)).toBe(iconFor('COW', 16))
