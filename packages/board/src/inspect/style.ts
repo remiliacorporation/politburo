@@ -811,13 +811,23 @@ button.file:hover { background: var(--shade-hover); color: var(--bright); }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 60; }
 .toast { max-width: 420px; padding: 8px 12px; background: var(--bg); box-shadow: 0 4px 12px var(--shadow); color: var(--bright); }
 
-.mob-map h2 { margin: 16px 0 0; padding-bottom: 2px; border-bottom: 1px solid var(--hairline); font-size: 1rem; color: var(--bright); }
-.mob-map h3 { margin: 12px 0 0; font-size: 13px; font-weight: 500; color: var(--muted); }
-.mob-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 12px; row-gap: 2px; margin-top: 12px; }
+.page.mob-map { padding: clamp(16px, 4vw, 40px); }
+.mob-map h2 { margin: 16px 0 8px; padding-bottom: 2px; border-bottom: 1px solid var(--hairline); font-size: 1rem; color: var(--bright); }
+.mob-map h2:first-child { margin-top: 0; }
+.mob-map h3 { margin: 10px 0 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.mob-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 12px; }
+.mob-card { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 12px; align-items: start; min-width: 0; padding: 10px; background: var(--shade); }
+.mob-facts { min-width: 0; display: grid; gap: 2px; align-content: start; }
 .mob-card p { margin: 0; }
-.mob-card .pixel { grid-row: 1 / span 8; width: 64px; height: 64px; image-rendering: pixelated; }
-.mob-sprites { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
-.mob-sprites li { display: flex; align-items: center; gap: 6px; }
+.mob-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mob-state { display: inline-flex; align-items: center; padding: 1px 7px; background: var(--panel); font-size: 11px; line-height: 16px; }
+.mob-state.running { color: var(--accent); }
+.mob-state.stalled { color: var(--warning); }
+.mob-state.idle { color: var(--faint); }
+.mob-card .pixel { width: 64px; height: 64px; image-rendering: pixelated; }
+.mob-sprites { display: flex; flex-direction: row; flex-wrap: wrap; gap: 4px; margin: 4px 0 0; padding: 0; list-style: none; }
+.mob-sprites li { display: flex; }
+.mob-sprite-id { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .mob-sprites img { width: 16px; height: 16px; image-rendering: pixelated; }
 
 /* --- a touch device: iOS zooms in on a focused field whose text is under
