@@ -257,6 +257,12 @@ textarea, [contenteditable]:not([contenteditable='false']) { cursor: text; }
 .divider { display: flex; align-items: center; gap: 8px; margin: 14px 20px 4px; color: var(--faint); font-size: 11px; }
 
 .message { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; padding: 4px var(--inset) 4px 8px; }
+.message.letter { display: block; margin: 10px var(--inset); padding: 12px 14px; background: var(--rail); box-shadow: inset 3px 0 var(--gold); }
+.letter-kind { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--gold); font-size: 12px; font-weight: 600; }
+.letter-kind svg { flex: none; }
+.letter-route { margin: 6px 0 0; color: var(--bright); font-size: 13px; }
+.letter-body { margin: 8px 0; padding: 10px 12px; background: var(--bg); }
+.letter-state { margin: 0; color: var(--faint); font-size: 12px; }
 .message.continued { padding-block: 0; }
 @media (hover: hover) { .message:not(.active):hover { background: var(--shade); } }
 .message.active { background: var(--selected); box-shadow: inset 2px 0 var(--gold); }

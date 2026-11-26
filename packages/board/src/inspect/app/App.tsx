@@ -18,7 +18,7 @@ import { actorFor, TaskCard, taskIds } from './task.tsx'
 import { Trace } from './trace.tsx'
 import { Tasks } from './tasks.tsx'
 import { FilterButton, FilterChips } from './filters.tsx'
-import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, listingOf, matches, mayCancelSchedule, nameOf, pauseBanner, profilesOf, stateNow, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
+import { byWritten, channelRows, channelThreads, filtering, isTask, knownLabels, lettersFor, listingOf, matches, mayCancelSchedule, nameOf, pauseBanner, profilesOf, stateNow, thread as threadOf, threadSchedules, type Filter, type State, type Viewer } from './store.ts'
 import { Ask, AskForm, Header, HeaderActions, nativeMenu, Panel, ResizeHandle, type KnownLabels } from './ui.tsx'
 import { ActorName } from './actor-name.tsx'
 import { boardWords, cadence, firstLine, shownName, until } from './words.ts'
@@ -521,7 +521,18 @@ function ThreadPane(props: { id: string; state: State; viewer: Viewer; now: numb
   const scheduled = threadSchedules(state, id)
   const platforms = Object.fromEntries((state.discovery?.sync ?? []).map((entry) => [entry.key, entry.platform]))
   const names = namesOf(state)
-  const options: RowOptions = { me: state.me!.actor, viewer, now: props.now, known: props.known, platforms, syncConfigured: Boolean(state.discovery?.sync.length), schemas: state.schemas, names }
+  const claimed = t && isTask(t.root) && stateNow(t.root.task, props.now) === 'claimed' ? t.root.task.claim : null
+  const claimant = claimed ? state.actors[claimed.actor] : undefined
+  const options: RowOptions = {
+    me: state.me!.actor, viewer, now: props.now, known: props.known, platforms, syncConfigured: Boolean(state.discovery?.sync.length), schemas: state.schemas, names,
+    ...(t && claimed ? { mail: {
+      task: t.root.id,
+      claimant: nameOf(state, claimed.actor),
+      claimantActor: claimed.actor,
+      claimantHandle: claimant?.handle ?? null,
+      letters: lettersFor(state, t.root.id),
+    } } : {}),
+  }
   return (
     <>
       <Header lead={props.lead} title={isTask(t?.root) ? 'task' : 'thread'} meta={t ? `in #${t.root.channel}` : undefined}>

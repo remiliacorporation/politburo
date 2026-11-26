@@ -1398,6 +1398,85 @@ it('shows an envelope on the reply send only while the task is claimed', async (
   await vi.waitFor(() => expect(threadPane()?.textContent).toContain('The notes are in'))
 })
 
+const messageRow = (text: string) => [...(threadPane()?.querySelectorAll('.message') ?? [])].find((el) => el.textContent?.includes(text))
+
+it('renders a person’s reply on a claimed task as a letter, and keeps agent and spawner notes as updates', async () => {
+  const { api, as, client, open } = await workbench()
+  const { task } = await api.tasks.create('work', { text: 'Write the letter' })
+  await as('worker').tasks.claim(task.id)
+  const wrote = await client.reply(task.id, 'Please check the gate')
+  const person = wrote.author?.name
+  expect(person).toBeTruthy()
+  const when = '2026-11-25T23:04:00.000Z'
+  await client.post('mail/worker', {
+    text: 'mailbox copy, not the card',
+    labels: {
+      'mail.from': wrote.author!.handle,
+      'mail.task': task.id,
+      'mail.reply': wrote.id,
+      'mail.state': 'delivered',
+      'mail.delivered': when,
+    },
+  })
+  await as('worker').reply(task.id, 'still reading the diff')
+  await as('spawner').reply(task.id, 'worker is up')
+  await client.reply(task.id, { text: 'delivered to worker', labels: { 'mail.notice': 'delivered', 'mail.reply': wrote.id } })
+  await open(`/c/work?thread=${task.id}`)
+  const card = await vi.waitFor(() => {
+    const found = messageRow('Please check the gate')
+    expect(found?.classList.contains('letter')).toBe(true)
+    expect(found?.querySelector('.letter-state')?.textContent).toBe('delivered at 2026-11-25 23:04 UTC')
+    return found!
+  })
+  expect(card.querySelector('.letter-kind')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('letter')
+  expect(card.querySelector('svg.lucide-mail')).not.toBeNull()
+  expect(card.querySelector('.letter-route')?.textContent).toBe(`From ${person} to ${holder()}`)
+  expect(card.querySelector('.letter-body')?.textContent).toContain('Please check the gate')
+  expect(card.querySelector('.letter-body')?.textContent).not.toContain('mailbox copy, not the card')
+  expect(threadPane()?.textContent).not.toContain('mailbox copy, not the card')
+  const agent = messageRow('still reading the diff')
+  const spawner = messageRow('worker is up')
+  const notice = messageRow('delivered to worker')
+  expect(agent?.classList.contains('letter')).toBe(false)
+  expect(spawner?.classList.contains('letter')).toBe(false)
+  expect(notice?.classList.contains('letter')).toBe(false)
+  expect(agent?.querySelector('.text')?.textContent).toContain('still reading the diff')
+  expect(spawner?.querySelector('.text')?.textContent).toContain('worker is up')
+  expect(notice?.querySelector('.text')?.textContent).toContain('delivered to worker')
+  const more = await client.reply(task.id, 'One more thing')
+  await vi.waitFor(() => {
+    const pending = messageRow('One more thing')
+    expect(pending?.classList.contains('letter')).toBe(true)
+    expect(pending?.querySelector('.letter-state')?.textContent).toBe('pending')
+  })
+  const letter = await client.post('mail/worker', {
+    text: 'second copy',
+    labels: {
+      'mail.from': wrote.author!.handle,
+      'mail.task': task.id,
+      'mail.reply': more.id,
+      'mail.state': 'pending',
+    },
+  })
+  await client.label(letter.id, { set: { 'mail.state': 'delivered', 'mail.delivered': '2026-11-25T23:10:00.000Z' } })
+  await vi.waitFor(() => expect(messageRow('One more thing')?.querySelector('.letter-state')?.textContent).toBe('delivered at 2026-11-25 23:10 UTC'))
+})
+
+it('keeps a person’s reply a plain message until the task is claimed', async () => {
+  const { api, as, client, open } = await workbench()
+  const { task } = await api.tasks.create('work', { text: 'Write the letter' })
+  await client.reply(task.id, 'Before anyone holds it')
+  await open(`/c/work?thread=${task.id}`)
+  await vi.waitFor(() => expect(messageRow('Before anyone holds it')).toBeTruthy())
+  expect(messageRow('Before anyone holds it')?.classList.contains('letter')).toBe(false)
+  expect(messageRow('Before anyone holds it')?.querySelector('.text')?.textContent).toContain('Before anyone holds it')
+  await as('worker').tasks.claim(task.id)
+  await vi.waitFor(() => {
+    expect(messageRow('Before anyone holds it')?.classList.contains('letter')).toBe(true)
+    expect(messageRow('Before anyone holds it')?.querySelector('.letter-state')?.textContent).toBe('pending')
+  })
+})
+
 it('renders the author’s initial without loading their supplied avatar', async () => {
   const { as, open } = await workbench()
   const author = as({ name: 'Reviewer', avatar: 'https://images.example.test/avatar.png' })
