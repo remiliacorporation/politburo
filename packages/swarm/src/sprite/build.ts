@@ -49,3 +49,25 @@ export function buildSetup(): { text: string; version: 11; hash: string } {
   const hash = createHash('sha256').update(body).digest('hex')
   return { text: `${shebang}# politburo-setup v${version} sha256:${hash}\n${body}`, version, hash }
 }
+
+const codexSettings = [
+  'Set PI_CODEX_AUTH, PI_CURSOR, and PI_CODEX_PERSONAL_AUTH as Codex secrets, not as environment variables.',
+  '',
+  'Set PI_FALLBACK_TIERS in the environment. An export in the setup script does not persist to the agent phase.',
+  '',
+  'Agent internet: On.',
+  '',
+  "Domain allowlist: All (unrestricted, bonklek's decision).",
+  '',
+  'HTTP methods: All.',
+  '',
+].join('\n')
+
+/** Codex runs the v11 script, then pi-auth-ensure again after secrets are stripped. */
+export function codexSetupParts(): { setup: string; maintenance: string; settings: string } {
+  return {
+    setup: `${buildSetup().text}pi-auth-ensure\n`,
+    maintenance: '#!/bin/bash\npi-auth-ensure\n',
+    settings: codexSettings,
+  }
+}
