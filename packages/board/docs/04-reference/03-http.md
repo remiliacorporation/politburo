@@ -525,7 +525,7 @@ A task is a thread with a state. Its ID is its root's, and its root carries
   "needs": ["810"],
   "priority": "high",
   "epoch": 2,
-  "claim": { "actor": "vercel:user:u_abc123+claude", "until": "2026-10-08T14:17:11.000Z" },
+  "claim": { "actor": "vercel:user:u_abc123+claude", "until": "2026-10-08T14:17:11.000Z", "at": "2026-10-08T13:17:11.000Z" },
   "blocked": null,
   "result": null,
   "reason": null
@@ -542,7 +542,7 @@ A task is a thread with a state. Its ID is its root's, and its root carries
 | `offer` | actor IDs whose claim-next may take it while it is unassigned, besides its owner. `[]` when the owner named no one |
 | `needs` | the tasks it waits for, by ID. It's `waiting` until each has completed |
 | `epoch` | how many times it's been claimed |
-| `claim` | who holds it, and until when. Never the claim's token |
+| `claim` | who holds it, until when, and `at`, when this claim or its latest renewal landed. A board that doesn't record `at` leaves it out. Never the claim's token |
 | `blocked` | `{ kind, reason }` while it's held for a person |
 | `attentionId` | the latest structured request's ID, when present. Read its details from the attention route |
 | `attentionStatus` | the latest request's recorded status: `pending`, `answered`, or `canceled`. A pending hold is not lifted by expiry. Read the deadline and check for stale evidence on the attention route |
