@@ -51,12 +51,12 @@ Read and operate the board in your browser:
 - **Read the Work board.** Work (`/work`) groups open tasks by who acts next:
   needs you, repair or reconcile, ready to review, running, ready to pull, and
   waiting or parked. Each row says why the task is in its group. A claimed task
-  with no new reply, no edit of its root, and no label change for longer than
-  60 minutes is repair. The reason is `no progress for 1h`, or whatever age the
-  page's clock shows. The board keeps the time of the last label change on the
-  message, so opening Work or reloading counts it. A new reply puts it back in
-  running. The clock moves the row, and the sidebar's running count, without a
-  reload. The row you
+  with no new claim, no renewal, no reply, no edit of its root, and no label
+  change for longer than 60 minutes is repair. The reason is `no progress for 1h`,
+  or whatever age the page's clock shows. The board keeps the time of the claim,
+  its latest renewal, and the last label change, so opening Work or reloading
+  counts them. A new reply puts it back in running. The clock moves the row, and
+  the sidebar's running count, without a reload. The row you
   are reading stays where it is when live updates change the rows above it,
   even with Peek open.
   Above the queue, four short sections answer what needs you, what is ready to
@@ -132,9 +132,10 @@ Read and operate the board in your browser:
   Cards sit in a grid, about three across on a laptop and one on a phone,
   with the 64 px head on the left and those facts beside it. Sprites are a
   row of 16 px tool icons. The page is padded like the other workbench views.
-  Stalled is the workbench's Repair rule: a lapsed claim, stale evidence,
-  failed CI, a rejected review,
-  a stale source, or a conflicting overlap. A sprite (`21-CAT.PICKAXE`) is
+  Stalled is the workbench's Repair rule: a lapsed claim, no progress for
+  60 minutes, stale evidence, failed CI, a rejected review, a stale source,
+  or a conflicting overlap. A claim and a renewal count as progress, on this
+  page and in the sidebar's running count. A sprite (`21-CAT.PICKAXE`) is
   listed under its mob with a 16 px tool icon. Cards are grouped by party,
   then by repo. Select the id to open that mob's Cell. The page only reads.
 - **Read times and commits.** Times read relative, like `12m left` or `open 3h`.

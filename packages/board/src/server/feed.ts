@@ -124,7 +124,7 @@ export function taskView(task: Task): TaskView {
     ...(task.work ? { work: { ...task.work } } : {}),
     ...(attention ? { attentionId: attention.id, attentionStatus: attention.status } : {}),
     needs: needs.map(ref),
-    claim: claim && { actor: claim.actor, until: claim.until, ...(claim.holdUntil ? { holdUntil: claim.holdUntil } : {}), ...(claim.binding ? { binding: structuredClone(claim.binding) } : {}) },
+    claim: claim && { actor: claim.actor, until: claim.until, ...(claim.at ? { at: claim.at } : {}), ...(claim.holdUntil ? { holdUntil: claim.holdUntil } : {}), ...(claim.binding ? { binding: structuredClone(claim.binding) } : {}) },
     blocked: task.blocked && { ...task.blocked },
     ...(parked !== undefined ? { parked: parked && { ...parked, by: authorView(parked.by) } } : {}),
     ...(handoff ? { handoff: { ...handoff, by: authorView(handoff.by) } } : {}),
