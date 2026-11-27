@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
+import { deflateSync } from 'node:zlib'
 import { expect, it } from 'vitest'
-import { actorIcon, iconFor, itemNames, itemOfSprite, speciesNames, speciesOfMob } from '../src/inspect/app/icons.ts'
+import { actorIcon, iconFor, itemNames, itemOfSprite, paintIcon, paintedIcon, speciesNames, speciesOfMob } from '../src/inspect/app/icons.ts'
+import { itemTextures, speciesTextures } from '../src/inspect/app/texture-faces.ts'
 
 type Pools = {
   names: {
@@ -165,3 +167,125 @@ it('keeps species heads and item tools crisp at 16 px and 64 px', () => {
   expect(rects(iconFor('PICKAXE'))).toBeLessThanOrEqual(64)
   expect(rects(iconFor('not-a-name'))).toBeLessThanOrEqual(64)
 })
+
+it('names a texture for every default species and item', () => {
+  expect(Object.keys(speciesTextures).sort()).toEqual([...speciesNames()].sort())
+  expect(Object.keys(itemTextures).sort()).toEqual([...itemNames()].sort())
+})
+
+it('crops the side of the head and keeps the original art when the file is not a texture', async () => {
+  const face = speciesTextures.COW!
+  const width = face.x + face.w + 1
+  const height = face.y + face.h
+  const rgba = new Uint8Array(width * height * 4)
+  for (let i = 0; i < width * height; i++) {
+    rgba[i * 4 + 2] = 255
+    rgba[i * 4 + 3] = 255
+  }
+  for (let y = 0; y < face.h; y++) {
+    for (let x = 0; x < face.w; x++) {
+      const at = ((face.y + y) * width + face.x + x) * 4
+      rgba[at] = 255
+      rgba[at + 1] = 0
+      rgba[at + 2] = 0
+      rgba[at + 3] = 255
+    }
+    const beside = ((face.y + y) * width + face.x + face.w) * 4
+    rgba[beside] = 0
+    rgba[beside + 1] = 255
+    rgba[beside + 2] = 0
+    rgba[beside + 3] = 255
+  }
+  const painted = await paintIcon('COW', rgbaPng(width, height, rgba), 16)
+  expect(painted).not.toBeNull()
+  expect(painted).toContain('fill="#ff0000"')
+  expect(painted).not.toContain('#0000ff')
+  expect(painted).not.toContain('#00ff00')
+  expect(painted).not.toBe(iconFor('COW', 16))
+  expect(await paintIcon('COW', new Uint8Array([1, 2, 3]), 16)).toBeNull()
+  expect(await paintIcon('COW', rgbaPng(2, 2, new Uint8Array(16).fill(255)), 16)).toBeNull()
+  expect(await paintedIcon('COW', 16)).toBe(iconFor('COW', 16))
+})
+
+it('draws a sprite from the whole item texture, nearest-neighbour', async () => {
+  // Indexed, the way a game's item texture often is: red, green, blue, white.
+  const painted = await paintIcon('PICKAXE', indexedPng(2, 2, [0, 1, 2, 3], [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]]), 16)
+  expect(painted).not.toBeNull()
+  expect(colorAt(painted!, 0, 0)).toBe('#ff0000')
+  expect(colorAt(painted!, 15, 0)).toBe('#00ff00')
+  expect(colorAt(painted!, 0, 15)).toBe('#0000ff')
+  expect(colorAt(painted!, 15, 15)).toBe('#ffffff')
+  expect(painted).not.toBe(iconFor('PICKAXE', 16))
+})
+
+function colorAt(svg: string, x: number, y: number): string | null {
+  for (const rect of svg.matchAll(/<rect x="(\d+)" y="(\d+)" width="(\d+)" height="1" fill="(#[0-9a-f]{6})"\/>/g)) {
+    const left = Number(rect[1])
+    const top = Number(rect[2])
+    const width = Number(rect[3])
+    if (top === y && x >= left && x < left + width) return rect[4]!
+  }
+  return null
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = ~0
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1))
+  }
+  return ~crc >>> 0
+}
+
+function chunk(type: string, data: Uint8Array): Uint8Array {
+  const name = new TextEncoder().encode(type)
+  const body = new Uint8Array(name.length + data.length)
+  body.set(name)
+  body.set(data, name.length)
+  const out = new Uint8Array(12 + data.length)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, data.length)
+  out.set(name, 4)
+  out.set(data, 8)
+  view.setUint32(8 + data.length, crc32(body))
+  return out
+}
+
+function pngOf(width: number, height: number, colorType: number, raw: Uint8Array, extra: Uint8Array[] = []): Uint8Array {
+  const ihdr = new Uint8Array(13)
+  const view = new DataView(ihdr.buffer)
+  view.setUint32(0, width)
+  view.setUint32(4, height)
+  ihdr[8] = 8
+  ihdr[9] = colorType
+  const parts = [Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), ...extra, chunk('IDAT', deflateSync(raw)), chunk('IEND', new Uint8Array())]
+  const size = parts.reduce((sum, part) => sum + part.length, 0)
+  const out = new Uint8Array(size)
+  let at = 0
+  for (const part of parts) {
+    out.set(part, at)
+    at += part.length
+  }
+  return out
+}
+
+function rgbaPng(width: number, height: number, rgba: Uint8Array): Uint8Array {
+  const stride = width * 4
+  const raw = new Uint8Array((stride + 1) * height)
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = 0
+    raw.set(rgba.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1)
+  }
+  return pngOf(width, height, 6, raw)
+}
+
+function indexedPng(width: number, height: number, indices: number[], palette: number[][]): Uint8Array {
+  const raw = new Uint8Array((width + 1) * height)
+  for (let y = 0; y < height; y++) {
+    raw[y * (width + 1)] = 0
+    for (let x = 0; x < width; x++) raw[y * (width + 1) + 1 + x] = indices[y * width + x]!
+  }
+  const plte = new Uint8Array(palette.length * 3)
+  palette.forEach((rgb, i) => plte.set(rgb, i * 3))
+  return pngOf(width, height, 3, raw, [chunk('PLTE', plte)])
+}

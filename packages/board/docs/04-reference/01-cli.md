@@ -1777,9 +1777,13 @@ vb wait --re 812 --after "$reply" --timeout 30m --json
 
 ```text
 vb inspect [--port N] [--no-open] [--sign-in] [--allow-host <host>]...
+           [--textures <dir>]
 ```
 
-Serves the board's web UI on 127.0.0.1, as you, and opens it. `--sign-in`
+Serves the board's web UI on 127.0.0.1, as you, and opens it. `--textures`
+reads mob and item PNGs from a directory laid out like the game's textures
+folder (`entity/`, `item/`, `block/`). The files stay on this machine. See
+[Mob textures](../03-guides/02-inspector.md#mob-textures). `--sign-in`
 asks each viewer for their own team token and keeps it in an HttpOnly cookie,
 so the page acts as them. The port is 4747,
 or any free port when that's taken. Only board's own CLI has it, so without

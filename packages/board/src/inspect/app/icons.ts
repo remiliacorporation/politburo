@@ -1,7 +1,12 @@
 // Pixel heads and tools for the party name pools. Each species is an 8×8 face; the cube's
 // side and top are shaded from that face. Each item is a flat 8×8 tool, drawn at 2×.
-// SPAWNER is a cube too, and not a species or an item. The grids are original. They are
-// not a game's texture files.
+// SPAWNER is a cube too, and not a species or an item. The grids are original.
+// When the page is told a textures directory is mounted, a species is instead the
+// side of its head cropped from that directory, and an item is its item texture,
+// both scaled nearest-neighbour and flat. A missing file keeps the grid.
+
+import { decodePng, type Raster } from './png.ts'
+import { itemTextures, speciesTextures, type TextureRect } from './texture-faces.ts'
 
 const palette: Record<string, string> = {
   k: '#1b1b1b',
@@ -954,4 +959,115 @@ export function iconFor(name: string, size: 16 | 64 = 16): string {
   const item = itemFaces.get(name)
   const body = species ? cube(species) : block ? cube(block) : item ? flat(item) : fallbackBody
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16" shape-rendering="crispEdges">${body}</svg>`
+}
+
+/**
+ * A species as the side of its head, or an item as its whole texture, scaled
+ * nearest-neighbour to `size`. Null when `png` is not a readable image or the
+ * crop does not fit, which is when the page keeps {@link iconFor}.
+ */
+export async function paintIcon(name: string, png: Uint8Array, size: 16 | 64 = 16): Promise<string | null> {
+  const image = await decodePng(png)
+  if (!image) return null
+  const face = speciesTextures[name]
+  const crop = face ? cropRect(image, face) : itemTextures[name] !== undefined ? image.rgba : null
+  const width = face ? face.w : itemTextures[name] !== undefined ? image.width : 0
+  const height = face ? face.h : itemTextures[name] !== undefined ? image.height : 0
+  if (!crop || width < 1 || height < 1) return null
+  return flatSvg(scaleNearest(crop, width, height, size, size), size)
+}
+
+/** The drawn icon, or the original art when no textures directory is mounted or the file is missing. */
+export async function paintedIcon(name: string, size: 16 | 64 = 16): Promise<string> {
+  const fallback = iconFor(name, size)
+  const path = speciesTextures[name]?.path ?? itemTextures[name]
+  if (path === undefined || !texturesMounted()) return fallback
+  const png = await readTexture(path)
+  if (!png) return fallback
+  return (await paintIcon(name, png, size)) ?? fallback
+}
+
+function cropRect(image: Raster, face: TextureRect): Uint8Array | null {
+  if (face.w < 1 || face.h < 1 || face.x < 0 || face.y < 0) return null
+  if (face.x + face.w > image.width || face.y + face.h > image.height) return null
+  const out = new Uint8Array(face.w * face.h * 4)
+  for (let y = 0; y < face.h; y++) {
+    const from = ((face.y + y) * image.width + face.x) * 4
+    out.set(image.rgba.subarray(from, from + face.w * 4), y * face.w * 4)
+  }
+  return out
+}
+
+/** Each output pixel is the source pixel nearest its center. */
+function scaleNearest(src: Uint8Array, sw: number, sh: number, dw: number, dh: number): Uint8Array {
+  const out = new Uint8Array(dw * dh * 4)
+  for (let y = 0; y < dh; y++) {
+    const sy = Math.min(sh - 1, Math.floor((y * sh) / dh))
+    for (let x = 0; x < dw; x++) {
+      const sx = Math.min(sw - 1, Math.floor((x * sw) / dw))
+      const from = (sy * sw + sx) * 4
+      const to = (y * dw + x) * 4
+      out[to] = src[from]!
+      out[to + 1] = src[from + 1]!
+      out[to + 2] = src[from + 2]!
+      out[to + 3] = src[from + 3]!
+    }
+  }
+  return out
+}
+
+function flatSvg(rgba: Uint8Array, size: number): string {
+  const parts: string[] = []
+  for (let y = 0; y < size; y++) {
+    let x = 0
+    while (x < size) {
+      const at = (y * size + x) * 4
+      const alpha = rgba[at + 3]!
+      if (alpha === 0) {
+        x++
+        continue
+      }
+      const fill = `#${[rgba[at]!, rgba[at + 1]!, rgba[at + 2]!].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+      let end = x + 1
+      while (end < size) {
+        const next = (y * size + end) * 4
+        if (rgba[next + 3] !== alpha || rgba[next] !== rgba[at] || rgba[next + 1] !== rgba[at + 1] || rgba[next + 2] !== rgba[at + 2]) break
+        end++
+      }
+      const opacity = alpha === 255 ? '' : ` fill-opacity="${(alpha / 255).toFixed(3)}"`
+      parts.push(`<rect x="${x}" y="${y}" width="${end - x}" height="1" fill="${fill}"${opacity}/>`)
+      x = end
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">${parts.join('')}</svg>`
+}
+
+const textureBytes = new Map<string, Promise<Uint8Array | null>>()
+
+function texturesMounted(): boolean {
+  const doc = globalThis.document
+  if (!doc) return false
+  return doc.querySelector('meta[name="inspect-textures"]')?.getAttribute('content') === '1'
+}
+
+function readTexture(path: string): Promise<Uint8Array | null> {
+  const cached = textureBytes.get(path)
+  if (cached) return cached
+  const reading = fetchTexture(path)
+  textureBytes.set(path, reading)
+  return reading
+}
+
+async function fetchTexture(path: string): Promise<Uint8Array | null> {
+  const doc = globalThis.document
+  if (!doc) return null
+  const token = doc.querySelector('meta[name="inspect-token"]')?.getAttribute('content') ?? ''
+  const base = doc.querySelector('meta[name="inspect-base"]')?.getAttribute('content') ?? ''
+  try {
+    const response = await fetch(`${location.origin}${base}/textures/${path}`, { headers: { 'x-inspect-token': token } })
+    if (!response.ok) return null
+    return new Uint8Array(await response.arrayBuffer())
+  } catch {
+    return null
+  }
 }

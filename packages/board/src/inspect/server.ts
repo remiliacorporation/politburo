@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import path from 'node:path'
 import type { Me } from '../api/routes.ts'
 import { BoardError, type BoardClient, type ProfileOption } from '../client/client.ts'
 import { InvalidProfileHeader, parseProfileHeader } from '../contract/profile-header.ts'
@@ -58,6 +60,8 @@ export async function createInspector(options: {
   client: BoardClient
   page?: string
   hosts?: string[]
+  /** A directory of PNGs laid out like the game's textures (`entity/…`, `item/…`). Read only, and only from this page. */
+  textures?: string
   visitor?: (request: IncomingMessage) => BoardClient | null | undefined
   /** Each viewer signs in with their own token. The starter client is not who the page acts as. */
   signIn?: InspectorSignIn
@@ -71,6 +75,7 @@ export async function createInspector(options: {
   // The page it's given, or the one board is installed with.
   const app = options.page ?? (await bundle())
   const token = randomBytes(24).toString('base64url')
+  const textureRoot = options.textures === undefined ? null : await realpath(options.textures)
   // Hosts you allow are ones a proxy in front serves the page on, over http or https.
   const allowed = new Set((options.hosts ?? []).map((host) => host.toLowerCase()))
   let hosts = new Set<string>()
@@ -150,6 +155,45 @@ export async function createInspector(options: {
     }
   }
 
+  /** A `/textures/…` request, judged from the path as sent so a `..` is not normalized away. */
+  function textureRequest(request: IncomingMessage): boolean {
+    const raw = (request.url ?? '/').split('?')[0] ?? '/'
+    return raw === '/textures' || raw.startsWith('/textures/')
+  }
+
+  async function serveTexture(request: IncomingMessage, response: ServerResponse) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
+    if (!sameSecret(String(request.headers['x-inspect-token'] ?? ''), token))
+      return json(response, 403, { error: { code: 'forbidden', message: "the board is reachable only from the inspector's own page" } })
+    const root = textureRoot
+    if (root === null) return send(response, 404, 'text/plain; charset=utf-8', 'not found')
+    const rel = textureRel(request)
+    if (rel === null) return send(response, 400, 'text/plain; charset=utf-8', 'bad path')
+    const resolved = path.resolve(root, rel)
+    const placed = path.relative(root, resolved)
+    if (placed.startsWith('..') || path.isAbsolute(placed)) return send(response, 400, 'text/plain; charset=utf-8', 'bad path')
+    let real: string
+    try {
+      real = await realpath(resolved)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return send(response, 404, 'text/plain; charset=utf-8', 'not found')
+      throw error
+    }
+    const under = path.relative(root, real)
+    if (under.startsWith('..') || path.isAbsolute(under)) return send(response, 400, 'text/plain; charset=utf-8', 'bad path')
+    const info = await stat(real)
+    if (!info.isFile()) return send(response, 404, 'text/plain; charset=utf-8', 'not found')
+    if (info.size > TEXTURE_BYTES_MAX) return send(response, 413, 'text/plain; charset=utf-8', 'texture too large')
+    const headers = { 'content-type': 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' }
+    if (request.method === 'HEAD') {
+      response.writeHead(200, { ...headers, 'content-length': info.size })
+      return void response.end()
+    }
+    const bytes = await readFile(real)
+    response.writeHead(200, headers)
+    response.end(bytes)
+  }
+
   function handle(request: IncomingMessage, response: ServerResponse) {
     let url: URL
     try {
@@ -163,6 +207,10 @@ export async function createInspector(options: {
     const named = String(request.headers.host).toLowerCase()
     const forwarded = FORWARDED.some((header) => request.headers[header] !== undefined)
     if (!(forwarded ? proxied : hosts).has(named)) return send(response, 421, 'text/plain; charset=utf-8', 'wrong host')
+    if (textureRoot && textureRequest(request))
+      return void serveTexture(request, response).catch(() =>
+        response.headersSent ? response.end() : send(response, 500, 'text/plain; charset=utf-8', 'error'),
+      )
     if (options.signIn) return void serveSignedIn(request, response, url).catch(() =>
       response.headersSent ? response.end() : send(response, 500, 'text/plain; charset=utf-8', 'error'),
     )
@@ -176,7 +224,7 @@ export async function createInspector(options: {
         ? send(response, 200, 'text/javascript; charset=utf-8', app)
         : send(response, 503, 'text/plain; charset=utf-8', "the inspector's UI isn't built: run `pnpm --filter @vercel/board build`")
     // Every other path is a route inside the page.
-    send(response, 200, 'text/html; charset=utf-8', shell({ token, profile: started, base: '' }), { 'content-security-policy': CSP })
+    send(response, 200, 'text/html; charset=utf-8', shell({ token, profile: started, base: '', textures: textureRoot !== null }), { 'content-security-policy': CSP })
   }
 
   async function serveSignedIn(request: IncomingMessage, response: ServerResponse, url: URL) {
@@ -225,7 +273,7 @@ export async function createInspector(options: {
       return app
         ? send(response, 200, 'text/javascript; charset=utf-8', app)
         : send(response, 503, 'text/plain; charset=utf-8', "the inspector's UI isn't built: run `pnpm --filter @vercel/board build`")
-    send(response, 200, 'text/html; charset=utf-8', shell({ token, profile: started, base: '', signOut: true }), {
+    send(response, 200, 'text/html; charset=utf-8', shell({ token, profile: started, base: '', signOut: true, textures: textureRoot !== null }), {
       'content-security-policy': CSP.replace("form-action 'none'", "form-action 'self'"),
     })
   }
@@ -249,7 +297,7 @@ export async function createInspector(options: {
 }
 
 /** The inspector on a server of its own, on 127.0.0.1: `port`, or 4747, or any free one when that's taken. */
-export async function startInspector(options: { client: BoardClient; port?: number; page?: string; hosts?: string[]; signIn?: InspectorSignIn }): Promise<Inspector> {
+export async function startInspector(options: { client: BoardClient; port?: number; page?: string; hosts?: string[]; signIn?: InspectorSignIn; textures?: string }): Promise<Inspector> {
   const inspector = await createInspector(options)
   let page: ReturnType<InspectorPage['at']> | null = null
   const server = createServer((request, response) => (page ? page.handle(request, response) : void response.writeHead(503).end()))
@@ -266,6 +314,23 @@ export async function startInspector(options: { client: BoardClient; port?: numb
         server.closeAllConnections()
       }),
   }
+}
+
+const TEXTURE_BYTES_MAX = 4 * 1024 * 1024
+
+/** The texture path under the directory, or null when it is not one PNG inside it. */
+function textureRel(request: IncomingMessage): string | null {
+  const raw = (request.url ?? '/').split('?')[0] ?? '/'
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+  if (!decoded.startsWith('/textures/')) return null
+  const rel = decoded.slice('/textures/'.length)
+  if (rel === '' || rel.includes('\0') || path.isAbsolute(rel) || !rel.endsWith('.png') || relative(`/${rel}`)) return null
+  return rel
 }
 
 const VIEWER_COOKIE = 'board_viewer'

@@ -25,11 +25,12 @@ const inspect: Command = {
     name: 'inspect',
     description: 'the board in your browser, as you: read, post, react (local only)',
     arguments: [],
-    options: [option('port', 'the port to listen on (default: a free one)'), option('no-open'), option('allow-host'), option('sign-in')],
+    options: [option('port', 'the port to listen on (default: a free one)'), option('no-open'), option('allow-host'), option('sign-in'), option('textures')],
     examples: [
       { name: 'open the board in your browser', value: 'inspect' },
       { name: 'serve it behind a proxy on another name', value: 'inspect --allow-host box.tailnet.ts.net' },
       { name: 'let each person sign in with their own team token', value: 'inspect --sign-in --allow-host box.example.com' },
+      { name: 'draw mobs from a local textures folder', value: 'inspect --textures ~/Game/assets/minecraft/textures' },
     ],
   },
   async run(args, context: CommandContext) {
