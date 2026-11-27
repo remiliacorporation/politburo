@@ -98,6 +98,7 @@ a party's and a repo's values over `src/config/defaults.json`. `swarm check` and
 | `src/checks` | Check lock, check-and-push, retire check. `swarm check` | Works. Needs GitHub. |
 | `src/gate` | `swarm gate check` reads the plb task labelled `pr.number` for that pull request (or a result that names it, when none does) and GitHub checks for that head. A task labelled `fix.of` for the pull request is not that task | Works. Read-only. |
 | `src/instruction` | `swarm instruction verify` reads one message and exits 0 only when its verified author is that person | Works. Read-only. |
+| `src/trace` | `swarm trace attach` uploads a redacted transcript, log, or ci file onto a task. It does not replace an earlier file | Works. The inspector Trace tab reads the file from the board. |
 | `src/watch`, `src/watcher` | Stall, slowdown and PR alerts; the status loop | Shadow. Needs GitHub. |
 | `sprite/` | `pi` helpers and the model router | Linux only (`setsid`, `/proc`). The model order is one jockey's accounts. |
 | `parity/` | Temporary parity cases | Deleted after cutover. |

@@ -1,4 +1,4 @@
-import { Clock, Ellipsis, FileText, MessageSquare, SmilePlus, Tag } from 'lucide-react'
+import { Clock, Ellipsis, FileText, Mail, MessageSquare, SmilePlus, Tag } from 'lucide-react'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkBreaks from 'remark-breaks'
@@ -12,7 +12,7 @@ import * as board from './board.ts'
 import { setEditing, toast, useEditing } from './chrome.ts'
 import { Ago } from './nav.tsx'
 import { LabelValue } from './sha.tsx'
-import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type Pending, type ReplySummary, type State, type Viewer } from './store.ts'
+import { bodyParts, continues, isTask, schemaOf, sourcePlatform, type Groupable, type LetterMail, type Pending, type ReplySummary, type State, type Viewer } from './store.ts'
 import { TaskLine } from './task.tsx'
 import { ActorName } from './actor-name.tsx'
 import { absoluteTime, authorName, fileSize, shownName, timingWords } from './words.ts'
@@ -38,6 +38,17 @@ export type RowOptions = {
   schemas?: SchemaView[] | null
   /** Each actor the page knows, by ID, as they show: who a mention reads as. */
   names?: Record<string, string>
+  /**
+   * Set in a claimed task's thread. A person's reply there is a letter; its delivery is the mail
+   * labels for that reply. Agent and spawner notes leave this unset for themselves.
+   */
+  mail?: {
+    task: string
+    claimant: string
+    claimantActor: string
+    claimantHandle: string | null
+    letters: Record<string, LetterMail>
+  }
 }
 
 // A mention is `@[actor-id]` or `@[email]`, as the board stores one: any other `@word` is text.
@@ -277,10 +288,37 @@ export function Messages(props: { messages: MessageView[]; options: RowOptions; 
     const previous = props.messages[i - 1]
     const before = previous ?? props.after
     if (!before || day(at(before)) !== day(at(m))) rows.push(<DayDivider key={`d${m.id}`} iso={at(m)} now={props.now} />)
-    const grouped = continues(previous, m, previous ? (props.options.summary?.(previous)?.count ?? 0) > 0 : false)
+    const letter = asLetter(m, props.options) !== null
+    const grouped = !letter && continues(previous, m, previous ? (props.options.summary?.(previous)?.count ?? 0) > 0 : false) && asLetter(previous, props.options) === null
     rows.push(<MessageRow key={m.id} m={m} options={props.options} continued={grouped} />)
   })
   return <>{rows}</>
+}
+
+function two(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** `pending`, or `delivered at <time>` from `mail.state` and `mail.delivered`. */
+function deliveryWords(letter: LetterMail | undefined): string {
+  if (letter?.state !== 'delivered') return 'pending'
+  if (!letter.delivered) return 'delivered'
+  const date = new Date(letter.delivered)
+  if (Number.isNaN(date.getTime())) return 'delivered'
+  return `delivered at ${date.getUTCFullYear()}-${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())} ${two(date.getUTCHours())}:${two(date.getUTCMinutes())} UTC`
+}
+
+/**
+ * A person's reply on a claimed task, as a letter to the claimant. The claimant's own notes, an
+ * agent's, and a spawner notice (`mail.notice`) stay ordinary messages.
+ */
+function asLetter(m: MessageView | undefined, options: RowOptions): { from: string; to: string; state: string } | null {
+  const mail = options.mail
+  if (!m || !mail || m.re !== mail.task || m.deleted) return null
+  if (m.author?.kind !== 'person' || m.labels['mail.notice']) return null
+  if (m.by.actor === mail.claimantActor) return null
+  if (mail.claimantHandle !== null && m.author.handle === mail.claimantHandle) return null
+  return { from: authorName(m), to: mail.claimant, state: deliveryWords(mail.letters[m.id]) }
 }
 
 function Editor({ m }: { m: MessageView }) {
@@ -369,14 +407,27 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
   )
 
   const active = (hovered || menuOpen || labelsOpen) && !editing
+  const letter = editing || m.deleted ? null : asLetter(m, options)
   const element = (
       <div
         ref={row}
         id={`m${m.id}`}
-        className={`message${continued ? ' continued' : ''}${active ? ' active' : ''}`}
+        className={`message${letter ? ' letter' : ''}${continued && !letter ? ' continued' : ''}${active ? ' active' : ''}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
+        {letter ? (
+          <div className="body">
+            <p className="letter-kind"><Mail size={16} strokeWidth={1.75} aria-hidden="true" /> letter</p>
+            <p className="letter-route">From <ActorName name={letter.from} /> to <ActorName name={letter.to} /></p>
+            <div className="letter-body">
+              <Body m={m} schemas={options.schemas} names={options.names} />
+              <Attachments items={m.attachments ?? []} />
+              <Links items={m.links} />
+            </div>
+            <p className="letter-state">{letter.state}</p>
+          </div>
+        ) : <>
         <div className="gutter">
           {continued ? (
             <span {...nativeMenu}><Ago iso={m.createdAt} now={options.now} className="gutter-time" /></span>
@@ -447,6 +498,7 @@ export function MessageRow({ m, options, continued = false }: { m: MessageView; 
             </button>
           )}
         </div>
+        </>}
         {active && !m.deleted && (
           <div className="actions">
             {canReact && <><button className="tool" title={`${reacted('thumbs_up') ? 'remove' : 'react'} 👍`} onClick={() => toggle('thumbs_up')}>

@@ -367,6 +367,61 @@ export async function loadOlder(channel: string): Promise<boolean> {
 let pane: { id: string; identity: number } | undefined
 const threadRequests = new Map<string, number>()
 
+const MAIL_SEGMENT = /^[a-z0-9][a-z0-9_-]*$/
+
+/** `mail/<handle>`, the relay's mailbox, when the handle can be a channel segment. */
+function mailboxChannel(handle: string): string | null {
+  const name = MAIL_SEGMENT.test(handle) ? handle : handle.toLowerCase()
+  return MAIL_SEGMENT.test(name) ? `mail/${name}` : null
+}
+
+function keepLetter(message: MessageView, taskId: string): boolean {
+  const labels = message.labels
+  return labels['mail.task'] === taskId && Boolean(labels['mail.reply']) && Boolean(labels['mail.state'])
+}
+
+/** One page of letters, or null when this board will not answer that listing. */
+async function listLetters(query: { channel?: string; label: string[] }, taskId: string): Promise<MessageView[] | null> {
+  const found: MessageView[] = []
+  const seen = new Set<string>()
+  let after: string | undefined
+  try {
+    for (;;) {
+      const page = await team.threads({ ...query, limit: 100, ...(after ? { after } : {}) })
+      for (const row of page.threads) if (keepLetter(row.message, taskId)) found.push(row.message)
+      if (page.threads.length < 100 || !page.cursor || seen.has(page.cursor)) break
+      seen.add(page.cursor)
+      after = page.cursor
+    }
+  } catch (error) {
+    if (error instanceof BoardError && (error.status === 501 || error.code === 'not_supported')) return null
+    return found
+  }
+  return found
+}
+
+/**
+ * Letters for a claimed task: threads labeled `mail.task=<id>`. A board that will not list every
+ * channel (Vercel's) is asked for `mail/<handle>` instead, the mailbox the relay writes when the
+ * claimant's handle is a channel segment. A miss leaves the reply pending.
+ */
+async function readLetters(root: MessageView): Promise<MessageView[]> {
+  if (!store.isTask(root) || root.task.state !== 'claimed' || !root.task.claim) return []
+  const taskId = root.id
+  const listed = await listLetters({ label: [`mail.task=${taskId}`] }, taskId)
+  if (listed) return listed
+  let handle: string | null = null
+  try {
+    const [actor] = await team.actors({ id: [root.task.claim.actor] })
+    handle = actor?.handle ?? null
+  } catch {
+    return []
+  }
+  const channel = handle ? mailboxChannel(handle) : null
+  if (!channel) return []
+  return (await listLetters({ channel, label: [`mail.task=${taskId}`] }, taskId)) ?? []
+}
+
 async function requestThread(id: string) {
   const as = identity
   const visit = pane?.identity === as && pane.id === id ? pane : undefined
@@ -376,7 +431,9 @@ async function requestThread(id: string) {
   try {
     const { message, replies } = await readThread(id)
     if (!current()) return
-    const messages = [message, ...replies]
+    const letters = await readLetters(message)
+    if (!current()) return
+    const messages = [message, ...replies, ...letters]
     set((s) => {
       const next = store.merge(s, messages, taken)
       if (!visit) return next
@@ -1234,6 +1291,46 @@ export async function loadWatchers() {
 
 /** Every board event for a task, oldest first. */
 export const taskTrace = (id: string) => team.tasks.events(id)
+
+const TRACE_FILE_KINDS = new Set(['transcript', 'log', 'ci'])
+
+export type TraceAttachment = {
+  id: string
+  name: string
+  kind: 'transcript' | 'log' | 'ci'
+  source: string | null
+}
+
+/** Trace files on a task's thread, in the order they were attached. The bytes stay on the board. */
+export async function taskTraceFiles(id: string): Promise<TraceAttachment[]> {
+  const files: TraceAttachment[] = []
+  const root = await team.thread(id)
+  const take = (message: { labels: Record<string, string>; attachments?: { id: string; name: string }[] }) => {
+    const kind = message.labels['trace.kind']
+    if (!kind || !TRACE_FILE_KINDS.has(kind)) return
+    for (const file of message.attachments ?? []) {
+      files.push({ id: file.id, name: file.name, kind: kind as TraceAttachment['kind'], source: message.labels['trace.source'] ?? null })
+    }
+  }
+  take(root.message)
+  let after = id
+  const seen = new Set<string>()
+  for (;;) {
+    const page = await team.thread(id, { after, limit: 500 })
+    for (const message of page.replies) take(message)
+    if (page.replies.length < 500) break
+    const last = page.replies.at(-1)
+    if (!last || seen.has(last.id)) break
+    seen.add(last.id)
+    after = last.id
+  }
+  return files
+}
+
+/** The text of one trace file, read through this page's board handle. */
+export async function traceFileText(id: string): Promise<string> {
+  return await (await team.download(id)).text()
+}
 
 /** Where a thread is synced: each target, and the platform's link to its copy there. Nothing, on a board that syncs nothing. */
 export async function loadSynced(id: string): Promise<SyncedView['targets']> {

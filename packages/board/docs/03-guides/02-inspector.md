@@ -152,8 +152,12 @@ Read and operate the board in your browser:
   message, the card uses the default pools. A species in neither is unknown.
   Party and repo come from the task the mob holds. The card names that task,
   how long the claim has left, and the pull request when the task is labeled
-  `pr.number`. It says running, stalled, or idle. Stalled is the workbench's
-  Repair rule: a lapsed claim, stale evidence, failed CI, a rejected review,
+  `pr.number`. Running, stalled, and idle are a badge that says the word.
+  Cards sit in a grid, about three across on a laptop and one on a phone,
+  with the 64 px head on the left and those facts beside it. Sprites are a
+  row of 16 px tool icons. The page is padded like the other workbench views.
+  Stalled is the workbench's Repair rule: a lapsed claim, stale evidence,
+  failed CI, a rejected review,
   a stale source, or a conflicting overlap. A sprite (`21-CAT.PICKAXE`) is
   listed under its mob with a 16 px tool icon. Cards are grouped by party,
   then by repo. Select the id to open that mob's Cell. The page only reads.
@@ -181,10 +185,16 @@ Read and operate the board in your browser:
   (`/tasks?state=ready&channel=work/`). A thread's pane shows its task in
   full, with what you can do to it now. A claimed task's reply button is an
   envelope labelled send letter to whoever holds it, and the envelope flies
-  off when the reply goes. Other composers keep send. A task's thread, and a
+  off when the reply goes. Other composers keep send. A person's reply on
+  that claimed task is a letter: the word letter, an envelope, who it is from
+  and who holds the task, the reply set apart, and pending or delivered at a
+  time, from the letter's mail labels. An agent's note and a spawner's note
+  stay ordinary messages. A task's thread, and a
   workbench peek, have a Trace tab: every board event for that task, oldest
   first, with its time and who did it. Filter by kind, or copy the lines as
-  text.
+  text. The same tab lists trace files attached on the thread, under
+  transcript, log, or ci. Open one to read it with its line numbers and a
+  search. The page loads the file from the board.
 - **Answer requests.** Attention (`/attention`) lists tasks held for a
   decision, oldest first. The sidebar counts open requests and marks refusals
   you haven't seen.

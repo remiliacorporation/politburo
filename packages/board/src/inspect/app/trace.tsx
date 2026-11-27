@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { BoardEventView } from '../../api/routes.ts'
 import * as board from './board.ts'
+import type { TraceAttachment } from './board.ts'
 import { said, shownName } from './words.ts'
+
+const FILE_KINDS = ['transcript', 'log', 'ci'] as const
 
 export const TRACE_KINDS = [
   'created', 'letter', 'labelled', 'review', 'pr', 'claimed', 'renewed', 'released',
@@ -90,6 +93,82 @@ export function traceText(lines: readonly TraceLine[]): string {
   return lines.map((row) => `${row.at}  ${row.actor}  ${row.text}`).join('\n')
 }
 
+function TraceFiles({ id, stamp }: { id: string; stamp: string }) {
+  const [files, setFiles] = useState<TraceAttachment[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  const [body, setBody] = useState<string | null>(null)
+  const [bodyError, setBodyError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  useEffect(() => {
+    let live = true
+    void board.taskTraceFiles(id).then(
+      (next) => { if (live) { setFiles(next); setError(null) } },
+      (reason: unknown) => { if (live) setError(said(reason)) },
+    )
+    return () => { live = false }
+  }, [id, stamp])
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    setBody(null)
+    setBodyError(null)
+    setQuery('')
+    void board.traceFileText(open).then(
+      (text) => { if (live) setBody(text) },
+      (reason: unknown) => { if (live) setBodyError(said(reason)) },
+    )
+    return () => { live = false }
+  }, [open])
+  const lines = useMemo(() => {
+    if (body === null) return []
+    const needle = query.trim().toLowerCase()
+    return body.split('\n').flatMap((text, index) => {
+      const line = { n: index + 1, text }
+      return !needle || text.toLowerCase().includes(needle) ? [line] : []
+    })
+  }, [body, query])
+  return (
+    <section className="trace-file-list" aria-label="trace files">
+      {error ? <p className="error" role="status">{error}</p>
+        : files === null ? <p className="empty">loading…</p>
+        : files.length === 0 ? <p className="empty">no trace files</p>
+        : FILE_KINDS.filter((name) => files.some((file) => file.kind === name)).map((name) => (
+          <div key={name}>
+            <h3>{name}</h3>
+            <ul>
+              {files.filter((file) => file.kind === name).map((file) => (
+                <li key={file.id}>
+                  <button type="button" aria-current={open === file.id ? 'true' : undefined} onClick={() => setOpen(file.id)}>
+                    {file.name}
+                  </button>
+                  {file.source && <span className="faint">{file.source}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      {open && (
+        <div className="trace-reader">
+          <input aria-label="search trace file" value={query} onChange={(event) => setQuery(event.target.value)} />
+          {bodyError ? <p className="error" role="status">{bodyError}</p>
+            : body === null ? <p className="empty">loading…</p>
+            : (
+              <ol className="trace-reader-lines" aria-label="trace file">
+                {lines.map((row) => (
+                  <li key={row.n} data-line={row.n}>
+                    <span className="trace-line-no">{row.n}</span>
+                    <span>{row.text}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 /** A task's board events, oldest first. `stamp` reloads when the thread moves, without clearing the list. */
 export function Trace({ id, stamp }: { id: string; stamp: string }) {
   const [events, setEvents] = useState<BoardEventView[] | null>(null)
@@ -132,6 +211,7 @@ export function Trace({ id, stamp }: { id: string; stamp: string }) {
         </button>
         {note && <span role="status">{note}</span>}
       </div>
+      <TraceFiles id={id} stamp={stamp} />
       {error ? <p className="error" role="status">{error}</p>
         : events === null ? <p className="empty">loading…</p>
         : shown.length === 0 ? <p className="empty">no events</p>

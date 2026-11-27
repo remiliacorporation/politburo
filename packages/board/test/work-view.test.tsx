@@ -750,6 +750,46 @@ it('lists the task trace in peek, oldest first, and copies the filtered lines', 
   expect(written[0]).toContain(rows()[0]!.querySelector('time')!.dateTime)
 })
 
+it('lists trace files by kind and reads one from the board with search and line numbers', async () => {
+  const { create, client, open } = await workBoard()
+  const { task } = await create('plb-134', 'Read the log')
+  const log = await client.upload({ data: new TextEncoder().encode('alpha line\nbeta line\n'), name: 'run.log' })
+  const notes = await client.upload({ data: new TextEncoder().encode('not a trace\n'), name: 'notes.txt' })
+  const ci = await client.upload({ data: new TextEncoder().encode('ci passed\n'), name: 'checks.txt' })
+  await client.reply(task.id, { text: 'notes.txt', attachments: [notes] })
+  await client.reply(task.id, {
+    text: 'run.log',
+    labels: { 'trace.kind': 'log', 'trace.source': 'https://example.test/run' },
+    attachments: [log],
+  })
+  await client.reply(task.id, { text: 'checks.txt', labels: { 'trace.kind': 'ci' }, attachments: [ci] })
+  await open(`?peek=${task.id}`)
+  await vi.waitFor(() => expect(peek()?.querySelector('h2')?.textContent).toBe('Read the log'))
+  flushSync(() => [...peek()!.querySelectorAll('button')].find((button) => button.textContent === 'trace')!.click())
+  const files = () => peek()?.querySelector('.trace-file-list')
+  await vi.waitFor(() => {
+    expect(files()?.textContent).toContain('log')
+    expect(files()?.textContent).toContain('run.log')
+    expect(files()?.textContent).toContain('https://example.test/run')
+    expect(files()?.textContent).toContain('ci')
+    expect(files()?.textContent).toContain('checks.txt')
+    expect(files()?.textContent).not.toContain('notes.txt')
+  })
+  flushSync(() => [...files()!.querySelectorAll('button')].find((button) => button.textContent === 'run.log')!.click())
+  const reader = () => peek()?.querySelector('.trace-reader')
+  await vi.waitFor(() => {
+    const lines = [...reader()!.querySelectorAll('li')]
+    expect(lines.map((line) => line.getAttribute('data-line'))).toEqual(['1', '2', '3'])
+    expect(lines.map((line) => line.querySelector('.trace-line-no')?.textContent)).toEqual(['1', '2', '3'])
+    expect(lines.map((line) => line.textContent)).toEqual(['1alpha line', '2beta line', '3'])
+  })
+  expect(reader()?.innerHTML ?? '').not.toContain('cursor.com')
+  setField(reader()!.querySelector('input')!, 'beta')
+  const shown = [...reader()!.querySelectorAll('li')]
+  expect(shown.map((line) => line.getAttribute('data-line'))).toEqual(['2'])
+  expect(shown[0]?.textContent).toBe('2beta line')
+})
+
 it('shows loading then the task-list refusal in Queue and peek without presenting an empty Home', async () => {
   const { create, open } = await workBoard()
   const { task } = await create(1, 'Task the reader cannot load')
